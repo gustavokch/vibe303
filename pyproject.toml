@@ -1,0 +1,34 @@
+[project]
+name = "ba283"
+version = "0.1.0"
+description = "Neve BA283 mic preamp neural emulation"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "soundfile>=0.12",
+    "PySpice>=1.5",
+    "torch>=2.4",
+    "tensorboard>=2.17",
+    "pandas>=2.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-xdist>=3.6",
+    "pytest-timeout>=2.3",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
