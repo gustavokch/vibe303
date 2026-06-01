@@ -192,9 +192,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["vst3", "standalone"] }
-rtneural = "0.1"
 serde_json = "1"
 atomic_float = "1"
+# TODO(Task 3.2): pick neural inference backend (pure-Rust hand-coded GRU+Dense vs experimental rtneural-rs git dep).
+# Cannot add until Task 3.2 selects + verifies the runtime; placeholder removed so Phase 0 scaffold can build.
 
 [dev-dependencies]
 assert_no_alloc = "1.1"
@@ -204,7 +205,7 @@ name = "ba283_standalone"
 path = "src/bin/standalone.rs"
 ```
 
-**Note:** if the published Rust binding crate is named differently (e.g. `rtneural-rs` on crates.io), update during Task 3.2.
+**Note:** the neural inference backend is deferred to Task 3.2. crates.io search at the time of Task 0.3 returned no `rtneural` crate, and the only candidate (`rcelha/rtneural-rs` on GitHub) is 0-star experimental. Phase 0 scaffold therefore builds without an inference dep; Task 3.2 will decide between (a) pure-Rust hand-coded GRU(2,32)+Dense(1) forward pass (preferred — fully real-time-safe, ~80 LOC, no deps) and (b) the experimental git crate.
 
 **Step 3: rust-toolchain.toml**
 
