@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.uv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Rust
+target/
+Cargo.lock.bak
+
+# Regenerable artifacts
+data/
+checkpoints/
+runs/
+*.pth
+*.npz
+*.wav
+*.flac
+
+# Allow committed reference WAVs (Git LFS) — re-include after the broad exclude
+!tests/regression/refs/*.wav
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
