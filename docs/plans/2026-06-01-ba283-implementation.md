@@ -176,7 +176,6 @@ resolver = "2"
 lto = "fat"
 codegen-units = 1
 opt-level = 3
-panic = "abort"
 ```
 
 **Step 2: plugin/Cargo.toml**
@@ -191,7 +190,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["vst3", "standalone"] }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23", features = ["vst3", "standalone"] }
 serde_json = "1"
 atomic_float = "1"
 # TODO(Task 3.2): pick neural inference backend (pure-Rust hand-coded GRU+Dense vs experimental rtneural-rs git dep).
@@ -212,7 +211,7 @@ path = "src/bin/standalone.rs"
 ```toml
 # plugin/rust-toolchain.toml
 [toolchain]
-channel = "stable"
+channel = "1.93.0"
 components = ["rustfmt", "clippy"]
 targets = ["x86_64-unknown-linux-gnu"]
 ```

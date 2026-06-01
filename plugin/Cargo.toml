@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["vst3", "standalone"] }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23", features = ["vst3", "standalone"] }
 serde_json = "1"
 atomic_float = "1"
 # TODO(Task 3.2): pick neural inference backend (pure-Rust hand-coded GRU+Dense vs experimental rtneural-rs git dep).
