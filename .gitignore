@@ -25,6 +25,7 @@ runs/
 !tests/regression/refs/*.wav
 # Allow committed test fixtures (small, intentional)
 !tests/fixtures/*.wav
+!tests/fixtures/**/*.wav
 
 # OS / editor
 .DS_Store
