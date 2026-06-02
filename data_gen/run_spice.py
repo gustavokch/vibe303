@@ -120,14 +120,17 @@ def simulate_one(dry_wav: Path, bias: float, out_npz: Path) -> Path:
 
     sim = circuit.simulator()
     # method='gear' is accepted as an options kwarg by PySpice 1.5.
-    # These tolerances (reltol=1e-4, abstol=1e-9, vntol=1e-6, gmin=1e-13, gear)
-    # are tuned for convergence of the stiff XSPICE-core transient; loosening
-    # them risks non-convergence.
+    # Tolerances relaxed from the old XSPICE-core era (reltol 1e-4 / abstol 1e-9):
+    # the behavioral transformer passes HF fully, so a sustained ~20 kHz sweep
+    # drives TR3's nonlinear junction caps hard and the tight tolerances forced
+    # the timestep toward 1e-17 (abort). reltol=1e-3 / abstol=1e-7 let the gear
+    # integrator take sane steps through the HF tail while staying well within
+    # audio accuracy (the null-vs-SPICE gate is -22 dB, ~5 effective bits).
     sim.options(
-        reltol=1e-4,
-        abstol=1e-9,
-        vntol=1e-6,
-        gmin=1e-13,
+        reltol=1e-3,
+        abstol=1e-7,
+        vntol=1e-5,
+        gmin=1e-12,
         method="gear",
     )
 

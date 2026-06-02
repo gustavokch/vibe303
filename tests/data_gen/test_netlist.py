@@ -91,11 +91,22 @@ def test_lo1166_instance_line_present():
     ), f"LO1166 instance line missing or pin order wrong:\n{s}"
 
 
-def test_lo1166_is_xspice_not_pspice():
-    """Transformer must be the XSPICE code-model form, not PSpice CORE/K idiom."""
+def test_lo1166_linear_mutual_model():
+    """Transformer must be the linear mutual-inductance (K-coupled) form (v1).
+
+    Asserts the two coupled windings (L_pri/L_sec), the coupling line (K1) and
+    the LP/LS params (turns ratio set by LS = N^2*LP). v1 is intentionally
+    linear -- no flux integrator or tanh saturation source (those wound up on
+    the primary DC and latched the core) and no E/F algebraic-loop sources
+    (those went near-oscillatory at the sweep HF tail).
+    """
     s = str(build_netlist(0.5))
-    for token in ("lcouple", "core", "H_array", "B_array", "num_turns"):
-        assert token in s, f"XSPICE transformer token {token!r} missing:\n{s}"
-    # The PSpice device forms must not appear as live device lines.
+    for token in ("L_pri", "L_sec", "K1", "LP=", "LS="):
+        assert token in s, f"transformer token {token!r} missing:\n{s}"
+    # The mis-wired XSPICE magnetics and PSpice CORE-model-on-K idiom must be gone.
+    assert "lcouple" not in s
     assert "CORE(MS=" not in s
     assert "K1 L_pri L_sec LO1166_CORE" not in s
+    # No flux-integrator/tanh windup machinery and no E/F ideal-xfmr sources.
+    assert "tanh" not in s
+    assert "E_sec" not in s

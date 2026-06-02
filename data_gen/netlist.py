@@ -9,13 +9,15 @@ Electrolytics (C7, C4, Cgain 80 µF) are modelled as an ideal cap in
 series with a 1 Ω ESR resistor (named R_esr_C7, R_esr_C4, R_esr_Cgain).
 This is the "C_esr" series model alluded to in the design doc.
 
-Output transformer LO1166 uses ngspice's XSPICE nonlinear-magnetics
-code models (two ``lcouple`` windings + a ``core`` PWL B-H model). The
-original PSpice ``CORE(MS/A/C/K)`` + ``K``-line idiom does not exist in
-ngspice; this is ngspice's genuine nonlinear-transformer path (closest
-practical equivalent to the Jiles-Atherton hysteresis originally
-requested). The code-model windings have no DC operating point, so
-data-gen runs a ``uic`` transient rather than a ``.op``.
+Output transformer LO1166 is a linear mutual-inductance model (v1):
+two coupled windings (``K1 L_pri L_sec``) with turns ratio N = 310/155 =
+2 set by ``LS = N^2 * LP`` (passband gain sqrt(LS/LP) = 2). The windings
+are inductors, so DC is blocked at the secondary (clean AC-only output
+tap); ``K < 1`` gives a leakage inductance and a gentle HF rolloff above
+the audio band. Core saturation + B-H hysteresis are a second-order
+effect deferred to v2; the dominant nonlinearity is the transistor
+chain. ``.op`` does not converge (TR2 base is AC-coupled with no DC bias
+resistor), so data-gen runs a ``uic`` transient.
 """
 
 from __future__ import annotations
@@ -30,34 +32,48 @@ _TRANSISTOR_MODELS = """\
 """  # noqa: E501
 
 _LO1166_SUBCKT = """\
-* Marinair LO1166 Gapped Output Transformer
-* ngspice XSPICE nonlinear-magnetics model: two `lcouple` windings driving a
-* shared `core` code model (PWL B-H curve, mode=1). This is ngspice's genuine
-* nonlinear-transformer path. NOTE: the PSpice `.MODEL ... CORE(MS/A/C/K)` +
-* `K1 L L modelname` idiom from the original plan does NOT exist in ngspice and
-* was replaced here. DC `.op` does not converge with code-model windings; the
-* data-gen transient runs with `uic`. B-H curve + turns are plausible defaults;
-* absolute calibration to a measured LO1166 is deferred (validation is null-vs-
-* SPICE, so the dataset is self-consistent regardless).
+* Marinair LO1166 Gapped Output Transformer (linear mutual-inductance model).
+* Two coupled windings L_pri/L_sec with coupling coefficient K. Turns ratio
+* N = Nsec/Npri = 310/155 = 2 is set by LS = N^2 * LP, so the passband voltage
+* gain is sqrt(LS/LP) = 2 (+6 dB). The windings are inductors -> DC is blocked
+* at the secondary (Vsec = M*dIpri/dt + LS*dIsec/dt = 0 at DC), a clean AC-only
+* output tap as a real galvanically-isolated transformer. K < 1 gives the
+* leakage inductance LP*(1-K) ~ 1 mH, i.e. a gentle HF rolloff (corner ~25 kHz
+* into the reflected load) above the audio band.
+*
+* This is the standard, numerically well-behaved transformer form. It replaces:
+*   (1) a prior XSPICE coupled-inductor + PWL-core model that mis-wired the
+*       magnetic node (the core shunted MMF instead of linking windings): a
+*       sub-100 Hz lowpass, gain ~ 1/Lmag, +34.8 V DC pedestal -- untunable; and
+*   (2) an E/F controlled-source ideal transformer that, while correct in gain
+*       and DC blocking, formed an undamped algebraic feedback loop (secondary
+*       current -> reflected primary current -> mag voltage -> secondary voltage
+*       -> secondary current). Driven by TR3 at
+*       the sweep's ~20 kHz tail it went near-oscillatory and collapsed the
+*       transient timestep to ~1e-17 (abort). The finite mutual inductances here
+*       break that loop and the K<1 HF rolloff removes the offending HF energy.
+*
+* NOTE: linear K coupling is fully supported by ngspice. The original plan's
+* failure was attaching a nonlinear .MODEL CORE to the K line, which ngspice
+* does not implement; a plain coupling coefficient does not need a model card.
+*
+* v1 is intentionally LINEAR (anhysteretic, no core saturation). The dominant
+* BA283 nonlinearity is the transistor chain (already in the netlist); output-
+* transformer saturation + B-H hysteresis are a second-order effect deferred to
+* v2. (A flux-integrator + saturating B-source was tried and rejected: a
+* standing DC across the primary wound the flux integrator up without bound,
+* latching the core into saturation and killing all AC transfer. v2 must add
+* saturation on a DC-blocked / anti-windup flux path.)
+*
+* .op does not converge (TR2 base is AC-coupled with no DC bias resistor), so
+* data-gen continues to run a uic transient.
 .SUBCKT LO1166 PRI_IN PRI_OUT SEC_IN SEC_OUT
-R_pri PRI_IN np 4.5
-R_sec SEC_IN ns 12.0
-L_leak_p np p1 2m
-L_leak_s ns s1 8m
-Rdc_p p1 PRI_OUT 1e7
-Rdc_s s1 SEC_OUT 1e7
-a1 (p1 PRI_OUT) (mc 0) pri_w
-.model pri_w lcouple (num_turns=155)
-a2 (mc 0) iron
-.model iron core (mode=1
-+ H_array=[-1000 -500 -250 -125 -63 0 63 125 250 500 1000]
-+ B_array=[-1.5 -1.4 -1.2 -0.8 -0.5 0 0.5 0.8 1.2 1.4 1.5]
-+ area=2.5e-4 length=0.12)
-a3 (s1 SEC_OUT) (mc 0) sec_w
-.model sec_w lcouple (num_turns=310)
-C_pri np PRI_OUT 200p
-C_sec ns SEC_OUT 400p
-Rmc mc 0 1e9
+.param LP=2 LS=8 K=0.9999
+R_pri PRI_IN pa 4.5
+L_pri pa PRI_OUT {LP}
+L_sec sa SEC_OUT {LS}
+R_sec SEC_IN sa 12.0
+K1 L_pri L_sec {K}
 .ENDS LO1166
 """
 
@@ -85,10 +101,10 @@ def build_netlist(bias_norm: float) -> Circuit:
     Returns
     -------
     PySpice ``Circuit`` whose +24 V rail (node ``A``) settles near the
-    supply under a ``uic`` transient. The XSPICE transformer has no DC
-    operating point, so a no-input ``.op`` will not converge; data-gen
-    runs a ``uic`` transient instead. Audio injection (PWL source on
-    node ``INPUT``) is layered in by ``run_spice.py``.
+    supply under a ``uic`` transient. TR2's base is AC-coupled with no DC
+    bias resistor, so a no-input ``.op`` will not converge; data-gen runs
+    a ``uic`` transient instead. Audio injection (PWL source on node
+    ``INPUT``) is layered in by ``run_spice.py``.
     """
     if not (0.0 <= bias_norm <= 1.0):
         raise ValueError(
