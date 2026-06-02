@@ -5,6 +5,7 @@ import soundfile as sf
 
 from data_gen.stimulus import (
     SAMPLE_RATE,
+    build_synthetic_segments,
     load_dry,
     load_user_music,
     log_sine_sweep,
@@ -87,6 +88,20 @@ def test_load_user_music_concatenates_with_silence(tmp_path):
     silence_len = int(0.05 * 96_000)
     expected_len = 2 * clip_len + silence_len
     assert abs(len(out) - expected_len) <= 10
+
+
+def test_build_synthetic_segments_multi_file_and_levels():
+    segs = build_synthetic_segments()
+    # enough distinct files for an 80/10/10 split
+    assert len(segs) >= 9
+    # all float32, all peak <= 0.5 (SPICE input ceiling), all non-empty
+    for name, sig in segs.items():
+        assert sig.dtype == np.float32, name
+        assert sig.size > 0, name
+        assert np.max(np.abs(sig)) <= 0.5 + 1e-6, name
+    # levels actually differ (level-dependent nonlinearity coverage)
+    peaks = {name: float(np.max(np.abs(sig))) for name, sig in segs.items()}
+    assert max(peaks.values()) > 3 * min(v for v in peaks.values() if v > 0)
 
 
 def test_pink_noise_reproducible():

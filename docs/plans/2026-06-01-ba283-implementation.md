@@ -399,8 +399,9 @@ Implement:
 - `filtered_impulses(duration_s)` — 10 impulses + step responses.
 - `load_user_music(paths) -> np.ndarray` — load via `soundfile`, resample to 96 kHz via `scipy.signal.resample_poly`, peak-normalize to 0.5 V, concatenate with 50 ms silence between.
 - `load_dry(path) -> (samples, 96000)`.
-- `build_synthetic_block()` — 4 sweeps (30 s each at −18/−12/−6/−1 dBFS) + 1 min pink bursts + 1 min IMD + 1 min impulses + 3 min multisine, peak-normalized to 0.5 V.
-- `main()`: writes `data/dry/synth_block.wav` and (if `--music-paths` passed) `data/dry/music_block.wav`.
+- `build_synthetic_block()` — 4 sweeps (30 s each at −18/−12/−6/−1 dBFS) + 1 min pink bursts + 1 min IMD + 1 min impulses + 3 min multisine, peak-normalized to 0.5 V. (Kept for reference; no longer used by `main()`.)
+- `build_synthetic_segments() -> dict[str, np.ndarray]` — emits ~11 per-segment stimuli (4 sweeps, 2 pink, 2 two-tone, impulse, 2 multisine), each scaled via `_scale_to_dbfs` to a peak of `0.5 * 10**(level_db/20)` so relative drive levels are preserved (level-dependent nonlinearity coverage) while staying ≤ 0.5 V. Each is its own file so the leakage-free-by-file manifest split (Task 1.4) has enough distinct files for an 80/10/10 split.
+- `main()`: writes one WAV per `build_synthetic_segments()` entry to `data/dry/<name>.wav`, and (if `--music-paths` passed) each music clip as its own `data/dry/music_<i>_<stem>.wav` (loaded via `load_dry`, scaled to −6 dBFS). Clobber-guarded by `--overwrite`.
 
 ### Step 1.2.4: Run tests
 

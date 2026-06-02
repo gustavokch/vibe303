@@ -4,6 +4,9 @@ Generator functions produce continuous ``np.float32`` arrays. The individual
 generators honour a ``level_db`` (or ``peak_db``) peak target; the *block
 builders* (:func:`build_synthetic_block`, :func:`load_user_music`) renormalise
 to a peak of 0.5 V, which is the SPICE input scaling from the design doc.
+:func:`build_synthetic_segments` instead emits one file per stimulus segment,
+each scaled to ``0.5 * 10**(level_db/20)`` so relative drive levels are
+preserved (level-dependent nonlinearity coverage) while staying at/under 0.5 V.
 
 Everything is 96 kHz, mono, float32. Pink noise is reproducible per-call via
 the ``seed`` argument (defaulting to the module ``SEED`` constant), so a bare
@@ -37,6 +40,15 @@ def _peak_normalize(x: np.ndarray, peak: float) -> np.ndarray:
     if m == 0:
         return x.astype(np.float32)
     return (x * (peak / m)).astype(np.float32)
+
+
+def _scale_to_dbfs(x: np.ndarray, level_db: float) -> np.ndarray:
+    """Scale x so its peak == 0.5 * 10**(level_db/20) (0 dBFS == 0.5 V SPICE input max)."""
+    peak = np.max(np.abs(x))
+    if peak == 0:
+        return x.astype(np.float32)
+    target = 0.5 * (10 ** (level_db / 20.0))
+    return (x * (target / peak)).astype(np.float32)
 
 
 def log_sine_sweep(
@@ -249,12 +261,63 @@ def build_synthetic_block() -> np.ndarray:
     return _peak_normalize(block, 0.5)
 
 
+def build_synthetic_segments() -> dict[str, np.ndarray]:
+    """Build per-segment dry stimuli as ``{name: float32_array}``.
+
+    Each segment is its own file (so the leakage-free-by-file manifest split has
+    enough distinct files for a representative train/val/test split) and is
+    scaled via :func:`_scale_to_dbfs` to a peak of ``0.5 * 10**(level_db/20)``.
+    This preserves *relative* drive levels across segments (so the dataset
+    covers the circuit's level-dependent nonlinearity) while keeping every
+    segment under the 0.5 V SPICE input ceiling. All 96 kHz mono float32.
+
+    Because each segment is a separate file, the inter-segment seam-click
+    problem addressed by :func:`build_synthetic_block` does not apply here.
+    """
+    return {
+        "sweep_m18": _scale_to_dbfs(
+            log_sine_sweep(30.0, 20.0, 20_000.0, 0.0), -18.0
+        ),
+        "sweep_m12": _scale_to_dbfs(
+            log_sine_sweep(30.0, 20.0, 20_000.0, 0.0), -12.0
+        ),
+        "sweep_m6": _scale_to_dbfs(
+            log_sine_sweep(30.0, 20.0, 20_000.0, 0.0), -6.0
+        ),
+        "sweep_m1": _scale_to_dbfs(
+            log_sine_sweep(30.0, 20.0, 20_000.0, 0.0), -1.0
+        ),
+        "pink_m18": _scale_to_dbfs(
+            pink_noise_bursts(20.0, 200, 800, -18.0, seed=SEED), -18.0
+        ),
+        "pink_m6": _scale_to_dbfs(
+            pink_noise_bursts(20.0, 200, 800, -6.0, seed=SEED + 1), -6.0
+        ),
+        "twotone_m12": _scale_to_dbfs(
+            two_tone_imd(20.0, 220.0, 277.18, -12.0), -12.0
+        ),
+        "twotone_m3": _scale_to_dbfs(
+            two_tone_imd(20.0, 330.0, 495.0, -3.0), -3.0
+        ),
+        "impulse": _scale_to_dbfs(filtered_impulses(20.0), -6.0),
+        "multisine_m12": _scale_to_dbfs(
+            multisine_schroeder(60.0, 40, 20.0, 20_000.0), -12.0
+        ),
+        "multisine_m3": _scale_to_dbfs(
+            multisine_schroeder(60.0, 40, 20.0, 20_000.0), -3.0
+        ),
+    }
+
+
 def main() -> None:
-    """CLI: write the synthetic block (and optional music block) to ``--out``."""
-    parser = argparse.ArgumentParser(description="Generate BA283 dry stimulus blocks.")
+    """CLI: write per-segment dry stimulus files (and optional music) to ``--out``."""
+    parser = argparse.ArgumentParser(description="Generate BA283 dry stimulus files.")
     parser.add_argument("--out", default="data/dry/", help="output directory")
     parser.add_argument(
-        "--music-paths", nargs="*", default=None, help="optional WAV clips for a music block"
+        "--music-paths",
+        nargs="*",
+        default=None,
+        help="optional WAV clips, each written as its own dry file",
     )
     parser.add_argument(
         "--overwrite", action="store_true", help="overwrite existing output files"
@@ -264,20 +327,28 @@ def main() -> None:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    synth_path = out / "synth_block.wav"
-    if synth_path.exists() and not args.overwrite:
-        print(f"skipping {synth_path}: already exists (use --overwrite)")
-    else:
-        synth = build_synthetic_block()
-        sf.write(str(synth_path), synth, SAMPLE_RATE, subtype="FLOAT")
+    def _write(path: Path, sig: np.ndarray) -> bool:
+        """Write ``sig`` to ``path`` honouring the clobber guard; True if written."""
+        if path.exists() and not args.overwrite:
+            print(f"skipping {path}: already exists (use --overwrite)")
+            return False
+        sf.write(str(path), sig, SAMPLE_RATE, subtype="FLOAT")
+        return True
+
+    written = 0
+    for name, sig in build_synthetic_segments().items():
+        if _write(out / f"{name}.wav", sig):
+            written += 1
 
     if args.music_paths:
-        music_path = out / "music_block.wav"
-        if music_path.exists() and not args.overwrite:
-            print(f"skipping {music_path}: already exists (use --overwrite)")
-        else:
-            music = load_user_music([Path(p) for p in args.music_paths])
-            sf.write(str(music_path), music, SAMPLE_RATE, subtype="FLOAT")
+        for i, p in enumerate(args.music_paths):
+            mp = Path(p)
+            samples, _ = load_dry(mp)
+            samples = _scale_to_dbfs(samples, -6.0)
+            if _write(out / f"music_{i}_{mp.stem}.wav", samples):
+                written += 1
+
+    print(f"wrote {written} dry stimulus file(s) to {out}")
 
 
 if __name__ == "__main__":
