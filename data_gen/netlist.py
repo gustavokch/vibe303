@@ -143,6 +143,9 @@ def build_netlist(bias_norm: float) -> Circuit:
 
     # --- TR2 (BC184C, driver) ----------------------------------------------
     # Base fed from RV1 wiper via C4 (4.7 µF electrolytic) + 1 Ω ESR.
+    # TR2 base is AC-coupled only (via C4); no DC base-bias resistor by
+    # design. Works under uic transient; do not attempt .op-seeded sim
+    # here. See null-vs-SPICE rationale in module docstring.
     circuit.C("4", "RV1_WIPER", "C4_MID", 4.7e-6)
     circuit.R("_esr_C4", "C4_MID", "TR2_B", 1.0)
 
