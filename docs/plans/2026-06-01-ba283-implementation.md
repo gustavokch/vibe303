@@ -1832,6 +1832,19 @@ git commit -m "feat(plugin): wire Drive/Output/Mix params + dry-delay phase alig
 
 ## Task 3.5: Phase 3 gate check
 
+> **DONE.** The nih_plug `nih_plug_xtask` bundler is set up: `xtask/` workspace
+> member (Cargo.toml + src/main.rs calling `nih_plug_xtask::main()`, pinned to
+> the same nih_plug rev `f36931f7af4646065488a9845d8f8c2f95252c23`), root
+> `bundler.toml` mapping `[ba283] name = "BA283"`, and a `.cargo/config.toml`
+> alias `xtask = "run --package xtask --release --"`. `cargo xtask bundle ba283
+> --release` produces `target/bundled/BA283.vst3/Contents/x86_64-linux/BA283.so`
+> (no manual fallback needed; the xtask API worked unmodified at this rev — at
+> this rev it emits no moduleinfo.json, which is optional for VST3). The render
+> smoke uses the offline `ba283_standalone` custom renderer (not the nih_plug
+> standalone audio backend), so the gate runs headless without an audio device.
+> Gate passed: 13 cargo tests green, clippy clean, fmt clean, standalone renders
+> sr=96000 non-silent finite WAV, round-trip max diff 2.6e-08 < 1e-5.
+
 ### Step 3.5.1: Build VST3 bundle
 
 Run: `cargo xtask bundle ba283 --release`
