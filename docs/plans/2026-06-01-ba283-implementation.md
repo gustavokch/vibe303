@@ -395,7 +395,7 @@ Implement:
 - `log_sine_sweep(duration_s, f_start, f_end, level_db) -> np.ndarray[np.float32]` using `scipy.signal.chirp(method="logarithmic")`.
 - `pink_noise_bursts(duration_s, burst_ms, gap_ms, peak_db)` — FFT-coloured white noise enveloped by rectangular bursts.
 - `two_tone_imd(duration_s, f1, f2, level_db)`.
-- `multisine_schroeder(duration_s, num_tones, f_low, f_high)` — log-spaced tones with Schroeder phases `φ_k = -k(k-1)π/N`.
+- `multisine_schroeder(duration_s, num_tones, f_low, f_high)` — linear-spaced tones with Schroeder phases `φ_k = -k(k-1)π/N`. (Schroeder phases only minimize crest factor for equally-spaced tones; log spacing breaks the crest<3 contract — 3.42 vs 1.92. Broadband log coverage is supplied by the sweeps + pink bursts in the block.)
 - `filtered_impulses(duration_s)` — 10 impulses + step responses.
 - `load_user_music(paths) -> np.ndarray` — load via `soundfile`, resample to 96 kHz via `scipy.signal.resample_poly`, peak-normalize to 0.5 V, concatenate with 50 ms silence between.
 - `load_dry(path) -> (samples, 96000)`.
