@@ -611,24 +611,33 @@ git commit -m "feat(data_gen): PCHIP resample to 96k grid + leakage-free manifes
 Run: `uv run pytest tests/data_gen/ -v`
 Expected: all green.
 
-### Step 1.5.2: Smoke run end-to-end
+### Step 1.5.2: End-to-end gate (short-stimulus pipeline)
 
-Run:
-```bash
-uv run python -m data_gen.stimulus --out data/dry/
-uv run python -m data_gen.run_spice --smoke
-uv run python -m data_gen.resample --raw-dir data/wet_raw --out-dir data/wet --manifest data/manifest.csv
-```
-Expected: `data/wet/short_sine_96k_bias0.50.wav` exists, `data/manifest.csv` non-empty.
+Run: `uv run python tests/gate_phase1.py`
+
+Fast end-to-end on 6 short (~0.15 s) dry stimuli of varied generators/levels
+× 3 biases (`[0.0, 0.5, 1.0]`). Generates dry WAVs → SPICE batch → PCHIP
+resample → manifest → leakage-free 4/1/1 split. Asserts a non-empty,
+pairwise-disjoint train/val/test split and a decodable 96 kHz wet WAV.
+Artifacts land under gitignored `data/gate/` (cleaned at start for
+deterministic re-runs). Expected: prints `PHASE 1 GATE: PASS`, exit 0.
+
+(Replaces the original single-fixture `run_spice --smoke` smoke: that produced
+only one dry file, so `split_manifest` — which now requires ≥3 unique stimuli
+after the per-segment-file + split-guard changes — could not form a valid
+3-way split.)
 
 ### Step 1.5.3: Gate 1 verification
 
-@superpowers:verification-before-completion. Confirm:
-- All `pytest tests/data_gen/` green.
-- `data/manifest.csv` exists with valid rows.
-- At least one wet WAV decodes via `soundfile.read` at 96 kHz.
+@superpowers:verification-before-completion. The gate script
+(`tests/gate_phase1.py`) itself asserts and exits 1 on any failure:
+- `data/gate/manifest.csv` exists with ≥1 data row (18 expected: 6 dry × 3 biases).
+- `train.csv`/`val.csv`/`test.csv` all exist and are non-empty.
+- The three split `dry_path` sets are pairwise disjoint (leakage-free).
+- At least one wet WAV decodes via `soundfile.read` at sr==96000 with finite, >0 samples.
+- SPICE failures are tolerated up to 20% of pairs (failures logged to `data/gate/failed.csv`); a larger failure rate fails the gate.
 
-If any fails — back up and fix.
+Also confirm `uv run pytest tests/data_gen/` is all green. If any fails — back up and fix.
 
 ### Step 1.5.4: Commit
 
