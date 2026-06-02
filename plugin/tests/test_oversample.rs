@@ -24,7 +24,11 @@ fn upsample_then_downsample_is_unity_after_latency() {
         let (u0, u1) = os.upsample(input[i]);
         output[i] = os.downsample(u0, u1);
     }
-    let latency = 16;
+    // 63-tap half-band cascade (user decision to meet >= 80 dB stopband).
+    // Latency rose from 16 (31-tap) to 32 base-rate samples; this MUST equal
+    // Ba283Plugin::latency_samples() (the single source of truth for the host
+    // report and Task 3.4's dry-path delay).
+    let latency = 32;
     let mut max_err = 0.0f32;
     for i in latency..1024 {
         let e = (output[i] - input[i - latency]).abs();

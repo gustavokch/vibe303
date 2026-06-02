@@ -1559,12 +1559,12 @@ Write `tools/gen_fir_coeffs.py`:
 import numpy as np
 from scipy.signal import firwin
 
-n = 31
+n = 63
 beta = 8.6
 cutoff = 0.5
 h = firwin(n, cutoff, window=("kaiser", beta), pass_zero="lowpass")
 h *= 2.0
-print("const COEFFS: [f32; 31] = [")
+print("const COEFFS: [f32; 63] = [")
 for c in h:
     print(f"    {c:.10e},")
 print("];")
@@ -1603,7 +1603,7 @@ fn upsample_then_downsample_is_unity_after_latency() {
         let (u0, u1) = os.upsample(input[i]);
         output[i] = os.downsample(u0, u1);
     }
-    let latency = 16;
+    let latency = 32;
     let mut max_err = 0.0f32;
     for i in latency..1024 {
         let e = (output[i] - input[i - latency]).abs();
@@ -1711,7 +1711,7 @@ Cache `self.sample_rate` from `BufferConfig.sample_rate` in `initialize`. Overri
 
 ```rust
 fn latency_samples(&self) -> u32 {
-    if self.sample_rate < 96_000.0 { 8 } else { 0 }
+    if self.sample_rate < 96_000.0 { 32 } else { 0 }
 }
 ```
 

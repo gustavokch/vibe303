@@ -89,12 +89,14 @@ impl Default for Ba283Plugin {
 impl Ba283Plugin {
     /// Base-rate latency introduced by the 2x oversampler. When the host runs
     /// at >= 96 kHz no oversampling is done, so latency is zero. Below 96 kHz
-    /// the upsample -> model -> downsample cascade has a group delay of 16
-    /// base-rate samples (measured by the `upsample_then_downsample_is_unity`
-    /// test, which aligns `output[i]` with `input[i - 16]` at base rate).
+    /// the upsample -> model -> downsample cascade (63-tap half-band FIR per
+    /// direction) has a group delay of 32 base-rate samples (measured by the
+    /// `upsample_then_downsample_is_unity` test, which aligns `output[i]` with
+    /// `input[i - 32]` at base rate). This is the single source of truth for
+    /// the host report and Task 3.4's dry-path delay.
     fn latency_samples(&self) -> u32 {
         if self.sample_rate < 96_000.0 {
-            16
+            32
         } else {
             0
         }
