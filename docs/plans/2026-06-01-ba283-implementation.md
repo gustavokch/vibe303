@@ -998,6 +998,7 @@ Expected: FAIL.
 - Early stop on patience=10.
 - `CosineAnnealingLR(T_max=epochs)`.
 - If `smoke`: limit to first 2 batches per epoch.
+- Hardened for unattended multi-hour runs: gradient clipping (`clip_norm`) guards GRU divergence; non-finite-loss batches are skipped and a NaN `val_esr` is never checkpointed as best; checkpoints are written atomically (tmp + `os.replace`); a resumable `last.pth` bundle (model/optimizer/scheduler/epoch/best/patience) supports `--resume`; `--seed` for reproducibility; best.pth weights are reloaded into the in-memory model at the end; epoch-mean train loss is logged.
 
 CLI `main()` argparse: `--train-manifest`, `--val-manifest`, `--epochs`, `--batch`, `--lr`, `--hidden`, `--warmup`, `--window`, `--stride`, `--workers`, `--checkpoint-dir`, `--log-dir`, `--device`, `--smoke`.
 
