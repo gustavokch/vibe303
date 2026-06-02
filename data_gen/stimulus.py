@@ -261,7 +261,7 @@ def build_synthetic_block() -> np.ndarray:
     return _peak_normalize(block, 0.5)
 
 
-def build_synthetic_segments() -> dict[str, np.ndarray]:
+def build_synthetic_segments(duration_scale: float = 1.0) -> dict[str, np.ndarray]:
     """Build per-segment dry stimuli as ``{name: float32_array}``.
 
     Each segment is its own file (so the leakage-free-by-file manifest split has
@@ -273,38 +273,48 @@ def build_synthetic_segments() -> dict[str, np.ndarray]:
 
     Because each segment is a separate file, the inter-segment seam-click
     problem addressed by :func:`build_synthetic_block` does not apply here.
+
+    ``duration_scale`` multiplies every segment's base duration. Use < 1.0 to
+    shrink the dataset for a tractable SPICE batch (the SPICE transient runs at
+    ~tens of x realtime and PySpice holds the whole transient in RAM, so full
+    base durations make the batch many hours / many GB). The sweeps still cover
+    the full 20 Hz-20 kHz range regardless of scale (the chirp spans whatever
+    duration it is given), so shortening trades sweep *resolution*, not range.
     """
+    sweep_s = 30.0 * duration_scale
+    short_s = 20.0 * duration_scale
+    multisine_s = 60.0 * duration_scale
     return {
         "sweep_m18": _scale_to_dbfs(
-            log_sine_sweep(30.0, 20.0, 20_000.0, 0.0), -18.0
+            log_sine_sweep(sweep_s, 20.0, 20_000.0, 0.0), -18.0
         ),
         "sweep_m12": _scale_to_dbfs(
-            log_sine_sweep(30.0, 20.0, 20_000.0, 0.0), -12.0
+            log_sine_sweep(sweep_s, 20.0, 20_000.0, 0.0), -12.0
         ),
         "sweep_m6": _scale_to_dbfs(
-            log_sine_sweep(30.0, 20.0, 20_000.0, 0.0), -6.0
+            log_sine_sweep(sweep_s, 20.0, 20_000.0, 0.0), -6.0
         ),
         "sweep_m1": _scale_to_dbfs(
-            log_sine_sweep(30.0, 20.0, 20_000.0, 0.0), -1.0
+            log_sine_sweep(sweep_s, 20.0, 20_000.0, 0.0), -1.0
         ),
         "pink_m18": _scale_to_dbfs(
-            pink_noise_bursts(20.0, 200, 800, -18.0, seed=SEED), -18.0
+            pink_noise_bursts(short_s, 200, 800, -18.0, seed=SEED), -18.0
         ),
         "pink_m6": _scale_to_dbfs(
-            pink_noise_bursts(20.0, 200, 800, -6.0, seed=SEED + 1), -6.0
+            pink_noise_bursts(short_s, 200, 800, -6.0, seed=SEED + 1), -6.0
         ),
         "twotone_m12": _scale_to_dbfs(
-            two_tone_imd(20.0, 220.0, 277.18, -12.0), -12.0
+            two_tone_imd(short_s, 220.0, 277.18, -12.0), -12.0
         ),
         "twotone_m3": _scale_to_dbfs(
-            two_tone_imd(20.0, 330.0, 495.0, -3.0), -3.0
+            two_tone_imd(short_s, 330.0, 495.0, -3.0), -3.0
         ),
-        "impulse": _scale_to_dbfs(filtered_impulses(20.0), -6.0),
+        "impulse": _scale_to_dbfs(filtered_impulses(short_s), -6.0),
         "multisine_m12": _scale_to_dbfs(
-            multisine_schroeder(60.0, 40, 20.0, 20_000.0), -12.0
+            multisine_schroeder(multisine_s, 40, 20.0, 20_000.0), -12.0
         ),
         "multisine_m3": _scale_to_dbfs(
-            multisine_schroeder(60.0, 40, 20.0, 20_000.0), -3.0
+            multisine_schroeder(multisine_s, 40, 20.0, 20_000.0), -3.0
         ),
     }
 
@@ -322,6 +332,12 @@ def main() -> None:
     parser.add_argument(
         "--overwrite", action="store_true", help="overwrite existing output files"
     )
+    parser.add_argument(
+        "--duration-scale",
+        type=float,
+        default=1.0,
+        help="multiply every segment's base duration (use <1 for a faster/smaller SPICE batch)",
+    )
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -336,7 +352,7 @@ def main() -> None:
         return True
 
     written = 0
-    for name, sig in build_synthetic_segments().items():
+    for name, sig in build_synthetic_segments(args.duration_scale).items():
         if _write(out / f"{name}.wav", sig):
             written += 1
 

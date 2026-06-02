@@ -147,6 +147,10 @@ def simulate_one(dry_wav: Path, bias: float, out_npz: Path) -> Path:
 
     out_npz.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out_npz, t=t, v=v)
+    # Drop the filesource sidecar once the result is saved — these are large
+    # (~MB/s of audio) and would otherwise pile up across a full batch on a
+    # disk-constrained box. (Left in place only if the sim raised before here.)
+    sidecar.unlink(missing_ok=True)
     return out_npz
 
 
