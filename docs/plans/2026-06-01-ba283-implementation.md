@@ -590,7 +590,7 @@ Expected: FAIL.
   5. `soundfile.write(out_wav, v_uniform.astype(np.float32), target_sr, subtype="FLOAT")`.
 - `write_manifest(rows, out_csv)`: `pandas.DataFrame(rows).to_csv(out_csv, index=False)` with explicit column order.
 - `split_manifest(manifest_csv, out_dir, ratios=(0.8, 0.1, 0.1), seed=42)`: split by `dry_path`, write `train.csv`, `val.csv`, `test.csv`.
-- `main()` argparse: `--raw-dir`, `--out-dir`, `--manifest`.
+- `main()` argparse: `--raw-dir`, `--out-dir`, `--manifest`, `--dry-dir` (default `data/dry`). `dry_path` is written as `dry_dir/<stem>.wav` so the manifest resolves to the real dry stimulus.
 
 ### Step 1.4.4: Run tests
 

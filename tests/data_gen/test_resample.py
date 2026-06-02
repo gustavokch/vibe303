@@ -1,9 +1,11 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 import soundfile as sf
 
-from data_gen.resample import resample_to_grid, split_manifest, write_manifest
+from data_gen.resample import main, resample_to_grid, split_manifest, write_manifest
 
 
 def test_resample_lands_on_96k_grid(tmp_path):
@@ -106,3 +108,41 @@ def test_resample_non_monotonic_time_raises(tmp_path):
     out = tmp_path / "wet.wav"
     with pytest.raises(ValueError, match="strictly increasing"):
         resample_to_grid(npz, out)
+
+
+def test_main_writes_resolvable_dry_path(tmp_path):
+    dry_dir = tmp_path / "dry"
+    dry_dir.mkdir()
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    rng = np.random.default_rng(0)
+    # split_manifest (called by main) needs >=3 unique stems with non-empty
+    # train/val/test under the default 0.8/0.1/0.1 ratios; 10 satisfies that.
+    stems = [f"sweep{i}" for i in range(10)]
+    for stem in stems:
+        sf.write(
+            dry_dir / f"{stem}.wav",
+            np.zeros(96, dtype=np.float32),
+            96_000,
+            subtype="FLOAT",
+        )
+        t = np.cumsum(rng.uniform(5e-7, 1.5e-6, size=20_000))
+        v = np.sin(2 * np.pi * 1000 * t).astype(np.float32)
+        np.savez(raw_dir / f"{stem}_bias0.50.npz", t=t, v=v)
+
+    out_dir = tmp_path / "wet"
+    manifest = tmp_path / "manifest.csv"
+    rc = main([
+        "--raw-dir", str(raw_dir),
+        "--out-dir", str(out_dir),
+        "--manifest", str(manifest),
+        "--dry-dir", str(dry_dir),
+        "--head-trim-ms", "0",
+    ])
+    assert rc == 0
+
+    df = pd.read_csv(manifest)
+    assert len(df) == 10
+    row = df[df["dry_path"].str.endswith("sweep0.wav")].iloc[0]
+    assert row.dry_path == str(dry_dir / "sweep0.wav")
+    assert Path(row.dry_path).exists()

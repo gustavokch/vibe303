@@ -211,10 +211,16 @@ def main(argv: list[str] | None = None) -> int:
         default=50,
         help="Milliseconds trimmed from each head (DC-settle margin).",
     )
+    parser.add_argument(
+        "--dry-dir",
+        default="data/dry",
+        help="Directory of dry stimulus WAVs (<stem>.wav); used for dry_path.",
+    )
     args = parser.parse_args(argv)
 
     raw_dir = Path(args.raw_dir)
     out_dir = Path(args.out_dir)
+    dry_dir = Path(args.dry_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict] = []
@@ -233,10 +239,17 @@ def main(argv: list[str] | None = None) -> int:
             target_sr=args.target_sr,
             head_trim_ms=args.head_trim_ms,
         )
+        dry_path = dry_dir / f"{stem}.wav"
+        if not dry_path.exists():
+            warnings.warn(
+                f"dry stimulus not found: {dry_path}; manifest row will "
+                "reference a missing dry WAV.",
+                stacklevel=2,
+            )
         info = sf.info(str(wet_path))
         rows.append(
             {
-                "dry_path": f"{stem}.wav",
+                "dry_path": str(dry_path),
                 "wet_path": str(wet_path),
                 "bias_value": bias,
                 "duration_s": info.duration,
