@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -62,8 +63,15 @@ def resample_to_grid(
     """
     out_wav = Path(out_wav)
     d = np.load(npz_path)
+    if "t" not in d or "v" not in d:
+        raise ValueError(
+            f"{npz_path}: missing required arrays 't' and/or 'v' "
+            f"(found {list(d.keys())})"
+        )
     t = d["t"]
     v = d["v"]
+    if not np.all(np.diff(t) > 0):
+        raise ValueError(f"{npz_path}: time array 't' must be strictly increasing")
 
     # Uniform grid spanning the simulated interval, one sample per 1/target_sr.
     tg = np.arange(t[0], t[-1], 1.0 / target_sr)
@@ -72,10 +80,17 @@ def resample_to_grid(
 
     trim = int(head_trim_ms * target_sr / 1000)
     # Guard: a short stimulus (or a large head_trim) could trim every sample.
-    # If trimming would leave nothing, trim nothing — the WAV must be
-    # non-empty, and on a sub-trim-length clip there is no settled head to
-    # drop anyway. (A lone surviving sample would also be a degenerate clip.)
-    if trim < len(v_uniform):
+    # If trimming would leave nothing, keep the full signal — the WAV must be
+    # non-empty — but warn loudly: a clip shorter than the settle margin is
+    # entirely unsettled SPICE transient and silently keeping it leaks bad data.
+    if trim >= len(v_uniform):
+        warnings.warn(
+            f"{npz_path}: head_trim {trim} samples >= signal length "
+            f"{len(v_uniform)}; keeping full (likely-unsettled) signal. "
+            "Input shorter than settle margin.",
+            stacklevel=2,
+        )
+    else:
         v_uniform = v_uniform[trim:]
 
     out_wav.parent.mkdir(parents=True, exist_ok=True)
@@ -123,6 +138,21 @@ def split_manifest(
     n_val = round(n * r_val)
     n_test = n - n_train - n_val
 
+    if n < 3:
+        raise ValueError(
+            f"need >=3 unique dry stimuli to make non-empty train/val/test; "
+            f"got {n}. "
+            "Increase the stimulus library size or pass explicit ratios."
+        )
+    counts = {"train": n_train, "val": n_val, "test": n_test}
+    empty = [name for name, c in counts.items() if c <= 0]
+    if empty:
+        raise ValueError(
+            f"split ratios {ratios} on n={n} unique stimuli yield empty "
+            f"splits: {empty}. "
+            "Adjust ratios or add more stimuli."
+        )
+
     train_stems = set(stems[:n_train])
     val_stems = set(stems[n_train : n_train + n_val])
     test_stems = set(stems[n_train + n_val :])
@@ -138,9 +168,6 @@ def split_manifest(
         part.to_csv(path, index=False)
         out_paths[name] = path
 
-    # n_test is implied by the partition above; reference it so the rounding
-    # arithmetic stays self-documenting and lint-clean.
-    assert n_test == len(test_stems)
     return out_paths
 
 

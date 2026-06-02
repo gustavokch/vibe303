@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 import soundfile as sf
 
 from data_gen.resample import resample_to_grid, split_manifest, write_manifest
@@ -58,3 +59,50 @@ def test_split_by_stimulus_file_no_leakage(tmp_path):
     assert train_stems.isdisjoint(val_stems)
     assert train_stems.isdisjoint(test_stems)
     assert val_stems.isdisjoint(test_stems)
+
+
+def _write_manifest_with_stems(path, stems):
+    rows = []
+    for stim in stems:
+        for bias in [0.0, 0.5]:
+            rows.append({
+                "dry_path": f"dry/{stim}.wav",
+                "wet_path": f"wet/{stim}_bias{bias:.2f}.wav",
+                "bias_value": bias,
+                "duration_s": 60.0,
+                "stim_kind": "synth",
+            })
+    pd.DataFrame(rows).to_csv(path, index=False)
+
+
+def test_split_too_few_stems_raises(tmp_path):
+    manifest = tmp_path / "manifest.csv"
+    _write_manifest_with_stems(manifest, ["sweepA", "sweepB"])
+    with pytest.raises(ValueError, match="need >=3"):
+        split_manifest(manifest, tmp_path)
+
+
+def test_split_empty_split_raises(tmp_path):
+    manifest = tmp_path / "manifest.csv"
+    _write_manifest_with_stems(manifest, ["sweepA", "sweepB", "sweepC", "sweepD"])
+    with pytest.raises(ValueError, match="empty splits"):
+        split_manifest(manifest, tmp_path, ratios=(1.0, 0.0, 0.0))
+
+
+def test_resample_missing_keys_raises(tmp_path):
+    t = np.linspace(0.0, 1e-3, 100)
+    npz = tmp_path / "raw.npz"
+    np.savez(npz, t=t)
+    out = tmp_path / "wet.wav"
+    with pytest.raises(ValueError, match="missing required arrays"):
+        resample_to_grid(npz, out)
+
+
+def test_resample_non_monotonic_time_raises(tmp_path):
+    t = np.array([0.0, 1e-4, 0.5e-4, 2e-4])
+    v = np.zeros_like(t)
+    npz = tmp_path / "raw.npz"
+    np.savez(npz, t=t, v=v)
+    out = tmp_path / "wet.wav"
+    with pytest.raises(ValueError, match="strictly increasing"):
+        resample_to_grid(npz, out)
