@@ -3,23 +3,26 @@
 Pushes a dry-stimulus WAV through the parameterized BA283 netlist via
 ngspice and saves the raw ``(t, v)`` wet target as a compressed ``.npz``.
 
-The dry audio is injected as a PWL voltage source on node ``INPUT`` (which
-``data_gen.netlist`` leaves open for exactly this purpose). The output tap is
-read from node ``SEC_IN`` (the 600 Ohm-terminated transformer secondary).
+The dry audio is injected via an XSPICE ``filesource`` code-model a-device on
+node ``INPUT`` (which ``data_gen.netlist`` leaves open for exactly this
+purpose). The output tap is read from node ``SEC_IN`` (the 600 Ohm-terminated
+transformer secondary).
 
 The XSPICE nonlinear-magnetics transformer has no DC operating point, so the
 simulation runs a ``uic`` transient only (no ``.op``).
 
-For long stimuli (> 30 s) the PWL points are written to a sidecar ``.pwl``
-file and referenced via ngspice ``PWL file="..."`` syntax; for short stimuli
-the points are inlined directly into the netlist. Only the inline path is
-exercised by the Phase 1 tests and gate smoke.
+Every sim — regardless of duration — writes a sidecar ``time value`` ASCII
+file (one line per 96 kHz sample) and injects it via the XSPICE ``filesource``
+code model. The ngspice ``Vin INPUT 0 PWL file="..."`` sidecar syntax does
+NOT work in ngspice 46 (``Cannot compute substitute``), so it is not used.
+``filesource`` is the single, verified-working injection path.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import multiprocessing as mp
 import os
 from pathlib import Path
@@ -29,11 +32,14 @@ import soundfile as sf
 
 from data_gen.netlist import build_netlist
 
+# ngspice-46 is our validated target; PySpice 1.5's version table predates it
+# and emits a spurious "Unsupported Ngspice version 46" warning on every sim.
+# Silence it.
+logging.getLogger("PySpice.Spice.NgSpice.Shared").setLevel(logging.ERROR)
+
 SAMPLE_RATE = 96_000
 # Internal transient oversample factor (step = 1 / (SR * OVERSAMPLE)).
 OVERSAMPLE = 8
-# Stimuli longer than this (seconds) use a sidecar PWL file instead of inline.
-SIDECAR_THRESHOLD_S = 30.0
 # Tail appended after the stimulus so the transient settles past the input.
 TAIL_S = 0.05
 
@@ -53,19 +59,17 @@ def _load_dry(dry_wav: Path) -> np.ndarray:
     return np.ascontiguousarray(samples, dtype=np.float32)
 
 
-def _inline_pwl(samples: np.ndarray) -> str:
-    """Render an inline ``PWL(t0 v0 t1 v1 ...)`` body at the 96 kHz grid."""
-    t = np.arange(samples.shape[0]) / SAMPLE_RATE
-    parts = [f"{ti:.9g} {vi:.9g}" for ti, vi in zip(t, samples, strict=True)]
-    return "PWL(" + " ".join(parts) + ")"
+def _write_filesource(samples: np.ndarray, path: Path) -> None:
+    """Write a ``time value`` ASCII file for the XSPICE ``filesource`` model.
 
-
-def _write_pwl_file(samples: np.ndarray, pwl_path: Path) -> None:
-    """Write a sidecar PWL file (``t v`` per line) for long stimuli."""
-    t = np.arange(samples.shape[0]) / SAMPLE_RATE
-    with pwl_path.open("w") as fh:
-        for ti, vi in zip(t, samples, strict=True):
-            fh.write(f"{ti:.9g} {vi:.9g}\n")
+    One line per 96 kHz sample with ``time = i / 96000``. ``%.12g`` for time
+    avoids the timestamp-collision cliff that ``%.9g`` hits on long stimuli.
+    Written with ``np.savetxt`` so multi-minute (millions-of-line) files stay
+    fast and memory-friendly.
+    """
+    t = np.arange(samples.shape[0], dtype=np.float64) / SAMPLE_RATE
+    data = np.column_stack((t, samples.astype(np.float64)))
+    np.savetxt(path, data, fmt=("%.12g", "%.8g"))
 
 
 def simulate_one(dry_wav: Path, bias: float, out_npz: Path) -> Path:
@@ -92,18 +96,26 @@ def simulate_one(dry_wav: Path, bias: float, out_npz: Path) -> Path:
 
     circuit = build_netlist(bias)
 
-    # Inject the dry audio as a PWL voltage source on node INPUT.
-    if duration > SIDECAR_THRESHOLD_S:
-        # Sidecar path for real >30 s stimuli; not exercised in Phase 1.
-        # TODO: validate sidecar PWL against ngspice 46 in Task 1.5 gate run.
-        pwl_path = out_npz.with_suffix(".pwl")
-        _write_pwl_file(samples, pwl_path)
-        circuit.raw_spice += f'Vin INPUT 0 PWL file="{pwl_path}"\n'
-    else:
-        circuit.raw_spice += f"Vin INPUT 0 {_inline_pwl(samples)}\n"
+    # Inject the dry audio via the XSPICE filesource code model on node INPUT.
+    # A single path for every duration: the 'Vin INPUT 0 PWL file=' sidecar
+    # syntax does not work in ngspice 46, and inline PWL does not scale to the
+    # multi-minute production stimuli. filesource interpolates from a
+    # 'time value' ASCII file (absolute path; ngspice's file search needs it).
+    sidecar = out_npz.with_suffix(".src")
+    _write_filesource(samples, sidecar)
+    src_path = str(Path(sidecar).resolve())
+    circuit.raw_spice += (
+        "a_in %vd([INPUT 0]) inputsrc\n"
+        f'.model inputsrc filesource (file="{src_path}" amploffset=[0] '
+        "amplscale=[1] timeoffset=0 timescale=1 timerelative=false "
+        "amplstep=false)\n"
+    )
 
     sim = circuit.simulator()
     # method='gear' is accepted as an options kwarg by PySpice 1.5.
+    # These tolerances (reltol=1e-4, abstol=1e-9, vntol=1e-6, gmin=1e-13, gear)
+    # are tuned for convergence of the stiff XSPICE-core transient; loosening
+    # them risks non-convergence.
     sim.options(
         reltol=1e-4,
         abstol=1e-9,
@@ -190,7 +202,10 @@ def run_batch(manifest_or_stim_paths, biases, workers: int | None = None):
     if workers == 1:
         results = [_run_pair(p) for p in pairs]
     else:
-        with mp.Pool(processes=workers) as pool:
+        # maxtasksperchild=1: each sim runs in a fresh process so libngspice
+        # (cached as a per-process singleton by PySpice) cannot accumulate or
+        # leak state across sims over a long batch.
+        with mp.Pool(processes=workers, maxtasksperchild=1) as pool:
             results = pool.map(_run_pair, pairs)
 
     failures = [(s, b, e) for (s, b, e) in results if e is not None]
