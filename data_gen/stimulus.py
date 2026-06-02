@@ -5,8 +5,12 @@ generators honour a ``level_db`` (or ``peak_db``) peak target; the *block
 builders* (:func:`build_synthetic_block`, :func:`load_user_music`) renormalise
 to a peak of 0.5 V, which is the SPICE input scaling from the design doc.
 
-Everything is 96 kHz, mono, float32. Pink noise is reproducible via the module
-``SEED``. No chunking — arrays are built whole.
+Everything is 96 kHz, mono, float32. Pink noise is reproducible per-call via
+the ``seed`` argument (defaulting to the module ``SEED`` constant), so a bare
+call is byte-for-byte reproducible regardless of call order. The block builders
+separate their parts with 50 ms of silence to avoid seam transients (clicks
+from abutting tone segments at arbitrary phase). No chunking — arrays are built
+whole.
 """
 
 from __future__ import annotations
@@ -20,8 +24,6 @@ from scipy.signal import chirp, resample_poly
 
 SAMPLE_RATE = 96_000
 SEED = 0xBA283
-
-_RNG = np.random.default_rng(SEED)
 
 
 def _db_to_amp(db: float) -> float:
@@ -47,9 +49,13 @@ def log_sine_sweep(
     return _peak_normalize(sweep, _db_to_amp(level_db))
 
 
-def _pink_noise(n: int) -> np.ndarray:
-    """Pink noise via FFT colouring of white noise with a 1/sqrt(f) spectrum."""
-    white = _RNG.standard_normal(n)
+def _pink_noise(n: int, seed: int | None = None) -> np.ndarray:
+    """Pink noise via FFT colouring of white noise with a 1/sqrt(f) spectrum.
+
+    Reproducible per-call: ``seed`` defaults to the module ``SEED`` constant.
+    """
+    rng = np.random.default_rng(seed if seed is not None else SEED)
+    white = rng.standard_normal(n)
     spectrum = np.fft.rfft(white)
     freqs = np.fft.rfftfreq(n, d=1.0 / SAMPLE_RATE)
     scale = np.ones_like(freqs)
@@ -60,14 +66,20 @@ def _pink_noise(n: int) -> np.ndarray:
 
 
 def pink_noise_bursts(
-    duration_s: float, burst_ms: float, gap_ms: float, peak_db: float
+    duration_s: float,
+    burst_ms: float,
+    gap_ms: float,
+    peak_db: float,
+    seed: int | None = None,
 ) -> np.ndarray:
     """Pink-noise bursts (``burst_ms`` on, ``gap_ms`` off) at peak ``peak_db``.
 
-    Gap regions are set to exactly 0.0.
+    Gap regions are set to exactly 0.0. Reproducible per-call: ``seed`` defaults
+    to the module ``SEED`` constant, so a bare call is byte-for-byte
+    reproducible regardless of call order.
     """
     n = int(duration_s * SAMPLE_RATE)
-    pink = _peak_normalize(_pink_noise(n), _db_to_amp(peak_db))
+    pink = _peak_normalize(_pink_noise(n, seed), _db_to_amp(peak_db))
 
     burst_n = round(burst_ms * 1e-3 * SAMPLE_RATE)
     gap_n = round(gap_ms * 1e-3 * SAMPLE_RATE)
@@ -150,6 +162,16 @@ def _resample_to_96k(samples: np.ndarray, sr: int) -> np.ndarray:
     return resample_poly(samples, up, down)
 
 
+def _read_wav(path: Path) -> tuple[np.ndarray, int]:
+    """Read a WAV as float32, raising with the offending path on failure."""
+    if not Path(path).is_file():
+        raise FileNotFoundError(f"audio file not found: {path}")
+    try:
+        return sf.read(str(path), dtype="float32")
+    except Exception as exc:  # re-raise with path context
+        raise RuntimeError(f"failed to read audio file: {path}") from exc
+
+
 def load_user_music(paths: list[Path]) -> np.ndarray:
     """Load WAVs, resample to 96 kHz, peak-normalize each to 0.5, concatenate.
 
@@ -158,7 +180,7 @@ def load_user_music(paths: list[Path]) -> np.ndarray:
     silence = np.zeros(int(0.05 * SAMPLE_RATE), dtype=np.float32)
     clips: list[np.ndarray] = []
     for i, path in enumerate(paths):
-        samples, sr = sf.read(str(path), dtype="float32")
+        samples, sr = _read_wav(path)
         samples = _to_mono(samples)
         samples = _resample_to_96k(samples, sr)
         samples = _peak_normalize(samples, 0.5)
@@ -172,14 +194,20 @@ def load_user_music(paths: list[Path]) -> np.ndarray:
 
 def load_dry(path: Path) -> tuple[np.ndarray, int]:
     """Load a WAV as mono float32 at 96 kHz; resample if needed."""
-    samples, sr = sf.read(str(path), dtype="float32")
+    samples, sr = _read_wav(path)
     samples = _to_mono(samples)
     samples = _resample_to_96k(samples, sr)
     return samples.astype(np.float32), SAMPLE_RATE
 
 
 def build_synthetic_block() -> np.ndarray:
-    """Build the ~8 min synthetic stimulus block, peak-normalized to 0.5."""
+    """Build the ~8 min synthetic stimulus block, peak-normalized to 0.5.
+
+    Parts are separated by 50 ms of silence (the same convention as
+    :func:`load_user_music`) so abutting tone segments at arbitrary phase do not
+    inject broadband click transients into the SPICE training targets. Silence
+    is benign for SPICE — the netlist settles during the gap.
+    """
     parts: list[np.ndarray] = []
 
     # 4 log sweeps 20 Hz -> 20 kHz, 30 s each, at -18/-12/-6/-1 dBFS.
@@ -187,10 +215,11 @@ def build_synthetic_block() -> np.ndarray:
         parts.append(log_sine_sweep(30.0, 20.0, 20_000.0, level))
 
     # 1 min pink-noise bursts (200 ms / 800 ms), levels around -24..-3 dBFS.
+    # Distinct explicit seeds keep each segment different yet reproducible.
     burst_levels = (-24.0, -18.0, -12.0, -6.0, -3.0)
     seg = 60.0 / len(burst_levels)
-    for level in burst_levels:
-        parts.append(pink_noise_bursts(seg, 200, 800, level))
+    for i, level in enumerate(burst_levels):
+        parts.append(pink_noise_bursts(seg, 200, 800, level, seed=SEED + i))
 
     # 1 min two-tone IMD at musical-interval pairs.
     pairs = (
@@ -209,7 +238,14 @@ def build_synthetic_block() -> np.ndarray:
     # 3 min Schroeder multisine.
     parts.append(multisine_schroeder(180.0, 40, 20.0, 20_000.0))
 
-    block = np.concatenate(parts)
+    silence = np.zeros(int(0.05 * SAMPLE_RATE), dtype=np.float32)
+    joined: list[np.ndarray] = []
+    for i, part in enumerate(parts):
+        if i > 0:
+            joined.append(silence)
+        joined.append(part)
+
+    block = np.concatenate(joined)
     return _peak_normalize(block, 0.5)
 
 
@@ -220,17 +256,28 @@ def main() -> None:
     parser.add_argument(
         "--music-paths", nargs="*", default=None, help="optional WAV clips for a music block"
     )
+    parser.add_argument(
+        "--overwrite", action="store_true", help="overwrite existing output files"
+    )
     args = parser.parse_args()
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    synth = build_synthetic_block()
-    sf.write(str(out / "synth_block.wav"), synth, SAMPLE_RATE, subtype="FLOAT")
+    synth_path = out / "synth_block.wav"
+    if synth_path.exists() and not args.overwrite:
+        print(f"skipping {synth_path}: already exists (use --overwrite)")
+    else:
+        synth = build_synthetic_block()
+        sf.write(str(synth_path), synth, SAMPLE_RATE, subtype="FLOAT")
 
     if args.music_paths:
-        music = load_user_music([Path(p) for p in args.music_paths])
-        sf.write(str(out / "music_block.wav"), music, SAMPLE_RATE, subtype="FLOAT")
+        music_path = out / "music_block.wav"
+        if music_path.exists() and not args.overwrite:
+            print(f"skipping {music_path}: already exists (use --overwrite)")
+        else:
+            music = load_user_music([Path(p) for p in args.music_paths])
+            sf.write(str(music_path), music, SAMPLE_RATE, subtype="FLOAT")
 
 
 if __name__ == "__main__":
