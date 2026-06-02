@@ -38,8 +38,15 @@ from data_gen.netlist import build_netlist
 logging.getLogger("PySpice.Spice.NgSpice.Shared").setLevel(logging.ERROR)
 
 SAMPLE_RATE = 96_000
-# Internal transient oversample factor (step = 1 / (SR * OVERSAMPLE)).
-OVERSAMPLE = 8
+# Internal transient max-step factor (max_step = 1 / (SR * OVERSAMPLE)).
+# This only CAPS ngspice's adaptive (gear) timestep; solution accuracy is
+# governed by reltol/abstol, which still refine fast transients. A high cap
+# (8) emitted ~8 output points/sample held entirely in RAM by PySpice's
+# shared-lib mode, blowing past memory on multi-minute clips (a 60 s clip at
+# 8x needed ~7.4 GB). Lowered to 2 -> ~4x less memory + time with negligible
+# accuracy loss (PCHIP resample handles the variable output grid). 2x also
+# matches the plugin's own internal 2x oversampling.
+OVERSAMPLE = 2
 # Tail appended after the stimulus so the transient settles past the input.
 TAIL_S = 0.05
 

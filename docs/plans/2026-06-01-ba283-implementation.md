@@ -482,7 +482,7 @@ Implement:
   4. Inject via the XSPICE `filesource` code model: `a_in %vd([INPUT 0]) inputsrc` plus `.model inputsrc filesource (file="<abs_path>" ...)`.
   5. Configure simulator with `.options reltol=1e-4 abstol=1e-9 vntol=1e-6 gmin=1e-13 method=gear`.
   6. Do NOT run `.op` — the XSPICE transformer has no DC operating point. Run the transient with `use_initial_condition=True` (uic); rely on the 50 ms head margin + Task 1.4's 50 ms trim for bias settling.
-  7. `tran(step_time=1/(96000*8), end_time=duration+0.05, use_initial_condition=True)`.
+  7. `tran(step_time=1/(96000*OVERSAMPLE), end_time=duration+0.05, use_initial_condition=True)` with `OVERSAMPLE=2` (lowered from 8 to bound PySpice's in-RAM transient output; the cap only bounds the adaptive gear step, accuracy set by tolerances).
   8. Extract `analysis['SEC_IN']` → `(t, v)`.
   9. `np.savez_compressed(out_npz, t=t, v=v)`.
   10. Return `out_npz`.
