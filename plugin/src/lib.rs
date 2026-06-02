@@ -2,20 +2,25 @@ use nih_plug::prelude::*;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+pub mod delay;
+pub mod dsp;
 pub mod model;
 pub mod oversample;
 
-use model::Ba283Model;
-use oversample::Oversample2x;
+use dsp::ChannelDsp;
+
+/// Convert decibels to a linear gain factor.
+#[inline]
+fn db_to_gain(db: f32) -> f32 {
+    10.0f32.powf(db * 0.05)
+}
 
 pub struct Ba283Plugin {
     params: Arc<Ba283Params>,
-    /// One GRU instance per channel (mono/stereo). Each holds ~13KB of fixed
-    /// arrays; constructing here is fine (no runtime allocation in forward()).
-    models: [Ba283Model; 2],
-    /// One 2x polyphase oversampler per channel, used only when the host runs
-    /// below 96 kHz (the model is trained at 96 kHz).
-    os: [Oversample2x; 2],
+    /// One per-channel DSP core (model + oversampler + dry-delay) per channel
+    /// (mono/stereo). The SAME `ChannelDsp` chain is used by the offline
+    /// standalone, so the Phase-4 null target matches the plugin exactly.
+    channels: [ChannelDsp; 2],
     /// Host sample rate cached in `initialize`. Default to the model's native
     /// 96 kHz so the no-oversampling path is taken until told otherwise.
     sample_rate: f32,
@@ -76,11 +81,7 @@ impl Default for Ba283Plugin {
     fn default() -> Self {
         Self {
             params: Arc::new(Ba283Params::default()),
-            models: [
-                Ba283Model::new_from_embedded_weights(),
-                Ba283Model::new_from_embedded_weights(),
-            ],
-            os: [Oversample2x::new(), Oversample2x::new()],
+            channels: [ChannelDsp::new(), ChannelDsp::new()],
             sample_rate: 96_000.0,
         }
     }
@@ -96,7 +97,7 @@ impl Ba283Plugin {
     /// the host report and Task 3.4's dry-path delay.
     fn latency_samples(&self) -> u32 {
         if self.sample_rate < 96_000.0 {
-            32
+            dsp::OS_LATENCY_SAMPLES as u32
         } else {
             0
         }
@@ -145,11 +146,8 @@ impl Plugin for Ba283Plugin {
     }
 
     fn reset(&mut self) {
-        for m in self.models.iter_mut() {
-            m.reset();
-        }
-        for o in self.os.iter_mut() {
-            o.reset();
+        for ch in self.channels.iter_mut() {
+            ch.reset();
         }
     }
 
@@ -159,27 +157,22 @@ impl Plugin for Ba283Plugin {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // Model + 2x oversampling path. Drive/Output/Mix/dry-delay land in 3.4.
-        // At >= 96 kHz the model runs directly; below 96 kHz we upsample 2x,
-        // run the model on each oversampled sample, then downsample.
+        // Full chain via the shared per-channel `ChannelDsp` core: Drive ->
+        // model (direct at >= 96 kHz, else via 2x oversampler) -> Output, blended
+        // with a latency-aligned dry path by Mix. Params are sample-smoothed.
         let host_ge_96k = self.sample_rate >= 96_000.0;
         for mut frame in buffer.iter_samples() {
+            let drive = db_to_gain(self.params.drive_db.smoothed.next());
             let bias = self.params.bias.smoothed.next();
+            let out_g = db_to_gain(self.params.output_db.smoothed.next());
+            let mix = self.params.mix.smoothed.next() * 0.01;
             for (ch, sample) in frame.iter_mut().enumerate() {
                 // AUDIO_IO_LAYOUTS only declare mono/stereo, but guard anyway.
-                if ch >= self.models.len() {
+                if ch >= self.channels.len() {
                     break;
                 }
-                let dry = *sample;
-                let wet = if host_ge_96k {
-                    self.models[ch].forward(&[dry, bias])[0]
-                } else {
-                    let (u0, u1) = self.os[ch].upsample(dry);
-                    let w0 = self.models[ch].forward(&[u0, bias])[0];
-                    let w1 = self.models[ch].forward(&[u1, bias])[0];
-                    self.os[ch].downsample(w0, w1)
-                };
-                *sample = wet;
+                *sample =
+                    self.channels[ch].process_sample(*sample, drive, bias, out_g, mix, host_ge_96k);
             }
         }
         ProcessStatus::Normal
