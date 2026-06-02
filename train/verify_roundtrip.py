@@ -17,6 +17,8 @@ from train.model import BA283GRU
 def load_model_from_json(json_path: Path) -> BA283GRU:
     doc = json.loads(json_path.read_text())
     assert doc["hidden_size"] == 32 and doc["input_size"] == 2
+    assert doc["format"] == "ba283-gru-v1"
+    assert doc["gate_order"] == "rzn"
     gru = next(layer for layer in doc["layers"] if layer["type"] == "gru")
     dense = next(layer for layer in doc["layers"] if layer["type"] == "dense")
     m = BA283GRU(hidden=32)

@@ -2,17 +2,20 @@
 //!
 //! This is a CUSTOM offline file renderer, NOT nih_plug's realtime standalone
 //! (which cannot file-render). It reads a WAV, runs the hand-coded GRU per
-//! sample, and writes a WAV. For Task 3.2 only the `--raw` (pure model) path is
-//! meaningful; Drive/Output/Mix/oversampling are wired in 3.3/3.4.
+//! sample, and writes a WAV. In Tasks 3.2/3.3 ONLY the `--raw` (pure model)
+//! path is supported. The full DSP chain (Drive/Output/Mix/oversampling) and
+//! the `--drive-db` / `--output-db` / `--mix` flags land in Task 3.4; until
+//! then any invocation that implies the full chain fails loudly so a premature
+//! Phase-4 run cannot pass against the bare model by mistake.
 //!
 //! Arg parsing is manual over `std::env::args` (no clap dependency):
 //!   --input <path>   (required)
 //!   --output <path>  (required)
 //!   --bias <f32>     (default 0.5)
-//!   --raw            (flag) run pure model: out = forward([sample, bias])[0]
-//!   --drive-db / --output-db / --mix <f32>  accepted-and-ignored for now
-//!     (the Phase-4 scripts pass them; fully wired in 3.4). Non-raw currently
-//!     behaves identically to raw.
+//!   --raw            (flag, REQUIRED for now) run pure model:
+//!                    out = forward([sample, bias])[0]
+//!   --drive-db / --output-db / --mix <f32>  NOT implemented until 3.4;
+//!     passing any of them is a hard error.
 
 use ba283::model::Ba283Model;
 use std::process::exit;
@@ -42,9 +45,9 @@ fn main() {
                 let v = args.next().unwrap_or_else(|| die("--bias needs a value"));
                 bias = v.parse().unwrap_or_else(|_| die("--bias must be a float"));
             }
-            // Accept-and-ignore for now (fully wired in 3.4).
+            // Not implemented until 3.4 — fail loudly if present (with any value).
             "--drive-db" | "--output-db" | "--mix" => {
-                let _ = args.next().unwrap_or_else(|| die("flag needs a value"));
+                die("--drive-db/--output-db/--mix not implemented until Task 3.4");
             }
             other => die(&format!("unknown argument: {other}")),
         }
@@ -52,8 +55,13 @@ fn main() {
 
     let input = input.unwrap_or_else(|| die("--input is required"));
     let output = output.unwrap_or_else(|| die("--output is required"));
-    // Non-raw full chain comes in 3.4; for 3.2 it equals raw.
-    let _ = raw;
+    // The full DSP chain lands in 3.4; until then only --raw is supported.
+    if !raw {
+        die(
+            "full DSP chain (drive/output/mix/oversampling) not wired until Task 3.4; \
+             pass --raw for pure-model rendering",
+        );
+    }
 
     let reader = hound::WavReader::open(&input)
         .unwrap_or_else(|e| die(&format!("cannot open input WAV {input}: {e}")));

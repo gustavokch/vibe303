@@ -14,7 +14,11 @@ atomic_float = "1"
 hound = "3"
 
 [dev-dependencies]
-assert_no_alloc = "1.1"
+# `warn_release` so the alloc check is ACTIVE in `--release` test builds and
+# records violations (the default `disable_release` makes it a no-op in release,
+# and the abort mode would kill the test process instead of failing the test).
+# The test asserts `violation_count() == 0`.
+assert_no_alloc = { version = "1.1", default-features = false, features = ["warn_debug", "warn_release"] }
 
 [[bin]]
 name = "ba283_standalone"
