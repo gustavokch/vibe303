@@ -305,8 +305,22 @@ Expected: 5 PASS (3 parametrized + 2 standalone).
 
 ### Step 1.1.5: Smoke ngspice on the netlist
 
-Run: `uv run python -c "from data_gen.netlist import build_netlist; c = build_netlist(0.5); sim = c.simulator(); op = sim.operating_point(); print(float(op['A']))"`
-Expected: prints voltage near 24.0. If non-convergence — fix topology before proceeding.
+Note: ngspice cannot DC-`.op` the XSPICE transformer (the lcouple/core code-model windings have no DC operating point → singular matrix); use a `uic` transient.
+
+Run:
+```bash
+uv run python -c "
+from data_gen.netlist import build_netlist
+c = build_netlist(0.5)
+sim = c.simulator()
+analysis = sim.transient(step_time=1e-5, end_time=2e-3, use_initial_condition=True)
+import numpy as np
+v = np.array(analysis['SEC_IN'])
+print('SEC_IN samples:', v.shape, 'finite:', bool(np.all(np.isfinite(v))), 'std:', float(np.std(v)))
+print('node A (rail):', float(np.array(analysis['A'])[-1]))
+"
+```
+Expected: prints finite SEC_IN samples (non-empty, `finite: True`) and node A near 24.0. If non-convergence — fix topology before proceeding.
 
 ### Step 1.1.6: Commit
 
@@ -466,8 +480,8 @@ Implement:
   3. Write PWL sidecar `dry_wav.with_suffix(".pwl")` if file > 30 s; else inline PWL points.
   4. Add `Vin <input_node> 0 PWL FILE=<path>` (or inline).
   5. Configure simulator with `.options reltol=1e-4 abstol=1e-9 vntol=1e-6 gmin=1e-13 method=gear`.
-  6. Run `.op` first, set `.ic` accordingly.
-  7. `tran(step_time=1/(96000*8), end_time=duration+0.05)`.
+  6. Do NOT run `.op` — the XSPICE transformer has no DC operating point. Run the transient with `use_initial_condition=True` (uic); rely on the 50 ms head margin + Task 1.4's 50 ms trim for bias settling.
+  7. `tran(step_time=1/(96000*8), end_time=duration+0.05, use_initial_condition=True)`.
   8. Extract `analysis['SEC_IN']` → `(t, v)`.
   9. `np.savez_compressed(out_npz, t=t, v=v)`.
   10. Return `out_npz`.
