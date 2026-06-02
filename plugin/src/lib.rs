@@ -3,14 +3,22 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 pub mod model;
+pub mod oversample;
 
 use model::Ba283Model;
+use oversample::Oversample2x;
 
 pub struct Ba283Plugin {
     params: Arc<Ba283Params>,
     /// One GRU instance per channel (mono/stereo). Each holds ~13KB of fixed
     /// arrays; constructing here is fine (no runtime allocation in forward()).
     models: [Ba283Model; 2],
+    /// One 2x polyphase oversampler per channel, used only when the host runs
+    /// below 96 kHz (the model is trained at 96 kHz).
+    os: [Oversample2x; 2],
+    /// Host sample rate cached in `initialize`. Default to the model's native
+    /// 96 kHz so the no-oversampling path is taken until told otherwise.
+    sample_rate: f32,
 }
 
 #[derive(Params)]
@@ -72,6 +80,23 @@ impl Default for Ba283Plugin {
                 Ba283Model::new_from_embedded_weights(),
                 Ba283Model::new_from_embedded_weights(),
             ],
+            os: [Oversample2x::new(), Oversample2x::new()],
+            sample_rate: 96_000.0,
+        }
+    }
+}
+
+impl Ba283Plugin {
+    /// Base-rate latency introduced by the 2x oversampler. When the host runs
+    /// at >= 96 kHz no oversampling is done, so latency is zero. Below 96 kHz
+    /// the upsample -> model -> downsample cascade has a group delay of 16
+    /// base-rate samples (measured by the `upsample_then_downsample_is_unity`
+    /// test, which aligns `output[i]` with `input[i - 16]` at base rate).
+    fn latency_samples(&self) -> u32 {
+        if self.sample_rate < 96_000.0 {
+            16
+        } else {
+            0
         }
     }
 }
@@ -106,15 +131,23 @@ impl Plugin for Ba283Plugin {
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
-        _buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        buffer_config: &BufferConfig,
+        context: &mut impl InitContext<Self>,
     ) -> bool {
+        self.sample_rate = buffer_config.sample_rate;
+        // Report the oversampler latency to the host (this nih_plug rev exposes
+        // latency via InitContext::set_latency_samples; there is no
+        // Plugin::latency_samples trait method).
+        context.set_latency_samples(self.latency_samples());
         true
     }
 
     fn reset(&mut self) {
         for m in self.models.iter_mut() {
             m.reset();
+        }
+        for o in self.os.iter_mut() {
+            o.reset();
         }
     }
 
@@ -124,7 +157,10 @@ impl Plugin for Ba283Plugin {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // Pure model (raw) path. Drive/Output/Mix/oversampling wired in 3.3-3.4.
+        // Model + 2x oversampling path. Drive/Output/Mix/dry-delay land in 3.4.
+        // At >= 96 kHz the model runs directly; below 96 kHz we upsample 2x,
+        // run the model on each oversampled sample, then downsample.
+        let host_ge_96k = self.sample_rate >= 96_000.0;
         for mut frame in buffer.iter_samples() {
             let bias = self.params.bias.smoothed.next();
             for (ch, sample) in frame.iter_mut().enumerate() {
@@ -133,7 +169,14 @@ impl Plugin for Ba283Plugin {
                     break;
                 }
                 let dry = *sample;
-                let wet = self.models[ch].forward(&[dry, bias])[0];
+                let wet = if host_ge_96k {
+                    self.models[ch].forward(&[dry, bias])[0]
+                } else {
+                    let (u0, u1) = self.os[ch].upsample(dry);
+                    let w0 = self.models[ch].forward(&[u0, bias])[0];
+                    let w1 = self.models[ch].forward(&[u1, bias])[0];
+                    self.os[ch].downsample(w0, w1)
+                };
                 *sample = wet;
             }
         }
