@@ -291,7 +291,7 @@ Expected: FAIL — `ModuleNotFoundError`.
 Create `data_gen/netlist.py`. Must include:
 - `build_netlist(bias_norm: float) -> Circuit` raises `ValueError` if `bias_norm` not in `[0.0, 1.0]`.
 - `2N3055` and `BC184C` SPICE model cards verbatim from the design doc.
-- LO1166 `.SUBCKT` body verbatim from the design doc (Chan/Hwang `CORE` model).
+- LO1166 `.SUBCKT` body verbatim from the design doc Appendix A.2 (ngspice XSPICE `lcouple` + `core` PWL B-H model; the PSpice `CORE(MS/A/C/K)` + `K`-line idiom does not exist in ngspice).
 - Bias mapping: `R_upper = 4700 * (1 - bias_norm)`, `R_lower = 4700 * bias_norm` (clamp each to ≥ 1 Ω).
 - Comment: classic BA283 uses BC184 throughout; 2N3055 on TR3 is per user direction.
 - Every electrolytic (C7, C4, gain-cap `Cgain`) modelled as cap in series with named `R_esr_*` of 1.0 Ω.
