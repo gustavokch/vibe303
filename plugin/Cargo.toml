@@ -10,8 +10,8 @@ crate-type = ["cdylib", "rlib"]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23", features = ["vst3", "standalone"] }
 serde_json = "1"
 atomic_float = "1"
-# TODO(Task 3.2): pick neural inference backend (pure-Rust hand-coded GRU+Dense vs experimental rtneural-rs git dep).
-# Cannot add until Task 3.2 selects + verifies the runtime; placeholder removed so Phase 0 scaffold can build.
+# Task 3.2: pure-Rust hand-coded GRU(2,32)+Dense(1) (see src/model.rs); rtneural-rs not used.
+hound = "3"
 
 [dev-dependencies]
 assert_no_alloc = "1.1"

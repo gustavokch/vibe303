@@ -2,8 +2,15 @@ use nih_plug::prelude::*;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+pub mod model;
+
+use model::Ba283Model;
+
 pub struct Ba283Plugin {
     params: Arc<Ba283Params>,
+    /// One GRU instance per channel (mono/stereo). Each holds ~13KB of fixed
+    /// arrays; constructing here is fine (no runtime allocation in forward()).
+    models: [Ba283Model; 2],
 }
 
 #[derive(Params)]
@@ -61,6 +68,10 @@ impl Default for Ba283Plugin {
     fn default() -> Self {
         Self {
             params: Arc::new(Ba283Params::default()),
+            models: [
+                Ba283Model::new_from_embedded_weights(),
+                Ba283Model::new_from_embedded_weights(),
+            ],
         }
     }
 }
@@ -101,7 +112,11 @@ impl Plugin for Ba283Plugin {
         true
     }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        for m in self.models.iter_mut() {
+            m.reset();
+        }
+    }
 
     fn process(
         &mut self,
@@ -109,11 +124,17 @@ impl Plugin for Ba283Plugin {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // Identity passthrough placeholder; replaced by the model chain in Task 3.2.
-        #[allow(clippy::self_assignment)]
+        // Pure model (raw) path. Drive/Output/Mix/oversampling wired in 3.3-3.4.
         for mut frame in buffer.iter_samples() {
-            for sample in frame.iter_mut() {
-                *sample = *sample;
+            let bias = self.params.bias.smoothed.next();
+            for (ch, sample) in frame.iter_mut().enumerate() {
+                // AUDIO_IO_LAYOUTS only declare mono/stereo, but guard anyway.
+                if ch >= self.models.len() {
+                    break;
+                }
+                let dry = *sample;
+                let wet = self.models[ch].forward(&[dry, bias])[0];
+                *sample = wet;
             }
         }
         ProcessStatus::Normal
