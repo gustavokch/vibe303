@@ -17,6 +17,7 @@ plugin/weights/*.meta.json
 
 # Regenerable artifacts
 data/
+colab/*.zip
 checkpoints/
 runs/
 *.pth
