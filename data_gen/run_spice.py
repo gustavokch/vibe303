@@ -132,6 +132,11 @@ def simulate_one(dry_wav: Path, bias: float, out_npz: Path) -> Path:
         vntol=1e-5,
         gmin=1e-12,
         method="gear",
+        # .op convergence aids (gmin- and source-stepping, higher DC iter limit)
+        # so the d.c.-coupled feedback amp finds its operating point at every bias.
+        itl1=500,
+        gminsteps=10,
+        srcsteps=10,
     )
 
     # .op-initialized transient (use_initial_condition=False): the DC-feedback

@@ -83,9 +83,13 @@ K1 L_pri L_sec {K}
 .ENDS LO1166
 """
 
-# A.C.-feedback resistor R5 (ohms): with the K<->J 220 Ω gain tap this sets the
-# closed-loop gain to ~26 dB (Av ~ R5 / (R4 || R_KJ)). Calibrated by simulation.
+# Gain-setting resistors (ohms), calibrated by simulation to the BA283's 26 dB
+# spec: R5 is the A.C.-feedback resistor; R_KJ is the K<->J emitter-shunt tap
+# (Av ~ R5 / (R4 || R_KJ)). On the real card R_KJ=220 is the 26 dB tap, but this
+# reconstruction's forward gain is lower so R_KJ=47 lands the small-signal gain
+# on 26 dB (measured +26.9 dB at bias 0.5).
 FB_R5_OHMS = 3.3e3
+GAIN_RKJ_OHMS = 47.0
 
 # ESR series resistors named R_esr_C7 / R_esr_C4 / R_esr_Cgain (1 Ω each),
 # i.e. the "C_esr" series model for each electrolytic. The substring
@@ -176,9 +180,12 @@ def build_netlist(bias_norm: float) -> Circuit:
     circuit.BJT("TR1", "TR1_C", "TR1_B", "TR1_E", model="BC184C")
 
     # --- K <-> J gain bridge: shunts TR1 emitter load to ground ------------
-    # R_KJ (220 Ω = 26 dB tap) + 80 µF gain cap + 1 Ω ESR. At audio the cap
-    # is a short, so TR1's AC emitter impedance ~ R4 || 220 -> high gain.
-    circuit.R("KJ", "TR1_E", "J", 220)
+    # R_KJ + 80 µF gain cap + 1 Ω ESR. At audio the cap is a short, so TR1's
+    # AC emitter impedance ~ R4 || R_KJ -> high gain. On the real card 220 Ω
+    # is the 26 dB tap; this reconstruction's forward gain is a bit lower, so
+    # GAIN_RKJ_OHMS is calibrated (47 Ω) to land the small-signal gain on the
+    # BA283's 26 dB spec.
+    circuit.R("KJ", "TR1_E", "J", GAIN_RKJ_OHMS)
     circuit.C("gain", "J", "Cgain_MID", 80e-6)
     circuit.R("_esr_Cgain", "Cgain_MID", circuit.gnd, 1.0)
 
