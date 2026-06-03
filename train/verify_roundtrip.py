@@ -80,8 +80,17 @@ def main() -> int:
 
     n = min(len(y_ref), len(y_rust))
     max_diff = float(np.max(np.abs(y_ref[:n] - y_rust[:n])))
-    print(f"max diff = {max_diff:.3e} over {n} samples (tol {args.tol:.1e})")
-    if max_diff < args.tol and n == args.n:
+    # Relative tolerance: the trained model's raw output can be O(10-100), so an
+    # absolute 1e-5 tol is mis-scaled. Normalize the max abs error by the signal
+    # scale (max |ref|) so the gate measures Rust-vs-PyTorch agreement in
+    # relative terms (~f32 precision), independent of the output magnitude.
+    scale = max(float(np.max(np.abs(y_ref[:n]))), 1e-9)
+    rel_diff = max_diff / scale
+    print(
+        f"max diff = {max_diff:.3e} ({rel_diff:.3e} relative) over {n} samples "
+        f"(rel tol {args.tol:.1e})"
+    )
+    if rel_diff < args.tol and n == args.n:
         print("ROUND-TRIP PASS")
         return 0
     print("ROUND-TRIP FAIL")
