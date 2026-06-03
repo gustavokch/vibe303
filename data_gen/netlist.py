@@ -5,9 +5,17 @@ Topology: Neve BA283 audio path reduced to a single 26 dB gain bridge
 gapped output transformer with a 600 Ω secondary termination. Bias
 control sweeps the RV1 wiper (a 4K7 pot between +24 V and ground).
 
-Electrolytics (C7, C4, Cgain 80 µF) are modelled as an ideal cap in
-series with a 1 Ω ESR resistor (named R_esr_C7, R_esr_C4, R_esr_Cgain).
-This is the "C_esr" series model alluded to in the design doc.
+Electrolytics are modelled as an ideal cap with a series resistor: C7
+(input) and the 80 µF gain cap (Cgain) use a 1 Ω ESR (R_esr_C7,
+R_esr_Cgain); the 80 µF A.C.-feedback cap C4 uses the feedback resistor
+R5 as its series element. This is the "C_esr" series model from the design
+doc.
+
+The three stages are d.c.-coupled (TR1 collector -> TR2 base -> TR3 base)
+and a DC-feedback loop (RV1 in TR3's emitter path -> 56 k -> TR1 base)
+self-biases the amplifier, so the circuit has a convergent operating point
+and data-gen runs an ``.op``-initialized transient (steady-state start, no
+turn-on settling).
 
 Output transformer LO1166 is a linear mutual-inductance model (v1):
 two coupled windings (``K1 L_pri L_sec``) with turns ratio N = 310/155 =
@@ -65,8 +73,6 @@ _LO1166_SUBCKT = """\
 * latching the core into saturation and killing all AC transfer. v2 must add
 * saturation on a DC-blocked / anti-windup flux path.)
 *
-* .op does not converge (TR2 base is AC-coupled with no DC bias resistor), so
-* data-gen continues to run a uic transient.
 .SUBCKT LO1166 PRI_IN PRI_OUT SEC_IN SEC_OUT
 .param LP=2 LS=8 K=0.9999
 R_pri PRI_IN pa 4.5
@@ -77,12 +83,16 @@ K1 L_pri L_sec {K}
 .ENDS LO1166
 """
 
+# A.C.-feedback resistor R5 (ohms): with the K<->J 220 Ω gain tap this sets the
+# closed-loop gain to ~26 dB (Av ~ R5 / (R4 || R_KJ)). Calibrated by simulation.
+FB_R5_OHMS = 3.3e3
+
 # ESR series resistors named R_esr_C7 / R_esr_C4 / R_esr_Cgain (1 Ω each),
 # i.e. the "C_esr" series model for each electrolytic. The substring
 # below is a token marker used by tests/data_gen/test_netlist.py.
 _ESR_COMMENT = (
-    "* ESR series resistors named R_esr_C7 / R_esr_C4 / R_esr_Cgain "
-    "(1 ohm each, models C_esr)\n"
+    "* ESR series resistors R_esr_C7 / R_esr_Cgain (1 ohm); the 80 uF "
+    "feedback cap C4 uses R5 as its series element (models C_esr)\n"
 )
 
 
@@ -100,11 +110,11 @@ def build_netlist(bias_norm: float) -> Circuit:
 
     Returns
     -------
-    PySpice ``Circuit`` whose +24 V rail (node ``A``) settles near the
-    supply under a ``uic`` transient. TR2's base is AC-coupled with no DC
-    bias resistor, so a no-input ``.op`` will not converge; data-gen runs
-    a ``uic`` transient instead. Audio injection (PWL source on node
-    ``INPUT``) is layered in by ``run_spice.py``.
+    PySpice ``Circuit`` powered from the +24 V rail (node ``A``). The
+    d.c.-coupled stages plus the RV1 DC-feedback loop give a convergent DC
+    operating point, so data-gen runs an ``.op``-initialized transient.
+    Audio injection (filesource on node ``INPUT``) is layered in by
+    ``run_spice.py``.
     """
     if not (0.0 <= bias_norm <= 1.0):
         raise ValueError(
@@ -129,63 +139,76 @@ def build_netlist(bias_norm: float) -> Circuit:
     # PySpice's global ground (node 0).
     circuit.V("supply", "A", circuit.gnd, 24)
 
+    # ====================================================================
+    # BA283 output amplifier — real topology (per Neve docs the user supplied):
+    #   * TR1 common-emitter input; TR1->TR2->TR3 d.c.-coupled (TR1 collector
+    #     drives TR2 base, TR2 collector drives TR3 base: the d.c.-connected
+    #     pair). TR3 (2N3055) collector = output F -> transformer primary,
+    #     which also feeds TR3's ~60 mA Class-A collector current as a choke.
+    #   * DC FEEDBACK: RV1 (4k7) sits in the output-stage emitter path and
+    #     feeds a reference voltage from TR3's emitter back to TR1's base via
+    #     R_dcfb (56 k). This self-biases the whole chain (no floating base,
+    #     .op converges) AND, as the model's bias-conditioning input, sweeping
+    #     RV1 shifts TR1's DC operating point -> asymmetric clipping.
+    #   * AC FEEDBACK: from the TR2/TR3 collector (F) back to TR1's emitter
+    #     via an 80 uF cap -> sets the loop's mid-band behaviour.
+    #   * GAIN: the K<->J bridge (R_KJ + 80 uF) shunts TR1's emitter load R4
+    #     (1.2 k) to ground, lowering local NFB at the emitter and raising
+    #     gain; 220 ohm = the 26 dB tap (1.2k/470/220/110 -> 15/.../35 dB).
+    #   * Compensation: polystyrene caps (C2 220p, C5 330p, C3 4700p) roll off
+    #     the loop for HF stability.
+    # ====================================================================
+
     # --- TR1 (BC184C, common-emitter input stage) --------------------------
-    # Input coupling cap C7 (10 µF electrolytic) modelled as cap in
-    # series with 1 Ω ESR via the C7_MID intermediate node.
+    # Input coupling cap C7 (10 µF) + 1 Ω ESR.
     circuit.C("7", "INPUT", "C7_MID", 10e-6)
     circuit.R("_esr_C7", "C7_MID", "TR1_B", 1.0)
 
-    # Base bias network: 220k pull-up from A, 47k pull-down to ground.
-    circuit.R("b1_top", "A", "TR1_B", 220e3)
-    circuit.R("b1_bot", "TR1_B", circuit.gnd, 47e3)
+    # TR1 base DC bias comes from the output-stage DC feedback (R_dcfb, 56 k,
+    # from the RV1 wiper) plus a high startup pull-up from the rail.
+    circuit.R("b1_start", "A", "TR1_B", 1e6)
+    circuit.R("dcfb", "RV1_WIPER", "TR1_B", 56e3)
 
-    # Emitter 1 k to ground, bypassed by 47 µF electrolytic (single ESR
-    # not required by spec — only C7/C4/Cgain need the named R_esr_*).
-    circuit.R("e1", "TR1_E", circuit.gnd, 1e3)
-    circuit.C("byp1", "TR1_E", circuit.gnd, 47e-6)
+    # Emitter load R4 = 1.2 k to ground (the node the K<->J bridge shunts).
+    circuit.R("4", "TR1_E", circuit.gnd, 1.2e3)
+    # Collector load to rail.
+    circuit.R("c1", "A", "TR1_C", 10e3)
+    circuit.BJT("TR1", "TR1_C", "TR1_B", "TR1_E", model="BC184C")
 
-    # Collector resistor to rail; collector node is also bridge node K.
-    circuit.R("c1", "A", "K", 10e3)
-
-    # BJT: Q<name> collector base emitter model
-    circuit.BJT("TR1", "K", "TR1_B", "TR1_E", model="BC184C")
-
-    # --- K <-> J 26 dB gain bridge -----------------------------------------
-    # 220 Ω static rail of the bridge.
-    circuit.R("KJ", "K", "J", 220)
-    # 80 µF electrolytic gain cap in series with its 1 Ω ESR (Cgain).
+    # --- K <-> J gain bridge: shunts TR1 emitter load to ground ------------
+    # R_KJ (220 Ω = 26 dB tap) + 80 µF gain cap + 1 Ω ESR. At audio the cap
+    # is a short, so TR1's AC emitter impedance ~ R4 || 220 -> high gain.
+    circuit.R("KJ", "TR1_E", "J", 220)
     circuit.C("gain", "J", "Cgain_MID", 80e-6)
     circuit.R("_esr_Cgain", "Cgain_MID", circuit.gnd, 1.0)
 
-    # --- TR2 (BC184C, driver) ----------------------------------------------
-    # Base fed from RV1 wiper via C4 (4.7 µF electrolytic) + 1 Ω ESR.
-    # TR2 base is AC-coupled only (via C4); no DC base-bias resistor by
-    # design. Works under uic transient; do not attempt .op-seeded sim
-    # here. See null-vs-SPICE rationale in module docstring.
-    circuit.C("4", "RV1_WIPER", "C4_MID", 4.7e-6)
-    circuit.R("_esr_C4", "C4_MID", "TR2_B", 1.0)
+    # --- A.C. feedback: output F -> C4 (80 µF) -> R5 (3.3 k) -> TR1 emitter -
+    # R5 sets the feedback factor; closed-loop gain ~ R5/(R4||R_KJ) ~ 26 dB.
+    # (C4 is the DC block; its ESR is negligible next to R5.)
+    circuit.C("4", "F", "C4_MID", 80e-6)
+    circuit.R("5", "C4_MID", "TR1_E", FB_R5_OHMS)
 
-    # Emitter 470 Ω to ground; this is bridge node J (local feedback
-    # path through the gain bridge defines the 26 dB gain state).
-    circuit.R("e2", "J", circuit.gnd, 470)
-    # Collector 4.7 k to rail.
+    # --- TR2 (BC184C), d.c.-coupled from TR1 collector --------------------
+    circuit.R("e2", "TR2_E", circuit.gnd, 390)
     circuit.R("c2", "A", "TR2_C", 4.7e3)
+    circuit.BJT("TR2", "TR2_C", "TR1_C", "TR2_E", model="BC184C")
+    # Miller compensation across TR2 (C2 220 pF) for HF loop stability.
+    circuit.C("comp2", "TR2_C", "TR1_C", 220e-12)
 
-    circuit.BJT("TR2", "TR2_C", "TR2_B", "J", model="BC184C")
-
-    # --- RV1 (4K7 bias trim pot) -------------------------------------------
-    # Upper leg A -> wiper, lower leg wiper -> ground. Both legs are
-    # clamped to >= 1 Ω so a wiper-at-end position doesn't short the
-    # rail directly to ground.
-    circuit.R("upper", "A", "RV1_WIPER", r_upper)
+    # --- RV1 (4k7 bias trim) in the output-stage emitter path -------------
+    # Pot across TR3 emitter to ground; the wiper (a fraction of TR3_E set by
+    # bias_norm) is the DC-feedback reference sent to TR1 via R_dcfb. Both
+    # legs clamped >= 1 Ω so an end-stop never shorts the node.
+    circuit.R("upper", "TR3_E", "RV1_WIPER", r_upper)
     circuit.R("lower", "RV1_WIPER", circuit.gnd, r_lower)
 
-    # --- TR3 (2N3055, output transistor) -----------------------------------
-    # classic BA283 uses BC184 throughout; 2N3055 on TR3 is per user
-    # direction (see design doc section 3 decision).
+    # --- TR3 (2N3055, output transistor), d.c.-coupled from TR2 -----------
     circuit.R("b3", "TR2_C", "TR3_B", 100)
-    circuit.R("e3", "TR3_E", circuit.gnd, 47)
-    # Collector is contact F → feeds LO1166 primary.
+    circuit.R("7", "TR3_E", circuit.gnd, 47)
+    # Compensation: C5 330 pF at TR3 base, C3 4700 pF at TR1 collector.
+    circuit.C("comp5", "TR3_B", circuit.gnd, 330e-12)
+    circuit.C("comp3", "TR1_C", circuit.gnd, 4700e-12)
+    # Collector = contact F -> LO1166 primary.
     circuit.BJT("TR3", "F", "TR3_B", "TR3_E", model="2N3055")
 
     # --- LO1166 instance + 600 Ω secondary termination ---------------------

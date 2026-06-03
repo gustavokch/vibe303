@@ -37,16 +37,18 @@ def _resistor_value(netlist_str: str, ref: str) -> float:
 
 
 def test_esr_resistors_present():
-    """The three real ESR resistors must appear as actual elements.
+    """The electrolytics' series resistors must appear as actual elements.
 
-    Catches deletion of an ESR resistor, not just the C_esr comment line.
+    C7 (input) and Cgain (the 80 µF gain cap) keep their 1 Ω ESR; the 80 µF
+    A.C.-feedback cap C4 uses the feedback resistor R5 as its series element.
+    Catches deletion of any of them, not just the C_esr comment line.
     """
     s = str(build_netlist(0.5))
-    for ref in ("R_esr_C7", "R_esr_C4", "R_esr_Cgain"):
+    for ref in ("R_esr_C7", "R5", "R_esr_Cgain"):
         # Assert the element line exists (ref at start of line, with nodes/value).
         assert re.search(
             rf"(?m)^{re.escape(ref)}\s+\S+\s+\S+\s+\S+", s
-        ), f"ESR resistor element {ref!r} missing from netlist:\n{s}"
+        ), f"series resistor element {ref!r} missing from netlist:\n{s}"
 
 
 def test_rv1_bias_mapping_values():

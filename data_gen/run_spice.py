@@ -134,11 +134,16 @@ def simulate_one(dry_wav: Path, bias: float, out_npz: Path) -> Path:
         method="gear",
     )
 
-    # uic transient only — the XSPICE transformer has no DC operating point.
+    # .op-initialized transient (use_initial_condition=False): the DC-feedback
+    # bias loop (RV1 -> 56k -> TR1 base) now gives the circuit a convergent DC
+    # operating point, so the transient starts at steady state. This avoids the
+    # multi-second turn-on settling of the big electrolytics (80 µF gain/feedback
+    # caps) that, under the old `uic`, dominated the output and starved TR2/TR1
+    # toward cutoff (signal decayed to ~unity gain).
     analysis = sim.transient(
         step_time=1 / (SAMPLE_RATE * OVERSAMPLE),
         end_time=duration + TAIL_S,
-        use_initial_condition=True,
+        use_initial_condition=False,
     )
 
     t = np.asarray(analysis.time)
