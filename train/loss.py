@@ -7,8 +7,14 @@ def pre_emphasis(x: torch.Tensor, alpha: float = 0.85) -> torch.Tensor:
     return x[:, 1:, :] - alpha * x[:, :-1, :]
 
 
-def esr(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    return ((pred - target) ** 2).sum() / ((target ** 2).sum() + 1e-8)
+def esr(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
+    # ESR is error_energy / target_energy. ``eps`` floors the denominator: as the
+    # target energy -> 0 the ratio (and its backward num/denom**2 term) blows up
+    # to a non-finite gradient. The dataset already drops near-silent windows
+    # (see train.dataset.MIN_TARGET_ENERGY); this floor is a second line of
+    # defense, sized for the normalized (~unit) target domain so it is negligible
+    # for energetic windows.
+    return ((pred - target) ** 2).sum() / ((target ** 2).sum() + eps)
 
 
 def composite_loss(

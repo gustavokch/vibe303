@@ -31,6 +31,17 @@ INPUT_SCALE = 2.0
 OUTPUT_REF_V = 64.0
 OUTPUT_SCALE = 1.0 / OUTPUT_REF_V
 
+# Minimum scaled-target energy (sum of squares over a window) for a window to be
+# kept. The composite loss uses ESR (= error_energy / target_energy), which is
+# mathematically ill-defined as the target energy -> 0: near-silent windows
+# (e.g. impulse tails, quiet stimulus regions) drive the ESR denominator toward
+# zero, so the backward `num / denom**2` term overflows to a non-finite gradient.
+# These windows also carry no learnable input->output transfer. ~25% of the train
+# windows are near-silent (min target energy ~4e-16). Dropping windows below this
+# floor removes the gradient pathology at its source; the surviving minimum
+# energy (1e-2) keeps denom**2 >= 1e-4, so the ESR gradient stays bounded.
+MIN_TARGET_ENERGY = 1e-2
+
 
 def _resolve_path(raw: str) -> Path:
     """Resolve a manifest path to a usable filesystem path.
@@ -73,11 +84,13 @@ class BA283Dataset(Dataset):
         stride: int = 2048,
         input_scale: float = INPUT_SCALE,
         output_scale: float = OUTPUT_SCALE,
+        min_target_energy: float = MIN_TARGET_ENERGY,
     ) -> None:
         self.window = window
         self.stride = stride
         self.input_scale = input_scale
         self.output_scale = output_scale
+        self.min_target_energy = min_target_energy
 
         self.manifest = pd.read_csv(manifest_csv)
         missing = [c for c in _REQUIRED_COLUMNS if c not in self.manifest.columns]
@@ -86,14 +99,27 @@ class BA283Dataset(Dataset):
 
         # Flat index of (row_idx, sample_start) windows across every row. The
         # window count is bounded by min(dry_frames, wet_frames) so a dry file
-        # shorter than its wet pair never yields an out-of-range read.
+        # shorter than its wet pair never yields an out-of-range read. Windows
+        # whose scaled-target energy is below ``min_target_energy`` are dropped
+        # (see ``MIN_TARGET_ENERGY``): the wet file is read once per row to gate
+        # them, avoiding a per-window seek at training time.
         self.index: list[tuple[int, int]] = []
         for row_idx, row in self.manifest.iterrows():
             dry_frames = self._frame_count(row["dry_path"], int(row_idx), "dry_path")
             wet_frames = self._frame_count(row["wet_path"], int(row_idx), "wet_path")
             frames = min(dry_frames, wet_frames)
+
+            sq = None
+            if self.min_target_energy > 0.0 and window <= frames:
+                wet_full = self._read_full(row["wet_path"]).astype(np.float64)
+                sq = (wet_full * self.output_scale) ** 2
+
             start = 0
             while start + window <= frames:
+                if sq is not None:
+                    if float(sq[start : start + window].sum()) < self.min_target_energy:
+                        start += stride
+                        continue
                 self.index.append((int(row_idx), start))
                 start += stride
 
@@ -113,6 +139,15 @@ class BA283Dataset(Dataset):
                 f"manifest row {row_idx} column '{column}': cannot read audio "
                 f"file '{path}' ({exc})"
             ) from exc
+
+    def _read_full(self, path: str) -> np.ndarray:
+        """Read an entire (mono-mixed) audio file as float32 for energy gating."""
+        resolved = _resolve_path(path)
+        with sf.SoundFile(str(resolved)) as f:
+            data = f.read(dtype="float32")
+        if data.ndim == 2:
+            data = data.mean(axis=1)
+        return np.ascontiguousarray(data, dtype=np.float32)
 
     def __len__(self) -> int:
         return len(self.index)

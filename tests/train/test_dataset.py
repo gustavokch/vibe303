@@ -82,6 +82,41 @@ def test_target_is_output_normalized(tmp_path):
     assert abs(y[0, 0].item() - 50.0 * OUTPUT_SCALE) < 1e-4
 
 
+def test_silent_windows_are_dropped(tmp_path):
+    # ESR is undefined as target energy -> 0, so near-silent windows produce
+    # non-finite gradients. The dataset must drop them: a wet file that is loud
+    # in its first half and silent in its second must yield only the loud windows.
+    sr = 96_000
+    n = 4096 * 4
+    t = np.arange(n) / sr
+    wet = (40.0 * np.sin(2 * np.pi * 1000.0 * t)).astype(np.float32)
+    wet[n // 2 :] = 0.0  # silence the back half
+    dry = (0.3 * np.sin(2 * np.pi * 1000.0 * t)).astype(np.float32)
+    dry_path = tmp_path / "dry.wav"
+    wet_path = tmp_path / "wet.wav"
+    sf.write(dry_path, dry, sr, subtype="FLOAT")
+    sf.write(wet_path, wet, sr, subtype="FLOAT")
+    manifest = _write_manifest(
+        tmp_path / "m.csv",
+        [
+            {
+                "dry_path": str(dry_path),
+                "wet_path": str(wet_path),
+                "bias_value": 0.5,
+                "duration_s": n / sr,
+                "stim_kind": "synth",
+            }
+        ],
+    )
+    gated = BA283Dataset(manifest, window=4096, stride=4096)
+    ungated = BA283Dataset(manifest, window=4096, stride=4096, min_target_energy=0.0)
+    assert len(ungated) == 4
+    assert len(gated) == 2  # only the two loud front windows survive
+    for i in range(len(gated)):
+        _, y = gated[i]
+        assert float((y**2).sum()) >= 0.01
+
+
 def test_make_loader_yields_batches():
     loader = make_loader(
         MANIFEST, batch_size=4, window=4096, stride=2048, num_workers=0, shuffle=False
@@ -94,7 +129,10 @@ def test_make_loader_yields_batches():
 def test_dry_shorter_than_wet_is_handled(tmp_path):
     sr = 96_000
     n = 12_000
-    wet = np.zeros(n, dtype=np.float32)
+    # Energetic wet so the min_target_energy gate keeps the window; this test
+    # exercises dry-length window bounding, which is orthogonal to the gate.
+    t = np.arange(n) / sr
+    wet = (30.0 * np.sin(2 * np.pi * 1000.0 * t)).astype(np.float32)
     dry = np.zeros(n // 2, dtype=np.float32)
     dry_path = tmp_path / "dry.wav"
     wet_path = tmp_path / "wet.wav"
