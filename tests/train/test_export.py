@@ -14,6 +14,19 @@ def test_exported_json_has_expected_layers(tmp_path):
     assert "dense" in text
 
 
+def test_exported_film_layer_present_with_shapes(tmp_path):
+    model = BA283GRU(hidden=32)
+    out = tmp_path / "ba283.json"
+    export_rtneural_json(model, out, meta={"sample_rate": 96000})
+    doc = json.loads(out.read_text())
+    assert doc["format"] == "ba283-gru-v2"
+    assert doc["input_size"] == 2 and doc["gru_input_size"] == 1
+    film = next(layer for layer in doc["layers"] if layer["type"] == "film")
+    assert film["shapes"] == {"weight": [64, 1], "bias": [64]}
+    assert len(film["weight"]) == 64 and len(film["weight"][0]) == 1
+    assert len(film["bias"]) == 64
+
+
 def test_exported_weights_byte_count_in_expected_range(tmp_path):
     model = BA283GRU(hidden=32)
     out = tmp_path / "ba283.json"

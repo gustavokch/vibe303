@@ -75,16 +75,23 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
     weight_hh = to_list("gru.weight_hh_l0")
     bias_ih = to_list("gru.bias_ih_l0")
     bias_hh = to_list("gru.bias_hh_l0")
+    film_weight = to_list("film.weight")
+    film_bias = to_list("film.bias")
     dense_weight = to_list("dense.weight")
     dense_bias = to_list("dense.bias")
 
-    input_size = state["gru.weight_ih_l0"].shape[1]
+    # Model I/O is 2 channels ([audio, bias]); the GRU itself sees only audio
+    # (input_size 1) and the bias drives the FiLM affine. Record both.
+    gru_input_size = state["gru.weight_ih_l0"].shape[1]
     hidden_size = model.hidden
 
     doc = {
-        "format": "ba283-gru-v1",
-        "input_size": int(input_size),
+        "format": "ba283-gru-v2",
+        "input_size": 2,
+        "gru_input_size": int(gru_input_size),
         "hidden_size": int(hidden_size),
+        "conditioning": "film",
+        "film_equation": "out = dense((1 + gamma) * y + beta); [gamma,beta]=film(bias)",
         "gate_order": "rzn",
         # Domain scaling contract (see train/dataset.py). The model was trained on
         # input column 0 = dry_audio * input_scale and target = wet_volts *
@@ -102,7 +109,7 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
             {
                 "type": "gru",
                 "shapes": {
-                    "weight_ih": [3 * hidden_size, int(input_size)],
+                    "weight_ih": [3 * hidden_size, int(gru_input_size)],
                     "weight_hh": [3 * hidden_size, hidden_size],
                     "bias_ih": [3 * hidden_size],
                     "bias_hh": [3 * hidden_size],
@@ -111,6 +118,15 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
                 "weight_hh": weight_hh,
                 "bias_ih": bias_ih,
                 "bias_hh": bias_hh,
+            },
+            {
+                "type": "film",
+                "shapes": {
+                    "weight": [2 * hidden_size, 1],
+                    "bias": [2 * hidden_size],
+                },
+                "weight": film_weight,
+                "bias": film_bias,
             },
             {
                 "type": "dense",
