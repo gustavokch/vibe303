@@ -98,6 +98,33 @@ def resample_to_grid(
     return out_wav
 
 
+def write_aligned_dry(
+    dry_src: Path | str,
+    out_wav: Path | str,
+    target_sr: int = TARGET_SR,
+    head_trim_ms: int = 50,
+) -> Path:
+    """Write a head-trimmed copy of a dry stimulus, aligned to the wet target.
+
+    ``resample_to_grid`` drops the first ``head_trim_ms`` of the WET signal as a
+    settle margin, so ``wet[i]`` is the response to ``dry[i + trim]``. Pairing the
+    raw (untrimmed) dry with the trimmed wet therefore misaligns them by ``trim``
+    samples (~50 ms), which makes the dry->wet map unlearnable. This drops the
+    SAME head from the dry so the written pair satisfies ``dry[i] <-> wet[i]``.
+    The trim is mirrored exactly (including the short-signal keep-full fallback).
+    """
+    out_wav = Path(out_wav)
+    data, sr = sf.read(str(dry_src), dtype="float32")
+    if data.ndim == 2:
+        data = data.mean(axis=1)
+    trim = int(head_trim_ms * target_sr / 1000)
+    if trim < len(data):
+        data = data[trim:]
+    out_wav.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(out_wav, np.ascontiguousarray(data, dtype=np.float32), sr, subtype="FLOAT")
+    return out_wav
+
+
 def write_manifest(rows: list[dict], out_csv: Path | str) -> Path:
     """Write manifest ``rows`` to ``out_csv`` with the exact column order.
 
@@ -224,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict] = []
+    aligned_dry: dict[str, Path] = {}  # stem -> aligned dry path (written once)
     for npz_path in sorted(raw_dir.glob("*.npz")):
         m = _BIAS_RE.match(npz_path.stem)
         if m is None:
@@ -239,13 +267,25 @@ def main(argv: list[str] | None = None) -> int:
             target_sr=args.target_sr,
             head_trim_ms=args.head_trim_ms,
         )
-        dry_path = dry_dir / f"{stem}.wav"
-        if not dry_path.exists():
+        # Pair against a head-trimmed dry so dry[i] <-> wet[i] (see
+        # write_aligned_dry). Written once per unique stem, reused across biases.
+        dry_src = dry_dir / f"{stem}.wav"
+        if not dry_src.exists():
             warnings.warn(
-                f"dry stimulus not found: {dry_path}; manifest row will "
+                f"dry stimulus not found: {dry_src}; manifest row will "
                 "reference a missing dry WAV.",
                 stacklevel=2,
             )
+            dry_path = dry_src
+        else:
+            if stem not in aligned_dry:
+                aligned_dry[stem] = write_aligned_dry(
+                    dry_src,
+                    out_dir / f"{stem}_dry.wav",
+                    target_sr=args.target_sr,
+                    head_trim_ms=args.head_trim_ms,
+                )
+            dry_path = aligned_dry[stem]
         info = sf.info(str(wet_path))
         rows.append(
             {

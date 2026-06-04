@@ -110,6 +110,22 @@ def test_resample_non_monotonic_time_raises(tmp_path):
         resample_to_grid(npz, out)
 
 
+def test_write_aligned_dry_trims_head(tmp_path):
+    # The aligned dry must drop the same head (head_trim_ms) the wet resample
+    # drops, so dry[i] <-> wet[i]. Here: 96k sr, 50 ms -> 4800 samples trimmed.
+    from data_gen.resample import write_aligned_dry
+
+    sr = 96_000
+    n = 12_000
+    data = np.arange(n, dtype=np.float32)  # ramp: trivially checks the offset
+    src = tmp_path / "dry.wav"
+    sf.write(src, data, sr, subtype="FLOAT")
+    out = write_aligned_dry(src, tmp_path / "dry_aligned.wav", target_sr=sr, head_trim_ms=50)
+    got, _ = sf.read(out, dtype="float32")
+    assert len(got) == n - 4800
+    assert got[0] == 4800.0  # first kept sample is the old index 4800
+
+
 def test_main_writes_resolvable_dry_path(tmp_path):
     dry_dir = tmp_path / "dry"
     dry_dir.mkdir()
@@ -143,6 +159,8 @@ def test_main_writes_resolvable_dry_path(tmp_path):
 
     df = pd.read_csv(manifest)
     assert len(df) == 10
-    row = df[df["dry_path"].str.endswith("sweep0.wav")].iloc[0]
-    assert row.dry_path == str(dry_dir / "sweep0.wav")
+    # main writes a head-trimmed dry copy (aligned to the wet target) into the
+    # out dir and points the manifest at it (see write_aligned_dry).
+    row = df[df["dry_path"].str.endswith("sweep0_dry.wav")].iloc[0]
+    assert row.dry_path == str(out_dir / "sweep0_dry.wav")
     assert Path(row.dry_path).exists()
