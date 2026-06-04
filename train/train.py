@@ -5,10 +5,12 @@ A warmup region primes the GRU hidden state under ``no_grad``, then
 backpropagation runs only over the train region using the carried (detached)
 hidden state. The objective is the composite ESR + MSE pre-emphasis loss.
 
-The loop is hardened for unattended multi-hour runs: gradient clipping guards
-against GRU divergence, non-finite batches are skipped, checkpoints are written
-atomically, and ``last.pth`` carries a full resume bundle so a crash does not
-discard hours of compute.
+The loop is hardened for unattended multi-hour runs: gradient clipping bounds
+GRU divergence and any batch with a non-finite loss OR non-finite gradient is
+dropped before the optimizer step (so an inf gradient can never be turned into a
+NaN parameter that poisons the whole run), checkpoints are written atomically,
+and ``last.pth`` carries a full resume bundle so a crash does not discard hours
+of compute.
 """
 
 from __future__ import annotations
@@ -136,7 +138,25 @@ def train_main(
 
                 optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
+                # clip_grad_norm_ does NOT protect against an already inf/NaN
+                # gradient: total_norm becomes inf, clip_coef -> 0, and inf*0 = NaN
+                # -> the step would poison every parameter permanently (NaN never
+                # recovers; every later loss is then non-finite and skipped). So
+                # guard explicitly: if any gradient is non-finite, drop the batch.
+                total_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=clip_norm
+                )
+                if not torch.isfinite(total_norm):
+                    warnings.warn(
+                        f"non-finite gradient at epoch {e} batch {batch_idx}; "
+                        f"skipping step",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    optimizer.zero_grad(set_to_none=True)
+                    if smoke and batch_idx >= 1:
+                        break
+                    continue
                 optimizer.step()
 
                 loss_sum += loss.item()

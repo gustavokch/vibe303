@@ -43,6 +43,7 @@ exact GRU equations (which the Rust side must reproduce) are::
 import json
 from pathlib import Path
 
+from train.dataset import INPUT_SCALE, OUTPUT_REF_V, OUTPUT_SCALE
 from train.model import BA283GRU
 
 GRU_EQUATIONS = (
@@ -85,6 +86,14 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
         "input_size": int(input_size),
         "hidden_size": int(hidden_size),
         "gate_order": "rzn",
+        # Domain scaling contract (see train/dataset.py). The model was trained on
+        # input column 0 = dry_audio * input_scale and target = wet_volts *
+        # output_scale. To reproduce SPICE volts the plugin must feed
+        # model_in = audio * input_scale and recover volts as
+        # model_out * output_ref_v (= model_out / output_scale).
+        "input_scale": float(INPUT_SCALE),
+        "output_scale": float(OUTPUT_SCALE),
+        "output_ref_v": float(OUTPUT_REF_V),
         "bias_convention": (
             "PyTorch keeps b_ih and b_hh separate; both exported per GRU layer."
         ),

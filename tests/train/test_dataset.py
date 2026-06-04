@@ -49,6 +49,39 @@ def test_input_scale_applied():
     assert 0.7 < audio.abs().max().item() < 0.9
 
 
+def test_target_is_output_normalized(tmp_path):
+    # Real SPICE wet targets are raw volts (peaks ~55 V). The target must be
+    # normalized by OUTPUT_SCALE (volt -> ~unit), NOT by the input_scale used for
+    # the dry audio. A constant 50 V wet must map to 50 * OUTPUT_SCALE (< 1.0),
+    # bounded, so the MSE loss term cannot explode. The bug: y = wet * 2.0 = 100.
+    from train.dataset import OUTPUT_SCALE
+
+    sr = 96_000
+    n = 12_000
+    dry = (0.3 * np.ones(n)).astype(np.float32)
+    wet = (50.0 * np.ones(n)).astype(np.float32)
+    dry_path = tmp_path / "dry.wav"
+    wet_path = tmp_path / "wet.wav"
+    sf.write(dry_path, dry, sr, subtype="FLOAT")
+    sf.write(wet_path, wet, sr, subtype="FLOAT")
+    manifest = _write_manifest(
+        tmp_path / "m.csv",
+        [
+            {
+                "dry_path": str(dry_path),
+                "wet_path": str(wet_path),
+                "bias_value": 0.5,
+                "duration_s": n / sr,
+                "stim_kind": "synth",
+            }
+        ],
+    )
+    ds = BA283Dataset(manifest, window=4096, stride=2048)
+    _, y = ds[0]
+    assert y.abs().max().item() < 1.0
+    assert abs(y[0, 0].item() - 50.0 * OUTPUT_SCALE) < 1e-4
+
+
 def test_make_loader_yields_batches():
     loader = make_loader(
         MANIFEST, batch_size=4, window=4096, stride=2048, num_workers=0, shuffle=False
