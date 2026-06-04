@@ -235,7 +235,10 @@ def main() -> None:
     parser.add_argument("--val-manifest", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=5e-3)
+    # 1e-3, not 5e-3: at 5e-3 the GRU's BPTT gradient over the ~3072-step train
+    # window periodically explodes once the model starts fitting (bursts of
+    # non-finite gradients ~epoch 10), wasting batches. 1e-3 trains stably.
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--hidden", type=int, default=32)
     parser.add_argument("--warmup", type=int, default=1024)
     parser.add_argument("--window", type=int, default=4096)
