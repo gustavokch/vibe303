@@ -103,19 +103,33 @@ class BA283Dataset(Dataset):
         # whose scaled-target energy is below ``min_target_energy`` are dropped
         # (see ``MIN_TARGET_ENERGY``): the wet file is read once per row to gate
         # them, avoiding a per-window seek at training time.
+        has_frame_range = (
+            "frame_start" in self.manifest.columns
+            and "frame_end" in self.manifest.columns
+        )
         self.index: list[tuple[int, int]] = []
         for row_idx, row in self.manifest.iterrows():
             dry_frames = self._frame_count(row["dry_path"], int(row_idx), "dry_path")
             wet_frames = self._frame_count(row["wet_path"], int(row_idx), "wet_path")
             frames = min(dry_frames, wet_frames)
 
+            # Optional temporal sub-range: a row may restrict windows to
+            # ``[frame_start, frame_end)`` so the SAME file can supply disjoint
+            # time slices to train/val/test (see resample.temporal_split). Absent
+            # columns -> the whole file.
+            lo = 0
+            hi = frames
+            if has_frame_range:
+                lo = max(0, int(row["frame_start"]))
+                hi = min(frames, int(row["frame_end"]))
+
             sq = None
             if self.min_target_energy > 0.0 and window <= frames:
                 wet_full = self._read_full(row["wet_path"]).astype(np.float64)
                 sq = (wet_full * self.output_scale) ** 2
 
-            start = 0
-            while start + window <= frames:
+            start = lo
+            while start + window <= hi:
                 if sq is not None:
                     if float(sq[start : start + window].sum()) < self.min_target_energy:
                         start += stride

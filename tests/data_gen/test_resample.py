@@ -5,7 +5,13 @@ import pandas as pd
 import pytest
 import soundfile as sf
 
-from data_gen.resample import main, resample_to_grid, split_manifest, write_manifest
+from data_gen.resample import (
+    main,
+    resample_to_grid,
+    split_manifest,
+    temporal_split,
+    write_manifest,
+)
 
 
 def test_resample_lands_on_96k_grid(tmp_path):
@@ -61,6 +67,31 @@ def test_split_by_stimulus_file_no_leakage(tmp_path):
     assert train_stems.isdisjoint(val_stems)
     assert train_stems.isdisjoint(test_stems)
     assert val_stems.isdisjoint(test_stems)
+
+
+def test_temporal_split_disjoint_time_slices(tmp_path):
+    sr = 96_000
+    n = 100_000
+    sig = np.zeros(n, dtype=np.float32)
+    dry = tmp_path / "s_dry.wav"
+    wet = tmp_path / "s_bias0.50.wav"
+    sf.write(dry, sig, sr, subtype="FLOAT")
+    sf.write(wet, sig, sr, subtype="FLOAT")
+    manifest = write_manifest(
+        [{
+            "dry_path": str(dry), "wet_path": str(wet), "bias_value": 0.5,
+            "duration_s": n / sr, "stim_kind": "synth",
+        }],
+        tmp_path / "m.csv",
+    )
+    paths = temporal_split(manifest, tmp_path)
+    tr = pd.read_csv(paths["train"]); va = pd.read_csv(paths["val"]); te = pd.read_csv(paths["test"])
+    # every split keeps the file; the time ranges are contiguous and disjoint
+    assert len(tr) == len(va) == len(te) == 1
+    assert tr.iloc[0]["frame_start"] == 0
+    assert tr.iloc[0]["frame_end"] == va.iloc[0]["frame_start"]
+    assert va.iloc[0]["frame_end"] == te.iloc[0]["frame_start"]
+    assert te.iloc[0]["frame_end"] == n
 
 
 def _write_manifest_with_stems(path, stems):

@@ -198,6 +198,48 @@ def split_manifest(
     return out_paths
 
 
+def temporal_split(
+    manifest_csv: Path | str,
+    out_dir: Path | str,
+    ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
+) -> dict[str, Path]:
+    """Split EACH file by TIME into train/val/test (frame_start/frame_end columns).
+
+    Unlike :func:`split_manifest` (which partitions whole stimuli), this keeps
+    every stimulus AND every drive level in all three splits but on disjoint
+    time slices: train = first ``ratios[0]`` of each file, val/test the next
+    slices. Used as a diagnostic re-eval when the by-stimulus split is too small
+    to give representative val/test (e.g. it exiles the loudest levels). Val/test
+    are unseen time segments of seen conditions, so this measures whether the
+    model can learn the transfer at all -- it is NOT leakage-free across stimuli.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    df = pd.read_csv(manifest_csv)
+    r_train, r_val, _ = ratios
+    parts: dict[str, list[dict]] = {"train": [], "val": [], "test": []}
+    for _, row in df.iterrows():
+        dry_f = sf.info(str(_resolve(row["dry_path"]))).frames
+        wet_f = sf.info(str(_resolve(row["wet_path"]))).frames
+        frames = min(dry_f, wet_f)
+        a = int(frames * r_train)
+        b = int(frames * (r_train + r_val))
+        bounds = {"train": (0, a), "val": (a, b), "test": (b, frames)}
+        for name, (lo, hi) in bounds.items():
+            parts[name].append({**row.to_dict(), "frame_start": lo, "frame_end": hi})
+    out_paths: dict[str, Path] = {}
+    for name, rows in parts.items():
+        path = out_dir / f"{name}.csv"
+        pd.DataFrame(rows).to_csv(path, index=False)
+        out_paths[name] = path
+    return out_paths
+
+
+def _resolve(raw: str) -> Path:
+    p = Path(raw)
+    return p if p.is_absolute() else Path.cwd() / p
+
+
 def _infer_stim_kind(stem: str) -> str:
     """Best-effort substring match of a dry stem to a stim_kind."""
     low = stem.lower()
