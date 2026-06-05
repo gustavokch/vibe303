@@ -27,6 +27,16 @@ def test_exported_film_layer_present_with_shapes(tmp_path):
     assert len(film["bias"]) == 64
 
 
+def test_exported_concat_has_no_film_and_gru_input_2(tmp_path):
+    model = BA283GRU(hidden=32, conditioning="concat")
+    out = tmp_path / "ba283.json"
+    export_rtneural_json(model, out, meta={"sample_rate": 96000})
+    doc = json.loads(out.read_text())
+    assert doc["conditioning"] == "concat"
+    assert doc["gru_input_size"] == 2
+    assert not any(layer["type"] == "film" for layer in doc["layers"])
+
+
 def test_exported_weights_byte_count_in_expected_range(tmp_path):
     model = BA283GRU(hidden=32)
     out = tmp_path / "ba283.json"

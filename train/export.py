@@ -75,28 +75,59 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
     weight_hh = to_list("gru.weight_hh_l0")
     bias_ih = to_list("gru.bias_ih_l0")
     bias_hh = to_list("gru.bias_hh_l0")
-    film_weight = to_list("film.weight")
-    film_bias = to_list("film.bias")
     dense_weight = to_list("dense.weight")
     dense_bias = to_list("dense.bias")
 
-    # Model I/O is 2 channels ([audio, bias]); the GRU itself sees only audio
-    # (input_size 1) and the bias drives the FiLM affine. Record both.
+    # FiLM mode: GRU sees only audio (input_size 1) + a film layer; bias drives
+    # the affine. Concat mode: bias is the 2nd GRU input channel, no film layer.
+    conditioning = getattr(model, "conditioning", "film")
     gru_input_size = state["gru.weight_ih_l0"].shape[1]
     hidden_size = model.hidden
 
+    gru_layer = {
+        "type": "gru",
+        "shapes": {
+            "weight_ih": [3 * hidden_size, int(gru_input_size)],
+            "weight_hh": [3 * hidden_size, hidden_size],
+            "bias_ih": [3 * hidden_size],
+            "bias_hh": [3 * hidden_size],
+        },
+        "weight_ih": weight_ih,
+        "weight_hh": weight_hh,
+        "bias_ih": bias_ih,
+        "bias_hh": bias_hh,
+    }
+    dense_layer = {
+        "type": "dense",
+        "shapes": {"weight": [1, hidden_size], "bias": [1]},
+        "weight": dense_weight,
+        "bias": dense_bias,
+    }
+    layers = [gru_layer]
+    if conditioning == "film":
+        layers.append(
+            {
+                "type": "film",
+                "shapes": {"weight": [2 * hidden_size, 1], "bias": [2 * hidden_size]},
+                "weight": to_list("film.weight"),
+                "bias": to_list("film.bias"),
+            }
+        )
+    layers.append(dense_layer)
+
     doc = {
+        # v2 = FiLM-capable schema (carries `conditioning` + optional film layer).
+        # concat models are also emitted as v2 with conditioning="concat".
         "format": "ba283-gru-v2",
         "input_size": 2,
         "gru_input_size": int(gru_input_size),
         "hidden_size": int(hidden_size),
-        "conditioning": "film",
+        "conditioning": conditioning,
         "film_equation": "out = dense((1 + gamma) * y + beta); [gamma,beta]=film(bias)",
         "gate_order": "rzn",
-        # Domain scaling contract (see train/dataset.py). The model was trained on
-        # input column 0 = dry_audio * input_scale and target = wet_volts *
-        # output_scale. To reproduce SPICE volts the plugin must feed
-        # model_in = audio * input_scale and recover volts as
+        # Domain scaling contract (see train/dataset.py): the model trained on
+        # input col 0 = dry_audio * input_scale, target = wet_volts * output_scale.
+        # Plugin feeds model_in = audio * input_scale, recovers volts as
         # model_out * output_ref_v (= model_out / output_scale).
         "input_scale": float(INPUT_SCALE),
         "output_scale": float(OUTPUT_SCALE),
@@ -105,39 +136,7 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
             "PyTorch keeps b_ih and b_hh separate; both exported per GRU layer."
         ),
         "gru_equations": GRU_EQUATIONS,
-        "layers": [
-            {
-                "type": "gru",
-                "shapes": {
-                    "weight_ih": [3 * hidden_size, int(gru_input_size)],
-                    "weight_hh": [3 * hidden_size, hidden_size],
-                    "bias_ih": [3 * hidden_size],
-                    "bias_hh": [3 * hidden_size],
-                },
-                "weight_ih": weight_ih,
-                "weight_hh": weight_hh,
-                "bias_ih": bias_ih,
-                "bias_hh": bias_hh,
-            },
-            {
-                "type": "film",
-                "shapes": {
-                    "weight": [2 * hidden_size, 1],
-                    "bias": [2 * hidden_size],
-                },
-                "weight": film_weight,
-                "bias": film_bias,
-            },
-            {
-                "type": "dense",
-                "shapes": {
-                    "weight": [1, hidden_size],
-                    "bias": [1],
-                },
-                "weight": dense_weight,
-                "bias": dense_bias,
-            },
-        ],
+        "layers": layers,
         "meta": meta,
     }
 

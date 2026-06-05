@@ -60,6 +60,7 @@ def train_main(
     resume: bool = False,
     seed: int = 0xBA283,
     patience: int = 10,
+    conditioning: str = "film",
 ) -> None:
     torch.manual_seed(seed)
 
@@ -81,7 +82,7 @@ def train_main(
         drop_last=False,
     )
 
-    model = BA283GRU(hidden=hidden).to(device)
+    model = BA283GRU(hidden=hidden, conditioning=conditioning).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     writer = SummaryWriter(log_dir=str(log_dir))
@@ -263,6 +264,12 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--seed", type=int, default=0xBA283)
     parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument(
+        "--conditioning",
+        choices=("film", "concat"),
+        default="film",
+        help="bias conditioning: 'film' (affine modulation) or 'concat' (input channel)",
+    )
     args = parser.parse_args()
 
     train_main(
@@ -284,6 +291,7 @@ def main() -> None:
         resume=args.resume,
         seed=args.seed,
         patience=args.patience,
+        conditioning=args.conditioning,
     )
 
 
