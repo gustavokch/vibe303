@@ -52,24 +52,35 @@ def test_esr_resistors_present():
 
 
 def test_rv1_bias_mapping_values():
-    """RV1 leg resistances must follow R_upper=4700*(1-b), R_lower=4700*b.
+    """RV1 legs follow the remapped wiper: wiper = MIN + (1-MIN)*bias_norm,
+    R_upper = 4700*(1-wiper), R_lower = 4700*wiper.
 
-    Catches an inverted or mis-scaled bias map. Read directly from the
-    rendered Rupper/Rlower element lines.
+    bias_norm in [0,1] is mapped onto the stable class-A portion of the pot
+    (very low wiper runs TR3 idle away to saturation), so the raw end-stops are
+    not reached at bias_norm 0. Catches an inverted or mis-scaled bias map.
     """
+    from data_gen.netlist import RV1_WIPER_MIN
+
     tol = 1.0
 
+    def legs(b):
+        wiper = RV1_WIPER_MIN + (1.0 - RV1_WIPER_MIN) * b
+        return 4700.0 * (1.0 - wiper), 4700.0 * wiper
+
     s0 = str(build_netlist(0.0))
-    assert _resistor_value(s0, "Rupper") == pytest.approx(4700.0, abs=tol)
-    assert _resistor_value(s0, "Rlower") == pytest.approx(1.0, abs=tol)
+    up0, lo0 = legs(0.0)
+    assert _resistor_value(s0, "Rupper") == pytest.approx(up0, abs=tol)
+    assert _resistor_value(s0, "Rlower") == pytest.approx(lo0, abs=tol)
 
     s1 = str(build_netlist(1.0))
+    # wiper -> 1.0 so R_upper hits the 1 Ω clamp; R_lower -> 4700.
     assert _resistor_value(s1, "Rupper") == pytest.approx(1.0, abs=tol)
     assert _resistor_value(s1, "Rlower") == pytest.approx(4700.0, abs=tol)
 
     s_mid = str(build_netlist(0.5))
-    assert _resistor_value(s_mid, "Rupper") == pytest.approx(2350.0, abs=tol)
-    assert _resistor_value(s_mid, "Rlower") == pytest.approx(2350.0, abs=tol)
+    up_m, lo_m = legs(0.5)
+    assert _resistor_value(s_mid, "Rupper") == pytest.approx(up_m, abs=tol)
+    assert _resistor_value(s_mid, "Rlower") == pytest.approx(lo_m, abs=tol)
 
 
 def test_clamp_keeps_legs_at_least_one_ohm():

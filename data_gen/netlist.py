@@ -1,31 +1,44 @@
 """BA283 SPICE netlist, parameterized by RV1 bias position.
 
-Topology: Neve BA283 audio path reduced to a single 26 dB gain bridge
-(TR1 + TR2 BC184C input/driver, TR3 2N3055 output) feeding the LO1166
-gapped output transformer with a 600 Ω secondary termination. Bias
-control sweeps the RV1 wiper (a 4K7 pot between +24 V and ground).
+Real Neve BA283 AM output/line-amp section (drawing EX/10283), reconstructed
+to the actual schematic topology. The audio path is a three-transistor
+d.c.-coupled amplifier between card contacts A (+24 V rail) and M (0 V):
 
-Electrolytics are modelled as an ideal cap with a series resistor: C7
-(input) and the 80 µF gain cap (Cgain) use a 1 Ω ESR (R_esr_C7,
-R_esr_Cgain); the 80 µF A.C.-feedback cap C4 uses the feedback resistor
-R5 as its series element. This is the "C_esr" series model from the design
-doc.
+  * TR1 (BC184C) common-emitter input. Signal in via C1 (10 µF) + R1 (2k2).
+    Emitter load R4 (1k2) to ground; the emitter is card contact **J**.
+  * TR2 (BC184C) + TR3 (2N3055) are a **common-collector compound pair**: TR1's
+    collector drives TR2's base, TR2's **emitter** drives TR3's base, and the
+    **collectors of TR2 and TR3 are tied together** (node ``F``) and driven into
+    the LO1166 primary, which returns to the +24 V rail (the primary doubles as
+    the collector choke). Contact F is the unbalanced output; the transformer
+    secondary (node ``SEC_IN``) is the balanced output we sample.
+  * GAIN: the external K<->J network — R_KJ (220 Ω for the 26 dB tap) in series
+    with an 80 µF cap — shunts TR1's emitter load R4 for a.c., cutting local
+    feedback and setting closed-loop gain. The cap blocks d.c. so the gain
+    setting never disturbs the bias.
+  * A.C. FEEDBACK: fixed loop from the common collector F via C4 (100 µF,
+    d.c. block) + R5 (3k3) back to TR1's emitter.
+  * D.C. BIAS: RV1 (4k7 preset) samples TR3's emitter and feeds R2 (56 k) to
+    TR1's base, self-biasing the triplet. RV1 is the real card's trim — set
+    once for ~65 mA TR3 idle / symmetric clipping. Here it is the model's
+    bias-conditioning input: sweeping it shifts TR3 idle current and the
+    clipping character. ``bias_norm`` in [0,1] is remapped to the non-degenerate
+    portion of the pot (very low wiper runs TR3 idle away to saturation), see
+    ``RV1_WIPER_MIN``.
+  * COMPENSATION: C2 (220 pF) across TR1 base-collector, C5 (330 pF) across the
+    TR2 base-collector (Miller), C3 (4700 pF) on TR1's collector — the BA283's
+    actual stabilising caps; they hold phase margin so the high-gain loop does
+    not oscillate at large signal.
 
-The three stages are d.c.-coupled (TR1 collector -> TR2 base -> TR3 base)
-and a DC-feedback loop (RV1 in TR3's emitter path -> 56 k -> TR1 base)
-self-biases the amplifier, so the circuit has a convergent operating point
-and data-gen runs an ``.op``-initialized transient (steady-state start, no
-turn-on settling).
-
-Output transformer LO1166 is a linear mutual-inductance model (v1):
-two coupled windings (``K1 L_pri L_sec``) with turns ratio N = 310/155 =
-2 set by ``LS = N^2 * LP`` (passband gain sqrt(LS/LP) = 2). The windings
-are inductors, so DC is blocked at the secondary (clean AC-only output
-tap); ``K < 1`` gives a leakage inductance and a gentle HF rolloff above
-the audio band. Core saturation + B-H hysteresis are a second-order
-effect deferred to v2; the dominant nonlinearity is the transistor
-chain. ``.op`` does not converge (TR2 base is AC-coupled with no DC bias
-resistor), so data-gen runs a ``uic`` transient.
+Output transformer LO1166 is a linear mutual-inductance model: two coupled
+windings (``K1 L_pri L_sec``) with turns ratio N = 1.68 set by ``LS = N^2*LP``,
+primary magnetizing ``LP`` ~ 1.9 H, real winding DCR (R_pri 14.5 Ω, R_sec 44 Ω).
+The windings block DC at the secondary (clean AC-only tap). A primary Zobel
+(1k5 + 0.01 µF across F->A) damps the leakage-inductance HF top-ring, exactly as
+on the real card. Core saturation + B-H hysteresis are a v2 refinement; the
+dominant nonlinearity is the transistor chain. The d.c.-coupled feedback bias
+loop gives a convergent operating point, so data-gen runs an ``.op``-initialized
+transient (steady-state start, no turn-on settling).
 """
 
 from __future__ import annotations
@@ -39,193 +52,147 @@ _TRANSISTOR_MODELS = """\
 .MODEL BC184C NPN(IS=1.04E-14 BF=600 VAF=120 IKF=0.05 ISE=1.00E-14 NE=1.5 BR=0.1 NR=1.00 VAR=200 ISC=1.00E-15 NC=1.2 RB=50 RE=0.5 RC=0.5 CJC=4.50E-12 MJC=0.33 VJC=0.75 CJE=1.40E-11 MJE=0.33 VJE=0.75 TF=4.00E-10 TR=1.00E-08)
 """  # noqa: E501
 
+# Marinair/Carnhill LO1166 gapped single-ended output transformer, linear
+# mutual-inductance model. Turns ratio N = Nsec/Npri = 1.68 (1:1.68 step-up);
+# LS = N^2 * LP gives the 1.68x passband voltage gain. LP ~ 1.9 H magnetizing
+# (20 Hz LF corner into the reflected ~600 Ohm line). Real winding DC
+# resistances: primary 14.5 Ohm (7+8 across the windings), secondary 44 Ohm.
+# K < 1 gives the leakage inductance; the primary Zobel (added in build_netlist)
+# damps its HF ring. Windings block DC -> clean AC-only secondary tap.
 _LO1166_SUBCKT = """\
-* Marinair LO1166 Gapped Output Transformer (linear mutual-inductance model).
-* Two coupled windings L_pri/L_sec with coupling coefficient K. Turns ratio
-* N = Nsec/Npri = 310/155 = 2 is set by LS = N^2 * LP, so the passband voltage
-* gain is sqrt(LS/LP) = 2 (+6 dB). The windings are inductors -> DC is blocked
-* at the secondary (Vsec = M*dIpri/dt + LS*dIsec/dt = 0 at DC), a clean AC-only
-* output tap as a real galvanically-isolated transformer. K < 1 gives the
-* leakage inductance LP*(1-K) ~ 1 mH, i.e. a gentle HF rolloff (corner ~25 kHz
-* into the reflected load) above the audio band.
-*
-* This is the standard, numerically well-behaved transformer form. It replaces:
-*   (1) a prior XSPICE coupled-inductor + PWL-core model that mis-wired the
-*       magnetic node (the core shunted MMF instead of linking windings): a
-*       sub-100 Hz lowpass, gain ~ 1/Lmag, +34.8 V DC pedestal -- untunable; and
-*   (2) an E/F controlled-source ideal transformer that, while correct in gain
-*       and DC blocking, formed an undamped algebraic feedback loop (secondary
-*       current -> reflected primary current -> mag voltage -> secondary voltage
-*       -> secondary current). Driven by TR3 at
-*       the sweep's ~20 kHz tail it went near-oscillatory and collapsed the
-*       transient timestep to ~1e-17 (abort). The finite mutual inductances here
-*       break that loop and the K<1 HF rolloff removes the offending HF energy.
-*
-* NOTE: linear K coupling is fully supported by ngspice. The original plan's
-* failure was attaching a nonlinear .MODEL CORE to the K line, which ngspice
-* does not implement; a plain coupling coefficient does not need a model card.
-*
-* v1 is intentionally LINEAR (anhysteretic, no core saturation). The dominant
-* BA283 nonlinearity is the transistor chain (already in the netlist); output-
-* transformer saturation + B-H hysteresis are a second-order effect deferred to
-* v2. (A flux-integrator + saturating B-source was tried and rejected: a
-* standing DC across the primary wound the flux integrator up without bound,
-* latching the core into saturation and killing all AC transfer. v2 must add
-* saturation on a DC-blocked / anti-windup flux path.)
-*
 .SUBCKT LO1166 PRI_IN PRI_OUT SEC_IN SEC_OUT
-.param LP=2 LS=8 K=0.9999
-R_pri PRI_IN pa 4.5
+.param LP=1.9 LS=5.36 K=0.9995
+R_pri PRI_IN pa 14.5
 L_pri pa PRI_OUT {LP}
 L_sec sa SEC_OUT {LS}
-R_sec SEC_IN sa 12.0
+R_sec SEC_IN sa 44.0
 K1 L_pri L_sec {K}
 .ENDS LO1166
 """
 
-# Gain-setting resistors (ohms), calibrated by simulation to the BA283's 26 dB
-# spec: R5 is the A.C.-feedback resistor; R_KJ is the K<->J emitter-shunt tap
-# (Av ~ R5 / (R4 || R_KJ)). On the real card R_KJ=220 is the 26 dB tap, but this
-# reconstruction's forward gain is lower so R_KJ=47 lands the small-signal gain
-# on 26 dB (measured +26.9 dB at bias 0.5).
+# Gain-setting K<->J network: R_KJ (220 Ohm = the real card's 26 dB tap) in
+# series with the 80 uF gain cap shunts TR1's emitter load R4 for a.c. R5 is the
+# a.c.-feedback resistor (common collector F -> C4 -> R5 -> TR1 emitter).
 FB_R5_OHMS = 3.3e3
-GAIN_RKJ_OHMS = 47.0
+GAIN_RKJ_OHMS = 220.0
 
-# ESR series resistors named R_esr_C7 / R_esr_C4 / R_esr_Cgain (1 Ω each),
-# i.e. the "C_esr" series model for each electrolytic. The substring
+# RV1 (4k7 preset) bias map. The very-low-wiper end runs TR3 idle current away
+# to saturation (output collapses), so bias_norm in [0,1] is mapped to the
+# stable class-A portion of the pot: wiper fraction = RV1_WIPER_MIN..1.0. Over
+# that range TR3 idle sweeps ~160 mA -> ~55 mA, passing the real card's
+# 65-70 mA / symmetric-clipping setting near the top of the range.
+RV1_WIPER_MIN = 0.3
+
+# ESR series resistors named R_esr_C7 / R_esr_Cgain (1 Ω each), i.e. the
+# "C_esr" series model for the input and gain electrolytics. The a.c.-feedback
+# cap C4 uses the feedback resistor R5 as its series element. The substring
 # below is a token marker used by tests/data_gen/test_netlist.py.
 _ESR_COMMENT = (
-    "* ESR series resistors R_esr_C7 / R_esr_Cgain (1 ohm); the 80 uF "
+    "* ESR series resistors R_esr_C7 / R_esr_Cgain (1 ohm); the 100 uF "
     "feedback cap C4 uses R5 as its series element (models C_esr)\n"
 )
 
 
 def build_netlist(bias_norm: float) -> Circuit:
-    """Build the BA283 SPICE netlist with RV1 wiper at ``bias_norm``.
+    """Build the BA283 AM netlist with RV1 wiper at ``bias_norm``.
 
     Parameters
     ----------
     bias_norm:
-        Wiper position in ``[0.0, 1.0]``. 0.0 puts the wiper at ground
-        (lower leg short), 1.0 puts it at +24 V (upper leg short). Maps
-        to ``R_upper = 4700 * (1 - bias_norm)``,
-        ``R_lower = 4700 * bias_norm``, each clamped to at least 1 Ω so
-        ngspice never sees a true short on either leg of the pot.
+        Bias-conditioning position in ``[0.0, 1.0]``, remapped to the stable
+        portion of the RV1 pot (``RV1_WIPER_MIN``..1.0). 0.0 = hottest usable
+        TR3 idle, 1.0 = coolest; the real card's ~65 mA symmetric-clipping
+        setting falls near the upper end. Each pot leg is clamped to at least
+        1 Ω so ngspice never sees a true short.
 
     Returns
     -------
     PySpice ``Circuit`` powered from the +24 V rail (node ``A``). The
-    d.c.-coupled stages plus the RV1 DC-feedback loop give a convergent DC
-    operating point, so data-gen runs an ``.op``-initialized transient.
-    Audio injection (filesource on node ``INPUT``) is layered in by
-    ``run_spice.py``.
+    d.c.-coupled triplet plus the RV1 DC-bias loop give a convergent DC
+    operating point, so data-gen runs an ``.op``-initialized transient. Audio
+    injection (filesource on node ``INPUT``) is layered in by ``run_spice.py``.
     """
     if not (0.0 <= bias_norm <= 1.0):
         raise ValueError(
             f"bias_norm must be in [0.0, 1.0]; got {bias_norm!r}"
         )
 
-    r_upper = max(1.0, 4700.0 * (1.0 - bias_norm))
-    r_lower = max(1.0, 4700.0 * bias_norm)
+    # Map the [0,1] conditioning value onto the stable wiper range.
+    wiper = RV1_WIPER_MIN + (1.0 - RV1_WIPER_MIN) * bias_norm
+    r_upper = max(1.0, 4700.0 * (1.0 - wiper))
+    r_lower = max(1.0, 4700.0 * wiper)
 
     circuit = Circuit("BA283")
 
-    # Inject transistor .MODEL cards + LO1166 .SUBCKT verbatim. PySpice's
-    # high-level API cannot express the ngspice XSPICE code models
-    # (lcouple/core a-devices) directly, so we use raw_spice to keep the
-    # cards bit-for-bit identical to the design-doc appendix.
+    # Inject transistor .MODEL cards + LO1166 .SUBCKT verbatim via raw_spice to
+    # keep the cards bit-for-bit identical to the design-doc appendix.
     circuit.raw_spice += _ESR_COMMENT
     circuit.raw_spice += _TRANSISTOR_MODELS
     circuit.raw_spice += _LO1166_SUBCKT
 
     # --- Rails -------------------------------------------------------------
-    # +24 V supply on node A (the BA283 "A" rail). Signal ground is
-    # PySpice's global ground (node 0).
+    # +24 V supply on node A (the BA283 "A" rail). Signal ground is PySpice's
+    # global ground (node 0). C6 decouples the rail.
     circuit.V("supply", "A", circuit.gnd, 24)
+    circuit.C("6", "A", circuit.gnd, 80e-6)
 
     # ====================================================================
-    # BA283 output amplifier — real topology (per Neve docs the user supplied):
-    #   * TR1 common-emitter input; TR1->TR2->TR3 d.c.-coupled (TR1 collector
-    #     drives TR2 base, TR2 collector drives TR3 base: the d.c.-connected
-    #     pair). TR3 (2N3055) collector = output F -> transformer primary,
-    #     which also feeds TR3's ~60 mA Class-A collector current as a choke.
-    #   * DC FEEDBACK: RV1 (4k7) sits in the output-stage emitter path and
-    #     feeds a reference voltage from TR3's emitter back to TR1's base via
-    #     R_dcfb (56 k). This self-biases the whole chain (no floating base,
-    #     .op converges) AND, as the model's bias-conditioning input, sweeping
-    #     RV1 shifts TR1's DC operating point -> asymmetric clipping.
-    #   * AC FEEDBACK: from the TR2/TR3 collector (F) back to TR1's emitter
-    #     via an 80 uF cap -> sets the loop's mid-band behaviour.
-    #   * GAIN: the K<->J bridge (R_KJ + 80 uF) shunts TR1's emitter load R4
-    #     (1.2 k) to ground, lowering local NFB at the emitter and raising
-    #     gain; 220 ohm = the 26 dB tap (1.2k/470/220/110 -> 15/.../35 dB).
-    #   * Compensation: polystyrene caps (C2 220p, C5 330p, C3 4700p) roll off
-    #     the loop for HF stability.
+    # TR1 (BC184C) — common-emitter input stage.
     # ====================================================================
-
-    # --- TR1 (BC184C, common-emitter input stage) --------------------------
-    # Input coupling cap C7 (10 µF) + 1 Ω ESR.
-    circuit.C("7", "INPUT", "C7_MID", 10e-6)
-    circuit.R("_esr_C7", "C7_MID", "TR1_B", 1.0)
-
-    # TR1 base DC bias comes from the output-stage DC feedback (R_dcfb, 56 k,
-    # from the RV1 wiper) plus a high startup pull-up from the rail.
-    circuit.R("b1_start", "A", "TR1_B", 1e6)
-    circuit.R("dcfb", "RV1_WIPER", "TR1_B", 56e3)
-
-    # Emitter load R4 = 1.2 k to ground (the node the K<->J bridge shunts).
+    # Input coupling C1 (10 µF) + R1 (2k2) + 1 Ω ESR into the base.
+    circuit.C("1", "INPUT", "C1_MID", 10e-6)
+    circuit.R("_esr_C7", "C1_MID", "R1_MID", 1.0)
+    circuit.R("1", "R1_MID", "TR1_B", 2.2e3)
+    # Base bleed R3 (68 k) and the DC-bias feedback R2 (56 k) from the RV1 wiper.
+    circuit.R("3", "TR1_B", circuit.gnd, 68e3)
+    circuit.R("2", "RV1_WIPER", "TR1_B", 56e3)
+    # Emitter load R4 (1k2); the emitter is contact J.
     circuit.R("4", "TR1_E", circuit.gnd, 1.2e3)
-    # Collector load to rail.
-    circuit.R("c1", "A", "TR1_C", 10e3)
+    # Collector load R8 (33 k) to the rail.
+    circuit.R("8", "A", "TR1_C", 33e3)
+    # Compensation: C2 (220 pF) Miller across TR1 B-C, C3 (4700 pF) on TR1_C.
+    circuit.C("2", "TR1_B", "TR1_C", 220e-12)
+    circuit.C("3", "TR1_C", circuit.gnd, 4700e-12)
     circuit.BJT("TR1", "TR1_C", "TR1_B", "TR1_E", model="BC184C")
 
-    # --- K <-> J gain bridge: shunts TR1 emitter load to ground ------------
-    # R_KJ + 80 µF gain cap + 1 Ω ESR. At audio the cap is a short, so TR1's
-    # AC emitter impedance ~ R4 || R_KJ -> high gain. On the real card 220 Ω
-    # is the 26 dB tap; this reconstruction's forward gain is a bit lower, so
-    # GAIN_RKJ_OHMS is calibrated (47 Ω) to land the small-signal gain on the
-    # BA283's 26 dB spec.
+    # --- K <-> J gain network: shunts TR1 emitter load to ground for a.c. ---
+    # R_KJ (220 Ω, the 26 dB tap) + 80 µF gain cap + 1 Ω ESR. The cap blocks DC,
+    # so the gain setting does not disturb the RV1 bias.
     circuit.R("KJ", "TR1_E", "J", GAIN_RKJ_OHMS)
     circuit.C("gain", "J", "Cgain_MID", 80e-6)
     circuit.R("_esr_Cgain", "Cgain_MID", circuit.gnd, 1.0)
 
-    # --- A.C. feedback: output F -> C4 (80 µF) -> R5 (3.3 k) -> TR1 emitter -
-    # R5 sets the feedback factor; closed-loop gain ~ R5/(R4||R_KJ) ~ 26 dB.
-    # (C4 is the DC block; its ESR is negligible next to R5.)
-    circuit.C("4", "F", "C4_MID", 80e-6)
-    circuit.R("5", "C4_MID", "TR1_E", FB_R5_OHMS)
+    # ====================================================================
+    # TR2 (BC184C) + TR3 (2N3055) — common-collector compound output pair.
+    #   TR2 base = TR1 collector; TR2 emitter -> TR3 base; TR2 & TR3 collectors
+    #   tied together at node F (driven into the transformer primary).
+    # ====================================================================
+    # TR2 emitter resistor R6 (18 k); C5 (330 pF) Miller across TR2 B-C (TR1_C->F)
+    circuit.R("6", "TR2_E", circuit.gnd, 18e3)
+    circuit.C("5", "TR1_C", "F", 330e-12)
+    circuit.BJT("TR2", "F", "TR1_C", "TR2_E", model="BC184C")
 
-    # --- TR2 (BC184C), d.c.-coupled from TR1 collector --------------------
-    circuit.R("e2", "TR2_E", circuit.gnd, 390)
-    circuit.R("c2", "A", "TR2_C", 4.7e3)
-    circuit.BJT("TR2", "TR2_C", "TR1_C", "TR2_E", model="BC184C")
-    # Miller compensation across TR2 (C2 220 pF) for HF loop stability.
-    circuit.C("comp2", "TR2_C", "TR1_C", 220e-12)
-
-    # --- RV1 (4k7 bias trim) in the output-stage emitter path -------------
-    # Pot across TR3 emitter to ground; the wiper (a fraction of TR3_E set by
-    # bias_norm) is the DC-feedback reference sent to TR1 via R_dcfb. Both
-    # legs clamped >= 1 Ω so an end-stop never shorts the node.
+    # --- RV1 (4k7 bias preset) sampling TR3's emitter ----------------------
+    # Pot from TR3_E to ground; the wiper (a fraction of TR3_E set by bias_norm)
+    # is the DC-bias reference fed to TR1 via R2. Both legs clamped >= 1 Ω.
     circuit.R("upper", "TR3_E", "RV1_WIPER", r_upper)
     circuit.R("lower", "RV1_WIPER", circuit.gnd, r_lower)
+    # TR3 emitter resistor R7 (47 Ω) to ground.
+    circuit.R("7", "TR3_E", circuit.gnd, 47.0)
+    circuit.BJT("TR3", "F", "TR2_E", "TR3_E", model="2N3055")
 
-    # --- TR3 (2N3055, output transistor), d.c.-coupled from TR2 -----------
-    circuit.R("b3", "TR2_C", "TR3_B", 100)
-    circuit.R("7", "TR3_E", circuit.gnd, 47)
-    # Compensation: C5 330 pF at TR3 base, C3 4700 pF at TR1 collector.
-    circuit.C("comp5", "TR3_B", circuit.gnd, 330e-12)
-    circuit.C("comp3", "TR1_C", circuit.gnd, 4700e-12)
-    # Collector = contact F -> LO1166 primary.
-    circuit.BJT("TR3", "F", "TR3_B", "TR3_E", model="2N3055")
+    # --- A.C. feedback: common collector F -> C4 (100 µF) -> R5 (3k3) -> TR1_E
+    circuit.C("4", "F", "C4_MID", 100e-6)
+    circuit.R("5", "C4_MID", "TR1_E", FB_R5_OHMS)
 
-    # --- LO1166 instance + 600 Ω secondary termination ---------------------
-    # Subcircuit pins: PRI_IN, PRI_OUT, SEC_IN, SEC_OUT.
-    # PRI_IN  = F        (driven by TR3 collector)
-    # PRI_OUT = A        (centre-tapped to +24 V rail)
-    # SEC_IN  = SEC_IN   (output tap)
-    # SEC_OUT = 0        (ground return)
+    # --- LO1166 instance + primary Zobel + 600 Ω secondary termination -----
+    # Subcircuit pins: PRI_IN=F (common collector), PRI_OUT=A (rail, primary as
+    # collector choke), SEC_IN (balanced output tap), SEC_OUT=0.
     circuit.raw_spice += "XLO1166 F A SEC_IN 0 LO1166\n"
-
+    # Primary Zobel (Boucherot): 1k5 + 0.01 µF across F->A damps the leakage-
+    # inductance HF top-ring (the real card's snubber).
+    circuit.R("zobel", "F", "ZOBEL_MID", 1.5e3)
+    circuit.C("zobel", "ZOBEL_MID", "A", 0.01e-6)
     # 600 Ω console line-in termination on the secondary tap.
     circuit.R("term", "SEC_IN", circuit.gnd, 600)
 
