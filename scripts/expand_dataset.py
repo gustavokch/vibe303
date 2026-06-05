@@ -141,6 +141,9 @@ def _stream_one(task: tuple) -> tuple:
             pass
 
 
+LOCAL_OUT = Path("/tmp/ba283_out")  # local staging (libsndfile can't write to rclone)
+
+
 def stream_expand(
     raw_dry: Path,
     biases: list[float],
@@ -148,6 +151,8 @@ def stream_expand(
     workers: int,
     head_trim_ms: int = 50,
 ) -> None:
+    import shutil
+
     from data_gen.resample import (
         _infer_stim_kind,
         split_manifest,
@@ -156,8 +161,11 @@ def stream_expand(
     )
 
     SCRATCH.mkdir(parents=True, exist_ok=True)
-    wet_dir = out_base / "wet"
-    aligned_dir = out_base / "dry"
+    # Write everything to LOCAL staging first: libsndfile/pandas do seek-on-write
+    # which fails on an rclone/FUSE mount ("System error"). We bulk-copy the
+    # finished dataset to out_base at the end (sequential copy works on rclone).
+    wet_dir = LOCAL_OUT / "wet"
+    aligned_dir = LOCAL_OUT / "dry"
     wet_dir.mkdir(parents=True, exist_ok=True)
     aligned_dir.mkdir(parents=True, exist_ok=True)
 
@@ -203,10 +211,23 @@ def stream_expand(
             "duration_s": wet_dur,
             "stim_kind": _infer_stim_kind(stem),
         })
-    manifest = out_base / "manifest.csv"
+    manifest = LOCAL_OUT / "manifest.csv"
     write_manifest(manifest_rows, manifest)
-    split_manifest(manifest, out_base)
-    print(f"[stream] wrote manifest: {manifest} ({len(manifest_rows)} rows) + split", flush=True)
+    split_manifest(manifest, LOCAL_OUT)
+    print(f"[stream] staged manifest ({len(manifest_rows)} rows) + split in {LOCAL_OUT}", flush=True)
+
+    # Bulk-copy the finished dataset to out_base (Drive). Pure data copies
+    # (copyfile, no metadata/utime/chmod) — sequential writes that rclone allows,
+    # unlike libsndfile's seek-on-write or copy2's copystat.
+    n_copied = 0
+    for src in LOCAL_OUT.rglob("*"):
+        if src.is_dir():
+            continue
+        dest = out_base / src.relative_to(LOCAL_OUT)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        n_copied += 1
+    print(f"[stream] copied {n_copied} files -> {out_base}", flush=True)
 
 
 def main() -> int:
