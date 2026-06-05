@@ -4,89 +4,97 @@
     "rgain_ohm": 1200.0,
     "wdf_fake_lpf_fc_hz": 15102.0
   },
+  "wdf_stability": {
+    "crashed_stimuli": [],
+    "n_crashed_unique": 0,
+    "ladder_levels_crashed": 0,
+    "val_pairs_crashed": 0,
+    "note": "Latest WDF source segfaults (SIGSEGV) on some inputs and is non-deterministic across builds (likely uninitialized-memory UB)."
+  },
   "gain_calibration": {
-    "g_volts_per_unit": 1.912813,
-    "esr_at_cal_pair_db": -0.08,
+    "g_volts_per_unit": 1.688164,
+    "esr_at_cal_pair_db": -0.24,
     "calibration_file": "sweep_m24_dry.wav"
   },
   "frequency_response": {
-    "max_shape_error_db": 20.02,
-    "shape_error_at_15kHz_db": 1.13,
+    "max_shape_error_db": 3.25,
+    "shape_error_at_15kHz_db": -0.05,
     "wdf_fake_lpf_fc_hz": 15102.0
   },
   "level_ladder": {
     "1": {
-      "esr_db": -0.02,
-      "spice_rms_v": 5.9182,
-      "wdf_rms_scaled_v": 0.9194,
-      "wdf_clipping": false
+      "esr_db": 0.22,
+      "spice_rms_v": 5.8467,
+      "wdf_rms_scaled_v": 1.488,
+      "wdf_clipping": true
     },
     "2": {
-      "esr_db": -0.02,
-      "spice_rms_v": 5.8057,
-      "wdf_rms_scaled_v": 0.8195,
-      "wdf_clipping": false
+      "esr_db": 0.18,
+      "spice_rms_v": 5.727,
+      "wdf_rms_scaled_v": 1.3419,
+      "wdf_clipping": true
     },
     "3": {
-      "esr_db": -0.02,
-      "spice_rms_v": 5.7035,
-      "wdf_rms_scaled_v": 0.7304,
-      "wdf_clipping": false
+      "esr_db": 0.14,
+      "spice_rms_v": 5.6195,
+      "wdf_rms_scaled_v": 1.1981,
+      "wdf_clipping": true
     },
     "4": {
-      "esr_db": -0.03,
-      "spice_rms_v": 5.596,
-      "wdf_rms_scaled_v": 0.651,
-      "wdf_clipping": false
+      "esr_db": 0.12,
+      "spice_rms_v": 5.5029,
+      "wdf_rms_scaled_v": 1.0692,
+      "wdf_clipping": true
     },
     "6": {
-      "esr_db": -0.03,
-      "spice_rms_v": 5.3264,
-      "wdf_rms_scaled_v": 0.5172,
+      "esr_db": 0.05,
+      "spice_rms_v": 5.273,
+      "wdf_rms_scaled_v": 0.8522,
       "wdf_clipping": false
     },
     "8": {
-      "esr_db": -0.02,
-      "spice_rms_v": 5.0223,
-      "wdf_rms_scaled_v": 0.4109,
+      "esr_db": 0.01,
+      "spice_rms_v": 5.0211,
+      "wdf_rms_scaled_v": 0.6775,
       "wdf_clipping": false
     },
     "10": {
-      "esr_db": -0.02,
-      "spice_rms_v": 4.7183,
-      "wdf_rms_scaled_v": 0.3264,
+      "esr_db": -0.0,
+      "spice_rms_v": 4.7316,
+      "wdf_rms_scaled_v": 0.5383,
       "wdf_clipping": false
     },
     "13": {
-      "esr_db": 0.0,
-      "spice_rms_v": 3.7276,
-      "wdf_rms_scaled_v": 0.2312,
+      "esr_db": -0.0,
+      "spice_rms_v": 3.7279,
+      "wdf_rms_scaled_v": 0.381,
       "wdf_clipping": false
     },
     "16": {
-      "esr_db": -0.07,
+      "esr_db": -0.25,
       "spice_rms_v": 1.0938,
-      "wdf_rms_scaled_v": 0.1639,
+      "wdf_rms_scaled_v": 0.2699,
       "wdf_clipping": false
     },
     "20": {
-      "esr_db": -0.07,
+      "esr_db": -0.24,
       "spice_rms_v": 0.7219,
-      "wdf_rms_scaled_v": 0.1038,
+      "wdf_rms_scaled_v": 0.1689,
       "wdf_clipping": false
     },
     "24": {
-      "esr_db": -0.07,
+      "esr_db": -0.24,
       "spice_rms_v": 0.4619,
-      "wdf_rms_scaled_v": 0.0661,
+      "wdf_rms_scaled_v": 0.107,
       "wdf_clipping": false
     }
   },
   "val_set_esr": {
-    "mean_esr_db": -0.03,
+    "mean_esr_db": -0.05,
     "median_esr_db": -0.03,
-    "min_esr_db": -0.1,
-    "clipping_pairs": 0,
+    "min_esr_db": -0.09,
+    "clipping_pairs": 5,
+    "crashed_pairs": 0,
     "n_pairs": 8
   },
   "bias_tracking": {
@@ -97,13 +105,13 @@
       "0.75": 6.313710591096383,
       "1.0": 7.212972510711597
     },
-    "wdf_rms_scaled": 0.517165950379269,
+    "wdf_rms_scaled": 0.8420405807875129,
     "esr_per_bias_db": {
-      "0.0": 0.23013164997378094,
-      "0.25": 0.19593699060380387,
-      "0.5": -0.02622686394762818,
-      "0.75": -0.049627722480834136,
-      "1.0": -0.06249468769145481
+      "0.0": 0.8352757769078121,
+      "0.25": 0.222002960690357,
+      "0.5": 0.04826862531540897,
+      "0.75": 0.04772037789209157,
+      "1.0": 0.04506267091702486
     }
   },
   "caveats": [

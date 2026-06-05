@@ -38,6 +38,9 @@ from scipy.signal import csd, welch  # type: ignore[import-untyped]
 
 from eval.wdf_vs_spice.run_wdf import build_if_needed, run_wdf
 
+# Stimuli on which the WDF binary crashed (SIGSEGV / non-zero exit).
+WDF_CRASHES: list[str] = []
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -71,6 +74,27 @@ def load_wav(path: Path) -> np.ndarray:
     if x.ndim > 1:
         x = x[:, 0]
     return np.asarray(x, dtype=np.float32)
+
+
+def try_run_wdf(dry_path: Path, rgain: float) -> np.ndarray | None:
+    """Run the WDF binary, tolerating crashes.
+
+    The latest WDF source segfaults on some inputs (and exhibits non-deterministic
+    behaviour across builds — likely uninitialized-memory UB).  On any failure we
+    record the stimulus in ``WDF_CRASHES`` and return None so the caller can skip
+    it instead of aborting the whole evaluation.
+    """
+    try:
+        out, _ = run_wdf(dry_path, rgain=rgain)
+        if not np.all(np.isfinite(out)):
+            print(f"  [WDF non-finite output] {dry_path.name}")
+            WDF_CRASHES.append(dry_path.name)
+            return None
+        return out
+    except (RuntimeError, Exception) as exc:  # noqa: BLE001 - binary crash is opaque
+        print(f"  [WDF CRASH] {dry_path.name}: {str(exc).splitlines()[0]}")
+        WDF_CRASHES.append(dry_path.name)
+        return None
 
 
 def find_lag(a: np.ndarray, b: np.ndarray, max_lag_s: float = 0.2) -> int:
@@ -221,7 +245,10 @@ def run_bias_tracking(
         wet = load_wav(wet_path)
         spice_rms[b] = float(np.sqrt(np.mean(wet.astype(np.float64) ** 2)))
 
-    wdf_out, _ = run_wdf(dry_path, rgain=rgain)
+    wdf_out = try_run_wdf(dry_path, rgain=rgain)
+    if wdf_out is None:
+        print("[bias_tracking] WDF crashed on sweep_m6, skipping.")
+        return {}
     wdf_scaled = wdf_out * g
     wdf_rms = float(np.sqrt(np.mean(wdf_scaled.astype(np.float64) ** 2)))
 
@@ -307,7 +334,16 @@ def run_level_ladder(
 
         print(f"[level_ladder] processing sweep_m{lvl}...")
         wet = load_wav(wet_path)
-        wdf_out, _ = run_wdf(dry_path, rgain=rgain)
+        wdf_out = try_run_wdf(dry_path, rgain=rgain)
+        if wdf_out is None:
+            results[lvl] = {
+                "esr_db": None,
+                "spice_rms_v": round(float(np.sqrt(np.mean(wet.astype(np.float64) ** 2))), 4),
+                "wdf_rms_scaled_v": None,
+                "wdf_clipping": None,
+                "wdf_crashed": True,
+            }
+            continue
 
         clipping = is_clipping(wdf_out)
         wdf_a, spice_a = align_pair(wdf_out, wet)
@@ -333,6 +369,8 @@ def run_level_ladder(
         return {}
 
     levels = sorted(results.keys())
+    # Levels where the WDF produced usable output (did not crash).
+    ok = [l for l in levels if results[l].get("esr_db") is not None]
 
     # --- Plot 1: RMS vs level ---
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -342,15 +380,18 @@ def run_level_ladder(
         "o-",
         label="SPICE (raw V)",
     )
-    ax.plot(
-        levels,
-        [results[l]["wdf_rms_scaled_v"] for l in levels],
-        "s--",
-        label=f"WDF × g (Rgain={rgain:.0f}Ω)",
-    )
+    if ok:
+        ax.plot(
+            ok,
+            [results[l]["wdf_rms_scaled_v"] for l in ok],
+            "s--",
+            label=f"WDF × g (Rgain={rgain:.0f}Ω)",
+        )
     for l in levels:
-        if results[l]["wdf_clipping"]:
+        if results[l].get("wdf_clipping"):
             ax.axvline(l, color="red", alpha=0.3, linewidth=1)
+        if results[l].get("wdf_crashed"):
+            ax.axvline(l, color="purple", alpha=0.4, linewidth=2, linestyle=":")
     ax.set_xlabel("Input level (dBFS magnitude)")
     ax.set_ylabel("Output RMS (V equivalent)")
     ax.set_title(f"Output level tracking — sweep ladder, bias={bias:.2f}")
@@ -359,28 +400,30 @@ def run_level_ladder(
     ax.invert_xaxis()  # m1 (hot) on left, m24 (quiet) on right
     ax.set_xticks(levels)
     ax.set_xticklabels([f"−{l}" for l in levels])
-    note = "Red vertical lines: WDF output clipping (|y| ≥ 0.99)"
+    note = "Red: WDF clipping  ·  Purple dotted: WDF crashed"
     ax.text(0.99, 0.02, note, transform=ax.transAxes, ha="right", fontsize=8, color="red")
     plt.tight_layout()
     fig.savefig(out_dir / "level_ladder.png", dpi=150)
     plt.close(fig)
 
-    # --- Plot 2: ESR vs level ---
-    fig, ax = plt.subplots(figsize=(8, 5))
-    esrs = [results[l]["esr_db"] for l in levels]
-    colors = ["red" if results[l]["wdf_clipping"] else "steelblue" for l in levels]
-    ax.bar([str(l) for l in levels], esrs, color=colors)
-    ax.axhline(0, color="k", linewidth=1, linestyle=":")
-    ax.set_xlabel("Input level (dBFS magnitude)")
-    ax.set_ylabel("ESR (dB)  [lower = better match]")
-    ax.set_title(f"Null depth (ESR) vs level — WDF vs SPICE, bias={bias:.2f}")
-    ax.set_xticklabels([f"−{l}" for l in levels])
-    ax.grid(True, axis="y", alpha=0.4)
-    note = "Red bars: WDF clipping"
-    ax.text(0.99, 0.01, note, transform=ax.transAxes, ha="right", fontsize=8, color="red")
-    plt.tight_layout()
-    fig.savefig(out_dir / "esr_vs_level.png", dpi=150)
-    plt.close(fig)
+    # --- Plot 2: ESR vs level (non-crashed only) ---
+    if ok:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        esrs = [results[l]["esr_db"] for l in ok]
+        colors = ["red" if results[l]["wdf_clipping"] else "steelblue" for l in ok]
+        ax.bar([str(l) for l in ok], esrs, color=colors)
+        ax.axhline(0, color="k", linewidth=1, linestyle=":")
+        ax.set_xlabel("Input level (dBFS magnitude)")
+        ax.set_ylabel("ESR (dB)  [lower = better match]")
+        ax.set_title(f"Null depth (ESR) vs level — WDF vs SPICE, bias={bias:.2f}")
+        ax.set_xticks(range(len(ok)))
+        ax.set_xticklabels([f"−{l}" for l in ok])
+        ax.grid(True, axis="y", alpha=0.4)
+        note = "Red bars: WDF clipping"
+        ax.text(0.99, 0.01, note, transform=ax.transAxes, ha="right", fontsize=8, color="red")
+        plt.tight_layout()
+        fig.savefig(out_dir / "esr_vs_level.png", dpi=150)
+        plt.close(fig)
 
     print(f"[level_ladder] saved level_ladder.png and esr_vs_level.png")
     return results
@@ -422,7 +465,10 @@ def run_fr_analysis(
     wet_sp = load_wav(wet_sp_path)
 
     print("[fr_analysis] running WDF...")
-    wdf_out, _ = run_wdf(dry_path, rgain=rgain)
+    wdf_out = try_run_wdf(dry_path, rgain=rgain)
+    if wdf_out is None:
+        print("[fr_analysis] WDF crashed on the FR stimulus, skipping FR plots.")
+        return {}
 
     # Align WDF to match SPICE wet timing.
     wdf_a, spice_a = align_pair(wdf_out, wet_sp)
@@ -581,7 +627,18 @@ def run_val_esr(
 
         print(f"[val_esr] {row['dry_base']} (bias={bias:.2f}, kind={row['stim_kind']})...")
         wet = load_wav(wet_path)
-        wdf_out, _ = run_wdf(dry_path, rgain=rgain)
+        wdf_out = try_run_wdf(dry_path, rgain=rgain)
+        if wdf_out is None:
+            records.append({
+                "dry": row["dry_base"],
+                "wet": row["wet_base"],
+                "stim_kind": row["stim_kind"],
+                "bias": float(row["bias_value"]),
+                "esr_db": None,
+                "wdf_clipping": None,
+                "wdf_crashed": True,
+            })
+            continue
         clipping = is_clipping(wdf_out)
         wdf_a, spice_a = align_pair(wdf_out, wet)
         wdf_scaled = wdf_a * g
@@ -594,6 +651,7 @@ def run_val_esr(
             "bias": float(row["bias_value"]),
             "esr_db": round(esr, 2),
             "wdf_clipping": clipping,
+            "wdf_crashed": False,
         }
         records.append(record)
         print(f"  ESR = {esr:+.1f} dB{'  [CLIPPING]' if clipping else ''}")
@@ -602,22 +660,24 @@ def run_val_esr(
         # Save table as CSV
         pd.DataFrame(records).to_csv(out_dir / "val_esr_table.csv", index=False)
 
-        # Plot ESR bar chart
-        fig, ax = plt.subplots(figsize=(max(8, len(records) * 0.6), 5))
-        labels = [r["dry"].replace("_dry.wav", "")[:30] for r in records]
-        esrs = [r["esr_db"] for r in records]
-        cols = ["red" if r["wdf_clipping"] else "steelblue" for r in records]
-        ax.bar(range(len(records)), esrs, color=cols)
-        ax.set_xticks(range(len(records)))
-        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
-        ax.axhline(0, color="k", linestyle=":", linewidth=0.8)
-        ax.set_ylabel("ESR (dB)  [lower = better match]")
-        ax.set_title(f"Val-set null depth — WDF vs SPICE (bias={bias:.2f})")
-        ax.grid(True, axis="y", alpha=0.4)
-        plt.tight_layout()
-        fig.savefig(out_dir / "val_esr_bar.png", dpi=150)
-        plt.close(fig)
-        print(f"[val_esr] saved val_esr_table.csv and val_esr_bar.png")
+        # Plot ESR bar chart (non-crashed pairs only)
+        ok_records = [r for r in records if not r.get("wdf_crashed")]
+        if ok_records:
+            fig, ax = plt.subplots(figsize=(max(8, len(ok_records) * 0.6), 5))
+            labels = [r["dry"].replace("_dry.wav", "")[:30] for r in ok_records]
+            esrs = [r["esr_db"] for r in ok_records]
+            cols = ["red" if r["wdf_clipping"] else "steelblue" for r in ok_records]
+            ax.bar(range(len(ok_records)), esrs, color=cols)
+            ax.set_xticks(range(len(ok_records)))
+            ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
+            ax.axhline(0, color="k", linestyle=":", linewidth=0.8)
+            ax.set_ylabel("ESR (dB)  [lower = better match]")
+            ax.set_title(f"Val-set null depth — WDF vs SPICE (bias={bias:.2f})")
+            ax.grid(True, axis="y", alpha=0.4)
+            plt.tight_layout()
+            fig.savefig(out_dir / "val_esr_bar.png", dpi=150)
+            plt.close(fig)
+        print(f"[val_esr] saved val_esr_table.csv" + ("" if not ok_records else " and val_esr_bar.png"))
 
     return records
 
@@ -675,7 +735,12 @@ def main() -> None:
 
     print(f"\n--- Gain calibration on {ref_dry.name} ---")
     ref_wet_wav = load_wav(ref_wet)
-    wdf_ref, _ = run_wdf(ref_dry, rgain=args.rgain)
+    wdf_ref = try_run_wdf(ref_dry, rgain=args.rgain)
+    if wdf_ref is None:
+        raise SystemExit(
+            f"FATAL: WDF crashed on the gain-calibration stimulus ({ref_dry.name}). "
+            "Cannot compute the gain scalar — the WDF binary is unusable on this input."
+        )
     wdf_ref_a, spice_ref_a = align_pair(wdf_ref, ref_wet_wav)
     g = fit_gain(wdf_ref_a, spice_ref_a)
     print(f"  gain scalar g = {g:.4f} V/unit")
@@ -703,14 +768,17 @@ def main() -> None:
     mid_wet = args.spice_set / "wet" / f"sweep_m6_bias{bias_str}.wav"
     if mid_dry.exists() and mid_wet.exists():
         print("\n--- Waveform overlay (sweep_m6) ---")
-        mid_wdf, _ = run_wdf(mid_dry, rgain=args.rgain)
-        mid_wdf_a, mid_spice_a = align_pair(mid_wdf, load_wav(mid_wet))
-        plot_waveform_overlay(
-            mid_spice_a,
-            mid_wdf_a * g,
-            label="sweep_m6",
-            out_dir=args.out,
-        )
+        mid_wdf = try_run_wdf(mid_dry, rgain=args.rgain)
+        if mid_wdf is not None:
+            mid_wdf_a, mid_spice_a = align_pair(mid_wdf, load_wav(mid_wet))
+            plot_waveform_overlay(
+                mid_spice_a,
+                mid_wdf_a * g,
+                label="sweep_m6",
+                out_dir=args.out,
+            )
+        else:
+            print("[overlay] WDF crashed on sweep_m6, skipping overlay.")
 
     # ----------------------------------------------------------------
     # Step 5: Bias-tracking gap.
@@ -727,14 +795,28 @@ def main() -> None:
     # ----------------------------------------------------------------
     # Step 7: Aggregate summary.
     # ----------------------------------------------------------------
-    esr_vals = [r["esr_db"] for r in val_records if not r["wdf_clipping"]]
-    clip_count = sum(1 for r in val_records if r["wdf_clipping"])
+    usable = [r for r in val_records if not r.get("wdf_crashed")]
+    esr_vals = [r["esr_db"] for r in usable if not r["wdf_clipping"]]
+    clip_count = sum(1 for r in usable if r["wdf_clipping"])
+
+    # Crashed stimuli (deduped, across all stages).
+    crashed = sorted(set(WDF_CRASHES))
+    ladder_crashed = sum(1 for v in ladder_results.values() if v.get("wdf_crashed"))
+    val_crashed = sum(1 for r in val_records if r.get("wdf_crashed"))
 
     summary = {
         "config": {
             "bias": args.bias,
             "rgain_ohm": args.rgain,
             "wdf_fake_lpf_fc_hz": round(_LPF_FC_96K, 0),
+        },
+        "wdf_stability": {
+            "crashed_stimuli": crashed,
+            "n_crashed_unique": len(crashed),
+            "ladder_levels_crashed": ladder_crashed,
+            "val_pairs_crashed": val_crashed,
+            "note": "Latest WDF source segfaults (SIGSEGV) on some inputs and is "
+            "non-deterministic across builds (likely uninitialized-memory UB).",
         },
         "gain_calibration": {
             "g_volts_per_unit": round(g, 6),
@@ -748,6 +830,7 @@ def main() -> None:
             "median_esr_db": round(float(np.median(esr_vals)), 2) if esr_vals else None,
             "min_esr_db": round(float(np.min(esr_vals)), 2) if esr_vals else None,
             "clipping_pairs": clip_count,
+            "crashed_pairs": val_crashed,
             "n_pairs": len(val_records),
         },
         "bias_tracking": bias_results,
@@ -777,6 +860,11 @@ def main() -> None:
         print(f"  Val-set ESR (mean)    : {np.mean(esr_vals):+.1f} dB")
         print(f"  Val-set ESR (median)  : {np.median(esr_vals):+.1f} dB")
         print(f"  Clipping pairs        : {clip_count} / {len(val_records)}")
+    if crashed:
+        print(f"  WDF CRASHES           : {len(crashed)} stimuli "
+              f"(ladder={ladder_crashed}, val={val_crashed})")
+        for name in crashed:
+            print(f"     - {name}")
     if bias_results and "esr_per_bias_db" in bias_results:
         esr_05 = bias_results["esr_per_bias_db"].get("0.5", "?")
         print(f"  WDF vs SPICE@bias=0.5 : {esr_05:+.1f} dB (sweep_m6)")

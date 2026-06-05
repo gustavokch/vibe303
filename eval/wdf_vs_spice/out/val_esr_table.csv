@@ -1,9 +1,9 @@
-dry,wet,stim_kind,bias,esr_db,wdf_clipping
-music11_Wave Sweep_m6_dry.wav,music11_Wave Sweep_m6_bias0.50.wav,sweep,0.5,0.01,False
-music2_04 - Shed - Password (Techno Mix)_m3_dry.wav,music2_04 - Shed - Password (Techno Mix)_m3_bias0.50.wav,music,0.5,-0.1,False
-music3_08 - Shed - Rave Echoes_m12_dry.wav,music3_08 - Shed - Rave Echoes_m12_bias0.50.wav,music,0.5,-0.02,False
-music6_Berimbau Loop 07 120bpm_m3_dry.wav,music6_Berimbau Loop 07 120bpm_m3_bias0.50.wav,music,0.5,-0.01,False
-music8_Conga Loop 06 120bpm_m1_dry.wav,music8_Conga Loop 06 120bpm_m1_bias0.50.wav,music,0.5,-0.04,False
-music9_Sabbath 84bpm Gm PianoMelody_m12_dry.wav,music9_Sabbath 84bpm Gm PianoMelody_m12_bias0.50.wav,music,0.5,-0.04,False
-music9_Sabbath 84bpm Gm PianoMelody_m3_dry.wav,music9_Sabbath 84bpm Gm PianoMelody_m3_bias0.50.wav,music,0.5,-0.04,False
-sweep_m3_dry.wav,sweep_m3_bias0.50.wav,sweep,0.5,-0.02,False
+dry,wet,stim_kind,bias,esr_db,wdf_clipping,wdf_crashed
+music11_Wave Sweep_m6_dry.wav,music11_Wave Sweep_m6_bias0.50.wav,sweep,0.5,-0.02,False,False
+music2_04 - Shed - Password (Techno Mix)_m3_dry.wav,music2_04 - Shed - Password (Techno Mix)_m3_bias0.50.wav,music,0.5,-0.06,True,False
+music3_08 - Shed - Rave Echoes_m12_dry.wav,music3_08 - Shed - Rave Echoes_m12_bias0.50.wav,music,0.5,-0.03,False,False
+music6_Berimbau Loop 07 120bpm_m3_dry.wav,music6_Berimbau Loop 07 120bpm_m3_bias0.50.wav,music,0.5,-0.02,True,False
+music8_Conga Loop 06 120bpm_m1_dry.wav,music8_Conga Loop 06 120bpm_m1_bias0.50.wav,music,0.5,-0.04,True,False
+music9_Sabbath 84bpm Gm PianoMelody_m12_dry.wav,music9_Sabbath 84bpm Gm PianoMelody_m12_bias0.50.wav,music,0.5,-0.09,False,False
+music9_Sabbath 84bpm Gm PianoMelody_m3_dry.wav,music9_Sabbath 84bpm Gm PianoMelody_m3_bias0.50.wav,music,0.5,-0.06,True,False
+sweep_m3_dry.wav,sweep_m3_bias0.50.wav,sweep,0.5,0.14,True,False
