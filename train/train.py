@@ -204,6 +204,17 @@ def train_main(
             else:
                 epochs_since_improvement += 1
 
+            # Per-epoch curve to stdout (tensorboard alone is invisible on Colab):
+            # the trajectory distinguishes "still descending" from "plateaued /
+            # collapsed" and shows whether best.pth is an early checkpoint.
+            print(
+                f"epoch {e:3d}  train_loss={mean_train_loss:.4f}  "
+                f"val_esr={val_esr:.4f}  best={best_esr:.4f}"
+                f"{'  *' if improved else ''}  "
+                f"no_improve={epochs_since_improvement}",
+                flush=True,
+            )
+
             # Resume bundle: richer than best.pth, written every epoch.
             _atomic_save(
                 {
