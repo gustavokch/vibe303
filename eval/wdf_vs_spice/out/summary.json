@@ -1,0 +1,115 @@
+{
+  "config": {
+    "bias": 0.5,
+    "rgain_ohm": 1200.0,
+    "wdf_fake_lpf_fc_hz": 15102.0
+  },
+  "gain_calibration": {
+    "g_volts_per_unit": 1.912813,
+    "esr_at_cal_pair_db": -0.08,
+    "calibration_file": "sweep_m24_dry.wav"
+  },
+  "frequency_response": {
+    "max_shape_error_db": 20.02,
+    "shape_error_at_15kHz_db": 1.13,
+    "wdf_fake_lpf_fc_hz": 15102.0
+  },
+  "level_ladder": {
+    "1": {
+      "esr_db": -0.02,
+      "spice_rms_v": 5.9182,
+      "wdf_rms_scaled_v": 0.9194,
+      "wdf_clipping": false
+    },
+    "2": {
+      "esr_db": -0.02,
+      "spice_rms_v": 5.8057,
+      "wdf_rms_scaled_v": 0.8195,
+      "wdf_clipping": false
+    },
+    "3": {
+      "esr_db": -0.02,
+      "spice_rms_v": 5.7035,
+      "wdf_rms_scaled_v": 0.7304,
+      "wdf_clipping": false
+    },
+    "4": {
+      "esr_db": -0.03,
+      "spice_rms_v": 5.596,
+      "wdf_rms_scaled_v": 0.651,
+      "wdf_clipping": false
+    },
+    "6": {
+      "esr_db": -0.03,
+      "spice_rms_v": 5.3264,
+      "wdf_rms_scaled_v": 0.5172,
+      "wdf_clipping": false
+    },
+    "8": {
+      "esr_db": -0.02,
+      "spice_rms_v": 5.0223,
+      "wdf_rms_scaled_v": 0.4109,
+      "wdf_clipping": false
+    },
+    "10": {
+      "esr_db": -0.02,
+      "spice_rms_v": 4.7183,
+      "wdf_rms_scaled_v": 0.3264,
+      "wdf_clipping": false
+    },
+    "13": {
+      "esr_db": 0.0,
+      "spice_rms_v": 3.7276,
+      "wdf_rms_scaled_v": 0.2312,
+      "wdf_clipping": false
+    },
+    "16": {
+      "esr_db": -0.07,
+      "spice_rms_v": 1.0938,
+      "wdf_rms_scaled_v": 0.1639,
+      "wdf_clipping": false
+    },
+    "20": {
+      "esr_db": -0.07,
+      "spice_rms_v": 0.7219,
+      "wdf_rms_scaled_v": 0.1038,
+      "wdf_clipping": false
+    },
+    "24": {
+      "esr_db": -0.07,
+      "spice_rms_v": 0.4619,
+      "wdf_rms_scaled_v": 0.0661,
+      "wdf_clipping": false
+    }
+  },
+  "val_set_esr": {
+    "mean_esr_db": -0.03,
+    "median_esr_db": -0.03,
+    "min_esr_db": -0.1,
+    "clipping_pairs": 0,
+    "n_pairs": 8
+  },
+  "bias_tracking": {
+    "spice_rms_per_bias": {
+      "0.0": 1.7498932970764236,
+      "0.25": 4.069367316568622,
+      "0.5": 5.316489535827157,
+      "0.75": 6.313710591096383,
+      "1.0": 7.212972510711597
+    },
+    "wdf_rms_scaled": 0.517165950379269,
+    "esr_per_bias_db": {
+      "0.0": 0.23013164997378094,
+      "0.25": 0.19593699060380387,
+      "0.5": -0.02622686394762818,
+      "0.75": -0.049627722480834136,
+      "1.0": -0.06249468769145481
+    }
+  },
+  "caveats": [
+    "WDF models TR1 (1 stage) + fake one-pole LPF transformer. SPICE has TR1+TR2+TR3 + linear LO1166 transformer. Transfer functions differ by construction.",
+    "WDF has no bias control. SPICE bias dependence is not modeled.",
+    "WDF fake transformer LPF pole shifts with SR: ~15.1 kHz @ 96k vs ~6.4 kHz @ 44.1k.",
+    "Gain scalar g fitted on lowest-level sweep (linear region only)."
+  ]
+}
