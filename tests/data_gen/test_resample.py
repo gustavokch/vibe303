@@ -32,7 +32,7 @@ def test_write_manifest_columns(tmp_path):
         {
             "dry_path": "a.wav",
             "wet_path": "a_bias0.50.wav",
-            "bias_value": 0.5,
+            "gain_value": 0.5,
             "duration_s": 1.0,
             "stim_kind": "sweep",
         },
@@ -40,7 +40,7 @@ def test_write_manifest_columns(tmp_path):
     out = tmp_path / "manifest.csv"
     write_manifest(rows, out)
     text = out.read_text()
-    assert "dry_path,wet_path,bias_value,duration_s,stim_kind" in text.splitlines()[0]
+    assert "dry_path,wet_path,gain_value,duration_s,stim_kind" in text.splitlines()[0]
     assert "a.wav" in text
 
 
@@ -51,7 +51,7 @@ def test_split_by_stimulus_file_no_leakage(tmp_path):
             rows.append({
                 "dry_path": f"dry/{stim}.wav",
                 "wet_path": f"wet/{stim}_bias{bias:.2f}.wav",
-                "bias_value": bias,
+                "gain_value": bias,
                 "duration_s": 60.0,
                 "stim_kind": "sweep" if "sweep" in stim else "noise",
             })
@@ -79,7 +79,7 @@ def test_temporal_split_disjoint_time_slices(tmp_path):
     sf.write(wet, sig, sr, subtype="FLOAT")
     manifest = write_manifest(
         [{
-            "dry_path": str(dry), "wet_path": str(wet), "bias_value": 0.5,
+            "dry_path": str(dry), "wet_path": str(wet), "gain_value": 0.5,
             "duration_s": n / sr, "stim_kind": "synth",
         }],
         tmp_path / "m.csv",
@@ -101,7 +101,7 @@ def _write_manifest_with_stems(path, stems):
             rows.append({
                 "dry_path": f"dry/{stim}.wav",
                 "wet_path": f"wet/{stim}_bias{bias:.2f}.wav",
-                "bias_value": bias,
+                "gain_value": bias,
                 "duration_s": 60.0,
                 "stim_kind": "synth",
             })
@@ -175,7 +175,7 @@ def test_main_writes_resolvable_dry_path(tmp_path):
         )
         t = np.cumsum(rng.uniform(5e-7, 1.5e-6, size=20_000))
         v = np.sin(2 * np.pi * 1000 * t).astype(np.float32)
-        np.savez(raw_dir / f"{stem}_bias0.50.npz", t=t, v=v)
+        np.savez(raw_dir / f"{stem}_gain0.500.npz", t=t, v=v)
 
     out_dir = tmp_path / "wet"
     manifest = tmp_path / "manifest.csv"

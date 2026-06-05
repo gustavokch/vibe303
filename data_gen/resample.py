@@ -28,14 +28,14 @@ import soundfile as sf
 from scipy.interpolate import PchipInterpolator
 
 TARGET_SR = 96_000
-MANIFEST_COLUMNS = ["dry_path", "wet_path", "bias_value", "duration_s", "stim_kind"]
+MANIFEST_COLUMNS = ["dry_path", "wet_path", "gain_value", "duration_s", "stim_kind"]
 
 # Substring -> stim_kind, checked in order against the dry stem. Best-effort:
 # unmatched stems fall back to "synth".
 _STIM_KINDS = ("sweep", "noise", "imd", "impulse", "multisine", "music")
 
-# Matches "<stem>_bias<value>" filename stems, e.g. "sweepA_bias0.50".
-_BIAS_RE = re.compile(r"^(?P<stem>.+)_bias(?P<bias>[-+0-9.eE]+)$")
+# Matches "<stem>_gain<value>" filename stems, e.g. "sweepA_gain0.500".
+_GAIN_RE = re.compile(r"^(?P<stem>.+)_gain(?P<gain>[-+0-9.eE]+)$")
 
 
 def resample_to_grid(
@@ -128,7 +128,7 @@ def write_aligned_dry(
 def write_manifest(rows: list[dict], out_csv: Path | str) -> Path:
     """Write manifest ``rows`` to ``out_csv`` with the exact column order.
 
-    Columns: ``dry_path,wet_path,bias_value,duration_s,stim_kind``.
+    Columns: ``dry_path,wet_path,gain_value,duration_s,stim_kind``.
     """
     out_csv = Path(out_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -295,12 +295,12 @@ def main(argv: list[str] | None = None) -> int:
     rows: list[dict] = []
     aligned_dry: dict[str, Path] = {}  # stem -> aligned dry path (written once)
     for npz_path in sorted(raw_dir.glob("*.npz")):
-        m = _BIAS_RE.match(npz_path.stem)
+        m = _GAIN_RE.match(npz_path.stem)
         if m is None:
-            # Skip files that don't follow <stem>_bias<value>.npz.
+            # Skip files that don't follow <stem>_gain<value>.npz.
             continue
         stem = m.group("stem")
-        bias = float(m.group("bias"))
+        gain = float(m.group("gain"))
 
         wet_path = out_dir / f"{npz_path.stem}.wav"
         resample_to_grid(
@@ -310,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
             head_trim_ms=args.head_trim_ms,
         )
         # Pair against a head-trimmed dry so dry[i] <-> wet[i] (see
-        # write_aligned_dry). Written once per unique stem, reused across biases.
+        # write_aligned_dry). Written once per unique stem, reused across gains.
         dry_src = dry_dir / f"{stem}.wav"
         if not dry_src.exists():
             warnings.warn(
@@ -333,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "dry_path": str(dry_path),
                 "wet_path": str(wet_path),
-                "bias_value": bias,
+                "gain_value": gain,
                 "duration_s": info.duration,
                 "stim_kind": _infer_stim_kind(stem),
             }

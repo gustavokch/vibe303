@@ -76,6 +76,30 @@ K1 L_pri L_sec {K}
 FB_R5_OHMS = 3.3e3
 GAIN_RKJ_OHMS = 220.0
 
+# --- Gain-sweep dataset parameters -----------------------------------------
+# The conditioning axis is GAIN, not bias: RV1 is the real card's set-once bias
+# trim, so it is pinned at the ~65 mA / symmetric-clipping calibration while the
+# K<->J gain resistor R_KJ is swept. BIAS_NORM_FIXED maps (via the RV1 remap) to
+# a wiper of ~0.84 -> ~63 mA TR3 idle (within the 60-70 mA spec).
+BIAS_NORM_FIXED = 0.77
+
+# Gain knob -> R_KJ map. The K<->J slot accepts any external R; gain_norm in
+# [0,1] maps log-linearly (≈ constant dB/step) from ~open (min gain ~14 dB at
+# the secondary) to 82 Ω (max gain ~33 dB). A LOWER R_KJ bypasses more of TR1's
+# emitter degeneration -> higher closed-loop gain.
+GAIN_RKJ_MAX = 10_000.0   # gain_norm 0.0 -> ~14 dB (K<->J ~ open)
+GAIN_RKJ_MIN = 82.0       # gain_norm 1.0 -> ~33 dB
+
+
+def gain_norm_to_rkj(gain_norm: float) -> float:
+    """Map a normalized gain knob in ``[0, 1]`` to the K<->J resistor (ohms).
+
+    Log-linear, so equal knob steps give roughly equal dB steps:
+    ``0.0 -> GAIN_RKJ_MAX`` (minimum gain), ``1.0 -> GAIN_RKJ_MIN`` (maximum).
+    """
+    g = min(1.0, max(0.0, gain_norm))
+    return GAIN_RKJ_MAX * (GAIN_RKJ_MIN / GAIN_RKJ_MAX) ** g
+
 # RV1 (4k7 preset) bias map. The very-low-wiper end runs TR3 idle current away
 # to saturation (output collapses), so bias_norm in [0,1] is mapped to the
 # stable class-A portion of the pot: wiper fraction = RV1_WIPER_MIN..1.0. Over
@@ -93,7 +117,7 @@ _ESR_COMMENT = (
 )
 
 
-def build_netlist(bias_norm: float) -> Circuit:
+def build_netlist(bias_norm: float, gain_rkj: float = GAIN_RKJ_OHMS) -> Circuit:
     """Build the BA283 AM netlist with RV1 wiper at ``bias_norm``.
 
     Parameters
@@ -104,6 +128,13 @@ def build_netlist(bias_norm: float) -> Circuit:
         TR3 idle, 1.0 = coolest; the real card's ~65 mA symmetric-clipping
         setting falls near the upper end. Each pot leg is clamped to at least
         1 Ω so ngspice never sees a true short.
+    gain_rkj:
+        The K<->J gain-shunt resistor R_KJ in ohms (default
+        ``GAIN_RKJ_OHMS`` = 220 = the real card's 26 dB tap). This is the
+        gain-conditioning knob: a LOWER R_KJ shunts more of TR1's emitter
+        degeneration for a.c., cutting local feedback and RAISING closed-loop
+        gain (and drive into the TR2/TR3 nonlinearity); a higher R_KJ lowers
+        it. Bias is held fixed while this is swept for the gain dataset.
 
     Returns
     -------
@@ -158,7 +189,7 @@ def build_netlist(bias_norm: float) -> Circuit:
     # --- K <-> J gain network: shunts TR1 emitter load to ground for a.c. ---
     # R_KJ (220 Ω, the 26 dB tap) + 80 µF gain cap + 1 Ω ESR. The cap blocks DC,
     # so the gain setting does not disturb the RV1 bias.
-    circuit.R("KJ", "TR1_E", "J", GAIN_RKJ_OHMS)
+    circuit.R("KJ", "TR1_E", "J", gain_rkj)
     circuit.C("gain", "J", "Cgain_MID", 80e-6)
     circuit.R("_esr_Cgain", "Cgain_MID", circuit.gnd, 1.0)
 

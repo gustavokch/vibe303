@@ -12,7 +12,7 @@ MANIFEST = Path("tests/fixtures/manifest_tiny.csv")
 
 
 def _write_manifest(path: Path, rows: list[dict]) -> Path:
-    cols = ["dry_path", "wet_path", "bias_value", "duration_s", "stim_kind"]
+    cols = ["dry_path", "wet_path", "gain_value", "duration_s", "stim_kind"]
     pd.DataFrame(rows, columns=cols).to_csv(path, index=False)
     return path
 
@@ -70,7 +70,7 @@ def test_target_is_output_normalized(tmp_path):
             {
                 "dry_path": str(dry_path),
                 "wet_path": str(wet_path),
-                "bias_value": 0.5,
+                "gain_value": 0.5,
                 "duration_s": n / sr,
                 "stim_kind": "synth",
             }
@@ -102,7 +102,7 @@ def test_silent_windows_are_dropped(tmp_path):
             {
                 "dry_path": str(dry_path),
                 "wet_path": str(wet_path),
-                "bias_value": 0.5,
+                "gain_value": 0.5,
                 "duration_s": n / sr,
                 "stim_kind": "synth",
             }
@@ -145,7 +145,7 @@ def test_dry_shorter_than_wet_is_handled(tmp_path):
             {
                 "dry_path": str(dry_path),
                 "wet_path": str(wet_path),
-                "bias_value": 0.5,
+                "gain_value": 0.5,
                 "duration_s": n / sr,
                 "stim_kind": "synth",
             }
@@ -178,7 +178,7 @@ def test_missing_file_raises_clear_error(tmp_path):
             {
                 "dry_path": str(dry_path),
                 "wet_path": str(missing_wet),
-                "bias_value": 0.0,
+                "gain_value": 0.0,
                 "duration_s": 0.085,
                 "stim_kind": "synth",
             }

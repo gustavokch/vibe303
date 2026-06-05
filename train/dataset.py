@@ -1,4 +1,4 @@
-"""Conditioned PyTorch Dataset yielding (audio+bias, wet) windows for BA283."""
+"""Conditioned PyTorch Dataset yielding (audio+gain, wet) windows for BA283."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import soundfile as sf
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-_REQUIRED_COLUMNS = ("dry_path", "wet_path", "bias_value", "duration_s", "stim_kind")
+_REQUIRED_COLUMNS = ("dry_path", "wet_path", "gain_value", "duration_s", "stim_kind")
 
 # --- Domain scaling -------------------------------------------------------
 # The dry stimulus WAVs sit at ~0.4 peak; INPUT_SCALE lifts them to ~0.9 so the
@@ -61,11 +61,11 @@ def _resolve_path(raw: str) -> Path:
 
 
 class BA283Dataset(Dataset):
-    """Yields fixed-length (dry_scaled, bias) -> wet_scaled windows from a manifest.
+    """Yields fixed-length (dry_scaled, gain) -> wet_scaled windows from a manifest.
 
     Each item is a tuple ``(x, y)`` where ``x`` has shape ``(window, 2)`` with
     column 0 = dry audio scaled by ``input_scale`` and column 1 = the constant
-    bias value (the conditioning), and ``y`` has shape ``(window, 1)`` with the
+    gain value (the conditioning), and ``y`` has shape ``(window, 1)`` with the
     wet (volt) target scaled by ``output_scale`` into a normalized ~[-1, 1]
     domain (see ``OUTPUT_SCALE``). The model thus learns normalized output; the
     Rust plugin multiplies by ``OUTPUT_REF_V`` to recover volts.
@@ -175,7 +175,7 @@ class BA283Dataset(Dataset):
 
         x = torch.empty(self.window, 2, dtype=torch.float32)
         x[:, 0] = torch.from_numpy(dry) * self.input_scale
-        x[:, 1] = float(row["bias_value"])
+        x[:, 1] = float(row["gain_value"])
 
         y = (torch.from_numpy(wet) * self.output_scale).reshape(self.window, 1)
         return x, y

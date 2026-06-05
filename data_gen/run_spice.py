@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from data_gen.netlist import build_netlist
+from data_gen.netlist import GAIN_RKJ_OHMS, build_netlist
 
 # ngspice-46 is our validated target; PySpice 1.5's version table predates it
 # and emits a spurious "Unsupported Ngspice version 46" warning on every sim.
@@ -79,8 +79,10 @@ def _write_filesource(samples: np.ndarray, path: Path) -> None:
     np.savetxt(path, data, fmt=("%.12g", "%.8g"))
 
 
-def simulate_one(dry_wav: Path, bias: float, out_npz: Path) -> Path:
-    """Simulate one (dry stimulus, bias) pair and save the wet target.
+def simulate_one(
+    dry_wav: Path, bias: float, out_npz: Path, gain_rkj: float = GAIN_RKJ_OHMS
+) -> Path:
+    """Simulate one (dry stimulus, bias, gain) point and save the wet target.
 
     Parameters
     ----------
@@ -90,6 +92,9 @@ def simulate_one(dry_wav: Path, bias: float, out_npz: Path) -> Path:
         RV1 wiper position in ``[0.0, 1.0]`` passed to ``build_netlist``.
     out_npz:
         Destination ``.npz`` path; receives arrays ``t`` and ``v``.
+    gain_rkj:
+        K<->J gain-shunt resistor R_KJ in ohms (default = 26 dB tap). For the
+        gain-conditioned dataset this is swept while ``bias`` is held fixed.
 
     Returns
     -------
@@ -101,7 +106,7 @@ def simulate_one(dry_wav: Path, bias: float, out_npz: Path) -> Path:
     samples = _load_dry(dry_wav)
     duration = samples.shape[0] / SAMPLE_RATE
 
-    circuit = build_netlist(bias)
+    circuit = build_netlist(bias, gain_rkj)
 
     # Inject the dry audio via the XSPICE filesource code model on node INPUT.
     # A single path for every duration: the 'Vin INPUT 0 PWL file=' sidecar
@@ -246,7 +251,73 @@ def run_batch(manifest_or_stim_paths, biases, workers: int | None = None):
     return results
 
 
+def _gain_tag(gain_rkj: float) -> str:
+    return f"{gain_rkj:g}"
+
+
+def _run_gain_pair(
+    args: tuple[Path, float, float],
+) -> tuple[Path, float, str | None]:
+    """Worker: run one (stim, gain) point at a fixed bias.
+
+    Returns ``(stim, gain, error_or_None)``.
+    """
+    stim, gain, bias = args
+    out = WET_RAW_DIR / f"{stim.stem}_gain{_gain_tag(gain)}.npz"
+    log = SPICE_LOG_DIR / f"{stim.stem}_gain{_gain_tag(gain)}.log"
+    try:
+        simulate_one(stim, bias, out, gain_rkj=gain)
+        return (stim, gain, None)
+    except Exception as exc:
+        SPICE_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log.write_text(f"{type(exc).__name__}: {exc}\n")
+        return (stim, gain, f"{type(exc).__name__}: {exc}")
+
+
+def run_gain_batch(
+    manifest_or_stim_paths, gains, bias: float, workers: int | None = None
+):
+    """Run every (stimulus x gain) point at a FIXED bias, writing wet targets.
+
+    The gain-conditioned dataset: R_KJ is the swept conditioning knob and the
+    bias is pinned to the real card's operating point (default 0.77 ~ 65 mA
+    TR3 idle). Per-point failures are appended to ``data/failed.csv`` and the
+    batch continues.
+    """
+    stimuli = _resolve_stimuli(manifest_or_stim_paths)
+    points = [(stim, float(g), float(bias)) for stim in stimuli for g in gains]
+
+    WET_RAW_DIR.mkdir(parents=True, exist_ok=True)
+    SPICE_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    if workers is None:
+        workers = max(1, (os.cpu_count() or 2) - 2)
+
+    if workers == 1:
+        results = [_run_gain_pair(p) for p in points]
+    else:
+        with mp.Pool(processes=workers, maxtasksperchild=1) as pool:
+            results = pool.map(_run_gain_pair, points)
+
+    failures = [(s, g, e) for (s, g, e) in results if e is not None]
+    if failures:
+        FAILED_CSV.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not FAILED_CSV.exists()
+        with FAILED_CSV.open("a", newline="") as fh:
+            writer = csv.writer(fh)
+            if write_header:
+                writer.writerow(["stim", "gain", "error"])
+            for stim, gain, err in failures:
+                writer.writerow([str(stim), _gain_tag(gain), err])
+
+    return results
+
+
 def _parse_biases(spec: str) -> list[float]:
+    return [float(x) for x in spec.split(",") if x.strip()]
+
+
+def _parse_gains(spec: str) -> list[float]:
     return [float(x) for x in spec.split(",") if x.strip()]
 
 
@@ -259,7 +330,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--biases",
         default="0.0,0.25,0.5,0.75,1.0",
-        help="Comma-separated bias values in [0,1].",
+        help="Comma-separated bias values in [0,1] (bias-sweep mode).",
+    )
+    parser.add_argument(
+        "--gains",
+        help="Comma-separated R_KJ ohms for a GAIN sweep at fixed bias "
+        "(--fixed-bias). When set, sweeps gain instead of bias.",
+    )
+    parser.add_argument(
+        "--fixed-bias",
+        type=float,
+        default=0.77,
+        help="Bias held fixed during a --gains sweep (default 0.77 ~ 65 mA).",
     )
     parser.add_argument(
         "--workers",
@@ -278,6 +360,12 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         help="Bias for --single (in [0,1]).",
     )
+    parser.add_argument(
+        "--gain-rkj",
+        type=float,
+        default=GAIN_RKJ_OHMS,
+        help="K<->J gain resistor R_KJ (ohms) for --single (default = 26 dB tap).",
+    )
     parser.add_argument("--out", help="Output .npz path for --single.")
     args = parser.parse_args(argv)
 
@@ -295,13 +383,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.single:
         if args.bias is None or args.out is None:
             parser.error("--single requires --bias and --out")
-        out = simulate_one(Path(args.single), args.bias, Path(args.out))
+        out = simulate_one(
+            Path(args.single), args.bias, Path(args.out), gain_rkj=args.gain_rkj
+        )
         n = int(np.load(out)["t"].shape[0])
         print(f"wrote {out} ({n} samples)")
         return 0
 
     if not args.manifest:
         parser.error("provide --manifest, --single, or --smoke")
+
+    if args.gains:
+        gains = _parse_gains(args.gains)
+        results = run_gain_batch(
+            args.manifest, gains, args.fixed_bias, workers=args.workers
+        )
+        failed = sum(1 for (_, _, e) in results if e is not None)
+        print(
+            f"gain-batch done: {len(results)} points "
+            f"(bias={args.fixed_bias:g}), {failed} failed"
+        )
+        return 0
 
     biases = _parse_biases(args.biases)
     results = run_batch(args.manifest, biases, workers=args.workers)

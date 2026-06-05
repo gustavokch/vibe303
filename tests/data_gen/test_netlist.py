@@ -104,6 +104,31 @@ def test_lo1166_instance_line_present():
     ), f"LO1166 instance line missing or pin order wrong:\n{s}"
 
 
+def test_gain_norm_to_rkj_monotonic_and_endpoints():
+    """gain_norm in [0,1] maps to R_KJ: monotonically DECREASING (lower R = more
+    gain), hitting GAIN_RKJ_MAX at 0 and GAIN_RKJ_MIN at 1, clamped outside."""
+    from data_gen.netlist import (
+        GAIN_RKJ_MAX,
+        GAIN_RKJ_MIN,
+        gain_norm_to_rkj,
+    )
+
+    assert gain_norm_to_rkj(0.0) == pytest.approx(GAIN_RKJ_MAX)
+    assert gain_norm_to_rkj(1.0) == pytest.approx(GAIN_RKJ_MIN)
+    vals = [gain_norm_to_rkj(g) for g in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    assert all(a > b for a, b in zip(vals, vals[1:])), vals
+    # out-of-range clamps, not extrapolates
+    assert gain_norm_to_rkj(-1.0) == pytest.approx(GAIN_RKJ_MAX)
+    assert gain_norm_to_rkj(2.0) == pytest.approx(GAIN_RKJ_MIN)
+
+
+def test_build_netlist_gain_rkj_changes_render():
+    """A different K<->J resistor must change the rendered netlist."""
+    lo_gain = str(build_netlist(0.5, gain_rkj=10_000.0))
+    hi_gain = str(build_netlist(0.5, gain_rkj=82.0))
+    assert lo_gain != hi_gain
+
+
 def test_lo1166_linear_mutual_model():
     """Transformer must be the linear mutual-inductance (K-coupled) form (v1).
 
