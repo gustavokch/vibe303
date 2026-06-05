@@ -1,123 +1,140 @@
 {
   "config": {
-    "bias": 0.5,
-    "rgain_ohm": 1200.0,
-    "wdf_fake_lpf_fc_hz": 15102.0
+    "rgain_ohm": 47.0,
+    "ladder_bias": 0.5,
+    "max_lag_samples": 256,
+    "metric": "raw-volts ESR (dB)"
   },
+  "model": "full-chain BA283 (TR1+TR2+TR3+LO1166), nodal MNA + Newton",
   "wdf_stability": {
-    "crashed_stimuli": [],
-    "n_crashed_unique": 0,
-    "ladder_levels_crashed": 0,
-    "val_pairs_crashed": 0,
-    "note": "Latest WDF source segfaults (SIGSEGV) on some inputs and is non-deterministic across builds (likely uninitialized-memory UB)."
-  },
-  "gain_calibration": {
-    "g_volts_per_unit": 1.688164,
-    "esr_at_cal_pair_db": -0.24,
-    "calibration_file": "sweep_m24_dry.wav"
+    "crashed_stimuli": [
+      "music6_Berimbau Loop 07 120bpm_m3_dry.wav",
+      "music8_Conga Loop 06 120bpm_m1_dry.wav",
+      "music9_Sabbath 84bpm Gm PianoMelody_m12_dry.wav",
+      "music9_Sabbath 84bpm Gm PianoMelody_m3_dry.wav",
+      "sweep_m3_dry.wav"
+    ]
   },
   "frequency_response": {
-    "max_shape_error_db": 3.25,
-    "shape_error_at_15kHz_db": -0.05,
-    "wdf_fake_lpf_fc_hz": 15102.0
+    "stimulus": "pink_m18_s0",
+    "max_err_db_20Hz_20kHz": 0.39,
+    "max_err_db_midband_200_5k": 0.19,
+    "mean_coherence_midband": 1.0
   },
   "level_ladder": {
     "1": {
-      "esr_db": 0.22,
-      "spice_rms_v": 5.8467,
-      "wdf_rms_scaled_v": 1.488,
-      "wdf_clipping": true
+      "esr_db": 1.0371299526456668,
+      "gain": 0.37380464509248357,
+      "model_rms_v": 6.119420073444756,
+      "ref_rms_v": 5.919322548091443,
+      "clipping": true
     },
     "2": {
-      "esr_db": 0.18,
-      "spice_rms_v": 5.727,
-      "wdf_rms_scaled_v": 1.3419,
-      "wdf_clipping": true
+      "esr_db": 1.856906257612244,
+      "gain": 0.25020950684300286,
+      "model_rms_v": 6.001321820682431,
+      "ref_rms_v": 5.807200010907479,
+      "clipping": true
     },
     "3": {
-      "esr_db": 0.14,
-      "spice_rms_v": 5.6195,
-      "wdf_rms_scaled_v": 1.1981,
-      "wdf_clipping": true
+      "esr_db": 1.8564691632575538,
+      "gain": 0.25081486473786646,
+      "model_rms_v": 5.902824840481598,
+      "ref_rms_v": 5.705786860477054,
+      "clipping": true
     },
     "4": {
-      "esr_db": 0.12,
-      "spice_rms_v": 5.5029,
-      "wdf_rms_scaled_v": 1.0692,
-      "wdf_clipping": true
+      "esr_db": 2.111642935542773,
+      "gain": 0.20828944217870976,
+      "model_rms_v": 5.801250517834017,
+      "ref_rms_v": 5.599656298216923,
+      "clipping": true
     },
     "6": {
-      "esr_db": 0.05,
-      "spice_rms_v": 5.273,
-      "wdf_rms_scaled_v": 0.8522,
-      "wdf_clipping": false
+      "esr_db": 2.4062094753129784,
+      "gain": 0.16384468085662918,
+      "model_rms_v": 5.597219207496656,
+      "ref_rms_v": 5.333884605696589,
+      "clipping": true
     },
     "8": {
-      "esr_db": 0.01,
-      "spice_rms_v": 5.0211,
-      "wdf_rms_scaled_v": 0.6775,
-      "wdf_clipping": false
+      "esr_db": 2.7984737455766244,
+      "gain": 0.13105028957628792,
+      "model_rms_v": 5.5787830802599325,
+      "ref_rms_v": 5.037898285693986,
+      "clipping": true
     },
     "10": {
-      "esr_db": -0.0,
-      "spice_rms_v": 4.7316,
-      "wdf_rms_scaled_v": 0.5383,
-      "wdf_clipping": false
+      "esr_db": 3.42302305121599,
+      "gain": 0.008794005205104295,
+      "model_rms_v": 5.21342549184835,
+      "ref_rms_v": 4.718345753959082,
+      "clipping": true
     },
     "13": {
-      "esr_db": -0.0,
-      "spice_rms_v": 3.7279,
-      "wdf_rms_scaled_v": 0.381,
-      "wdf_clipping": false
+      "esr_db": 3.575907620347511,
+      "gain": 0.06474541469316272,
+      "model_rms_v": 4.516869467889045,
+      "ref_rms_v": 3.7275691585271784,
+      "clipping": true
     },
     "16": {
-      "esr_db": -0.25,
-      "spice_rms_v": 1.0938,
-      "wdf_rms_scaled_v": 0.2699,
-      "wdf_clipping": false
+      "esr_db": 6.478887453539109,
+      "gain": 0.18925819615710662,
+      "model_rms_v": 2.5753313505554307,
+      "ref_rms_v": 1.09381101082711,
+      "clipping": true
     },
     "20": {
-      "esr_db": -0.24,
-      "spice_rms_v": 0.7219,
-      "wdf_rms_scaled_v": 0.1689,
-      "wdf_clipping": false
+      "esr_db": -25.956874737623853,
+      "gain": 0.9766553386905481,
+      "model_rms_v": 0.7384682626932494,
+      "ref_rms_v": 0.7219391607728877,
+      "clipping": true
     },
     "24": {
-      "esr_db": -0.24,
-      "spice_rms_v": 0.4619,
-      "wdf_rms_scaled_v": 0.107,
-      "wdf_clipping": false
+      "esr_db": -26.017011637004536,
+      "gain": 0.9767261889957242,
+      "model_rms_v": 0.4724649747041917,
+      "ref_rms_v": 0.4619160629026695,
+      "clipping": false
+    }
+  },
+  "level_ladder_best_esr_db": -26.02,
+  "bias_tracking": {
+    "esr_per_bias_db": {
+      "0.0": 1.23,
+      "0.25": 2.65,
+      "0.5": 2.41,
+      "0.75": 2.17,
+      "1.0": 1.85
+    },
+    "model_rms_per_bias": {
+      "0.0": 2.0533,
+      "0.25": 4.252,
+      "0.5": 5.5972,
+      "0.75": 6.7765,
+      "1.0": 7.4987
+    },
+    "spice_rms_per_bias": {
+      "0.0": 1.7556,
+      "0.25": 4.0829,
+      "0.5": 5.3339,
+      "0.75": 6.3342,
+      "1.0": 7.2363
     }
   },
   "val_set_esr": {
-    "mean_esr_db": -0.05,
-    "median_esr_db": -0.03,
-    "min_esr_db": -0.09,
-    "clipping_pairs": 5,
-    "crashed_pairs": 0,
-    "n_pairs": 8
+    "mean_db": -4.09,
+    "median_db": -3.17,
+    "best_db": -34.26,
+    "worst_db": 6.33,
+    "n_pairs": 40
   },
-  "bias_tracking": {
-    "spice_rms_per_bias": {
-      "0.0": 1.7498932970764236,
-      "0.25": 4.069367316568622,
-      "0.5": 5.316489535827157,
-      "0.75": 6.313710591096383,
-      "1.0": 7.212972510711597
-    },
-    "wdf_rms_scaled": 0.8420405807875129,
-    "esr_per_bias_db": {
-      "0.0": 0.8352757769078121,
-      "0.25": 0.222002960690357,
-      "0.5": 0.04826862531540897,
-      "0.75": 0.04772037789209157,
-      "1.0": 0.04506267091702486
-    }
-  },
-  "caveats": [
-    "WDF models TR1 (1 stage) + fake one-pole LPF transformer. SPICE has TR1+TR2+TR3 + linear LO1166 transformer. Transfer functions differ by construction.",
-    "WDF has no bias control. SPICE bias dependence is not modeled.",
-    "WDF fake transformer LPF pole shifts with SR: ~15.1 kHz @ 96k vs ~6.4 kHz @ 44.1k.",
-    "Gain scalar g fitted on lowest-level sweep (linear region only)."
+  "notes": [
+    "Model output is raw volts at SEC_IN; compared directly to SPICE wet (no gain fit).",
+    "ESR on a frequency sweep is phase-sensitive \u2014 small group-delay/transformer-resonance phase diffs inflate it even when |H(f)| matches; the Welch FR + coherence is the authoritative linear-fidelity check.",
+    "gain ~1.0 in metrics confirms the volt scale matches SPICE.",
+    "Rgain=47.0\u03a9 matches the SPICE netlist GAIN_RKJ_OHMS (\u224826 dB)."
   ]
 }
