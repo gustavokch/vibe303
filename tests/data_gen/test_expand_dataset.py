@@ -25,4 +25,6 @@ def test_build_dense_covers_levels_and_is_bounded():
 def test_build_dense_names_unique_and_varied():
     segs = expand.build_dense(duration_scale=0.01)
     kinds = {k.split("_")[0].rstrip("0123456789") for k in segs}
-    assert {"sweep", "pink", "twotone", "multisine", "impulse"} <= kinds
+    # multisine is intentionally excluded (collapses ngspice's gear timestep)
+    assert {"sweep", "pink", "twotone", "impulse"} <= kinds
+    assert not any(k.startswith("multisine") for k in segs)

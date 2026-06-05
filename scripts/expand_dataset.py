@@ -27,7 +27,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import multiprocessing as mp
 import subprocess
 import sys
 from pathlib import Path
@@ -44,7 +43,6 @@ from data_gen.stimulus import (  # noqa: E402
     filtered_impulses,
     load_dry,
     log_sine_sweep,
-    multisine_schroeder,
     pink_noise_bursts,
     two_tone_imd,
 )
@@ -57,7 +55,6 @@ def build_dense(duration_scale: float) -> dict[str, np.ndarray]:
     """Dense level-grid synthetic library as ``{name: float32}``."""
     sweep_s = 30.0 * duration_scale
     short_s = 20.0 * duration_scale
-    multi_s = 60.0 * duration_scale
     segs: dict[str, np.ndarray] = {}
     for lv in [-24, -20, -16, -13, -10, -8, -6, -4, -3, -2, -1]:
         segs[f"sweep_m{abs(lv)}"] = _scale_to_dbfs(
@@ -74,10 +71,9 @@ def build_dense(duration_scale: float) -> dict[str, np.ndarray]:
             segs[f"twotone_p{pi}_m{abs(lv)}"] = _scale_to_dbfs(
                 two_tone_imd(short_s, f1, f2, 0.0), float(lv)
             )
-    for lv in (-12, -6, -3):
-        segs[f"multisine_m{abs(lv)}"] = _scale_to_dbfs(
-            multisine_schroeder(multi_s, 40, 20.0, 20_000.0), float(lv)
-        )
+    # NOTE: the 40-tone Schroeder multisine is intentionally omitted -- its dense
+    # broadband content collapses ngspice's gear timestep (a 30 s sim ran >3 min
+    # without finishing). Sweeps + pink + two-tone already cover the band.
     segs["impulse"] = _scale_to_dbfs(filtered_impulses(short_s), -6.0)
     return segs
 
@@ -116,23 +112,37 @@ def _bias_tag(b: float) -> str:
 
 
 def _stream_one(task: tuple) -> tuple:
-    """Worker: simulate one (dry,bias), resample to a wav, delete the npz.
+    """Run one (dry,bias) as a SUBPROCESS with a hard timeout, then resample.
 
-    Runs in a fresh process (maxtasksperchild=1) so each ngspice shared-lib load
-    is clean. Returns (stem, bias, wav_path_or_None, err_or_None).
+    The sim runs as a separate ``python -m data_gen.run_spice --single`` process
+    (libngspice loads inside it), so a hung/slow sim is killed by the subprocess
+    timeout without wedging the worker -- some dense stimuli collapse ngspice's
+    gear timestep and run for minutes. This worker runs in a ThreadPool thread;
+    the real parallelism is the N concurrent subprocesses. Returns
+    (stem, bias, wav_or_None, err_or_None).
     """
-    dry_path, bias, wet_dir, head_trim_ms = task
+    import subprocess
+
+    dry_path, bias, wet_dir, head_trim_ms, timeout_s = task
     from data_gen.resample import resample_to_grid
-    from data_gen.run_spice import simulate_one
 
     stem = Path(dry_path).stem
     npz = SCRATCH / f"{stem}_bias{_bias_tag(bias)}.npz"
     wav = Path(wet_dir) / f"{stem}_bias{_bias_tag(bias)}.wav"
     try:
-        simulate_one(Path(dry_path), bias, npz)
+        subprocess.run(
+            [sys.executable, "-m", "data_gen.run_spice",
+             "--single", dry_path, "--bias", str(bias), "--out", str(npz)],
+            cwd=str(REPO), timeout=timeout_s, capture_output=True, check=True,
+        )
         resample_to_grid(npz, wav, head_trim_ms=head_trim_ms)
         return (stem, bias, str(wav), None)
-    except Exception as exc:  # keep the batch going; record the failure
+    except subprocess.TimeoutExpired:
+        return (stem, bias, None, f"timeout>{timeout_s}s")
+    except subprocess.CalledProcessError as e:
+        tail = (e.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1:]
+        return (stem, bias, None, f"spice rc={e.returncode} {tail}")
+    except Exception as exc:
         return (stem, bias, None, repr(exc))
     finally:
         try:
@@ -150,8 +160,10 @@ def stream_expand(
     out_base: Path,
     workers: int,
     head_trim_ms: int = 50,
+    sim_timeout: int = 150,
 ) -> None:
     import shutil
+    from multiprocessing.pool import ThreadPool
 
     from data_gen.resample import (
         _infer_stim_kind,
@@ -170,15 +182,16 @@ def stream_expand(
     aligned_dir.mkdir(parents=True, exist_ok=True)
 
     dry_files = sorted(raw_dry.glob("*.wav"))
-    tasks = [(str(d), b, str(wet_dir), head_trim_ms) for d in dry_files for b in biases]
+    tasks = [(str(d), b, str(wet_dir), head_trim_ms, sim_timeout)
+             for d in dry_files for b in biases]
     total = len(tasks)
     print(f"[stream] {len(dry_files)} dry x {len(biases)} biases = {total} sims, "
-          f"{workers} workers", flush=True)
+          f"{workers} workers, sim_timeout={sim_timeout}s", flush=True)
 
     rows: list[tuple] = []
     fails: list[tuple] = []
     done = 0
-    with mp.Pool(processes=workers, maxtasksperchild=1) as pool:
+    with ThreadPool(workers) as pool:
         for stem, bias, wav, err in pool.imap_unordered(_stream_one, tasks):
             done += 1
             if err is None:
@@ -189,7 +202,7 @@ def stream_expand(
                 print(f"[stream] {done}/{total}  ok={len(rows)} fail={len(fails)}", flush=True)
 
     if fails:
-        fp = out_base / "failed.csv"
+        fp = LOCAL_OUT / "failed.csv"
         fp.write_text("stem,bias,error\n" + "\n".join(
             f'{s},{b},"{e}"' for s, b, e in fails))
         print(f"[stream] {len(fails)} sims failed -> {fp}", flush=True)
@@ -241,6 +254,8 @@ def main() -> int:
     ap.add_argument("--biases", default="0.0,0.25,0.5,0.75,1.0")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--duration-scale", type=float, default=1.0)
+    ap.add_argument("--sim-timeout", type=int, default=150,
+                    help="per-sim wall-clock cap (s); slow/hung sims are dropped + logged")
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--skip-generate", action="store_true")
     ap.add_argument("--yes", action="store_true")
@@ -264,7 +279,8 @@ def main() -> int:
             return 1
 
     if args.out_base:
-        stream_expand(out_dry, biases, args.out_base, args.workers)
+        stream_expand(out_dry, biases, args.out_base, args.workers,
+                      sim_timeout=args.sim_timeout)
         print(f"\nDone. Dataset under {args.out_base} (manifest + train/val/test.csv).")
         return 0
 
