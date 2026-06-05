@@ -20,39 +20,90 @@ WDF_DIR = Path.home() / "Git/ba283_wdf"
 BINARY = WDF_DIR / "ba283_sim"
 
 
-def build_if_needed() -> None:
-    """Build the WDF binary with clang++ if it is not already present."""
-    if BINARY.exists():
+def build_if_needed(allow_build: bool = True) -> None:
+    """Ensure a usable WDF binary exists, rebuilding from main.cpp when sensible.
+
+    The ba283_wdf source is an externally-edited repo that is sometimes mid-edit
+    and uncompilable. This function is resilient to that:
+
+      - If the binary is present and at least as new as main.cpp, do nothing.
+      - If the source is newer (or the binary is missing), attempt a rebuild —
+        but if the rebuild FAILS and a last-good binary already exists, warn and
+        fall back to it instead of aborting. Only raise if no binary exists at all.
+      - With ``allow_build=False`` (the ``--no-build`` path), never rebuild; just
+        use whatever binary is on disk (error if none).
+    """
+    src = WDF_DIR / "main.cpp"
+    fresh = BINARY.exists() and src.exists() and BINARY.stat().st_mtime >= src.stat().st_mtime
+
+    if fresh:
         return
-    print("[run_wdf] building ba283_sim with clang++...")
-    subprocess.check_call(
-        [
-            "clang++",
-            "-std=c++17",
-            "-O2",
-            "-I",
-            "chowdsp_wdf/single_include",
-            "main.cpp",
-            "-o",
-            "ba283_sim",
-        ],
-        cwd=WDF_DIR,
-    )
-    print("[run_wdf] build done.")
+
+    if not allow_build:
+        if BINARY.exists():
+            if src.exists() and BINARY.stat().st_mtime < src.stat().st_mtime:
+                print("[run_wdf] WARNING: main.cpp newer than ba283_sim; "
+                      "using existing binary (--no-build).")
+            return
+        raise RuntimeError(
+            f"No WDF binary at {BINARY} and --no-build set; build it first."
+        )
+
+    if BINARY.exists():
+        print("[run_wdf] WARNING: main.cpp newer than ba283_sim; rebuilding...")
+    else:
+        print("[run_wdf] ba283_sim missing; building with clang++...")
+
+    try:
+        subprocess.run(
+            [
+                "clang++",
+                "-std=c++17",
+                "-O2",
+                "-I",
+                "chowdsp_wdf/single_include",
+                "main.cpp",
+                "-o",
+                "ba283_sim",
+            ],
+            cwd=WDF_DIR,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        print("[run_wdf] build done.")
+    except subprocess.CalledProcessError as exc:
+        if BINARY.exists():
+            print("[run_wdf] WARNING: rebuild FAILED (source likely mid-edit); "
+                  "falling back to last-good binary.")
+            print("[run_wdf] build error (first lines):")
+            for line in (exc.stderr or "").splitlines()[:5]:
+                print(f"    {line}")
+        else:
+            raise RuntimeError(
+                f"WDF build failed and no last-good binary exists:\n{exc.stderr}"
+            ) from exc
 
 
-def run_wdf(dry_wav: Path, rgain: float = 1200.0) -> tuple[np.ndarray, int]:
+def run_wdf(
+    dry_wav: Path, rgain: float = 47.0, bias: float = 0.5
+) -> tuple[np.ndarray, int]:
     """Run the WDF model on *dry_wav* and return (samples_float32, sample_rate).
 
     Copies the binary and the dry WAV to a temp directory so the original
     ``input.wav`` (which may be read-only) is never modified.
 
+    The full-chain model's CLI is ``ba283_sim [Rgain] [bias]`` and its output is
+    **raw volts at node SEC_IN** (DC removed).  Rgain defaults to 47 Ω (≈26 dB,
+    matching the SPICE netlist's GAIN_RKJ_OHMS); bias is the RV1 trim pot ∈ [0,1].
+
     Args:
-        dry_wav: Path to a 96 kHz mono float WAV (peak ≤ 0.5 V).
-        rgain:   Gain resistor in ohms (CLI argument to ba283_sim).
+        dry_wav: Path to a 96 kHz mono float WAV (peak ≤ 0.5 V, in volts).
+        rgain:   K↔J gain shunt R_KJ in ohms (lower → more gain).
+        bias:    RV1 trim pot ∈ [0,1].
 
     Returns:
-        Tuple of (samples as float32 ndarray, sample_rate as int).
+        Tuple of (samples as float32 ndarray in volts, sample_rate as int).
     """
     build_if_needed()
     dry_wav = Path(dry_wav)
@@ -64,7 +115,7 @@ def run_wdf(dry_wav: Path, rgain: float = 1200.0) -> tuple[np.ndarray, int]:
         shutil.copy2(dry_wav, tmp / "input.wav")
 
         result = subprocess.run(
-            [str(tmp / "ba283_sim"), str(rgain)],
+            [str(tmp / "ba283_sim"), str(rgain), str(bias)],
             cwd=tmp,
             capture_output=True,
             text=True,
