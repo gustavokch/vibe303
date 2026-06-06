@@ -16,6 +16,21 @@ def test_per_gain_esr_groups_by_gain():
     assert all(v < 1e-9 for v in out.values())
 
 
+def test_per_gain_esr_averages_multiple_rows_at_same_gain():
+    # two rows at gain 0.5: one scored perfectly, one with known ESR.
+    def predict(dry, gain):
+        # err on the row whose dry[0] != 0.0 by predicting zeros.
+        return dry if dry[0] == 0.0 else np.zeros_like(dry)
+
+    perfect_dry = np.concatenate([[0.0], np.ones(2047)])
+    perfect_row = (perfect_dry, 0.5, perfect_dry)  # pred==target -> ESR 0.0
+    err_dry = np.concatenate([[1.0], np.ones(2047)])
+    err_row = (err_dry, 0.5, err_dry)  # pred=zeros, target=err_dry -> ESR 1.0
+    out = per_gain_esr(predict, [perfect_row, err_row])
+    assert set(out) == {0.5}
+    assert abs(out[0.5] - 0.5) < 1e-9  # mean of {0.0, 1.0}
+
+
 def test_held_out_gain_esr_filters_to_unseen_gains():
     rng = np.random.default_rng(2)
     rows = [(d, g, d) for d, g in
