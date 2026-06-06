@@ -55,7 +55,14 @@ def esr_resampled(
     return esr(pred, target, eps=eps)
 
 
-def high_band_error(pred, target, *, sr: int, split_frac: float = 0.5, eps: float = 1e-12) -> float:
+def high_band_error(
+    pred: np.ndarray,
+    target: np.ndarray,
+    *,
+    sr: int,
+    split_frac: float = 0.5,
+    eps: float = 1e-12,
+) -> float:
     """Relative error energy ABOVE split_frac * Nyquist (where folded aliases land).
 
     rFFT both signals, sum squared-magnitude error over bins >= split_frac*Nyquist,
@@ -70,6 +77,7 @@ def high_band_error(pred, target, *, sr: int, split_frac: float = 0.5, eps: floa
     pred, target = pred[:n], target[:n]
     if not (np.isfinite(pred).all() and np.isfinite(target).all()):
         raise ValueError("high_band_error: non-finite values in pred/target")
+    # no window: spectral leakage is common-mode across pred/target and cancels in the C4 diff
     P = np.fft.rfft(pred)
     T = np.fft.rfft(target)
     freqs = np.fft.rfftfreq(n, 1.0 / sr)
