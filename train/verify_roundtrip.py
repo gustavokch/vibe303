@@ -1,7 +1,9 @@
 # train/verify_roundtrip.py
-# Round-trip gate: PyTorch GRU output == Rust hand-coded GRU output (<1e-5).
+# Round-trip gate: PyTorch LSTM output == Rust hand-coded LSTM output (<1e-5).
 # Loads weights from the SAME committed JSON the Rust plugin embeds, so both
 # sides provably use identical weights (no torch-init seed fragility).
+# NOTE: the Rust standalone is the pending #30 port (was GRU); this gate runs
+# once that binary implements the LSTM forward described in train/export.py.
 import argparse
 import json
 import subprocess
@@ -11,25 +13,30 @@ import numpy as np
 import soundfile as sf
 import torch
 
-from train.model import BA283GRU
+from train.model import BA283LSTM
 
 
-def load_model_from_json(json_path: Path) -> BA283GRU:
+def load_model_from_json(json_path: Path) -> BA283LSTM:
     doc = json.loads(json_path.read_text())
     assert doc["hidden_size"] == 32 and doc["input_size"] == 2
-    assert doc["format"] == "ba283-gru-v1"
-    assert doc["gate_order"] == "rzn"
-    gru = next(layer for layer in doc["layers"] if layer["type"] == "gru")
+    assert doc["format"] == "ba283-lstm-v1"
+    assert doc["gate_order"] == "ifgo"
+    conditioning = doc.get("conditioning", "concat")
+    lstm = next(layer for layer in doc["layers"] if layer["type"] == "lstm")
     dense = next(layer for layer in doc["layers"] if layer["type"] == "dense")
-    m = BA283GRU(hidden=32)
+    m = BA283LSTM(hidden=32, conditioning=conditioning)
     sd = {
-        "gru.weight_ih_l0": torch.tensor(gru["weight_ih"], dtype=torch.float32),
-        "gru.weight_hh_l0": torch.tensor(gru["weight_hh"], dtype=torch.float32),
-        "gru.bias_ih_l0": torch.tensor(gru["bias_ih"], dtype=torch.float32),
-        "gru.bias_hh_l0": torch.tensor(gru["bias_hh"], dtype=torch.float32),
+        "lstm.weight_ih_l0": torch.tensor(lstm["weight_ih"], dtype=torch.float32),
+        "lstm.weight_hh_l0": torch.tensor(lstm["weight_hh"], dtype=torch.float32),
+        "lstm.bias_ih_l0": torch.tensor(lstm["bias_ih"], dtype=torch.float32),
+        "lstm.bias_hh_l0": torch.tensor(lstm["bias_hh"], dtype=torch.float32),
         "dense.weight": torch.tensor(dense["weight"], dtype=torch.float32),
         "dense.bias": torch.tensor(dense["bias"], dtype=torch.float32),
     }
+    if conditioning == "film":
+        film = next(layer for layer in doc["layers"] if layer["type"] == "film")
+        sd["film.weight"] = torch.tensor(film["weight"], dtype=torch.float32)
+        sd["film.bias"] = torch.tensor(film["bias"], dtype=torch.float32)
     m.load_state_dict(sd)
     m.train(False)
     return m
