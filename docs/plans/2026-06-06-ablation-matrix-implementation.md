@@ -364,3 +364,21 @@ brainstorming/writing-plans cycle).
 - Respect `.gitignore`: commit manifests + result JSONs, never wav/npz blobs.
 - The metric harness (Phase A) is venue-independent and the only TDD'd code; runs are
   procedural by nature.
+
+---
+
+## Known follow-ups (post Phase-A review)
+
+Phase-A harness (`eval/ablation/`) is built and green (34 tests). One tracked
+integration gap remains before the **C7 target-floor CLI** can run end-to-end:
+
+- `eval/ablation/target_floor.py` `_main` shells out to
+  `eval/acme_vs_spice/compare.py` and `eval/wdf_vs_spice/compare.py` assuming a
+  `--manifest`/`--emit-esr` JSON contract. Those harnesses (separate `spike/*`
+  branch work) do **not** yet expose that CLI: ACME's `compare.py` is absent on
+  this branch and WDF's uses `--stims/--gains/--bias/--out` and prints human
+  tables. Before the first real C7 run, add an `--emit-esr` JSON mode to each
+  harness (or write a thin adapter) and wire the actual flags. The pure core
+  (`summarize_floor`) is tested and correct; only the subprocess glue is pending.
+
+The Phase-A library itself is mergeable independently of this glue.
