@@ -69,3 +69,14 @@ def test_high_band_error_flags_added_hf_alias():
     nyq = sr / 2
     alias = base + 0.3 * np.sin(2 * np.pi * (0.8 * nyq) * np.arange(sr) / sr)  # strong HF content
     assert high_band_error(alias, base, sr=sr) > 1e-3
+
+
+def test_high_band_error_normalizer_bounded_when_target_has_hf():
+    sr = 44100
+    t = np.arange(sr)
+    nyq = sr / 2
+    target = np.sin(2*np.pi*1000*t/sr) + 0.5*np.sin(2*np.pi*(0.8*nyq)*t/sr)
+    pred = np.sin(2*np.pi*1000*t/sr) + 0.55*np.sin(2*np.pi*(0.8*nyq)*t/sr)  # HF tone +10%
+    hbe = high_band_error(pred, target, sr=sr)
+    # error is 0.05/0.5 = 10% of the HF amplitude -> energy ratio ~0.01, bounded
+    assert 0.005 < hbe < 0.02
