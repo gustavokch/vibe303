@@ -47,7 +47,7 @@ def main() -> int:
     ap.add_argument(
         "--weights-json",
         type=Path,
-        default=Path("plugin/weights/ba283_gru32.json"),
+        default=Path("plugin/weights/ba283_lstm32.json"),
     )
     ap.add_argument(
         "--standalone",
