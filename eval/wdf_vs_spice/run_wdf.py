@@ -86,7 +86,7 @@ def build_if_needed(allow_build: bool = True) -> None:
 
 
 def run_wdf(
-    dry_wav: Path, rgain: float = 47.0, bias: float = 0.5
+    dry_wav: Path, rgain: float = 220.0, bias: float = 0.77
 ) -> tuple[np.ndarray, int]:
     """Run the WDF model on *dry_wav* and return (samples_float32, sample_rate).
 
@@ -94,13 +94,15 @@ def run_wdf(
     ``input.wav`` (which may be read-only) is never modified.
 
     The full-chain model's CLI is ``ba283_sim [Rgain] [bias]`` and its output is
-    **raw volts at node SEC_IN** (DC removed).  Rgain defaults to 47 Ω (≈26 dB,
-    matching the SPICE netlist's GAIN_RKJ_OHMS); bias is the RV1 trim pot ∈ [0,1].
+    **raw volts at node SEC_IN** (DC removed).  The dataset is conditioned on
+    GAIN at a fixed bias: Rgain (K↔J shunt R_KJ) is swept while bias is pinned at
+    0.77 (≈65 mA TR3 idle, symmetric clipping).  Rgain default 220 Ω = the real
+    card's 26 dB tap.
 
     Args:
         dry_wav: Path to a 96 kHz mono float WAV (peak ≤ 0.5 V, in volts).
         rgain:   K↔J gain shunt R_KJ in ohms (lower → more gain).
-        bias:    RV1 trim pot ∈ [0,1].
+        bias:    RV1 trim pot ∈ [0,1] (held at 0.77 for the gain-conditioned set).
 
     Returns:
         Tuple of (samples as float32 ndarray in volts, sample_rate as int).

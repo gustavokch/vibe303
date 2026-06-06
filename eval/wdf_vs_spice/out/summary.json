@@ -1,140 +1,194 @@
 {
   "config": {
-    "rgain_ohm": 47.0,
-    "ladder_bias": 0.5,
-    "max_lag_samples": 256,
-    "metric": "raw-volts ESR (dB)"
+    "bias_fixed": 0.77,
+    "gain_norm_grid": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "stims": [
+      "pink_m3_s0",
+      "sweep_m3",
+      "music3_08 - Shed - Rave Echoes_m1"
+    ],
+    "max_lag_samples": 64,
+    "onset_skip_s": 0.5,
+    "metric": "raw-volts ESR (dB), 0.5s onset-skipped",
+    "spice": "on-the-fly from data_gen/netlist.py (corrected EX/10283)"
   },
-  "model": "full-chain BA283 (TR1+TR2+TR3+LO1166), nodal MNA + Newton",
+  "model": "full-chain BA283 (TR1+TR2+TR3+LO1166), nodal MNA + Newton, gain-conditioned",
   "wdf_stability": {
-    "crashed_stimuli": [
-      "music6_Berimbau Loop 07 120bpm_m3_dry.wav",
-      "music8_Conga Loop 06 120bpm_m1_dry.wav",
-      "music9_Sabbath 84bpm Gm PianoMelody_m12_dry.wav",
-      "music9_Sabbath 84bpm Gm PianoMelody_m3_dry.wav",
-      "sweep_m3_dry.wav"
-    ]
+    "crashed_stimuli": [],
+    "recovered_on_retry": [],
+    "retry_budget": 3
+  },
+  "spice_failures": {
+    "points": [],
+    "note": "ngspice memory cap on ~5 s 96 kHz\u00d72 sims (affects gain_validate.py too)."
   },
   "frequency_response": {
-    "stimulus": "pink_m18_s0",
-    "max_err_db_20Hz_20kHz": 0.39,
-    "max_err_db_midband_200_5k": 0.19,
+    "stimulus": "pink_m3_s0",
+    "gain_norm": 0.5,
+    "rkj_ohm": 905.5,
+    "max_err_db_20Hz_20kHz": 0.55,
+    "max_err_db_midband_200_5k": 0.01,
     "mean_coherence_midband": 1.0
   },
-  "level_ladder": {
-    "1": {
-      "esr_db": 1.0371299526456668,
-      "gain": 0.37380464509248357,
-      "model_rms_v": 6.119420073444756,
-      "ref_rms_v": 5.919322548091443,
-      "clipping": true
-    },
-    "2": {
-      "esr_db": 1.856906257612244,
-      "gain": 0.25020950684300286,
-      "model_rms_v": 6.001321820682431,
-      "ref_rms_v": 5.807200010907479,
-      "clipping": true
-    },
-    "3": {
-      "esr_db": 1.8564691632575538,
-      "gain": 0.25081486473786646,
-      "model_rms_v": 5.902824840481598,
-      "ref_rms_v": 5.705786860477054,
-      "clipping": true
-    },
-    "4": {
-      "esr_db": 2.111642935542773,
-      "gain": 0.20828944217870976,
-      "model_rms_v": 5.801250517834017,
-      "ref_rms_v": 5.599656298216923,
-      "clipping": true
-    },
-    "6": {
-      "esr_db": 2.4062094753129784,
-      "gain": 0.16384468085662918,
-      "model_rms_v": 5.597219207496656,
-      "ref_rms_v": 5.333884605696589,
-      "clipping": true
-    },
-    "8": {
-      "esr_db": 2.7984737455766244,
-      "gain": 0.13105028957628792,
-      "model_rms_v": 5.5787830802599325,
-      "ref_rms_v": 5.037898285693986,
-      "clipping": true
-    },
-    "10": {
-      "esr_db": 3.42302305121599,
-      "gain": 0.008794005205104295,
-      "model_rms_v": 5.21342549184835,
-      "ref_rms_v": 4.718345753959082,
-      "clipping": true
-    },
-    "13": {
-      "esr_db": 3.575907620347511,
-      "gain": 0.06474541469316272,
-      "model_rms_v": 4.516869467889045,
-      "ref_rms_v": 3.7275691585271784,
-      "clipping": true
-    },
-    "16": {
-      "esr_db": 6.478887453539109,
-      "gain": 0.18925819615710662,
-      "model_rms_v": 2.5753313505554307,
-      "ref_rms_v": 1.09381101082711,
-      "clipping": true
-    },
-    "20": {
-      "esr_db": -25.956874737623853,
-      "gain": 0.9766553386905481,
-      "model_rms_v": 0.7384682626932494,
-      "ref_rms_v": 0.7219391607728877,
-      "clipping": true
-    },
-    "24": {
-      "esr_db": -26.017011637004536,
-      "gain": 0.9767261889957242,
-      "model_rms_v": 0.4724649747041917,
-      "ref_rms_v": 0.4619160629026695,
-      "clipping": false
-    }
+  "gain_ladder": {
+    "pink_m3_s0": [
+      {
+        "gain_norm": 0.0,
+        "rkj_ohm": 10000.0,
+        "esr_db": -28.14,
+        "nrmse": 0.0025,
+        "rms_db": 0.01,
+        "ref_pk": 1.31,
+        "mod_pk": 1.312
+      },
+      {
+        "gain_norm": 0.25,
+        "rkj_ohm": 3009.2,
+        "esr_db": -28.89,
+        "nrmse": 0.0023,
+        "rms_db": 0.01,
+        "ref_pk": 1.536,
+        "mod_pk": 1.536
+      },
+      {
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -29.71,
+        "nrmse": 0.002,
+        "rms_db": 0.02,
+        "ref_pk": 2.192,
+        "mod_pk": 2.186
+      },
+      {
+        "gain_norm": 0.75,
+        "rkj_ohm": 272.5,
+        "esr_db": -29.91,
+        "nrmse": 0.0019,
+        "rms_db": 0.02,
+        "ref_pk": 3.937,
+        "mod_pk": 3.993
+      },
+      {
+        "gain_norm": 1.0,
+        "rkj_ohm": 82.0,
+        "esr_db": -30.43,
+        "nrmse": 0.0016,
+        "rms_db": 0.01,
+        "ref_pk": 9.309,
+        "mod_pk": 9.371
+      }
+    ],
+    "sweep_m3": [
+      {
+        "gain_norm": 0.0,
+        "rkj_ohm": 10000.0,
+        "esr_db": -30.04,
+        "nrmse": 0.0104,
+        "rms_db": 0.01,
+        "ref_pk": 1.939,
+        "mod_pk": 1.894
+      },
+      {
+        "gain_norm": 0.25,
+        "rkj_ohm": 3009.2,
+        "esr_db": -30.27,
+        "nrmse": 0.0101,
+        "rms_db": 0.01,
+        "ref_pk": 2.289,
+        "mod_pk": 2.239
+      },
+      {
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -30.68,
+        "nrmse": 0.0098,
+        "rms_db": 0.01,
+        "ref_pk": 3.368,
+        "mod_pk": 3.356
+      },
+      {
+        "gain_norm": 0.75,
+        "rkj_ohm": 272.5,
+        "esr_db": -31.06,
+        "nrmse": 0.0093,
+        "rms_db": 0.0,
+        "ref_pk": 6.824,
+        "mod_pk": 6.82
+      },
+      {
+        "gain_norm": 1.0,
+        "rkj_ohm": 82.0,
+        "esr_db": -32.27,
+        "nrmse": 0.0079,
+        "rms_db": -0.0,
+        "ref_pk": 16.125,
+        "mod_pk": 16.121
+      }
+    ],
+    "music3_08 - Shed - Rave Echoes_m1": [
+      {
+        "gain_norm": 0.0,
+        "rkj_ohm": 10000.0,
+        "esr_db": -43.58,
+        "nrmse": 0.001,
+        "rms_db": -0.0,
+        "ref_pk": 2.361,
+        "mod_pk": 2.36
+      },
+      {
+        "gain_norm": 0.25,
+        "rkj_ohm": 3009.2,
+        "esr_db": -44.08,
+        "nrmse": 0.001,
+        "rms_db": -0.0,
+        "ref_pk": 2.79,
+        "mod_pk": 2.79
+      },
+      {
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -44.7,
+        "nrmse": 0.0009,
+        "rms_db": -0.0,
+        "ref_pk": 4.186,
+        "mod_pk": 4.185
+      },
+      {
+        "gain_norm": 0.75,
+        "rkj_ohm": 272.5,
+        "esr_db": -44.94,
+        "nrmse": 0.0009,
+        "rms_db": -0.0,
+        "ref_pk": 8.59,
+        "mod_pk": 8.584
+      },
+      {
+        "gain_norm": 1.0,
+        "rkj_ohm": 82.0,
+        "esr_db": -45.27,
+        "nrmse": 0.0008,
+        "rms_db": -0.0,
+        "ref_pk": 20.737,
+        "mod_pk": 20.731
+      }
+    ]
   },
-  "level_ladder_best_esr_db": -26.02,
-  "bias_tracking": {
-    "esr_per_bias_db": {
-      "0.0": 1.23,
-      "0.25": 2.65,
-      "0.5": 2.41,
-      "0.75": 2.17,
-      "1.0": 1.85
-    },
-    "model_rms_per_bias": {
-      "0.0": 2.0533,
-      "0.25": 4.252,
-      "0.5": 5.5972,
-      "0.75": 6.7765,
-      "1.0": 7.4987
-    },
-    "spice_rms_per_bias": {
-      "0.0": 1.7556,
-      "0.25": 4.0829,
-      "0.5": 5.3339,
-      "0.75": 6.3342,
-      "1.0": 7.2363
-    }
-  },
-  "val_set_esr": {
-    "mean_db": -4.09,
-    "median_db": -3.17,
-    "best_db": -34.26,
-    "worst_db": 6.33,
-    "n_pairs": 40
+  "esr_summary_db": {
+    "median": -30.68,
+    "best": -45.27,
+    "worst": -28.14,
+    "n_points": 15
   },
   "notes": [
-    "Model output is raw volts at SEC_IN; compared directly to SPICE wet (no gain fit).",
-    "ESR on a frequency sweep is phase-sensitive \u2014 small group-delay/transformer-resonance phase diffs inflate it even when |H(f)| matches; the Welch FR + coherence is the authoritative linear-fidelity check.",
-    "gain ~1.0 in metrics confirms the volt scale matches SPICE.",
-    "Rgain=47.0\u03a9 matches the SPICE netlist GAIN_RKJ_OHMS (\u224826 dB)."
+    "Dataset is conditioned on GAIN at fixed bias 0.77 (the corrected netlist).",
+    "SPICE wet is regenerated per point from data_gen/netlist.py \u2014 no stale pre-rendered set.",
+    "ESR is time-domain L2 (phase-sensitive on clean broadband/sweeps); the Welch FR + coherence is the authoritative linear-fidelity check.",
+    "First 0.5 s skipped: SPICE starts from .op steady-state, the model from a rail-ramp warmup \u2014 a switch-on artifact a streaming plugin never sees."
   ]
 }
