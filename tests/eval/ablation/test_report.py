@@ -48,3 +48,22 @@ def test_render_table_has_headers_and_row_with_delta_and_verdict():
     assert "hidden 64" in md
     assert "-3.0" in md  # ΔdB column rendered
     assert "✅" in md  # explains-gap verdict marker for this row
+
+
+def test_render_table_marks_non_explaining_row():
+    md = render_table(
+        [{"cell": "C3", "val_esr": 0.092, "baseline_esr": 0.097, "notes": "alpha 0.95"}],
+        target=0.01,
+    )
+    assert "C3" in md
+    assert "—" in md  # the non-explain verdict branch
+    assert "✅" not in md
+
+
+def test_render_table_handles_perfect_cell_minus_inf_db():
+    md = render_table(
+        [{"cell": "C9", "val_esr": 0.0, "baseline_esr": 0.10, "notes": "perfect"}],
+        target=0.01,
+    )
+    assert "-inf" in md  # -inf dB rendered cleanly without breaking the column
+    assert "✅" in md  # a perfect cell explains the gap

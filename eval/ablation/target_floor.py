@@ -36,6 +36,14 @@ def summarize_floor(
         if len(values) == 0:
             raise ValueError(f"summarize_floor: empty ESR list for model {model!r}")
         med = float(np.median(values))
+        # A NaN median (from a diverged/exploded reference render) would make
+        # ``any(nan >= threshold)`` False and silently CLEAR the gate -- falsely
+        # steering the redesign toward the model instead of data-gen. Reject it,
+        # mirroring ``metrics.esr``'s non-finite policy.
+        if not np.isfinite(med):
+            raise ValueError(
+                f"summarize_floor: non-finite median ESR for model {model!r}"
+            )
         out[f"{model}_median"] = med
         medians.append(med)
     out["target_bound"] = any(m >= threshold for m in medians)
@@ -64,9 +72,11 @@ def _main() -> None:  # pragma: no cover - thin CLI orchestration
     args = parser.parse_args()
 
     esrs: dict[str, list[float]] = {}
+    missing: list[str] = []
     for name, script in (("acme", args.acme_compare), ("wdf", args.wdf_compare)):
         if not script.exists():
-            print(f"[C7] skip {name}: {script} not present")
+            missing.append(name)
+            print(f"[C7] WARNING skip {name}: {script} not present")
             continue
         # Each harness is expected to emit a JSON line {"esr": [...]} on stdout for
         # the given subset; adapt the flags here to the harness's actual CLI.
@@ -82,6 +92,12 @@ def _main() -> None:  # pragma: no cover - thin CLI orchestration
         raise SystemExit("[C7] no reference harness available; cannot estimate floor")
 
     summary = summarize_floor(esrs, threshold=args.threshold)
+    summary["reference_models"] = sorted(esrs)
+    if missing:
+        # Surface a single-source floor loudly: a WDF-only estimate is weaker
+        # than an ACME+WDF agreement and must not read as a full verdict.
+        summary["missing_references"] = sorted(missing)
+        print(f"[C7] WARNING floor is single-source; missing: {sorted(missing)}")
     print(json.dumps(summary, indent=2))
     if summary["target_bound"]:
         print("[C7] TARGET-BOUND: redesign starts at data-gen, not the model.")

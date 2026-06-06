@@ -69,6 +69,8 @@ def high_band_error(
     normalize by the target's high-band energy. Used to compare a 44.1k-trained model
     against an alias-minimized gold reference: lower = less aliasing.
     """
+    if not 0.0 <= split_frac < 1.0:
+        raise ValueError(f"high_band_error: split_frac must be in [0, 1), got {split_frac}")
     pred = np.asarray(pred, dtype=np.float64)
     target = np.asarray(target, dtype=np.float64)
     n = min(len(pred), len(target))

@@ -62,11 +62,12 @@ def render_table(cells: Sequence[Mapping[str, object]], *, target: float) -> str
         val = float(c["val_esr"])
         base = float(c["baseline_esr"])
         d = delta_db(val, base)
+        d_str = "-inf" if math.isinf(d) else f"{d:+.1f}"
         hog = c.get("held_out_gain_esr")
         hog_str = "—" if hog is None else f"{float(hog):.4f}"
         verdict = "✅" if explains_gap(cell=val, baseline=base, target=target) else "—"
         rows.append(
-            f"| {c['cell']} | {val:.4f} | {base:.4f} | {d:+.1f} | "
+            f"| {c['cell']} | {val:.4f} | {base:.4f} | {d_str} | "
             f"{hog_str} | {verdict} | {c.get('notes', '')} |"
         )
     return "\n".join(rows)

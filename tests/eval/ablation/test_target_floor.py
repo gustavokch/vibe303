@@ -29,3 +29,11 @@ def test_summarize_floor_median_is_true_median_not_mean():
 def test_summarize_floor_raises_on_empty_model_list():
     with pytest.raises(ValueError):
         summarize_floor({"acme": []}, threshold=0.05)
+
+
+def test_summarize_floor_raises_on_nan_median_not_silently_clear():
+    # a NaN median must NOT silently report target_bound=False (would falsely
+    # steer the redesign toward the model instead of data-gen).
+    nan = float("nan")
+    with pytest.raises(ValueError):
+        summarize_floor({"acme": [nan, 0.2]}, threshold=0.05)

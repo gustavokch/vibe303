@@ -80,3 +80,19 @@ def test_high_band_error_normalizer_bounded_when_target_has_hf():
     hbe = high_band_error(pred, target, sr=sr)
     # error is 0.05/0.5 = 10% of the HF amplitude -> energy ratio ~0.01, bounded
     assert 0.005 < hbe < 0.02
+
+
+def test_esr_resampled_tolerates_length_mismatch():
+    # resample can leave a few-sample length delta vs target; the truncation path
+    # in esr must absorb it without error.
+    sr_hi, sr_lo = 88200, 44100
+    t_hi = np.sin(np.linspace(0, 20, sr_hi + 7)).astype(np.float64)  # odd extra samples
+    t_lo = np.sin(np.linspace(0, 20, sr_lo)).astype(np.float64)
+    val = esr_resampled(t_hi, t_lo, sr_from=sr_hi, sr_to=sr_lo)
+    assert np.isfinite(val)
+
+
+def test_high_band_error_rejects_out_of_range_split_frac():
+    x = np.ones(1024)
+    with pytest.raises(ValueError):
+        high_band_error(x, x, sr=44100, split_frac=1.0)
