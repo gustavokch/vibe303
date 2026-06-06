@@ -2,6 +2,9 @@
 
 Operator runbook for producing a trained, exported BA283 model from scratch.
 
+> For *what the numbers mean and why the model is built this way*, see the
+> concept companion: [Training, Explained](training_explained.md).
+
 ## 1. Overview
 
 This pipeline produces `plugin/weights/ba283_gru32.json` — the self-describing
