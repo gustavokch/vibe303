@@ -28,7 +28,8 @@ def per_gain_esr(predict: Predict, rows: Sequence[Row]) -> dict[float, float]:
     for dry, gain, target in rows:
         pred = predict(dry, gain)
         grouped[gain].append(esr(pred, target))
-    return {gain: float(np.mean(scores)) for gain, scores in grouped.items()}
+    result = {gain: float(np.mean(scores)) for gain, scores in grouped.items()}
+    return dict(sorted(result.items()))
 
 
 def held_out_gain_esr(
