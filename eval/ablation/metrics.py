@@ -14,12 +14,21 @@ def esr(pred: np.ndarray, target: np.ndarray, eps: float = 1e-12) -> float:
 
     Inputs are truncated to their common length, so a few-sample length
     mismatch (e.g. from resampling edge effects) is handled gracefully.
-    Returns 0.0 when ``pred == target``; ``eps`` guards against a silent target.
+    Returns 0.0 when ``pred == target``.
+
+    ``eps`` is solely a 0/0 guard for the degenerate all-zero-target case; it
+    is NOT a meaningful floor on the raw-volt domain (target energy is
+    ~1e3-1e6). Callers pass energetic full-length val stems; near-silent inputs
+    are not expected here (the dataset drops them upstream).
     """
     pred = np.asarray(pred, dtype=np.float64)
     target = np.asarray(target, dtype=np.float64)
     n = min(len(pred), len(target))
+    if n == 0:
+        raise ValueError("esr: empty signal")
     pred, target = pred[:n], target[:n]
+    if not (np.isfinite(pred).all() and np.isfinite(target).all()):
+        raise ValueError("esr: non-finite values in pred/target")
     return float(((pred - target) ** 2).sum() / ((target**2).sum() + eps))
 
 
@@ -40,5 +49,7 @@ def esr_resampled(
     pred = np.asarray(pred, dtype=np.float64)
     if sr_from != sr_to:
         g = gcd(sr_from, sr_to)
+        # scipy's default Kaiser-windowed polyphase filter provides the
+        # anti-alias; adequate as a fairness/comparison metric.
         pred = resample_poly(pred, sr_to // g, sr_from // g)
     return esr(pred, target, eps=eps)
