@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from eval.ablation.metrics import esr, esr_resampled
+from eval.ablation.metrics import esr, esr_resampled, high_band_error
 
 
 def test_esr_zero_on_identical():
@@ -56,3 +56,16 @@ def test_esr_raises_on_nonfinite():
         esr(np.array([np.nan, 2.0, 3.0]), target)
     with pytest.raises(ValueError):
         esr(np.array([np.inf, 2.0, 3.0]), target)
+
+
+def test_high_band_error_zero_on_identical():
+    x = np.random.default_rng(0xBA283).standard_normal(44100)
+    assert high_band_error(x, x, sr=44100) < 1e-9
+
+
+def test_high_band_error_flags_added_hf_alias():
+    sr = 44100
+    base = np.sin(2 * np.pi * 1000 * np.arange(sr) / sr)
+    nyq = sr / 2
+    alias = base + 0.3 * np.sin(2 * np.pi * (0.8 * nyq) * np.arange(sr) / sr)  # strong HF content
+    assert high_band_error(alias, base, sr=sr) > 1e-3
