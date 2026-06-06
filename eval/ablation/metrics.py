@@ -1,0 +1,44 @@
+"""Pure-numpy fidelity metrics for the BA283 model ablation study.
+
+No torch, no GPU. scipy is used only for polyphase anti-aliased resampling.
+"""
+
+from math import gcd
+
+import numpy as np
+from scipy.signal import resample_poly
+
+
+def esr(pred: np.ndarray, target: np.ndarray, eps: float = 1e-12) -> float:
+    """Error-to-signal ratio: sum((pred - target)**2) / sum(target**2).
+
+    Inputs are truncated to their common length, so a few-sample length
+    mismatch (e.g. from resampling edge effects) is handled gracefully.
+    Returns 0.0 when ``pred == target``; ``eps`` guards against a silent target.
+    """
+    pred = np.asarray(pred, dtype=np.float64)
+    target = np.asarray(target, dtype=np.float64)
+    n = min(len(pred), len(target))
+    pred, target = pred[:n], target[:n]
+    return float(((pred - target) ** 2).sum() / ((target**2).sum() + eps))
+
+
+def esr_resampled(
+    pred: np.ndarray,
+    target: np.ndarray,
+    *,
+    sr_from: int,
+    sr_to: int,
+    eps: float = 1e-12,
+) -> float:
+    """ESR after resampling ``pred`` from ``sr_from`` to ``sr_to``.
+
+    Uses a polyphase anti-aliasing filter so 88.2k and 44.1k models are scored
+    at a common rate (``sr_to``) and compare apples-to-apples. When the two rates
+    are already equal this reduces to a plain :func:`esr` call.
+    """
+    pred = np.asarray(pred, dtype=np.float64)
+    if sr_from != sr_to:
+        g = gcd(sr_from, sr_to)
+        pred = resample_poly(pred, sr_to // g, sr_from // g)
+    return esr(pred, target, eps=eps)
