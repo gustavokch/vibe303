@@ -1,0 +1,143 @@
+{
+  "config": {
+    "bias_grid": [
+      0.0,
+      0.25,
+      0.5,
+      0.77,
+      1.0
+    ],
+    "gain_norm_grid": [
+      0.5
+    ],
+    "stims": [
+      "sweep_m3"
+    ],
+    "max_lag_samples": 64,
+    "onset_skip_s": 0.5,
+    "metric": "raw-volts ESR (dB), onset-skipped",
+    "spice": "on-the-fly from data_gen/netlist.py (EX/10283)"
+  },
+  "model": "ACME.jl DK-method BA283 (TR1+TR2+TR3+LO1166), Ebers-Moll bjt (no junction caps)",
+  "frequency_response": [
+    {
+      "stimulus": "sweep_m3",
+      "bias": 0.0,
+      "gain_norm": 0.5,
+      "rkj_ohm": 905.5,
+      "max_err_db_20Hz_20kHz": 0.54,
+      "max_err_db_midband_200_5k": 0.02,
+      "mean_coherence_midband": 1.0
+    },
+    {
+      "stimulus": "sweep_m3",
+      "bias": 0.25,
+      "gain_norm": 0.5,
+      "rkj_ohm": 905.5,
+      "max_err_db_20Hz_20kHz": 0.47,
+      "max_err_db_midband_200_5k": 0.03,
+      "mean_coherence_midband": 1.0
+    },
+    {
+      "stimulus": "sweep_m3",
+      "bias": 0.5,
+      "gain_norm": 0.5,
+      "rkj_ohm": 905.5,
+      "max_err_db_20Hz_20kHz": 0.41,
+      "max_err_db_midband_200_5k": 0.03,
+      "mean_coherence_midband": 1.0
+    },
+    {
+      "stimulus": "sweep_m3",
+      "bias": 0.77,
+      "gain_norm": 0.5,
+      "rkj_ohm": 905.5,
+      "max_err_db_20Hz_20kHz": 0.38,
+      "max_err_db_midband_200_5k": 0.03,
+      "mean_coherence_midband": 1.0
+    },
+    {
+      "stimulus": "sweep_m3",
+      "bias": 1.0,
+      "gain_norm": 0.5,
+      "rkj_ohm": 905.5,
+      "max_err_db_20Hz_20kHz": 0.37,
+      "max_err_db_midband_200_5k": 0.03,
+      "mean_coherence_midband": 1.0
+    }
+  ],
+  "points": {
+    "sweep_m3@b0.00": [
+      {
+        "bias": 0.0,
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -35.65,
+        "nrmse": 0.0055,
+        "rms_db": 0.02,
+        "ref_pk": 3.501,
+        "mod_pk": 3.455
+      }
+    ],
+    "sweep_m3@b0.25": [
+      {
+        "bias": 0.25,
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -36.3,
+        "nrmse": 0.0051,
+        "rms_db": 0.02,
+        "ref_pk": 3.423,
+        "mod_pk": 3.423
+      }
+    ],
+    "sweep_m3@b0.50": [
+      {
+        "bias": 0.5,
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -36.5,
+        "nrmse": 0.005,
+        "rms_db": 0.02,
+        "ref_pk": 3.401,
+        "mod_pk": 3.392
+      }
+    ],
+    "sweep_m3@b0.77": [
+      {
+        "bias": 0.77,
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -36.63,
+        "nrmse": 0.0049,
+        "rms_db": 0.02,
+        "ref_pk": 3.368,
+        "mod_pk": 3.358
+      }
+    ],
+    "sweep_m3@b1.00": [
+      {
+        "bias": 1.0,
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -36.71,
+        "nrmse": 0.0049,
+        "rms_db": 0.02,
+        "ref_pk": 3.334,
+        "mod_pk": 3.328
+      }
+    ]
+  },
+  "esr_summary_db": {
+    "median": -36.5,
+    "best": -36.71,
+    "worst": -35.65,
+    "n_points": 5
+  },
+  "verdict": "FEASIBLE \u2014 ACME matches SPICE across all points (worst midband \u00b10.03 dB, worst ESR -35.6 dB) incl. gain_norm 1.0 clipping; refine junction-cap fidelity next.",
+  "notes": [
+    "ACME bjt() is Ebers-Moll/Gummel-Poon without junction caps (CJE/CJC/TF); external Miller comp caps C2/C5/C3 are modelled explicitly.",
+    "ACME has no SPICE .op; ba283_acme.jl prepends a 2 s warmup so the slow electrolytics settle, then the comparator onset-skips 0.5 s.",
+    "Welch FR + coherence is the authoritative linear-fidelity check; ESR is phase-sensitive time-domain L2."
+  ]
+}

@@ -70,10 +70,39 @@ Worst ESR −30.5 dB; worst midband ±0.1 dB; RMS match ≤0.07 dB; lag 0 everyw
 nonlinearity as well as Gummel-Poon here. The missing BJT junction caps do not
 bite in the audio band.
 
+## Widening 2 — music DI + bias sweep
+
+Confirmed generality beyond the synthetic stimuli / fixed bias.
+
+**Music DI** (`music3_08 - Shed - Rave Echoes_m1`, bias 0.77) → `out/music/`:
+
+| gain_norm | R_KJ | ESR | FR midband | coherence | peak ref/ACME |
+|-----------|------|-----|-----------|-----------|---------------|
+| 0.5 | 906 Ω | −50.7 dB | +0.0 dB | 1.000 | 4.19 / 4.18 V |
+| 1.0 |  82 Ω | −43.9 dB | +0.1 dB | 1.000 | 20.74 / 20.64 V |
+
+Cleaner than the synthetic stimuli (program material has less broadband energy
+stressing the residual), even at 20.7 V hard clipping.
+
+**Bias sweep** (`sweep_m3`, gain_norm 0.5) → `out/biassweep/`:
+
+| bias | TR3 idle | ESR | FR midband | coherence | peak ref/ACME |
+|------|----------|-----|-----------|-----------|---------------|
+| 0.00 | hottest | −35.6 dB | +0.0 dB | 1.000 | 3.50 / 3.46 V |
+| 0.25 |         | −36.3 dB | +0.0 dB | 1.000 | 3.42 / 3.42 V |
+| 0.50 |         | −36.5 dB | +0.0 dB | 1.000 | 3.40 / 3.39 V |
+| 0.77 | spec    | −36.6 dB | +0.0 dB | 1.000 | 3.37 / 3.36 V |
+| 1.00 | coolest | −36.7 dB | +0.0 dB | 1.000 | 3.33 / 3.33 V |
+
+ACME tracks SPICE at every RV1 operating point; the bias-driven peak shift
+(3.50 → 3.33 V as TR3 idle cools) is reproduced identically. The hottest bias
+(0.0, ~160 mA TR3 idle) is marginally the worst (−35.6 dB) but still excellent.
+
+**Verdict holds across all dimensions:** stimulus type (synthetic + music),
+gain (linear + clipping), and the full bias range.
+
 ## Caveats / next steps
 
-- Only bias 0.77 and pink+sweep tested. Widen to a music DI and a bias sweep to
-  confirm generality.
 - ACME JITs a fresh `DiscreteModel` per run (~30 s). Cache the compiled model
   before any bulk dataset generation.
 - LO1166 is the same linear mutual-inductance model as the netlist (no core

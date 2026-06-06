@@ -101,17 +101,22 @@ def main() -> None:
                                  formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--stims", default=",".join(DEFAULT_STIMS))
     ap.add_argument("--gains", default=",".join(str(g) for g in DEFAULT_GAINS))
-    ap.add_argument("--bias", type=float, default=0.77)
+    ap.add_argument("--bias", type=float, default=0.77,
+                    help="single RV1 bias; ignored if --biases is given.")
+    ap.add_argument("--biases", default=None,
+                    help="comma-separated RV1 bias grid in [0,1] (bias sweep).")
     ap.add_argument("--out", type=Path, default=Path("eval/acme_vs_spice/out"))
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
     stims = [s.strip() for s in args.stims.split(",") if s.strip()]
     gains = [float(x) for x in args.gains.split(",")]
+    biases = ([float(b) for b in args.biases.split(",")] if args.biases
+              else [args.bias])
 
     print("=" * 64)
     print("ACME.jl vs SPICE — BA283 feasibility spike")
-    print(f"  bias (fixed) : {args.bias}")
+    print(f"  bias grid    : {biases} (RV1 wiper → TR3 idle / clip symmetry)")
     print(f"  gain grid    : {gains} (gain_norm → R_KJ via netlist)")
     print(f"  stimuli      : {stims}")
     print(f"  metric       : raw-volts ESR, |lag|<={SPAN}, {ONSET_SKIP}s onset-skip")
@@ -128,44 +133,48 @@ def main() -> None:
             continue
         dry = np.asarray(sf.read(dry_path, always_2d=False)[0], dtype=np.float64)
         nfix = dry.shape[0]
-        rows: list[dict] = []
         print(f"[acme] {stem}")
-        for gn in gains:
-            g = gain_norm_to_rkj(gn)
-            try:
-                ref = run_spice(dry_path, g, args.bias, nfix)
-            except Exception as exc:  # noqa: BLE001
-                print(f"    gain_norm={gn:.2f}: SPICE FAIL {exc}")
-                rows.append({"gain_norm": gn, "rkj": g, "esr_db": None, "spice_failed": True})
-                continue
-            try:
-                mod = run_acme(dry, SR, rgain=g, bias=args.bias)
-            except Exception as exc:  # noqa: BLE001
-                print(f"    gain_norm={gn:.2f}: ACME FAIL {exc}")
-                rows.append({"gain_norm": gn, "rkj": g, "esr_db": None, "acme_failed": True})
-                continue
-            if not np.all(np.isfinite(mod)):
-                print(f"    gain_norm={gn:.2f}: ACME non-finite output")
-                rows.append({"gain_norm": gn, "rkj": g, "esr_db": None, "acme_nonfinite": True})
-                continue
+        for bias in biases:
+            rows: list[dict] = []
+            for gn in gains:
+                g = gain_norm_to_rkj(gn)
+                base = {"gain_norm": gn, "rkj": g, "bias": bias}
+                try:
+                    ref = run_spice(dry_path, g, bias, nfix)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"    bias={bias:.2f} gain_norm={gn:.2f}: SPICE FAIL {exc}")
+                    rows.append({**base, "esr_db": None, "spice_failed": True})
+                    continue
+                try:
+                    mod = run_acme(dry, SR, rgain=g, bias=bias)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"    bias={bias:.2f} gain_norm={gn:.2f}: ACME FAIL {exc}")
+                    rows.append({**base, "esr_db": None, "acme_failed": True})
+                    continue
+                if not np.all(np.isfinite(mod)):
+                    print(f"    bias={bias:.2f} gain_norm={gn:.2f}: ACME non-finite output")
+                    rows.append({**base, "esr_db": None, "acme_nonfinite": True})
+                    continue
 
-            mt = metrics(ref, mod)
-            mt.update({"gain_norm": gn, "rkj": g})
-            rows.append(mt)
-            print(f"    gain_norm={gn:.2f} R_KJ={g:>5.0f}Ω  ESR={mt['esr_db']:+6.1f} dB  "
-                  f"NRMSE={mt['nrmse']:.4f}  rms={mt['rms_db']:+.2f} dB  "
-                  f"pk {mt['ref_pk']:.3f}/{mt['mod_pk']:.3f}  lag={mt['lag']:+d}")
+                mt = metrics(ref, mod)
+                mt.update(base)
+                rows.append(mt)
+                print(f"    bias={bias:.2f} gain_norm={gn:.2f} R_KJ={g:>5.0f}Ω  "
+                      f"ESR={mt['esr_db']:+6.1f} dB  NRMSE={mt['nrmse']:.4f}  "
+                      f"rms={mt['rms_db']:+.2f} dB  pk {mt['ref_pk']:.3f}/{mt['mod_pk']:.3f}  "
+                      f"lag={mt['lag']:+d}")
 
-            # Welch FR + waveform overlay per (stim, gain) point (unique tags).
-            tag = f"{stem}_g{gn:.2f}".replace(" ", "_").replace("/", "_")
-            n = min(len(dry), len(ref), len(mod))
-            fcs, mdb, mco = _welch_tf(mod[:n], dry[:n])
-            _, rdb, _ = _welch_tf(ref[:n], dry[:n])
-            fr_list.append({"stimulus": stem, "gain_norm": gn, "rkj_ohm": round(g, 1),
-                            **_fr_plot(fcs, rdb, mdb, mco, stem, gn, g, args.bias,
-                                       args.out, tag)})
-            _overlay(ref, mod, f"acme_{tag}", args.out)
-        results[stem] = rows
+                # Welch FR + waveform overlay per (stim, bias, gain) point.
+                tag = f"{stem}_b{bias:.2f}_g{gn:.2f}".replace(" ", "_").replace("/", "_")
+                n = min(len(dry), len(ref), len(mod))
+                fcs, mdb, mco = _welch_tf(mod[:n], dry[:n])
+                _, rdb, _ = _welch_tf(ref[:n], dry[:n])
+                fr_list.append({"stimulus": stem, "bias": bias, "gain_norm": gn,
+                                "rkj_ohm": round(g, 1),
+                                **_fr_plot(fcs, rdb, mdb, mco, stem, gn, g, bias,
+                                           args.out, tag)})
+                _overlay(ref, mod, f"acme_{tag}", args.out)
+            results[f"{stem}@b{bias:.2f}"] = rows
 
     # Verdict from the WORST point: ACME-vs-SPICE midband FR err + ESR.
     # NB: coherence-vs-dry drops under clipping (gain 1.0) — that is the device's
@@ -189,13 +198,13 @@ def main() -> None:
                        f"investigate topology/param mapping before trusting ACME.")
 
     summary = {
-        "config": {"bias_fixed": args.bias, "gain_norm_grid": gains, "stims": stims,
+        "config": {"bias_grid": biases, "gain_norm_grid": gains, "stims": stims,
                    "max_lag_samples": SPAN, "onset_skip_s": ONSET_SKIP,
                    "metric": "raw-volts ESR (dB), onset-skipped",
                    "spice": "on-the-fly from data_gen/netlist.py (EX/10283)"},
         "model": "ACME.jl DK-method BA283 (TR1+TR2+TR3+LO1166), Ebers-Moll bjt (no junction caps)",
         "frequency_response": fr_list,
-        "points": {stem: [{"gain_norm": r["gain_norm"], "rkj_ohm": round(r["rkj"], 1),
+        "points": {key: [{"bias": r.get("bias"), "gain_norm": r["gain_norm"], "rkj_ohm": round(r["rkj"], 1),
                            "esr_db": (round(r["esr_db"], 2) if r.get("esr_db") is not None else None),
                            "nrmse": (round(r["nrmse"], 4) if "nrmse" in r else None),
                            "rms_db": (round(r["rms_db"], 2) if "rms_db" in r else None),
@@ -203,7 +212,7 @@ def main() -> None:
                            "mod_pk": (round(r["mod_pk"], 3) if "mod_pk" in r else None),
                            **{k: r[k] for k in ("spice_failed", "acme_failed", "acme_nonfinite") if k in r}}
                           for r in rows]
-                   for stem, rows in results.items()},
+                   for key, rows in results.items()},
         "esr_summary_db": {
             "median": round(float(np.median(esr_vals)), 2) if esr_vals else None,
             "best": round(float(np.min(esr_vals)), 2) if esr_vals else None,
@@ -226,7 +235,8 @@ def main() -> None:
     print("SUMMARY")
     print("=" * 64)
     for f in fr_list:
-        print(f"  [{f['stimulus'][:20]} g{f['gain_norm']}] FR 20-20k {f['max_err_db_20Hz_20kHz']:+.1f} dB"
+        print(f"  [{f['stimulus'][:18]} b{f['bias']} g{f['gain_norm']}] "
+              f"FR 20-20k {f['max_err_db_20Hz_20kHz']:+.1f} dB"
               f"  midband {f['max_err_db_midband_200_5k']:+.1f} dB"
               f"  coh {f['mean_coherence_midband']:.3f}")
     if esr_vals:
