@@ -1,11 +1,32 @@
 //! Golden-vector tests for the WDF/MNA circuit solver (ports ~/Git/ba283_wdf/main.cpp).
 //! Fixtures captured from the C++ reference at the realtime tier — see plugin/tests/fixtures/wdf_golden.rs.
 
-use ba283::wdf::{self, node, NUM_NODES};
+use ba283::wdf::{self, node, QualityConfig, NUM_NODES};
 
 #[allow(dead_code)]
 mod wdf_golden {
     include!("fixtures/wdf_golden.rs");
+}
+
+/// Render the golden INPUT_256 stream through a warmed WDF model at the given config.
+fn run_stream(cfg: QualityConfig) -> Vec<f32> {
+    let mut m = wdf::WdfModel::new_with(cfg, wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
+    m.warmup();
+    wdf_golden::INPUT_256
+        .iter()
+        .map(|&x| m.process_host_sample(x as f32))
+        .collect()
+}
+
+/// Max absolute deviation of a lever config's output stream from the realtime reference stream.
+fn max_dev_vs_realtime(cfg: QualityConfig) -> f64 {
+    let reference = run_stream(QualityConfig::realtime());
+    let got = run_stream(cfg);
+    reference
+        .iter()
+        .zip(got.iter())
+        .map(|(&a, &b)| (a as f64 - b as f64).abs())
+        .fold(0.0, f64::max)
 }
 
 #[test]
@@ -135,6 +156,55 @@ fn decimated_output_matches_cpp() {
             wdf_golden::OUTPUT_256[i]
         );
     }
+}
+
+// ---- round-2 speed levers: A/B against the realtime reference (same fixed point) ----
+
+#[test]
+fn predict_lever_is_lossless() {
+    // Newton predictor only changes the warm-start guess. Same fixed point, but at the realtime
+    // tol (1e-7) the warm start lands a different (equally valid) iterate within tol — a ~1e-5
+    // output blip on the odd hard sample, not the ≤1-ULP agreement a tight tol would give. Bound
+    // tracks Newton tol, not f32 rounding.
+    let cfg = QualityConfig { predict: true, ..QualityConfig::realtime() };
+    let dev = max_dev_vs_realtime(cfg);
+    assert!(dev <= 1e-4, "predict deviation {dev} exceeds 1e-4");
+}
+
+#[test]
+fn schur_lever_is_lossless() {
+    // Schur static-block solve: different elimination order, same solution within tol.
+    let cfg = QualityConfig { solver: wdf::Solver::Schur, ..QualityConfig::realtime() };
+    let dev = max_dev_vs_realtime(cfg);
+    assert!(dev <= 1e-9, "schur deviation {dev} exceeds 1e-9");
+}
+
+#[test]
+fn ls_trim_lever_is_lossless() {
+    // Deferred-acceptance line search: bit-identical on the monotone path, ~1e-6 on hard onsets.
+    let cfg = QualityConfig { ls_trim: true, ..QualityConfig::realtime() };
+    let dev = max_dev_vs_realtime(cfg);
+    assert!(dev <= 1e-6, "ls-trim deviation {dev} exceeds 1e-6");
+}
+
+#[test]
+fn lossless_lever_combo_matches_realtime() {
+    // predict + schur + ls-trim (the fast tier MINUS the lossy freeze-caps) stays tol-equivalent.
+    let cfg = QualityConfig {
+        predict: true,
+        solver: wdf::Solver::Schur,
+        ls_trim: true,
+        ..QualityConfig::realtime()
+    };
+    let dev = max_dev_vs_realtime(cfg);
+    assert!(dev <= 1e-4, "lossless combo deviation {dev} exceeds 1e-4");
+}
+
+#[test]
+fn fast_tier_is_near_lossless() {
+    // Fast tier adds freeze-caps (lossy). Bound is FR-gated, not bit-exact: tiny deviation only.
+    let dev = max_dev_vs_realtime(QualityConfig::fast());
+    assert!(dev <= 2e-3, "fast tier deviation {dev} exceeds 2e-3");
 }
 
 #[test]
