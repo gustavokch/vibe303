@@ -70,3 +70,37 @@ fn build_topology_matches_cpp() {
     // a solved node has a valid row.
     assert!(m.urow_of(node::N_SEC_IN) >= 0);
 }
+
+#[test]
+fn process_settles_toward_golden() {
+    // Mini rail-ramp + idle settle (the real warmup schedule is A5). At the realtime tier with
+    // f64 determinism the operating point should land within 1e-4 of the C++ settled vector.
+    let internal_sr = 96_000.0;
+    let mut m = wdf::WdfModel::build(internal_sr, 220.0, wdf_golden::BIAS);
+    let ramp = internal_sr as usize; // 1 s
+    for i in 0..ramp {
+        m.v[node::N_INPUT as usize] = 0.0;
+        m.v[node::N_A as usize] = 24.0 * (i as f64) / (ramp as f64);
+        m.process();
+    }
+    m.v[node::N_A as usize] = 24.0;
+    // idle-settle with tap-delta early-exit (mirrors the C++ idleSettle), capped at 8 s.
+    let chunk = (internal_sr * 0.25) as usize;
+    let mut prev_tap = 1e9;
+    for _ in 0..32 {
+        for _ in 0..chunk {
+            m.process();
+        }
+        let tap = m.node_v(node::N_SEC_IN);
+        if (tap - prev_tap).abs() < 1e-6 {
+            break;
+        }
+        prev_tap = tap;
+    }
+    // check the DC operating-point nodes
+    for &id in &[node::N_TR1_C, node::N_TR2_E, node::N_TR3_E, node::N_F, node::N_RV1_W] {
+        let got = m.node_v(id);
+        let exp = wdf_golden::SETTLED_V[id as usize];
+        assert!((got - exp).abs() <= 1e-4, "node {id}: {got} vs {exp}");
+    }
+}

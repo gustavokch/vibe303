@@ -745,4 +745,467 @@ impl WdfModel {
         let vbc = self.node_v(t.b) - self.node_v(t.c);
         1000.0 * compute_bjt(vbe, vbc, &t.p).ic
     }
+
+    /// Residual 2-norm at current `v` (for line search / convergence), reusing per-sample `hist`.
+    /// Must stamp the SAME branches as `newton_iterate`'s F for line-search consistency
+    /// (`main.cpp:717-761`).
+    fn residual_norm(&mut self, gmin: f64) -> f64 {
+        use node::{N_A, N_PA, N_SA};
+        let u = self.u;
+        for i in 0..u {
+            self.rn[i] = self.hist[i];
+        }
+        // resistors
+        for i in 0..self.n_res {
+            let r = self.res[i];
+            let (va, vb) = (self.node_v(r.a), self.node_v(r.b));
+            let (ra, rb) = (self.ur(r.a), self.ur(r.b));
+            if ra >= 0 {
+                self.rn[ra as usize] += r.g * (va - vb);
+            }
+            if rb >= 0 {
+                self.rn[rb as usize] += r.g * (vb - va);
+            }
+        }
+        // caps
+        for i in 0..self.n_caps {
+            let c = self.caps[i];
+            let (va, vb) = (self.node_v(c.a), self.node_v(c.b));
+            let (ra, rb) = (self.ur(c.a), self.ur(c.b));
+            if ra >= 0 {
+                self.rn[ra as usize] += c.geq * (va - vb);
+            }
+            if rb >= 0 {
+                self.rn[rb as usize] += c.geq * (vb - va);
+            }
+        }
+        // coupled inductor
+        {
+            let vp = self.node_v(N_PA) - self.node_v(N_A);
+            let vs = self.node_v(N_SA);
+            let (rp, rs) = (self.ur(N_PA), self.ur(N_SA));
+            if rp >= 0 {
+                self.rn[rp as usize] += self.gl[0][0] * vp + self.gl[0][1] * vs;
+            }
+            if rs >= 0 {
+                self.rn[rs as usize] += self.gl[1][0] * vp + self.gl[1][1] * vs;
+            }
+        }
+        // BJTs (transport + charge caps — must match newton_iterate's F)
+        let k2 = 2.0 / self.dt;
+        for bi in 0..self.bjts.len() {
+            let t = self.bjts[bi];
+            let vbe = self.node_v(t.b) - self.node_v(t.e);
+            let vbc = self.node_v(t.b) - self.node_v(t.c);
+            let o = compute_bjt(vbe, vbc, &t.p);
+            let (rb, re, rc) = (self.ur(t.b), self.ur(t.e), self.ur(t.c));
+            if rb >= 0 {
+                self.rn[rb as usize] += o.ib;
+            }
+            if rc >= 0 {
+                self.rn[rc as usize] += o.ic;
+            }
+            if re >= 0 {
+                self.rn[re as usize] += o.ie;
+            }
+            if self.cap_tier != CapTier::Off {
+                let tf = if self.cap_tier == CapTier::Full { t.p.tf } else { 0.0 };
+                let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
+                let (qbe_dep, _) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
+                let (qbc_dep, _) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
+                let ibe = k2 * (qbe_dep + tf * o.itf - t.qbe_prev) - t.ibe_prev;
+                let ibc = k2 * (qbc_dep + tr * o.itr - t.qbc_prev) - t.ibc_prev;
+                if rb >= 0 {
+                    self.rn[rb as usize] += ibe + ibc;
+                }
+                if re >= 0 {
+                    self.rn[re as usize] -= ibe;
+                }
+                if rc >= 0 {
+                    self.rn[rc as usize] -= ibc;
+                }
+            }
+        }
+        if gmin != 0.0 {
+            for i in 0..NUM_NODES {
+                let r = self.ur(i as i32);
+                if r >= 0 {
+                    self.rn[r as usize] += gmin * self.v[i];
+                }
+            }
+        }
+        let mut n = 0.0;
+        for i in 0..u {
+            n += self.rn[i] * self.rn[i];
+        }
+        n.sqrt()
+    }
+
+    /// Dense Gaussian elimination with index-swap partial pivoting. Solves `A x = b` in place
+    /// (`x` in `b`). `A` is accessed through the `row[]` permutation; `b` is swapped physically —
+    /// the asymmetry is bit-identical to row-swap (`main.cpp:764-794`, commit 42b51ef).
+    fn gauss_solve(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
+        let mut row = [0usize; NUM_NODES];
+        for (i, slot) in row.iter_mut().enumerate().take(n) {
+            *slot = i;
+        }
+        for col in 0..n {
+            let mut piv = col;
+            let mut best = a[row[col] * n + col].abs();
+            for r in (col + 1)..n {
+                let val = a[row[r] * n + col].abs();
+                if val > best {
+                    best = val;
+                    piv = r;
+                }
+            }
+            if best < 1e-30 {
+                return false;
+            }
+            if piv != col {
+                row.swap(col, piv);
+                b.swap(col, piv);
+            }
+            let diag = a[row[col] * n + col];
+            for r in (col + 1)..n {
+                let f = a[row[r] * n + col] / diag;
+                if f == 0.0 {
+                    continue;
+                }
+                for c in col..n {
+                    a[row[r] * n + c] -= f * a[row[col] * n + c];
+                }
+                b[r] -= f * b[col];
+            }
+        }
+        for r in (0..n).rev() {
+            let mut s = b[r];
+            for c in (r + 1)..n {
+                s -= a[row[r] * n + c] * b[c];
+            }
+            b[r] = s / a[row[r] * n + r];
+        }
+        true
+    }
+
+    /// One Newton solve (up to `max_iters`) at the given `gmin` regularization. Returns iters used.
+    /// Realtime path only (`lsTrim=false`): the 3 trim regions (`main.cpp:634-651/665-679/702-712`)
+    /// are skipped; this is the eager backtracking-line-search path (`main.cpp:520-714`).
+    fn newton_iterate(&mut self, gmin: f64) -> usize {
+        use node::{N_A, N_PA, N_SA};
+        let u = self.u;
+        let mut iters_used = 0;
+        for iter in 0..self.max_iters {
+            iters_used = iter + 1;
+            // J starts as the constant linear conductance matrix; F starts at history.
+            self.j[..u * u].copy_from_slice(&self.g0[..u * u]);
+            self.f[..u].copy_from_slice(&self.hist[..u]);
+
+            // linear branch residuals into F only (their J entries are already in G0)
+            for i in 0..self.n_res {
+                let r = self.res[i];
+                let d = r.g * (self.node_v(r.a) - self.node_v(r.b));
+                let (ra, rb) = (self.ur(r.a), self.ur(r.b));
+                if ra >= 0 {
+                    self.f[ra as usize] += d;
+                }
+                if rb >= 0 {
+                    self.f[rb as usize] -= d;
+                }
+            }
+            for i in 0..self.n_caps {
+                let c = self.caps[i];
+                let d = c.geq * (self.node_v(c.a) - self.node_v(c.b));
+                let (ra, rb) = (self.ur(c.a), self.ur(c.b));
+                if ra >= 0 {
+                    self.f[ra as usize] += d;
+                }
+                if rb >= 0 {
+                    self.f[rb as usize] -= d;
+                }
+            }
+            {
+                // coupled inductor residual (F only)
+                let vp = self.node_v(N_PA) - self.node_v(N_A);
+                let vs = self.node_v(N_SA);
+                let (rp, rs) = (self.ur(N_PA), self.ur(N_SA));
+                if rp >= 0 {
+                    self.f[rp as usize] += self.gl[0][0] * vp + self.gl[0][1] * vs;
+                }
+                if rs >= 0 {
+                    self.f[rs as usize] += self.gl[1][0] * vp + self.gl[1][1] * vs;
+                }
+            }
+
+            // BJTs (Gummel-Poon transport form). Currents flow INTO the device.
+            let k2 = 2.0 / self.dt;
+            for bi in 0..self.bjts.len() {
+                let t = self.bjts[bi];
+                let vbe = self.node_v(t.b) - self.node_v(t.e);
+                let vbc = self.node_v(t.b) - self.node_v(t.c);
+                let o = compute_bjt(vbe, vbc, &t.p);
+                let (rb, re, rc) = (self.urow[t.b as usize], self.urow[t.e as usize], self.urow[t.c as usize]);
+                if rb >= 0 {
+                    let rb = rb as usize;
+                    self.f[rb] += o.ib;
+                    self.j[rb * u + rb] += o.dib_b;
+                    if re >= 0 {
+                        self.j[rb * u + re as usize] += o.dib_e;
+                    }
+                    if rc >= 0 {
+                        self.j[rb * u + rc as usize] += o.dib_c;
+                    }
+                }
+                if re >= 0 {
+                    let re = re as usize;
+                    self.f[re] += o.ie;
+                    if rb >= 0 {
+                        self.j[re * u + rb as usize] += o.die_b;
+                    }
+                    self.j[re * u + re] += o.die_e;
+                    if rc >= 0 {
+                        self.j[re * u + rc as usize] += o.die_c;
+                    }
+                }
+                if rc >= 0 {
+                    let rc = rc as usize;
+                    self.f[rc] += o.ic;
+                    if rb >= 0 {
+                        self.j[rc * u + rb as usize] += o.dic_b;
+                    }
+                    if re >= 0 {
+                        self.j[rc * u + re as usize] += o.dic_e;
+                    }
+                    self.j[rc * u + rc] += o.dic_c;
+                }
+
+                // Charge-storage caps (depletion + diffusion), trapezoidal companion.
+                if self.cap_tier != CapTier::Off {
+                    let tf = if self.cap_tier == CapTier::Full { t.p.tf } else { 0.0 };
+                    let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
+                    let (qbe_dep, cbe_dep) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
+                    let (qbc_dep, cbc_dep) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
+                    let qbe = qbe_dep + tf * o.itf;
+                    let cbe = cbe_dep + tf * o.gtf;
+                    let qbc = qbc_dep + tr * o.itr;
+                    let cbc = cbc_dep + tr * o.gtr;
+                    let ibe = k2 * (qbe - t.qbe_prev) - t.ibe_prev; // b->e
+                    let gbe = k2 * cbe;
+                    let ibc = k2 * (qbc - t.qbc_prev) - t.ibc_prev; // b->c
+                    let gbc = k2 * cbc;
+                    if rb >= 0 {
+                        let rb = rb as usize;
+                        self.f[rb] += ibe + ibc;
+                        self.j[rb * u + rb] += gbe + gbc;
+                        if re >= 0 {
+                            self.j[rb * u + re as usize] -= gbe;
+                        }
+                        if rc >= 0 {
+                            self.j[rb * u + rc as usize] -= gbc;
+                        }
+                    }
+                    if re >= 0 {
+                        let re = re as usize;
+                        self.f[re] -= ibe;
+                        self.j[re * u + re] += gbe;
+                        if rb >= 0 {
+                            self.j[re * u + rb as usize] -= gbe;
+                        }
+                    }
+                    if rc >= 0 {
+                        let rc = rc as usize;
+                        self.f[rc] -= ibc;
+                        self.j[rc * u + rc] += gbc;
+                        if rb >= 0 {
+                            self.j[rc * u + rb as usize] -= gbc;
+                        }
+                    }
+                }
+            }
+
+            // gmin homotopy: conductance from each node to ground
+            if gmin != 0.0 {
+                for i in 0..NUM_NODES {
+                    let r = self.urow[i];
+                    if r >= 0 {
+                        let r = r as usize;
+                        self.f[r] += gmin * self.v[i];
+                        self.j[r * u + r] += gmin;
+                    }
+                }
+            }
+
+            // 2-norm of residual; Newton step is a descent direction for this.
+            let mut norm_f = 0.0;
+            for i in 0..u {
+                norm_f += self.f[i] * self.f[i];
+            }
+            norm_f = norm_f.sqrt();
+            if norm_f < self.newton_tol {
+                break;
+            }
+
+            for i in 0..u {
+                self.delta[i] = -self.f[i];
+            }
+            if !Self::gauss_solve(&mut self.j, &mut self.delta, u) {
+                break;
+            }
+
+            // Bound step magnitude, preserving the Newton direction (ill-conditioned J).
+            let mut max_abs = 0.0f64;
+            for i in 0..u {
+                max_abs = max_abs.max(self.delta[i].abs());
+            }
+            const MAX_STEP: f64 = 2.0; // volts
+            if max_abs > MAX_STEP {
+                let s = MAX_STEP / max_abs;
+                for i in 0..u {
+                    self.delta[i] *= s;
+                }
+            }
+
+            // Backtracking line search on 2-norm; scale whole vector (preserve direction).
+            let mut v_save = [0.0f64; NUM_NODES];
+            v_save.copy_from_slice(&self.v);
+            let mut lambda = 1.0;
+            let mut accepted = 0.0;
+            for _ls in 0..12 {
+                self.v.copy_from_slice(&v_save);
+                for i in 0..NUM_NODES {
+                    let r = self.urow[i];
+                    if r >= 0 {
+                        self.v[i] += lambda * self.delta[r as usize];
+                    }
+                }
+                let tn = self.residual_norm(gmin);
+                if tn < norm_f {
+                    accepted = lambda;
+                    break;
+                }
+                lambda *= 0.5;
+            }
+            if accepted == 0.0 {
+                // no descent found: stay put, stop iterating
+                self.v.copy_from_slice(&v_save);
+                break;
+            }
+
+            let mut maxd = 0.0f64;
+            for i in 0..u {
+                maxd = maxd.max((accepted * self.delta[i]).abs());
+            }
+            if maxd < 1e-9 {
+                break;
+            }
+        }
+        iters_used
+    }
+
+    /// Solve one sample. `v[N_A]`, `v[N_INPUT]` must be set before calling (`main.cpp:452-516`).
+    pub fn process(&mut self) {
+        use node::{N_A, N_PA, N_SA};
+        let u = self.u;
+        // Per-sample constant history offsets (do not depend on v[n]).
+        for i in 0..u {
+            self.hist[i] = 0.0;
+        }
+        for i in 0..self.n_caps {
+            let c = self.caps[i];
+            let ih = c.geq * (self.node_v_prev(c.a) - self.node_v_prev(c.b)) + c.i_prev;
+            let (ra, rb) = (self.ur(c.a), self.ur(c.b));
+            if ra >= 0 {
+                self.hist[ra as usize] -= ih;
+            }
+            if rb >= 0 {
+                self.hist[rb as usize] += ih;
+            }
+        }
+        // trapezoidal inductor history: i[n-1] + g*v[n-1]
+        let ind_hist_p = self.i_hist_p + self.gl[0][0] * self.v_pprev + self.gl[0][1] * self.v_sprev;
+        let ind_hist_s = self.i_hist_s + self.gl[1][0] * self.v_pprev + self.gl[1][1] * self.v_sprev;
+        let (rp, rs) = (self.ur(N_PA), self.ur(N_SA));
+        if rp >= 0 {
+            self.hist[rp as usize] += ind_hist_p;
+        }
+        if rs >= 0 {
+            self.hist[rs as usize] += ind_hist_s;
+        }
+
+        self.newton_iterate(0.0);
+        let resid = self.residual_norm(0.0);
+        if resid > 1e-3 {
+            // hard sample: gmin-stepping homotopy
+            for g in [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 0.0] {
+                self.newton_iterate(g);
+            }
+        }
+
+        // update cap currents (trapezoidal) for next sample, using old v_prev
+        for i in 0..self.n_caps {
+            let c = self.caps[i];
+            let dv = self.node_v(c.a) - self.node_v(c.b);
+            let dv_prev = self.node_v_prev(c.a) - self.node_v_prev(c.b);
+            self.caps[i].i_prev = c.geq * (dv - dv_prev) - c.i_prev;
+        }
+        // update BJT charge-cap state (trapezoidal) for next sample
+        if self.cap_tier != CapTier::Off {
+            let k2 = 2.0 / self.dt;
+            for bi in 0..self.bjts.len() {
+                let t = self.bjts[bi];
+                let tf = if self.cap_tier == CapTier::Full { t.p.tf } else { 0.0 };
+                let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
+                let vbe = self.node_v(t.b) - self.node_v(t.e);
+                let vbc = self.node_v(t.b) - self.node_v(t.c);
+                let (i_be, _) = diode_branch(vbe, t.p.is, t.p.vt, t.p.vcrit);
+                let (i_bc, _) = diode_branch(vbc, t.p.is, t.p.vt, t.p.vcrit);
+                let (qbe_dep, _) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
+                let (qbc_dep, _) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
+                let qbe = qbe_dep + tf * i_be;
+                let qbc = qbc_dep + tr * i_bc;
+                let bjt = &mut self.bjts[bi];
+                bjt.ibe_prev = k2 * (qbe - bjt.qbe_prev) - bjt.ibe_prev;
+                bjt.qbe_prev = qbe;
+                bjt.ibc_prev = k2 * (qbc - bjt.qbc_prev) - bjt.ibc_prev;
+                bjt.qbc_prev = qbc;
+            }
+        }
+        // update inductor winding currents (trapezoidal) for next sample
+        let vp = self.node_v(N_PA) - self.node_v(N_A);
+        let vs = self.node_v(N_SA);
+        self.i_hist_p += self.gl[0][0] * (vp + self.v_pprev) + self.gl[0][1] * (vs + self.v_sprev);
+        self.i_hist_s += self.gl[1][0] * (vp + self.v_pprev) + self.gl[1][1] * (vs + self.v_sprev);
+        self.v_pprev = vp;
+        self.v_sprev = vs;
+
+        for i in 0..NUM_NODES {
+            self.v_prev[i] = self.v[i];
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gauss_solve_3x3() {
+        // [2 1 -1; -3 -1 2; -2 1 2] x = [8; -11; -3]  ->  x = [2, 3, -1]
+        let n = 3;
+        let m = [[2.0, 1.0, -1.0], [-3.0, -1.0, 2.0], [-2.0, 1.0, 2.0]];
+        let mut a = [0.0f64; NUM_NODES * NUM_NODES];
+        for (i, row) in m.iter().enumerate() {
+            for (j, &val) in row.iter().enumerate() {
+                a[i * n + j] = val;
+            }
+        }
+        let mut b = [0.0f64; NUM_NODES];
+        b[0] = 8.0;
+        b[1] = -11.0;
+        b[2] = -3.0;
+        assert!(WdfModel::gauss_solve(&mut a, &mut b, n));
+        assert!((b[0] - 2.0).abs() < 1e-12, "x0={}", b[0]);
+        assert!((b[1] - 3.0).abs() < 1e-12, "x1={}", b[1]);
+        assert!((b[2] + 1.0).abs() < 1e-12, "x2={}", b[2]);
+    }
 }
