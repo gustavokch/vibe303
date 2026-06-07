@@ -472,9 +472,8 @@ pub struct WdfSnapshot {
 pub struct WdfModel {
     pub v: [f64; NUM_NODES],      // current node voltages
     pub v_prev: [f64; NUM_NODES], // previous-sample node voltages (cap history)
-    known: [bool; NUM_NODES],
-    urow: [i32; NUM_NODES], // node -> unknown-row index, or -1
-    u: usize,               // number of unknowns
+    urow: [i32; NUM_NODES],       // node -> unknown-row index, or -1
+    u: usize,                     // number of unknowns
 
     res: [Res; MAX_RES],
     n_res: usize,
@@ -667,7 +666,6 @@ impl WdfModel {
         let mut model = WdfModel {
             v: [0.0; NUM_NODES],
             v_prev: [0.0; NUM_NODES],
-            known,
             urow,
             u,
             res,

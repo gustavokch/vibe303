@@ -27,8 +27,20 @@ pub struct Ba283Plugin {
     sample_rate: f32,
 }
 
+/// Which emulation runs per sample. `NeuralNet` is the default (preserves current behaviour); `Wdf`
+/// is the circuit-faithful MNA solver. Selectable live in the plugin.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum InferenceBackend {
+    #[name = "Neural Net"]
+    NeuralNet,
+    #[name = "Circuit (WDF)"]
+    Wdf,
+}
+
 #[derive(Params)]
 pub struct Ba283Params {
+    #[id = "backend"]
+    pub backend: EnumParam<InferenceBackend>,
     #[id = "drive_db"]
     pub drive_db: FloatParam,
     #[id = "bias"]
@@ -37,11 +49,16 @@ pub struct Ba283Params {
     pub output_db: FloatParam,
     #[id = "mix"]
     pub mix: FloatParam,
+    /// R_KJ gain shunt (ohms), WDF-only. Inert for the NeuralNet backend. No smoother — consumed at
+    /// block rate via a `G0` rebuild (matches the C++ `setBias`/`setRgain`).
+    #[id = "circuit_gain"]
+    pub circuit_gain: FloatParam,
 }
 
 impl Default for Ba283Params {
     fn default() -> Self {
         Self {
+            backend: EnumParam::new("Backend", InferenceBackend::NeuralNet),
             drive_db: FloatParam::new(
                 "Drive",
                 0.0,
@@ -74,6 +91,16 @@ impl Default for Ba283Params {
             )
             .with_unit(" %")
             .with_smoother(SmoothingStyle::Linear(20.0)),
+            circuit_gain: FloatParam::new(
+                "Circuit Gain",
+                220.0,
+                FloatRange::Skewed {
+                    min: 47.0,
+                    max: 10_000.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" Ohm"),
         }
     }
 }
