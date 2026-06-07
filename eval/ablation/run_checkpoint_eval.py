@@ -17,8 +17,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import torch
 
+from eval.ablation.gain_eval import Predict
 from train.model import BA283GRU
 
 
@@ -38,3 +40,27 @@ def load_model(
     model.load_state_dict(state)
     model.train(False)
     return model
+
+
+def make_predict(model, *, input_scale: float, warmup: int) -> Predict:
+    """Build a normalized-domain ``Predict`` closure around ``model``.
+
+    The returned callable takes a RAW dry signal and a gain, scales the dry by
+    ``input_scale`` (column 0), broadcasts gain as column 1, runs a single
+    forward pass with a fresh hidden state, and returns a 1-D numpy array with
+    the first ``warmup`` samples discarded (the GRU hidden state has not settled
+    there, so those samples would pollute the ESR score).
+    """
+
+    def predict(dry: np.ndarray, gain: float) -> np.ndarray:
+        dry = np.asarray(dry, dtype=np.float32)
+        n = len(dry)
+        x = torch.empty(1, n, 2, dtype=torch.float32)
+        x[0, :, 0] = torch.from_numpy(np.ascontiguousarray(dry)) * input_scale
+        x[0, :, 1] = float(gain)
+        with torch.no_grad():
+            out, _ = model(x)
+        out = out.reshape(-1).cpu().numpy()
+        return out[warmup:]
+
+    return predict
