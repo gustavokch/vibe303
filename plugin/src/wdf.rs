@@ -44,7 +44,7 @@ pub mod node {
 
 /// BJT device card (`main.cpp:89-97`). `alpha_f`/`alpha_r` are retained but unused by the
 /// Gummel-Poon path. `bf`/`br`/`vaf`/`var`/`ikf`/`ikr` <= 0 mean the corresponding effect is off.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct BjtParams {
     pub is: f64,
     pub vt: f64,
@@ -127,7 +127,7 @@ pub fn q2n3055() -> BjtParams {
 
 /// BJT instance: terminal node ids + device params + trapezoidal charge-cap companion state
 /// (`main.cpp:243-247`).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Bjt {
     pub b: i32,
     pub e: i32,
@@ -146,7 +146,7 @@ impl Bjt {
 }
 
 /// Resistor: conductance `g = 1/R` between nodes `a`, `b` (`main.cpp:248`).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Res {
     pub a: i32,
     pub b: i32,
@@ -155,7 +155,7 @@ pub struct Res {
 
 /// Capacitor with trapezoidal companion: `geq = 2C/dt`, current `i[n] = geq*(dv - dv_prev) -
 /// i_prev` (`main.cpp:249-250`).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Cap {
     pub a: i32,
     pub b: i32,
@@ -423,4 +423,326 @@ pub fn compute_bjt(vbe: f64, vbc: f64, p: &BjtParams) -> BjtOut {
     o.die_e = -die_vbe;
     o.die_c = -die_vbc;
     o
+}
+
+// ---------------------------------------------------------------------------
+// WdfModel — the circuit: topology + integrator state, solves one sample via Newton.
+// Ported from `class BA283` (`main.cpp:255-794`) at the realtime tier, RB off.
+// ---------------------------------------------------------------------------
+
+/// BJT charge-storage model detail (`main.cpp:72`). Realtime tier uses `Full`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum CapTier {
+    #[default]
+    Full,
+    Depletion,
+    Off,
+}
+
+// Realtime quality tier (`qualityPreset("realtime")`, main.cpp:84): OS=2, RB off, tol 1e-7,
+// maxIters 30, caps full, lsTrim off. RB off pins the 3 intrinsic-base nodes -> U = 16.
+const RT_NEWTON_TOL: f64 = 1e-7;
+const RT_MAX_ITERS: usize = 30;
+
+// Worst-case fixed-array bounds (RB off uses 17 resistors / 7 caps; sized for RB-on headroom).
+const MAX_RES: usize = 24;
+const MAX_CAPS: usize = 8;
+
+/// Coupled-circuit MNA + Newton solver. All scratch is fixed-size (no `Vec` on the process path)
+/// to satisfy the zero-alloc audio-thread contract.
+pub struct WdfModel {
+    pub v: [f64; NUM_NODES],      // current node voltages
+    pub v_prev: [f64; NUM_NODES], // previous-sample node voltages (cap history)
+    known: [bool; NUM_NODES],
+    urow: [i32; NUM_NODES], // node -> unknown-row index, or -1
+    u: usize,               // number of unknowns
+
+    res: [Res; MAX_RES],
+    n_res: usize,
+    caps: [Cap; MAX_CAPS],
+    n_caps: usize,
+    bjts: [Bjt; 3],
+
+    r_kj_idx: usize,    // R_KJ resistor index (gain knob), for set_rgain
+    r_upper_idx: usize, // RV1 upper-leg index, for set_bias
+    r_lower_idx: usize, // RV1 lower-leg index
+
+    // coupled inductor companion (transformer, trapezoidal): g = (dt/2) * inv([Lp M; M Ls])
+    gl: [[f64; 2]; 2],
+    i_hist_p: f64, // primary winding current i[n-1]
+    i_hist_s: f64, // secondary winding current i[n-1]
+    v_pprev: f64,  // winding voltages at n-1
+    v_sprev: f64,
+
+    dt: f64,
+    newton_tol: f64,
+    max_iters: usize,
+    cap_tier: CapTier,
+
+    // reusable solver scratch (only first `u` entries used)
+    hist: [f64; NUM_NODES],
+    f: [f64; NUM_NODES],
+    delta: [f64; NUM_NODES],
+    rn: [f64; NUM_NODES],
+    j: [f64; NUM_NODES * NUM_NODES],
+    g0: [f64; NUM_NODES * NUM_NODES], // constant linear conductance matrix
+}
+
+/// RV1 (4k7 preset) split. `bias` in [0,1] is remapped onto the stable pot range then split into
+/// the two legs (`main.cpp:307-312`). Returns `(r_upper, r_lower)`.
+fn rv1_split(bias: f64) -> (f64, f64) {
+    const RV1_WIPER_MIN: f64 = 0.3;
+    let wiper = RV1_WIPER_MIN + (1.0 - RV1_WIPER_MIN) * bias;
+    let r_upper = (4700.0 * (1.0 - wiper)).max(1.0);
+    let r_lower = (4700.0 * wiper).max(1.0);
+    (r_upper, r_lower)
+}
+
+impl WdfModel {
+    #[inline]
+    pub fn node_v(&self, id: i32) -> f64 {
+        if id < 0 {
+            0.0
+        } else {
+            self.v[id as usize]
+        }
+    }
+    #[inline]
+    fn node_v_prev(&self, id: i32) -> f64 {
+        if id < 0 {
+            0.0
+        } else {
+            self.v_prev[id as usize]
+        }
+    }
+    /// GND-safe row lookup (`main.cpp:449`).
+    #[inline]
+    fn ur(&self, id: i32) -> i32 {
+        if id < 0 {
+            -1
+        } else {
+            self.urow[id as usize]
+        }
+    }
+
+    pub fn u(&self) -> usize {
+        self.u
+    }
+    pub fn n_res(&self) -> usize {
+        self.n_res
+    }
+    pub fn n_caps(&self) -> usize {
+        self.n_caps
+    }
+    pub fn n_bjts(&self) -> usize {
+        self.bjts.len()
+    }
+    pub fn urow_of(&self, id: i32) -> i32 {
+        self.ur(id)
+    }
+
+    /// Build the circuit at the given **internal** sample rate (host × OS), gain shunt `rgain`
+    /// (R_KJ ohms), and `bias` (RV1 pot [0,1]). Hardcodes the realtime tier (RB off, U=16).
+    /// Mirrors `BA283::build` (`main.cpp:314-409`).
+    pub fn build(internal_sr: f64, rgain: f64, bias: f64) -> Self {
+        use node::*;
+        let dt = 1.0 / internal_sr;
+
+        let mut known = [false; NUM_NODES];
+        known[N_A as usize] = true;
+        known[N_INPUT as usize] = true;
+        // RB off: pin the 3 intrinsic-base nodes (V=0) so they're excluded from the unknown map.
+        known[N_TR1_BI as usize] = true;
+        known[N_TR2_BI as usize] = true;
+        known[N_TR3_BI as usize] = true;
+
+        let mut urow = [-1i32; NUM_NODES];
+        let mut u = 0usize;
+        for i in 0..NUM_NODES {
+            urow[i] = if known[i] {
+                -1
+            } else {
+                let r = u as i32;
+                u += 1;
+                r
+            };
+        }
+
+        // --- resistors (builder may use Vec; the process path is array-only) ---
+        let mut rv: Vec<Res> = Vec::new();
+        let push_r = |rv: &mut Vec<Res>, a: i32, b: i32, ohms: f64| rv.push(Res { a, b, g: 1.0 / ohms });
+        let (r_upper, r_lower) = rv1_split(bias);
+        // TR1 (BC184C) common-emitter input
+        push_r(&mut rv, N_C1_MID, N_R1_MID, 1.0); // R_esr_C7 (C1 ESR)
+        push_r(&mut rv, N_R1_MID, N_TR1_B, 2.2e3); // R1 input series
+        push_r(&mut rv, N_TR1_B, GND, 68.0e3); // R3 base bleed
+        push_r(&mut rv, N_RV1_W, N_TR1_B, 56.0e3); // R2 DC-bias feedback
+        push_r(&mut rv, N_TR1_E, GND, 1.2e3); // R4 emitter load
+        let r_kj_idx = rv.len();
+        push_r(&mut rv, N_TR1_E, N_J, rgain); // R_KJ (gain knob)
+        push_r(&mut rv, N_CGAIN_MID, GND, 1.0); // R_esr_Cgain
+        push_r(&mut rv, N_C4_MID, N_TR1_E, 3.3e3); // R5 AC feedback
+        push_r(&mut rv, N_A, N_TR1_C, 33.0e3); // R8 collector load
+        // TR2+TR3 compound common-collector pair
+        push_r(&mut rv, N_TR2_E, GND, 18.0e3); // R6 TR2 emitter load
+        push_r(&mut rv, N_TR3_E, GND, 47.0); // R7 TR3 emitter resistor
+        let r_upper_idx = rv.len();
+        push_r(&mut rv, N_TR3_E, N_RV1_W, r_upper); // RV1 upper
+        let r_lower_idx = rv.len();
+        push_r(&mut rv, N_RV1_W, GND, r_lower); // RV1 lower
+        // LO1166 + primary Zobel + secondary termination
+        push_r(&mut rv, N_F, N_PA, 14.5); // R_pri winding DCR
+        push_r(&mut rv, N_SEC_IN, N_SA, 44.0); // R_sec winding DCR
+        push_r(&mut rv, N_SEC_IN, GND, 600.0); // R_term (console line in)
+        push_r(&mut rv, N_F, N_ZOBEL, 1.5e3); // R_zobel (primary Boucherot snubber)
+        // RB off: bases wire directly (no RB resistors).
+
+        let mut res = [Res::default(); MAX_RES];
+        let n_res = rv.len();
+        res[..n_res].copy_from_slice(&rv);
+
+        // --- caps ---
+        let mut cv: Vec<Cap> = Vec::new();
+        let push_c = |cv: &mut Vec<Cap>, a: i32, b: i32, farads: f64| {
+            cv.push(Cap { a, b, c: farads, geq: 2.0 * farads / dt, i_prev: 0.0 })
+        };
+        push_c(&mut cv, N_INPUT, N_C1_MID, 10.0e-6); // C1 input coupling
+        push_c(&mut cv, N_J, N_CGAIN_MID, 80.0e-6); // Cgain
+        push_c(&mut cv, N_F, N_C4_MID, 100.0e-6); // C4 AC-feedback DC block
+        push_c(&mut cv, N_TR1_C, GND, 4700.0e-12); // C3 on TR1 collector
+        push_c(&mut cv, N_TR1_B, N_TR1_C, 220.0e-12); // C2 Miller across TR1 B-C
+        push_c(&mut cv, N_TR1_C, N_F, 330.0e-12); // C5 Miller across TR2 B-C
+        push_c(&mut cv, N_ZOBEL, N_A, 0.01e-6); // Zobel cap (primary, to rail)
+
+        let mut caps = [Cap::default(); MAX_CAPS];
+        let n_caps = cv.len();
+        caps[..n_caps].copy_from_slice(&cv);
+
+        // --- BJTs (RB off: external base directly) ---
+        let bc = bc184c();
+        let q = q2n3055();
+        let bjts = [
+            Bjt::new(N_TR1_B, N_TR1_E, N_TR1_C, bc), // TR1
+            Bjt::new(N_TR1_C, N_TR2_E, N_F, bc),     // TR2 (base = TR1_C, collector = F)
+            Bjt::new(N_TR2_E, N_TR3_E, N_F, q),      // TR3 (base = TR2_E, collector = F)
+        ];
+
+        // coupled inductor companion: L = [Lp M; M Ls], M = K*sqrt(Lp*Ls)
+        let (lp, ls, k): (f64, f64, f64) = (1.9, 5.36, 0.9995);
+        let m = k * (lp * ls).sqrt();
+        let det = lp * ls - m * m;
+        let l_inv = [[ls / det, -m / det], [-m / det, lp / det]];
+        let h = dt * 0.5;
+        let gl = [
+            [h * l_inv[0][0], h * l_inv[0][1]],
+            [h * l_inv[1][0], h * l_inv[1][1]],
+        ];
+
+        let mut model = WdfModel {
+            v: [0.0; NUM_NODES],
+            v_prev: [0.0; NUM_NODES],
+            known,
+            urow,
+            u,
+            res,
+            n_res,
+            caps,
+            n_caps,
+            bjts,
+            r_kj_idx,
+            r_upper_idx,
+            r_lower_idx,
+            gl,
+            i_hist_p: 0.0,
+            i_hist_s: 0.0,
+            v_pprev: 0.0,
+            v_sprev: 0.0,
+            dt,
+            newton_tol: RT_NEWTON_TOL,
+            max_iters: RT_MAX_ITERS,
+            cap_tier: CapTier::Full,
+            hist: [0.0; NUM_NODES],
+            f: [0.0; NUM_NODES],
+            delta: [0.0; NUM_NODES],
+            rn: [0.0; NUM_NODES],
+            j: [0.0; NUM_NODES * NUM_NODES],
+            g0: [0.0; NUM_NODES * NUM_NODES],
+        };
+        model.build_g0();
+        model
+    }
+
+    /// Precompute the constant linear conductance matrix G0 (resistors + cap Geq + coupled-inductor
+    /// companion). Only BJT entries change per Newton iteration (`main.cpp:413-428`).
+    fn build_g0(&mut self) {
+        use node::{N_PA, N_SA};
+        let u = self.u;
+        for x in self.g0[..u * u].iter_mut() {
+            *x = 0.0;
+        }
+        // stamp a symmetric linear conductance G between nodes a, b
+        let stamp_lin = |g0: &mut [f64], ra: i32, rb: i32, g: f64| {
+            if ra >= 0 {
+                g0[ra as usize * u + ra as usize] += g;
+                if rb >= 0 {
+                    g0[ra as usize * u + rb as usize] -= g;
+                }
+            }
+            if rb >= 0 {
+                g0[rb as usize * u + rb as usize] += g;
+                if ra >= 0 {
+                    g0[rb as usize * u + ra as usize] -= g;
+                }
+            }
+        };
+        for i in 0..self.n_res {
+            let r = self.res[i];
+            let (ra, rb) = (self.ur(r.a), self.ur(r.b));
+            stamp_lin(&mut self.g0, ra, rb, r.g);
+        }
+        for i in 0..self.n_caps {
+            let c = self.caps[i];
+            let (ra, rb) = (self.ur(c.a), self.ur(c.b));
+            stamp_lin(&mut self.g0, ra, rb, c.geq);
+        }
+        // coupled inductor (asymmetric)
+        let r_p = self.ur(N_PA);
+        let r_s = self.ur(N_SA);
+        if r_p >= 0 {
+            self.g0[r_p as usize * u + r_p as usize] += self.gl[0][0];
+            if r_s >= 0 {
+                self.g0[r_p as usize * u + r_s as usize] += self.gl[0][1];
+            }
+        }
+        if r_s >= 0 {
+            if r_p >= 0 {
+                self.g0[r_s as usize * u + r_p as usize] += self.gl[1][0];
+            }
+            self.g0[r_s as usize * u + r_s as usize] += self.gl[1][1];
+        }
+    }
+
+    /// Update the RV1 split (bias pot) + rebuild G0, preserving all integrator state
+    /// (`main.cpp:432-438`).
+    pub fn set_bias(&mut self, bias: f64) {
+        let (r_upper, r_lower) = rv1_split(bias);
+        self.res[self.r_upper_idx].g = 1.0 / r_upper;
+        self.res[self.r_lower_idx].g = 1.0 / r_lower;
+        self.build_g0();
+    }
+
+    /// Update R_KJ (circuit gain) + rebuild G0, preserving integrator state. New vs the C++
+    /// reference (which only sets gain at build time); mirrors `set_bias`.
+    pub fn set_rgain(&mut self, rgain: f64) {
+        self.res[self.r_kj_idx].g = 1.0 / rgain;
+        self.build_g0();
+    }
+
+    /// TR3 quiescent collector current (mA) at the current operating point (`main.cpp:441-445`).
+    pub fn tr3_idle_current_ma(&self) -> f64 {
+        let t = &self.bjts[2];
+        let vbe = self.node_v(t.b) - self.node_v(t.e);
+        let vbc = self.node_v(t.b) - self.node_v(t.c);
+        1000.0 * compute_bjt(vbe, vbc, &t.p).ic
+    }
 }

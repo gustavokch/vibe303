@@ -55,3 +55,18 @@ fn compute_bjt_against_golden() {
     assert!(rel(o.dic_b, g.dic_b), "q2n3055 dic_b");
     assert!(rel(o.dic_c, g.dic_c), "q2n3055 dic_c");
 }
+
+#[test]
+fn build_topology_matches_cpp() {
+    let m = wdf::WdfModel::build(48_000.0 * 2.0, 220.0, wdf_golden::BIAS); // internal = 96k
+    assert_eq!(m.u(), 16, "RB off => 16 unknowns");
+    assert_eq!(m.n_res(), 17);
+    assert_eq!(m.n_caps(), 7);
+    assert_eq!(m.n_bjts(), 3);
+    // known nodes (A, INPUT, 3 *_BI) are pinned out of the unknown map.
+    for &id in &[node::N_A, node::N_INPUT, node::N_TR1_BI, node::N_TR2_BI, node::N_TR3_BI] {
+        assert_eq!(m.urow_of(id), -1, "node {id} should be pinned");
+    }
+    // a solved node has a valid row.
+    assert!(m.urow_of(node::N_SEC_IN) >= 0);
+}
