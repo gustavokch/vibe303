@@ -3,7 +3,7 @@
 Neural **and** circuit emulation of the Neve BA283 mic-preamp output stage, shipped as a VST3 plugin.
 
 - **Version:** 0.1.0
-- **Vendor:** [gruber.dev.br](https://gruber.dev.br) · contact@gruber.dev.br
+- **Vendor:** [Gustavo M](https://github.com/gustavokch) · ghlsem@gmail.com
 - **License:** TBD
 
 ---
