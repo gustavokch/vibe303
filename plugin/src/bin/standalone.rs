@@ -204,6 +204,9 @@ fn main() {
         for ch in chans.iter_mut() {
             ch.wdf_rebuild_with(wdf_cfg, spec.sample_rate as f32, circuit_gain, bias);
             ch.wdf_warmup();
+            // Zero the Newton counters so the reported avgIters reflect the audio pass only (warmup
+            // transients run many iters and would skew the average), matching the C++ binary's count.
+            ch.wdf_reset_iter_stats();
         }
     }
 
@@ -222,6 +225,20 @@ fn main() {
     writer
         .finalize()
         .unwrap_or_else(|e| die(&format!("error finalizing output WAV: {e}")));
+
+    // WDF: report Newton-iteration stats (audio pass only) to stderr, mirroring the C++ binary's
+    // `Newton: ...` line so the offline A/B harness can compare per-iter solver cost across tiers.
+    if backend == InferenceBackend::Wdf {
+        let (mut samples, mut total, mut max) = (0u64, 0f64, 0usize);
+        for ch in chans.iter() {
+            let (s, avg, mx) = ch.wdf_iter_stats();
+            samples += s;
+            total += avg * s as f64;
+            max = max.max(mx);
+        }
+        let avg = if samples > 0 { total / samples as f64 } else { 0.0 };
+        eprintln!("Newton: samples={samples} avgIters={avg:.3} maxIters={max}");
+    }
 
     println!("rendered {} samples", n_frames * channels);
 }

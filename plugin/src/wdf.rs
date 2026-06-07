@@ -599,6 +599,14 @@ pub struct WdfModel {
     sec_in_dc: f64, // output DC offset captured at warmup; subtracted from the tap
     prev_in: f64,   // previous host input sample (linear-interpolation upsampling state)
     last_snapshot: Option<WdfSnapshot>,
+
+    // Newton-iteration instrumentation (write-only side state; never read on the audio path, so it
+    // cannot perturb the solve). Mirrors the C++ `samples`/`totalIters`/`maxItersUsed` counters
+    // (`main.cpp:1314-1320`). Each `process()` adds its total iters (iter-0 solve + any gmin
+    // homotopy passes) and bumps the per-call max. Reset via `reset_iter_stats` before an audio pass.
+    iter_samples: u64,
+    iter_total: u64,
+    iter_max: usize,
 }
 
 /// RV1 (4k7 preset) split. `bias` in [0,1] is remapped onto the stable pot range then split into
@@ -813,6 +821,9 @@ impl WdfModel {
             sec_in_dc: 0.0,
             prev_in: 0.0,
             last_snapshot: None,
+            iter_samples: 0,
+            iter_total: 0,
+            iter_max: 0,
         };
         model.build_g0();
         model.build_schur_partition(); // sets n/l partition; runs first Schur prep if enabled
@@ -1657,14 +1668,21 @@ impl WdfModel {
             self.hist[rs as usize] += ind_hist_s;
         }
 
-        self.newton_iterate(0.0);
+        let mut sample_iters = self.newton_iterate(0.0);
+        let mut sample_max = sample_iters;
         let resid = self.residual_norm(0.0);
         if resid > 1e-3 {
             // hard sample: gmin-stepping homotopy
             for g in [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 0.0] {
-                self.newton_iterate(g);
+                let it = self.newton_iterate(g);
+                sample_iters += it;
+                sample_max = sample_max.max(it);
             }
         }
+        // Instrumentation only (see field comment): never read back during the solve.
+        self.iter_samples += 1;
+        self.iter_total += sample_iters as u64;
+        self.iter_max = self.iter_max.max(sample_max);
 
         // update cap currents (trapezoidal) for next sample, using old v_prev
         for i in 0..self.n_caps {
@@ -1734,6 +1752,25 @@ impl WdfModel {
 
     /// Soft-start from cold: ramp the +24V rail (1 s homotopy), let the DC feedback loop self-bias
     /// (idle-settle, early-exit), then capture the output DC offset. Mirrors `main.cpp:865-916`
+    /// Newton-iteration stats since the last [`reset_iter_stats`]: `(samples, avg_iters, max_iters)`.
+    /// `samples` counts `process()` (internal-rate) solves; `avg` is total iters / samples. Pure
+    /// instrumentation for the offline A/B harness — mirrors C++ `avgIters`/`maxItersUsed`.
+    pub fn iter_stats(&self) -> (u64, f64, usize) {
+        let avg = if self.iter_samples > 0 {
+            self.iter_total as f64 / self.iter_samples as f64
+        } else {
+            0.0
+        };
+        (self.iter_samples, avg, self.iter_max)
+    }
+
+    /// Zero the Newton-iteration counters (call after warmup so the stats reflect the audio pass).
+    pub fn reset_iter_stats(&mut self) {
+        self.iter_samples = 0;
+        self.iter_total = 0;
+        self.iter_max = 0;
+    }
+
     /// MINUS auto-bias — the bias is a direct param here, not bisected to a target idle current.
     pub fn warmup(&mut self) {
         let internal_sr = self.internal_sr();

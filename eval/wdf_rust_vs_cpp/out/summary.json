@@ -1,0 +1,212 @@
+{
+  "config": {
+    "stims": [
+      "sweep_m6",
+      "pink_m6"
+    ],
+    "gains": [
+      0.0,
+      0.5,
+      1.0
+    ],
+    "tiers": [
+      "realtime",
+      "fast"
+    ],
+    "bias": 0.77,
+    "gate_esr_db": {
+      "realtime": -60.0,
+      "fast": -40.0
+    },
+    "gate_fr_db": 0.1,
+    "fr_max_hz": 15000.0
+  },
+  "worst_esr_db_per_tier": {
+    "realtime": -83.63787511712333,
+    "fast": -79.65888331023895
+  },
+  "rows": [
+    {
+      "stim": "sweep_m6",
+      "tier": "realtime",
+      "gain_norm": 0.0,
+      "rgain_ohm": 10000.0,
+      "esr_db": -164.427254218764,
+      "nrmse": 2.016548261707385e-09,
+      "rms_db": 0.0,
+      "lag": 0,
+      "fr_err_db": 0.0,
+      "rust_avg_iters": 2.368,
+      "rust_max_iters": 3,
+      "cpp_avg_iters": 2.368,
+      "cpp_max_iters": 3
+    },
+    {
+      "stim": "sweep_m6",
+      "tier": "realtime",
+      "gain_norm": 0.5,
+      "rgain_ohm": 905.5385138137417,
+      "esr_db": -160.2735484725481,
+      "nrmse": 3.2528184590319142e-09,
+      "rms_db": 0.0,
+      "lag": 0,
+      "fr_err_db": 0.0,
+      "rust_avg_iters": 2.456,
+      "rust_max_iters": 4,
+      "cpp_avg_iters": 2.45647,
+      "cpp_max_iters": 4
+    },
+    {
+      "stim": "sweep_m6",
+      "tier": "realtime",
+      "gain_norm": 1.0,
+      "rgain_ohm": 82.0,
+      "esr_db": -155.4319865614016,
+      "nrmse": 5.499306787726255e-09,
+      "rms_db": 0.0,
+      "lag": 0,
+      "fr_err_db": 0.0,
+      "rust_avg_iters": 2.837,
+      "rust_max_iters": 6,
+      "cpp_avg_iters": 2.83696,
+      "cpp_max_iters": 6
+    },
+    {
+      "stim": "sweep_m6",
+      "tier": "fast",
+      "gain_norm": 0.0,
+      "rgain_ohm": 10000.0,
+      "esr_db": -164.40261678861685,
+      "nrmse": 2.022285006120228e-09,
+      "rms_db": 0.0,
+      "lag": 0,
+      "fr_err_db": 0.0,
+      "rust_avg_iters": 2.163,
+      "rust_max_iters": 4,
+      "cpp_avg_iters": 2.16268,
+      "cpp_max_iters": 4
+    },
+    {
+      "stim": "sweep_m6",
+      "tier": "fast",
+      "gain_norm": 0.5,
+      "rgain_ohm": 905.5385138137417,
+      "esr_db": -160.15532095955234,
+      "nrmse": 3.297400796853367e-09,
+      "rms_db": 0.0,
+      "lag": 0,
+      "fr_err_db": 1.9073486328125e-06,
+      "rust_avg_iters": 2.215,
+      "rust_max_iters": 4,
+      "cpp_avg_iters": 2.21487,
+      "cpp_max_iters": 4
+    },
+    {
+      "stim": "sweep_m6",
+      "tier": "fast",
+      "gain_norm": 1.0,
+      "rgain_ohm": 82.0,
+      "esr_db": -155.33478527135478,
+      "nrmse": 5.5612034977059466e-09,
+      "rms_db": 0.0,
+      "lag": 0,
+      "fr_err_db": 0.0,
+      "rust_avg_iters": 2.433,
+      "rust_max_iters": 9,
+      "cpp_avg_iters": 2.43327,
+      "cpp_max_iters": 9
+    },
+    {
+      "stim": "pink_m6",
+      "tier": "realtime",
+      "gain_norm": 0.0,
+      "rgain_ohm": 10000.0,
+      "esr_db": -94.45726075912327,
+      "nrmse": 1.1123130434498307e-06,
+      "rms_db": 0.0,
+      "lag": 0,
+      "fr_err_db": 0.0,
+      "rust_avg_iters": 2.065,
+      "rust_max_iters": 3,
+      "cpp_avg_iters": 2.06463,
+      "cpp_max_iters": 3
+    },
+    {
+      "stim": "pink_m6",
+      "tier": "realtime",
+      "gain_norm": 0.5,
+      "rgain_ohm": 905.5385138137417,
+      "esr_db": -83.63787511712333,
+      "nrmse": 3.7680565583286807e-06,
+      "rms_db": 9.28036177174268e-06,
+      "lag": 0,
+      "fr_err_db": 3.814697265625e-06,
+      "rust_avg_iters": 2.085,
+      "rust_max_iters": 3,
+      "cpp_avg_iters": 2.087,
+      "cpp_max_iters": 3
+    },
+    {
+      "stim": "pink_m6",
+      "tier": "realtime",
+      "gain_norm": 1.0,
+      "rgain_ohm": 82.0,
+      "esr_db": -114.93252536977757,
+      "nrmse": 8.991441546868373e-08,
+      "rms_db": 0.0,
+      "lag": 0,
+      "fr_err_db": 5.7220458984375e-06,
+      "rust_avg_iters": 2.152,
+      "rust_max_iters": 4,
+      "cpp_avg_iters": 2.15199,
+      "cpp_max_iters": 4
+    },
+    {
+      "stim": "pink_m6",
+      "tier": "fast",
+      "gain_norm": 0.0,
+      "rgain_ohm": 10000.0,
+      "esr_db": -79.65888331023895,
+      "nrmse": 6.1114888012525626e-06,
+      "rms_db": -6.429325344838307e-07,
+      "lag": 0,
+      "fr_err_db": 7.62939453125e-06,
+      "rust_avg_iters": 1.747,
+      "rust_max_iters": 3,
+      "cpp_avg_iters": 1.74607,
+      "cpp_max_iters": 3
+    },
+    {
+      "stim": "pink_m6",
+      "tier": "fast",
+      "gain_norm": 0.5,
+      "rgain_ohm": 905.5385138137417,
+      "esr_db": -84.31974017717448,
+      "nrmse": 3.483557975414442e-06,
+      "rms_db": -7.733661320427668e-07,
+      "lag": 0,
+      "fr_err_db": 3.814697265625e-06,
+      "rust_avg_iters": 1.789,
+      "rust_max_iters": 3,
+      "cpp_avg_iters": 1.78787,
+      "cpp_max_iters": 3
+    },
+    {
+      "stim": "pink_m6",
+      "tier": "fast",
+      "gain_norm": 1.0,
+      "rgain_ohm": 82.0,
+      "esr_db": -96.83912302134287,
+      "nrmse": 7.219358622023719e-07,
+      "rms_db": 0.0,
+      "lag": 0,
+      "fr_err_db": 3.814697265625e-06,
+      "rust_avg_iters": 2.048,
+      "rust_max_iters": 5,
+      "cpp_avg_iters": 2.04913,
+      "cpp_max_iters": 5
+    }
+  ],
+  "pass": true,
+  "failures": []
+}

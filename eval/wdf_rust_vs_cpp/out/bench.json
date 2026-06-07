@@ -1,0 +1,46 @@
+{
+  "config": {
+    "stim": "sweep_m6",
+    "audio_dur_s": 9.0,
+    "gain_norm": 0.5,
+    "rgain_ohm": 905.5385138137417,
+    "bias": 0.77,
+    "runs": 5,
+    "warmup": 1,
+    "note": "both os=2, native opt, single-thread; wall incl. warmup+I/O"
+  },
+  "results": {
+    "cpp/realtime": {
+      "wall_s": 21.973987543000476,
+      "rt_factor": 2.4415541714444973,
+      "avg_iters": 2.45647,
+      "max_iters": 4
+    },
+    "cpp/fast": {
+      "wall_s": 13.145281662000343,
+      "rt_factor": 1.4605868513333715,
+      "avg_iters": 2.21487,
+      "max_iters": 4
+    },
+    "rust/realtime": {
+      "wall_s": 25.55893344800006,
+      "rt_factor": 2.839881494222229,
+      "avg_iters": 2.456,
+      "max_iters": 4
+    },
+    "rust/fast": {
+      "wall_s": 14.48169825199966,
+      "rt_factor": 1.6090775835555178,
+      "avg_iters": 2.215,
+      "max_iters": 4
+    }
+  },
+  "fast_speedup": {
+    "rust": 1.7649127197130237,
+    "cpp": 1.6716254628854146
+  },
+  "rust_over_cpp": {
+    "realtime": 1.163144986679558,
+    "fast": 1.1016651163787958
+  }
+}
