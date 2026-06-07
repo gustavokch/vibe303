@@ -1,14 +1,14 @@
-import subprocess  # noqa: F401  (used by Tasks 2/3)
-import zipfile  # noqa: F401  (used by Tasks 2/3)
+import subprocess  # noqa: F401  (used by Task 3)
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import soundfile as sf
 
-from train.stage import (  # noqa: F401  (stage_* used by Tasks 2/3)
+from train.stage import (
     remap_manifests,
-    stage_rclone,
+    stage_rclone,  # noqa: F401  (used by Task 3)
     stage_zip,
 )
 
@@ -44,3 +44,19 @@ def test_remap_rewrites_to_local_absolute_and_files_exist(tmp_path):
     assert wet0 == str(ds / "wet" / "sweepa_g0.wav")
     assert Path(wet0).exists()
     assert Path(df.iloc[0]["dry_path"]).exists()
+
+
+def test_stage_zip_extracts_and_finds_data_root(tmp_path):
+    ds = _make_dataset(tmp_path / "src")
+    # bundle stores paths under a leading data/ prefix, like make_bundle.sh
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w") as z:
+        for p in ds.rglob("*"):
+            if p.is_file():
+                z.write(p, Path("data") / p.relative_to(ds))
+
+    data_root = stage_zip(zip_path, dest=tmp_path / "content" / "dataset")
+    assert (data_root / "train.csv").exists()
+    assert (data_root / "dry").is_dir()
+    out = remap_manifests(data_root, out_dir=tmp_path / "content")
+    assert Path(pd.read_csv(out["train"]).iloc[0]["wet_path"]).exists()

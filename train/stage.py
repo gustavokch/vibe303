@@ -7,6 +7,7 @@ so it unit-tests anywhere and ships in the make_bundle zip.
 """
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -50,8 +51,20 @@ def remap_manifests(
     return out
 
 
-def stage_zip(zip_path, dest="/content/dataset"):
-    raise NotImplementedError  # Task 2
+def stage_zip(zip_path: str | Path, dest: str | Path = "/content/dataset") -> Path:
+    """Extract an uploaded bundle zip to ``dest``; return the dir holding train.csv.
+
+    The bundle stores entries under a leading ``data/`` prefix, so the data root
+    is wherever ``train.csv`` lands, not ``dest`` itself.
+    """
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path) as z:
+        z.extractall(dest)
+    hits = list(dest.rglob("train.csv"))
+    if not hits:
+        raise FileNotFoundError(f"train.csv not found under {dest} after unzip")
+    return hits[0].parent
 
 
 def stage_rclone(remote, dest="/content/dataset"):
