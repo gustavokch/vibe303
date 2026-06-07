@@ -18,10 +18,27 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+import soundfile as sf
 import torch
 
-from eval.ablation.gain_eval import Predict
+from eval.ablation.gain_eval import Predict, Row
+from train.dataset import _resolve_path
 from train.model import BA283GRU
+
+
+def _read_mono(path: str) -> np.ndarray:
+    """Read an audio file as float32, mono-mixing stereo via mean.
+
+    Mirrors :meth:`train.dataset.BA283Dataset._read_full` (cwd-relative path
+    resolution + stereo mean) so eval reads exactly what training read.
+    """
+    resolved = _resolve_path(path)
+    with sf.SoundFile(str(resolved)) as f:
+        data = f.read(dtype="float32")
+    if data.ndim == 2:
+        data = data.mean(axis=1)
+    return np.ascontiguousarray(data, dtype=np.float32)
 
 
 def load_model(
@@ -64,3 +81,27 @@ def make_predict(model, *, input_scale: float, warmup: int) -> Predict:
         return out[warmup:]
 
     return predict
+
+
+def build_rows(
+    manifest_df: pd.DataFrame,
+    *,
+    output_scale: float,
+    warmup: int,
+) -> list[Row]:
+    """Load manifest rows into ``(dry_raw, gain, target_normalized)`` tuples.
+
+    Each row reads its dry and wet wavs (mono-mixed, cwd-relative resolution
+    mirroring the dataset). The target is the wet signal scaled by
+    ``output_scale`` with the first ``warmup`` samples trimmed -- so it aligns
+    in length with a ``make_predict`` output (which trims the same warmup from
+    its own result). The dry stays RAW and full-length; ``make_predict`` applies
+    ``INPUT_SCALE`` and trims warmup internally.
+    """
+    rows: list[Row] = []
+    for _, row in manifest_df.iterrows():
+        dry = _read_mono(row["dry_path"])
+        wet = _read_mono(row["wet_path"])
+        target = (wet.astype(np.float64) * output_scale)[warmup:]
+        rows.append((dry, float(row["gain_value"]), target))
+    return rows
