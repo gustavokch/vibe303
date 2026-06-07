@@ -157,6 +157,8 @@ def test_run_cell_emits_verdict_dict(tmp_path):
     )
     # 0.5 is the only held-out gain -> a finite float, not None
     assert isinstance(cell["held_out_gain_esr"], float)
+    # no resampling requested (sr_train==sr_eval) -> field absent
+    assert "aliasing_high_band" not in cell
 
 
 def test_run_cell_resampled_path_populates_aliasing(tmp_path):

@@ -106,6 +106,10 @@ def build_rows(
     for _, row in manifest_df.iterrows():
         dry = _read_mono(row["dry_path"])
         wet = _read_mono(row["wet_path"])
+        # head-aligned; mirror dataset.py min(dry,wet)
+        n = min(len(dry), len(wet))
+        dry = dry[:n]
+        wet = wet[:n]
         target = (wet.astype(np.float64) * output_scale)[warmup:]
         rows.append((dry, float(row["gain_value"]), target))
     return rows
@@ -152,11 +156,15 @@ def run_cell(
         scored_predict = _resample_wrap
 
     per_gain = per_gain_esr(scored_predict, rows)
+    # equal-weight per gain (ablation fairness): each gain setting counts
+    # equally regardless of row count
     val_esr = float(np.mean(list(per_gain.values())))
 
     try:
         hog = held_out_gain_esr(scored_predict, rows, trained_gains=trained_gains)
-    except ValueError:
+    except ValueError as exc:
+        if "no held-out rows" not in str(exc):
+            raise
         hog = None
 
     result: dict = {
