@@ -369,16 +369,18 @@ brainstorming/writing-plans cycle).
 
 ## Known follow-ups (post Phase-A review)
 
-Phase-A harness (`eval/ablation/`) is built and green (34 tests). One tracked
-integration gap remains before the **C7 target-floor CLI** can run end-to-end:
+Phase-A harness (`eval/ablation/`) is built and green (39 tests).
 
-- `eval/ablation/target_floor.py` `_main` shells out to
-  `eval/acme_vs_spice/compare.py` and `eval/wdf_vs_spice/compare.py` assuming a
-  `--manifest`/`--emit-esr` JSON contract. Those harnesses (separate `spike/*`
-  branch work) do **not** yet expose that CLI: ACME's `compare.py` is absent on
-  this branch and WDF's uses `--stims/--gains/--bias/--out` and prints human
-  tables. Before the first real C7 run, add an `--emit-esr` JSON mode to each
-  harness (or write a thin adapter) and wire the actual flags. The pure core
-  (`summarize_floor`) is tested and correct; only the subprocess glue is pending.
+- **[RESOLVED]** C7 CLI wiring. `target_floor.py` now drives the harnesses with
+  their **real** CLI (`--stims/--gains/--bias/--out`) and parses each
+  `summary.json` (`esrs_from_summary`: per-row `esr_db` under `gain_ladder`/WDF or
+  `points`/ACME → linear). It can also reuse a prior run via
+  `--wdf-summary`/`--acme-summary`. Validated against the committed summary.json:
+  WDF median −30.7 dB (matches the harness's own `esr_summary_db.median`), ACME
+  −31.5 dB. On those full-grid runs `target_bound=False` (floor ≈ −31 dB ≪ the
+  0.097 neural `val_esr`) — preliminary signal that the SPICE target is **not**
+  the wall. The C7 *gate* still wants a run on the actual C7 **subset** (Phase B/C)
+  before the verdict is final; the heavy subprocess path stays `pragma: no cover`
+  (needs ngspice + the `ba283_sim` build + Julia).
 
-The Phase-A library itself is mergeable independently of this glue.
+The Phase-A library is mergeable independently.
