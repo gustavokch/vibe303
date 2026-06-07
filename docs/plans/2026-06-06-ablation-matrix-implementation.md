@@ -364,3 +364,23 @@ brainstorming/writing-plans cycle).
 - Respect `.gitignore`: commit manifests + result JSONs, never wav/npz blobs.
 - The metric harness (Phase A) is venue-independent and the only TDD'd code; runs are
   procedural by nature.
+
+---
+
+## Known follow-ups (post Phase-A review)
+
+Phase-A harness (`eval/ablation/`) is built and green (39 tests).
+
+- **[RESOLVED]** C7 CLI wiring. `target_floor.py` now drives the harnesses with
+  their **real** CLI (`--stims/--gains/--bias/--out`) and parses each
+  `summary.json` (`esrs_from_summary`: per-row `esr_db` under `gain_ladder`/WDF or
+  `points`/ACME → linear). It can also reuse a prior run via
+  `--wdf-summary`/`--acme-summary`. Validated against the committed summary.json:
+  WDF median −30.7 dB (matches the harness's own `esr_summary_db.median`), ACME
+  −31.5 dB. On those full-grid runs `target_bound=False` (floor ≈ −31 dB ≪ the
+  0.097 neural `val_esr`) — preliminary signal that the SPICE target is **not**
+  the wall. The C7 *gate* still wants a run on the actual C7 **subset** (Phase B/C)
+  before the verdict is final; the heavy subprocess path stays `pragma: no cover`
+  (needs ngspice + the `ba283_sim` build + Julia).
+
+The Phase-A library is mergeable independently.
