@@ -7,6 +7,7 @@ so it unit-tests anywhere and ships in the make_bundle zip.
 """
 from __future__ import annotations
 
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -67,5 +68,24 @@ def stage_zip(zip_path: str | Path, dest: str | Path = "/content/dataset") -> Pa
     return hits[0].parent
 
 
-def stage_rclone(remote, dest="/content/dataset"):
-    raise NotImplementedError  # Task 3
+def stage_rclone(remote: str, dest: str | Path = "/content/dataset") -> Path:
+    """Copy a dataset from an rclone ``remote`` to local ``dest`` (copy, NOT mount).
+
+    No FUSE / VFS: every file lands on local disk before training reads it.
+    Asserts ``manifest.csv`` is present afterwards so a partial copy is caught early.
+    """
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        ["rclone", "copy", remote, str(dest), "-P"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode:
+        raise RuntimeError(
+            f"rclone copy {remote} failed (exit {proc.returncode}):\n"
+            f"{proc.stderr[-2000:]}"
+        )
+    if not (dest / "manifest.csv").exists():
+        raise FileNotFoundError(f"manifest.csv missing under {dest} after copy")
+    return dest

@@ -1,4 +1,4 @@
-import subprocess  # noqa: F401  (used by Task 3)
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -8,7 +8,7 @@ import soundfile as sf
 
 from train.stage import (
     remap_manifests,
-    stage_rclone,  # noqa: F401  (used by Task 3)
+    stage_rclone,
     stage_zip,
 )
 
@@ -60,3 +60,35 @@ def test_stage_zip_extracts_and_finds_data_root(tmp_path):
     assert (data_root / "dry").is_dir()
     out = remap_manifests(data_root, out_dir=tmp_path / "content")
     assert Path(pd.read_csv(out["train"]).iloc[0]["wet_path"]).exists()
+
+
+def test_stage_rclone_copies_not_mounts(tmp_path, monkeypatch):
+    ds = _make_dataset(tmp_path / "remote")
+    dest = tmp_path / "content" / "dataset"
+    calls = []
+
+    def fake_run(argv, **kw):
+        calls.append(argv)
+        # emulate `rclone copy <remote> <dest>`: mirror files locally
+        import shutil
+        shutil.copytree(argv[2], argv[3], dirs_exist_ok=True)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    out_dir = stage_rclone(str(ds), dest=dest)
+
+    assert out_dir == dest
+    assert (dest / "manifest.csv").exists()
+    argv = calls[0]
+    assert argv[:2] == ["rclone", "copy"]
+    assert "mount" not in argv  # copy, never mount
+
+
+def test_stage_rclone_raises_on_failure(tmp_path, monkeypatch):
+    def fake_run(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1, "", "boom")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    import pytest
+    with pytest.raises(RuntimeError, match="rclone copy"):
+        stage_rclone("remote:x", dest=tmp_path / "d")
