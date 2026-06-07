@@ -4,7 +4,9 @@ import pytest
 import soundfile as sf
 import torch
 
+from eval.ablation import report
 from eval.ablation.run_checkpoint_eval import (
+    _main,
     build_rows,
     load_model,
     make_predict,
@@ -175,3 +177,39 @@ def test_run_cell_resampled_path_populates_aliasing(tmp_path):
     assert isinstance(cell["aliasing_high_band"], float)
     assert np.isfinite(cell["aliasing_high_band"])
     assert isinstance(cell["val_esr"], float)
+
+
+def test_main_writes_json_consumable_by_report(tmp_path):
+    import json
+
+    gains = [0.0, 0.5, 1.0]
+    ckpt, manifest, hidden = _make_fixture(tmp_path, gains)
+    out = tmp_path / "cell.json"
+
+    _main(
+        [
+            "--checkpoint",
+            str(ckpt),
+            "--manifest",
+            str(manifest),
+            "--hidden",
+            str(hidden),
+            "--cell",
+            "baseline",
+            "--trained-gains",
+            "0.0,1.0",
+            "--warmup",
+            "128",
+            "--out",
+            str(out),
+        ]
+    )
+
+    cell = json.loads(out.read_text())
+    assert cell["cell"] == "baseline"
+    assert isinstance(cell["val_esr"], float)
+    # render_table requires a per-cell baseline_esr (see report.py); supply it,
+    # mirroring how the caller assembles cells against venue baselines.
+    cell["baseline_esr"] = cell["val_esr"] * 2.0
+    table = report.render_table([cell], target=0.01)
+    assert "baseline" in table

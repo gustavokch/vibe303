@@ -15,6 +15,9 @@ mismatch here corrupts the score even for a perfect model.
 
 from __future__ import annotations
 
+import argparse
+import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -172,3 +175,43 @@ def run_cell(
         result["aliasing_high_band"] = float(np.mean(hb))
 
     return result
+
+
+def _main(argv: Sequence[str] | None = None) -> None:
+    """CLI: score a checkpoint cell and write the result dict to ``--out`` JSON."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--hidden", type=int, required=True)
+    parser.add_argument("--conditioning", default="film")
+    parser.add_argument("--cell", required=True)
+    parser.add_argument(
+        "--trained-gains",
+        required=True,
+        help="comma-separated gains the model was trained on, e.g. 0.0,1.0",
+    )
+    parser.add_argument("--sr-train", type=int, default=None)
+    parser.add_argument("--sr-eval", type=int, default=None)
+    parser.add_argument("--warmup", type=int, default=1024)
+    parser.add_argument("--out", required=True)
+    args = parser.parse_args(argv)
+
+    trained_gains = {float(g) for g in args.trained_gains.split(",") if g.strip()}
+
+    cell = run_cell(
+        args.checkpoint,
+        args.manifest,
+        hidden=args.hidden,
+        conditioning=args.conditioning,
+        cell=args.cell,
+        trained_gains=trained_gains,
+        sr_train=args.sr_train,
+        sr_eval=args.sr_eval,
+        warmup=args.warmup,
+    )
+
+    Path(args.out).write_text(json.dumps(cell, indent=2))
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _main()
