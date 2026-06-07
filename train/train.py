@@ -16,8 +16,10 @@ of compute.
 from __future__ import annotations
 
 import argparse
+import datetime
 import math
 import os
+import time
 import warnings
 from pathlib import Path
 
@@ -26,7 +28,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from train.dataset import make_loader
 from train.loss import composite_loss, esr
-from train.model import BA283GRU
+from train.model import BA283LSTM
 
 
 def _atomic_save(state: object, path: Path) -> None:
@@ -38,6 +40,14 @@ def _atomic_save(state: object, path: Path) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     torch.save(state, tmp)
     os.replace(tmp, path)
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    """Format an elapsed duration (seconds since run start T) as ``+HH:MM:SS``."""
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"+{h:02d}:{m:02d}:{s:02d}"
 
 
 def train_main(
@@ -82,7 +92,7 @@ def train_main(
         drop_last=False,
     )
 
-    model = BA283GRU(hidden=hidden, conditioning=conditioning).to(device)
+    model = BA283LSTM(hidden=hidden, conditioning=conditioning).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     writer = SummaryWriter(log_dir=str(log_dir))
@@ -105,6 +115,11 @@ def train_main(
         epochs_since_improvement = ckpt["epochs_since_improvement"]
         start_epoch = ckpt["epoch"] + 1
 
+    # Wall-clock start T (header) + monotonic reference for per-epoch deltas.
+    run_start = time.monotonic()
+    t_zero = datetime.datetime.now()
+    print(f"training start T={t_zero:%Y-%m-%d %H:%M:%S}", flush=True)
+
     try:
         for e in range(start_epoch, epochs):
             # --- Train ---
@@ -120,10 +135,11 @@ def train_main(
                 train_y = y[:, warmup_samples:]
 
                 with torch.no_grad():
-                    _, h = model(warmup_x)
-                h = h.detach()
+                    _, state = model(warmup_x)
+                # LSTM state is a (h, c) tuple; detach both to truncate BPTT.
+                state = tuple(s.detach() for s in state)
 
-                pred, _ = model(train_x, h)
+                pred, _ = model(train_x, state)
                 loss = composite_loss(pred, train_y)
 
                 if not torch.isfinite(loss):
@@ -209,6 +225,7 @@ def train_main(
             # the trajectory distinguishes "still descending" from "plateaued /
             # collapsed" and shows whether best.pth is an early checkpoint.
             print(
+                f"[{_fmt_elapsed(time.monotonic() - run_start)}] "
                 f"epoch {e:3d}  train_loss={mean_train_loss:.4f}  "
                 f"val_esr={val_esr:.4f}  best={best_esr:.4f}"
                 f"{'  *' if improved else ''}  "

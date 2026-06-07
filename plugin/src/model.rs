@@ -1,25 +1,38 @@
-//! Hand-coded pure-Rust GRU(2,32)+Dense(1) matching PyTorch nn.GRU exactly.
-//! Parses the self-describing `ba283-gru-v1` JSON (see train/export.py).
+//! Hand-coded pure-Rust LSTM(1,32)+FiLM+Dense(1) matching PyTorch nn.LSTM exactly.
+//! Parses the self-describing `ba283-lstm-v1` JSON (see train/export.py).
 //! forward() is zero-alloc: fixed [f32; 32] arrays, no Vec/heap in the audio path.
 
 use serde_json::Value;
 
 const HIDDEN: usize = 32;
-const INPUT: usize = 2;
-const GATES: usize = 3 * HIDDEN; // 96
+const INPUT: usize = 2; // [audio, gain]
+const GATES: usize = 4 * HIDDEN; // 128 (i, f, g, o)
+const LSTM_IN_MAX: usize = 2; // film -> 1 col used, concat -> 2
 
-/// GRU(2,32) + Dense(1) with fixed-size weight storage.
+/// LSTM(1|2, 32) + optional FiLM + Dense(1) with fixed-size weight storage.
 ///
-/// Gate ordering follows PyTorch `nn.GRU` (`gate_order: "rzn"`): the 96 rows of
-/// the gate tensors are reset r = [0..32], update z = [32..64], new n = [64..96].
+/// Gate ordering follows PyTorch `nn.LSTM` (`gate_order: "ifgo"`): the 128 rows
+/// of the gate tensors are input i = [0..32], forget f = [32..64], cell g =
+/// [64..96], output o = [96..128].
+///
+/// FiLM conditioning (`conditioning: "film"`): the LSTM sees only the audio
+/// channel (`lstm_input_size = 1`) and the gain channel drives a `Linear(1, 2H)`
+/// affine `(gamma, beta)` applied to the LSTM output before the dense layer.
+/// Concat conditioning (`"concat"`): gain is the 2nd LSTM input channel
+/// (`lstm_input_size = 2`) and there is no FiLM layer.
 pub struct Ba283Model {
-    w_ih: [[f32; INPUT]; GATES],  // 96x2
-    w_hh: [[f32; HIDDEN]; GATES], // 96x32
-    b_ih: [f32; GATES],           // 96
-    b_hh: [f32; GATES],           // 96
-    w_dense: [f32; HIDDEN],       // 32
+    w_ih: [[f32; LSTM_IN_MAX]; GATES], // 128 x (1|2); unused cols stay 0
+    w_hh: [[f32; HIDDEN]; GATES],      // 128 x 32
+    b_ih: [f32; GATES],                // 128
+    b_hh: [f32; GATES],                // 128
+    film_w: [f32; 2 * HIDDEN],         // 64 (the [64,1] weight flattened)
+    film_b: [f32; 2 * HIDDEN],         // 64
+    w_dense: [f32; HIDDEN],            // 32
     b_dense: f32,
     h: [f32; HIDDEN], // hidden state
+    c: [f32; HIDDEN], // cell state
+    lstm_input_size: usize,
+    film: bool,
 }
 
 #[inline(always)]
@@ -33,7 +46,7 @@ impl Ba283Model {
     /// The embedded weights are a build-time invariant; any shape/format
     /// mismatch panics with a clear message rather than failing silently.
     pub fn new_from_embedded_weights() -> Self {
-        const WEIGHTS_JSON: &str = include_str!("../weights/ba283_gru32.json");
+        const WEIGHTS_JSON: &str = include_str!("../weights/ba283_lstm32.json");
         Self::from_json_str(WEIGHTS_JSON)
     }
 
@@ -42,7 +55,7 @@ impl Ba283Model {
 
         let format = doc["format"].as_str().expect("weights: missing `format`");
         assert_eq!(
-            format, "ba283-gru-v1",
+            format, "ba283-lstm-v1",
             "weights: unexpected format `{format}`"
         );
         let input_size = doc["input_size"]
@@ -62,63 +75,99 @@ impl Ba283Model {
         let gate_order = doc["gate_order"]
             .as_str()
             .expect("weights: missing `gate_order`");
-        assert_eq!(gate_order, "rzn", "weights: gate_order must be `rzn`");
+        assert_eq!(gate_order, "ifgo", "weights: gate_order must be `ifgo`");
+
+        let conditioning = doc["conditioning"].as_str().unwrap_or("concat");
+        let film = conditioning == "film";
+        let lstm_input_size = doc["lstm_input_size"]
+            .as_u64()
+            .expect("weights: missing `lstm_input_size`") as usize;
+        assert!(
+            (1..=LSTM_IN_MAX).contains(&lstm_input_size),
+            "weights: lstm_input_size {lstm_input_size} out of range 1..={LSTM_IN_MAX}"
+        );
 
         let layers = doc["layers"]
             .as_array()
             .expect("weights: `layers` must be an array");
-        let gru = layers
+        let lstm = layers
             .iter()
-            .find(|l| l["type"].as_str() == Some("gru"))
-            .expect("weights: missing `gru` layer");
+            .find(|l| l["type"].as_str() == Some("lstm"))
+            .expect("weights: missing `lstm` layer");
         let dense = layers
             .iter()
             .find(|l| l["type"].as_str() == Some("dense"))
             .expect("weights: missing `dense` layer");
 
         let mut model = Self {
-            w_ih: [[0.0; INPUT]; GATES],
+            w_ih: [[0.0; LSTM_IN_MAX]; GATES],
             w_hh: [[0.0; HIDDEN]; GATES],
             b_ih: [0.0; GATES],
             b_hh: [0.0; GATES],
+            film_w: [0.0; 2 * HIDDEN],
+            film_b: [0.0; 2 * HIDDEN],
             w_dense: [0.0; HIDDEN],
             b_dense: 0.0,
             h: [0.0; HIDDEN],
+            c: [0.0; HIDDEN],
+            lstm_input_size,
+            film,
         };
 
-        // GRU weight_ih: 96 x 2
-        let w_ih = gru["weight_ih"].as_array().expect("gru.weight_ih missing");
-        assert_eq!(w_ih.len(), GATES, "gru.weight_ih rows must be {GATES}");
+        // LSTM weight_ih: 128 x lstm_input_size
+        let w_ih = lstm["weight_ih"].as_array().expect("lstm.weight_ih missing");
+        assert_eq!(w_ih.len(), GATES, "lstm.weight_ih rows must be {GATES}");
         for (row, row_v) in w_ih.iter().enumerate() {
-            let cols = row_v.as_array().expect("gru.weight_ih row not an array");
+            let cols = row_v.as_array().expect("lstm.weight_ih row not an array");
             assert_eq!(
                 cols.len(),
-                INPUT,
-                "gru.weight_ih row {row} must have {INPUT} cols"
+                lstm_input_size,
+                "lstm.weight_ih row {row} must have {lstm_input_size} cols"
             );
             for (col, v) in cols.iter().enumerate() {
-                model.w_ih[row][col] = as_f32(v, "gru.weight_ih");
+                model.w_ih[row][col] = as_f32(v, "lstm.weight_ih");
             }
         }
 
-        // GRU weight_hh: 96 x 32
-        let w_hh = gru["weight_hh"].as_array().expect("gru.weight_hh missing");
-        assert_eq!(w_hh.len(), GATES, "gru.weight_hh rows must be {GATES}");
+        // LSTM weight_hh: 128 x 32
+        let w_hh = lstm["weight_hh"].as_array().expect("lstm.weight_hh missing");
+        assert_eq!(w_hh.len(), GATES, "lstm.weight_hh rows must be {GATES}");
         for (row, row_v) in w_hh.iter().enumerate() {
-            let cols = row_v.as_array().expect("gru.weight_hh row not an array");
+            let cols = row_v.as_array().expect("lstm.weight_hh row not an array");
             assert_eq!(
                 cols.len(),
                 HIDDEN,
-                "gru.weight_hh row {row} must have {HIDDEN} cols"
+                "lstm.weight_hh row {row} must have {HIDDEN} cols"
             );
             for (col, v) in cols.iter().enumerate() {
-                model.w_hh[row][col] = as_f32(v, "gru.weight_hh");
+                model.w_hh[row][col] = as_f32(v, "lstm.weight_hh");
             }
         }
 
-        // GRU bias_ih / bias_hh: 96 each
-        fill_vec(&gru["bias_ih"], &mut model.b_ih, GATES, "gru.bias_ih");
-        fill_vec(&gru["bias_hh"], &mut model.b_hh, GATES, "gru.bias_hh");
+        // LSTM bias_ih / bias_hh: 128 each
+        fill_vec(&lstm["bias_ih"], &mut model.b_ih, GATES, "lstm.bias_ih");
+        fill_vec(&lstm["bias_hh"], &mut model.b_hh, GATES, "lstm.bias_hh");
+
+        // FiLM layer: weight [2H, 1] -> flattened 64, bias [2H] = 64.
+        if film {
+            let f = layers
+                .iter()
+                .find(|l| l["type"].as_str() == Some("film"))
+                .expect("weights: conditioning=film but no `film` layer");
+            let fw = f["weight"].as_array().expect("film.weight missing");
+            assert_eq!(
+                fw.len(),
+                2 * HIDDEN,
+                "film.weight rows must be {}",
+                2 * HIDDEN
+            );
+            for (row, row_v) in fw.iter().enumerate() {
+                let cols = row_v.as_array().expect("film.weight row not an array");
+                assert_eq!(cols.len(), 1, "film.weight row {row} must have 1 col");
+                model.film_w[row] = as_f32(&cols[0], "film.weight");
+            }
+            fill_vec(&f["bias"], &mut model.film_b, 2 * HIDDEN, "film.bias");
+        }
 
         // Dense weight: 1 x 32
         let d_w = dense["weight"].as_array().expect("dense.weight missing");
@@ -141,65 +190,71 @@ impl Ba283Model {
         model
     }
 
-    /// Run one timestep. `x = [audio, bias]`. Zero-alloc: only fixed stack arrays.
+    /// Run one timestep. `x = [audio, gain]`. Zero-alloc: only fixed stack arrays.
     ///
-    /// Implements PyTorch nn.GRU exactly:
+    /// Implements PyTorch nn.LSTM exactly (gate_order `ifgo`):
     /// ```text
-    /// r = sigmoid(W_ir x + b_ir + W_hr h + b_hr)
-    /// z = sigmoid(W_iz x + b_iz + W_hz h + b_hz)
-    /// n = tanh(W_in x + b_in + r * (W_hn h + b_hn))
-    /// h' = (1 - z) * n + z * h
-    /// y  = W_dense h' + b_dense
+    /// i  = sigmoid(W_ii x + b_ii + W_hi h + b_hi)
+    /// f  = sigmoid(W_if x + b_if + W_hf h + b_hf)
+    /// g  = tanh   (W_ig x + b_ig + W_hg h + b_hg)
+    /// o  = sigmoid(W_io x + b_io + W_ho h + b_ho)
+    /// c' = f * c + i * g
+    /// h' = o * tanh(c')
     /// ```
+    /// FiLM mode then applies `z = (1 + gamma) * h' + beta` with
+    /// `[gamma, beta] = film(gain)`; concat mode uses `z = h'`. Output is
+    /// `y = W_dense z + b_dense`.
     pub fn forward(&mut self, x: &[f32; 2]) -> [f32; 1] {
-        let mut r = [0.0f32; HIDDEN];
-        let mut z = [0.0f32; HIDDEN];
-        let mut n = [0.0f32; HIDDEN];
+        // LSTM input: film -> audio only (col 0); concat -> [audio, gain].
+        let in0 = x[0];
+        let in1 = if self.lstm_input_size > 1 { x[1] } else { 0.0 };
 
-        for i in 0..HIDDEN {
-            // reset gate r: rows [0..32]
-            let row_r = i;
-            let ih_r = self.w_ih[row_r][0] * x[0] + self.w_ih[row_r][1] * x[1] + self.b_ih[row_r];
-            let mut hh_r = self.b_hh[row_r];
-            for (j, &hv) in self.h.iter().enumerate() {
-                hh_r += self.w_hh[row_r][j] * hv;
-            }
-            r[i] = sigmoid(ih_r + hh_r);
+        let mut new_h = [0.0f32; HIDDEN];
+        for (k, h_slot) in new_h.iter_mut().enumerate() {
+            // gate rows: i=[0..32], f=[32..64], g=[64..96], o=[96..128]
+            let i = sigmoid(self.gate(k, in0, in1));
+            let f = sigmoid(self.gate(HIDDEN + k, in0, in1));
+            let g = self.gate(2 * HIDDEN + k, in0, in1).tanh();
+            let o = sigmoid(self.gate(3 * HIDDEN + k, in0, in1));
 
-            // update gate z: rows [32..64]
-            let row_z = HIDDEN + i;
-            let ih_z = self.w_ih[row_z][0] * x[0] + self.w_ih[row_z][1] * x[1] + self.b_ih[row_z];
-            let mut hh_z = self.b_hh[row_z];
-            for (j, &hv) in self.h.iter().enumerate() {
-                hh_z += self.w_hh[row_z][j] * hv;
-            }
-            z[i] = sigmoid(ih_z + hh_z);
+            let c_new = f * self.c[k] + i * g;
+            self.c[k] = c_new;
+            *h_slot = o * c_new.tanh();
         }
+        self.h = new_h;
 
-        for i in 0..HIDDEN {
-            // new gate n: rows [64..96]. r multiplies the ENTIRE hh term incl b_hn.
-            let row_n = 2 * HIDDEN + i;
-            let ih_n = self.w_ih[row_n][0] * x[0] + self.w_ih[row_n][1] * x[1] + self.b_ih[row_n];
-            let mut hh_n = self.b_hh[row_n];
-            for (j, &hv) in self.h.iter().enumerate() {
-                hh_n += self.w_hh[row_n][j] * hv;
-            }
-            n[i] = (ih_n + r[i] * hh_n).tanh();
-        }
-
+        let g_in = x[1];
         let mut y = self.b_dense;
-        for i in 0..HIDDEN {
-            let h_new = (1.0 - z[i]) * n[i] + z[i] * self.h[i];
-            self.h[i] = h_new;
-            y += self.w_dense[i] * h_new;
+        for k in 0..HIDDEN {
+            let z = if self.film {
+                let gamma = self.film_w[k] * g_in + self.film_b[k];
+                let beta = self.film_w[HIDDEN + k] * g_in + self.film_b[HIDDEN + k];
+                (1.0 + gamma) * self.h[k] + beta
+            } else {
+                self.h[k]
+            };
+            y += self.w_dense[k] * z;
         }
 
         [y]
     }
 
-    /// Zero the hidden state.
+    /// Pre-activation gate value for row `row`: `W_i row · in + b_ih + W_h row · h + b_hh`.
+    #[inline(always)]
+    fn gate(&self, row: usize, in0: f32, in1: f32) -> f32 {
+        let mut acc = self.b_ih[row] + self.b_hh[row];
+        acc += self.w_ih[row][0] * in0;
+        acc += self.w_ih[row][1] * in1;
+        for (j, &hv) in self.h.iter().enumerate() {
+            acc += self.w_hh[row][j] * hv;
+        }
+        acc
+    }
+
+    /// Zero the hidden and cell state.
     pub fn reset(&mut self) {
         self.h = [0.0; HIDDEN];
+        self.c = [0.0; HIDDEN];
     }
 }
 
