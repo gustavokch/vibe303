@@ -189,6 +189,7 @@ impl Plugin for Ba283Plugin {
         // model (direct at >= 96 kHz, else via 2x oversampler) -> Output, blended
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
         let host_ge_96k = self.sample_rate >= 96_000.0;
+        let backend = self.params.backend.value();
         for mut frame in buffer.iter_samples() {
             let drive = db_to_gain(self.params.drive_db.smoothed.next());
             let bias = self.params.bias.smoothed.next();
@@ -199,8 +200,8 @@ impl Plugin for Ba283Plugin {
                 if ch >= self.channels.len() {
                     break;
                 }
-                *sample =
-                    self.channels[ch].process_sample(*sample, drive, bias, out_g, mix, host_ge_96k);
+                *sample = self.channels[ch]
+                    .process_sample(*sample, drive, bias, out_g, mix, host_ge_96k, backend);
             }
         }
         ProcessStatus::Normal

@@ -146,11 +146,14 @@ fn main() {
     let out_gain = db_to_gain(output_db);
     let mix = mix_pct * 0.01;
     let mut chans: Vec<ChannelDsp> = (0..channels).map(|_| ChannelDsp::new()).collect();
+    // Phase E wires `--backend wdf|nn` + warmup; default to the existing NeuralNet chain for now.
+    let backend = ba283::InferenceBackend::NeuralNet;
 
     let mut n_frames = 0usize;
     for frame in samples.chunks(channels) {
         for (ch, &s) in frame.iter().enumerate() {
-            let y = chans[ch].process_sample(s, drive, bias, out_gain, mix, host_ge_96k);
+            let y = chans[ch]
+                .process_sample(s, drive, bias, out_gain, mix, host_ge_96k, backend);
             writer
                 .write_sample(y)
                 .unwrap_or_else(|e| die(&format!("error writing sample: {e}")));

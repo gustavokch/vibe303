@@ -17,6 +17,8 @@
 use crate::delay::ShortDelay;
 use crate::model::Ba283Model;
 use crate::oversample::Oversample2x;
+use crate::wdf::{WdfModel, WdfSnapshot};
+use crate::InferenceBackend;
 
 /// Dry-path delay depth on the sub-96k oversampling path. MUST equal
 /// `Ba283Plugin::latency_samples()` below 96 kHz (32) so the Mix blend stays
@@ -27,6 +29,12 @@ pub struct ChannelDsp {
     model: Ba283Model,
     os: Oversample2x,
     dry_delay: ShortDelay<OS_LATENCY_SAMPLES>,
+    /// Circuit-faithful backend. Self-oversamples internally (OS=2) and decimates with IIR
+    /// biquads, so its wet path has ~0 integer latency.
+    wdf: WdfModel,
+    /// Delays the WDF blended output by `OS_LATENCY_SAMPLES` sub-96k so the host-reported latency
+    /// stays valid for BOTH backends (no renegotiation when switching).
+    wdf_out_delay: ShortDelay<OS_LATENCY_SAMPLES>,
 }
 
 impl ChannelDsp {
@@ -35,6 +43,9 @@ impl ChannelDsp {
             model: Ba283Model::new_from_embedded_weights(),
             os: Oversample2x::new(),
             dry_delay: ShortDelay::new(),
+            // Placeholder SR/bias; rebuilt + restored with the real settings in `initialize`.
+            wdf: WdfModel::new(48_000.0, 220.0, 0.5),
+            wdf_out_delay: ShortDelay::new(),
         }
     }
 
@@ -42,11 +53,49 @@ impl ChannelDsp {
         self.model.reset();
         self.os.reset();
         self.dry_delay.reset();
+        self.wdf.reset(); // restore the settled snapshot installed in initialize
+        self.wdf_out_delay.reset();
     }
 
-    /// Run one sample through the full chain. Param values are already resolved
-    /// (smoothed/constant) and linear: `drive`/`out_gain` are linear gains
-    /// (db_to_gain applied by the caller), `mix` is the wet fraction in 0..1.
+    // --- WDF block-rate config (used by Phase D plugin wiring) ---
+
+    /// Rebuild the WDF model at the real host SR / gain / bias (e.g. in `initialize`).
+    pub fn wdf_rebuild(&mut self, host_sr: f32, rgain: f32, bias: f32) {
+        self.wdf = WdfModel::new(host_sr as f64, rgain as f64, bias as f64);
+    }
+
+    /// Install a settled snapshot (from a single shared warmup) and make it the reset target.
+    pub fn wdf_restore(&mut self, snap: &WdfSnapshot) {
+        self.wdf.restore(snap);
+        self.wdf.save_snapshot();
+    }
+
+    /// Warm the WDF model in place and make the settled state the reset target. Off the audio thread.
+    pub fn wdf_warmup(&mut self) {
+        self.wdf.warmup();
+        self.wdf.save_snapshot();
+    }
+
+    /// Capture the current WDF settled state (for sharing one warmup across channels).
+    pub fn wdf_snapshot(&self) -> WdfSnapshot {
+        self.wdf.snapshot()
+    }
+
+    /// Live bias change: rebuild G0 cheaply, preserving integrator state (dynamic re-settle).
+    pub fn wdf_set_bias(&mut self, bias: f32) {
+        self.wdf.set_bias(bias as f64);
+    }
+
+    /// Live circuit-gain (R_KJ) change: rebuild G0 cheaply, preserving integrator state.
+    pub fn wdf_set_rgain(&mut self, rgain: f32) {
+        self.wdf.set_rgain(rgain as f64);
+    }
+
+    /// Run one sample through the selected backend. `drive`/`out_gain` are linear gains, `mix` is the
+    /// wet fraction in 0..1. `bias` drives the NeuralNet path only — the WDF path uses the block-rate
+    /// bias/gain set via `wdf_set_bias`/`wdf_set_rgain`. The host-reported latency
+    /// (`Ba283Plugin::latency_samples`) is honoured for BOTH backends.
+    #[allow(clippy::too_many_arguments)]
     pub fn process_sample(
         &mut self,
         x: f32,
@@ -55,23 +104,36 @@ impl ChannelDsp {
         out_gain: f32,
         mix: f32,
         host_ge_96k: bool,
+        backend: InferenceBackend,
     ) -> f32 {
         let driven = x * drive;
-        let wet = if host_ge_96k {
-            self.model.forward(&[driven, bias])[0]
-        } else {
-            let (u0, u1) = self.os.upsample(driven);
-            let w0 = self.model.forward(&[u0, bias])[0];
-            let w1 = self.model.forward(&[u1, bias])[0];
-            self.os.downsample(w0, w1)
-        } * out_gain;
-        // Dry path delayed to match the wet-path latency so Mix aligns.
-        let dry_aligned = if host_ge_96k {
-            x
-        } else {
-            self.dry_delay.push_pop(x)
-        };
-        wet * mix + dry_aligned * (1.0 - mix)
+        match backend {
+            InferenceBackend::NeuralNet => {
+                let wet = if host_ge_96k {
+                    self.model.forward(&[driven, bias])[0]
+                } else {
+                    let (u0, u1) = self.os.upsample(driven);
+                    let w0 = self.model.forward(&[u0, bias])[0];
+                    let w1 = self.model.forward(&[u1, bias])[0];
+                    self.os.downsample(w0, w1)
+                } * out_gain;
+                // Dry path delayed to match the wet-path latency so Mix aligns.
+                let dry_aligned = if host_ge_96k { x } else { self.dry_delay.push_pop(x) };
+                wet * mix + dry_aligned * (1.0 - mix)
+            }
+            InferenceBackend::Wdf => {
+                let wet = self.wdf.process_host_sample(driven) * out_gain;
+                // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
+                let blended = wet * mix + x * (1.0 - mix);
+                // Keep the host-reported latency honest: delay the blended output by the same 32
+                // sub-96k the NeuralNet path reports, so switching backends needs no renegotiation.
+                if host_ge_96k {
+                    blended
+                } else {
+                    self.wdf_out_delay.push_pop(blended)
+                }
+            }
+        }
     }
 }
 
