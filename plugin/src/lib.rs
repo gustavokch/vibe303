@@ -9,6 +9,7 @@ pub mod oversample;
 pub mod wdf;
 
 use dsp::ChannelDsp;
+use wdf::WdfModel;
 
 /// Convert decibels to a linear gain factor.
 #[inline]
@@ -25,6 +26,10 @@ pub struct Ba283Plugin {
     /// Host sample rate cached in `initialize`. Default to the model's native
     /// 96 kHz so the no-oversampling path is taken until told otherwise.
     sample_rate: f32,
+    /// Last WDF R_KJ gain / bias applied to the channels (block-rate). `NAN` forces a first-block
+    /// apply. WDF-only; the NeuralNet path ignores these.
+    last_rgain: f32,
+    last_bias: f32,
 }
 
 /// Which emulation runs per sample. `NeuralNet` is the default (preserves current behaviour); `Wdf`
@@ -111,6 +116,8 @@ impl Default for Ba283Plugin {
             params: Arc::new(Ba283Params::default()),
             channels: [ChannelDsp::new(), ChannelDsp::new()],
             sample_rate: 96_000.0,
+            last_rgain: f32::NAN,
+            last_bias: f32::NAN,
         }
     }
 }
@@ -166,6 +173,22 @@ impl Plugin for Ba283Plugin {
         context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
+
+        // Warm ONE WDF model at the real SR / current gain / bias (both channels are identical), then
+        // install its settled snapshot into each channel as the reset target. Off the audio thread —
+        // bounded (~1 s of internal-rate solves with early-exit), acceptable at plugin load.
+        let rgain = self.params.circuit_gain.value();
+        let bias = self.params.bias.value();
+        let mut warm = WdfModel::new(self.sample_rate as f64, rgain as f64, bias as f64);
+        warm.warmup();
+        let snap = warm.snapshot();
+        for ch in self.channels.iter_mut() {
+            ch.wdf_rebuild(self.sample_rate, rgain, bias);
+            ch.wdf_restore(&snap);
+        }
+        self.last_rgain = rgain;
+        self.last_bias = bias;
+
         // Report the oversampler latency to the host (this nih_plug rev exposes
         // latency via InitContext::set_latency_samples; there is no
         // Plugin::latency_samples trait method).
@@ -190,6 +213,27 @@ impl Plugin for Ba283Plugin {
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
         let host_ge_96k = self.sample_rate >= 96_000.0;
         let backend = self.params.backend.value();
+
+        // WDF gain/bias are consumed at block rate (a cheap G0 rebuild, not per-sample-smoothed). Apply
+        // to both channels only when changed; integrator state is preserved so the model re-settles
+        // dynamically. NeuralNet blocks skip this entirely.
+        if backend == InferenceBackend::Wdf {
+            let rgain = self.params.circuit_gain.value();
+            let bias = self.params.bias.value();
+            if rgain != self.last_rgain {
+                for ch in self.channels.iter_mut() {
+                    ch.wdf_set_rgain(rgain);
+                }
+                self.last_rgain = rgain;
+            }
+            if bias != self.last_bias {
+                for ch in self.channels.iter_mut() {
+                    ch.wdf_set_bias(bias);
+                }
+                self.last_bias = bias;
+            }
+        }
+
         for mut frame in buffer.iter_samples() {
             let drive = db_to_gain(self.params.drive_db.smoothed.next());
             let bias = self.params.bias.smoothed.next();
