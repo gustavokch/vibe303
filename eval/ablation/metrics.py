@@ -9,6 +9,20 @@ import numpy as np
 from scipy.signal import resample_poly
 
 
+def resample_to(sig: np.ndarray, *, sr_from: int, sr_to: int) -> np.ndarray:
+    """Polyphase-resample ``sig`` from ``sr_from`` to ``sr_to`` (no-op if equal).
+
+    The single source of truth for the anti-aliased rate conversion shared by
+    :func:`esr_resampled` and the run-cell resample wrap, so both use the exact
+    same scipy Kaiser-windowed polyphase path (gcd-reduced up/down factors).
+    """
+    sig = np.asarray(sig, dtype=np.float64)
+    if sr_from == sr_to:
+        return sig
+    g = gcd(sr_from, sr_to)
+    return resample_poly(sig, sr_to // g, sr_from // g)
+
+
 def esr(pred: np.ndarray, target: np.ndarray, eps: float = 1e-12) -> float:
     """Error-to-signal ratio: sum((pred - target)**2) / sum(target**2).
 
@@ -46,12 +60,9 @@ def esr_resampled(
     at a common rate (``sr_to``) and compare apples-to-apples. When the two rates
     are already equal this reduces to a plain :func:`esr` call.
     """
-    pred = np.asarray(pred, dtype=np.float64)
-    if sr_from != sr_to:
-        g = gcd(sr_from, sr_to)
-        # scipy's default Kaiser-windowed polyphase filter provides the
-        # anti-alias; adequate as a fairness/comparison metric.
-        pred = resample_poly(pred, sr_to // g, sr_from // g)
+    # scipy's default Kaiser-windowed polyphase filter provides the anti-alias;
+    # adequate as a fairness/comparison metric. Shared with run_cell's wrap.
+    pred = resample_to(pred, sr_from=sr_from, sr_to=sr_to)
     return esr(pred, target, eps=eps)
 
 
