@@ -39,3 +39,6 @@ runs/
 
 # Large local training bundle (kept out of git)
 colab/ba283_train_bundle/
+
+# git worktrees
+.worktrees/
