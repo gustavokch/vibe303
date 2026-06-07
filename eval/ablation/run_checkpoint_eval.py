@@ -22,8 +22,9 @@ import pandas as pd
 import soundfile as sf
 import torch
 
-from eval.ablation.gain_eval import Predict, Row
-from train.dataset import _resolve_path
+from eval.ablation.gain_eval import Predict, Row, held_out_gain_esr, per_gain_esr
+from eval.ablation.metrics import high_band_error, resample_to
+from train.dataset import INPUT_SCALE, OUTPUT_SCALE, _resolve_path
 from train.model import BA283GRU
 
 
@@ -105,3 +106,69 @@ def build_rows(
         target = (wet.astype(np.float64) * output_scale)[warmup:]
         rows.append((dry, float(row["gain_value"]), target))
     return rows
+
+
+def run_cell(
+    checkpoint: str | Path,
+    manifest: str | Path,
+    *,
+    hidden: int,
+    conditioning: str = "film",
+    cell: str,
+    trained_gains: set[float],
+    sr_train: int | None = None,
+    sr_eval: int | None = None,
+    warmup: int = 1024,
+) -> dict:
+    """Score one ablation cell and emit a ``render_table``-shaped dict.
+
+    Loads the checkpoint, reads the manifest, builds normalized-domain rows and
+    a predict closure, then computes per-gain ESR, the val_esr (mean over gains),
+    and the held-out-gain ESR (``None`` when every gain was trained).
+
+    When ``sr_train`` and ``sr_eval`` differ, the predict output is resampled
+    ``sr_train -> sr_eval`` through the SAME polyphase path as
+    :func:`metrics.esr_resampled` (via :func:`metrics.resample_to`) before
+    scoring, and an ``aliasing_high_band`` field is populated with the mean
+    high-band error over rows at ``sr_eval``.
+    """
+    model = load_model(checkpoint, hidden=hidden, conditioning=conditioning)
+    manifest_df = pd.read_csv(manifest)
+    rows = build_rows(manifest_df, output_scale=OUTPUT_SCALE, warmup=warmup)
+    predict = make_predict(model, input_scale=INPUT_SCALE, warmup=warmup)
+
+    rescaled = (
+        sr_train is not None and sr_eval is not None and sr_train != sr_eval
+    )
+    scored_predict: Predict = predict
+    if rescaled:
+
+        def _resample_wrap(dry: np.ndarray, gain: float) -> np.ndarray:
+            return resample_to(predict(dry, gain), sr_from=sr_train, sr_to=sr_eval)
+
+        scored_predict = _resample_wrap
+
+    per_gain = per_gain_esr(scored_predict, rows)
+    val_esr = float(np.mean(list(per_gain.values())))
+
+    try:
+        hog = held_out_gain_esr(scored_predict, rows, trained_gains=trained_gains)
+    except ValueError:
+        hog = None
+
+    result: dict = {
+        "cell": cell,
+        "val_esr": val_esr,
+        "per_gain": per_gain,
+        "held_out_gain_esr": hog,
+        "notes": "",
+    }
+
+    if rescaled:
+        hb = [
+            high_band_error(scored_predict(dry, gain), target, sr=sr_eval)
+            for dry, gain, target in rows
+        ]
+        result["aliasing_high_band"] = float(np.mean(hb))
+
+    return result
