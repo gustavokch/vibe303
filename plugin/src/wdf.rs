@@ -444,6 +444,64 @@ pub enum CapTier {
 const RT_NEWTON_TOL: f64 = 1e-7;
 const RT_MAX_ITERS: usize = 30;
 
+/// Linear-solve path (`main.cpp:76`, `SolverMode`). `Dense` = full Gaussian elimination;
+/// `Schur` = static-block solve (factor the constant linear block once per sample, solve only
+/// the tiny nonlinear Schur complement per Newton iter). Schur falls back to dense when
+/// `gmin != 0` (homotopy perturbs the linear block) or when the complement is singular.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Solver {
+    #[default]
+    Dense,
+    Schur,
+}
+
+/// Quality/speed levers (`main.cpp:77` `QualityConfig` + the per-model lever fields).
+/// `realtime()` = every lever off (bit-identical to the reference); `fast()` = predict + schur
+/// + freeze-caps + ls-trim all on (`qualityPreset("fast")`, ~0.195x realtime, near-transparent).
+#[derive(Clone, Copy, Debug)]
+pub struct QualityConfig {
+    pub newton_tol: f64,
+    pub max_iters: usize,
+    pub cap_tier: CapTier,
+    /// 1st-order cross-sample Newton warm start (`--predict`). Lossless.
+    pub predict: bool,
+    /// Linear-solve path (`--solver schur`). Lossless within tol.
+    pub solver: Solver,
+    /// Freeze the junction-cap companion at Newton iter 0 (`--freeze-caps`). Lossy (FR ±0.1 dB).
+    pub freeze_caps: bool,
+    /// Deferred-acceptance line search (`--ls-trim`). Lossless.
+    pub ls_trim: bool,
+}
+
+impl QualityConfig {
+    pub fn realtime() -> Self {
+        Self {
+            newton_tol: RT_NEWTON_TOL,
+            max_iters: RT_MAX_ITERS,
+            cap_tier: CapTier::Full,
+            predict: false,
+            solver: Solver::Dense,
+            freeze_caps: false,
+            ls_trim: false,
+        }
+    }
+    pub fn fast() -> Self {
+        Self {
+            predict: true,
+            solver: Solver::Schur,
+            freeze_caps: true,
+            ls_trim: true,
+            ..Self::realtime()
+        }
+    }
+}
+
+impl Default for QualityConfig {
+    fn default() -> Self {
+        Self::realtime()
+    }
+}
+
 /// Internal oversampling factor (realtime tier). Host rate × OS = internal solve rate.
 pub const OS: usize = 2;
 
@@ -504,6 +562,36 @@ pub struct WdfModel {
     rn: [f64; NUM_NODES],
     j: [f64; NUM_NODES * NUM_NODES],
     g0: [f64; NUM_NODES * NUM_NODES], // constant linear conductance matrix
+
+    // --- round-2 speed levers (off at the realtime tier) ---
+    predict: bool,
+    solver: Solver,
+    freeze_caps: bool,
+    ls_trim: bool,
+
+    // Newton predictor: cross-sample voltage extrapolation (audio pass only).
+    v_pred_prev: [f64; NUM_NODES], // sol(n-2) for the unknown nodes
+    predict_primed: bool,          // false until the first extrapolation seed exists
+    in_audio_pass: bool,           // off during DC warmup/rail-ramp/settle
+
+    // Freeze-caps: cached iter-0 junction-cap companion per BJT: (cbe, cbc, off_be, off_bc).
+    frozen_cap: [(f64, f64, f64, f64); 3],
+    frozen_caps_valid: bool,
+
+    // Schur static-block partition (built once) + per-sample scratch.
+    n_idx: [usize; NUM_NODES], // global unknown-row indices in the N (nonlinear-coupled) set
+    l_idx: [usize; NUM_NODES], // global unknown-row indices in the L (linear-only) set
+    n_sz: usize,
+    l_sz: usize,
+    schur_ready: bool,
+    s_ll_fac: [f64; NUM_NODES * NUM_NODES], // LU factors of A_LL (row-permuted, in-place)
+    s_ll_piv: [usize; NUM_NODES],
+    s_w: [f64; NUM_NODES * NUM_NODES],      // W = A_LL^{-1} A_LN
+    s_sconst: [f64; NUM_NODES * NUM_NODES], // S_const = A_NN_lin - A_NL W
+    s_anl: [f64; NUM_NODES * NUM_NODES],
+    s_aln: [f64; NUM_NODES * NUM_NODES],
+    s_annlin: [f64; NUM_NODES * NUM_NODES],
+    s_s: [f64; NUM_NODES * NUM_NODES], // per-iter Schur complement
 
     // oversampling / decimation driver (set by `new`; unused when `build` is called directly)
     dec1: Biquad,
@@ -567,9 +655,16 @@ impl WdfModel {
     }
 
     /// Build the circuit at the given **internal** sample rate (host × OS), gain shunt `rgain`
-    /// (R_KJ ohms), and `bias` (RV1 pot [0,1]). Hardcodes the realtime tier (RB off, U=16).
-    /// Mirrors `BA283::build` (`main.cpp:314-409`).
+    /// (R_KJ ohms), and `bias` (RV1 pot [0,1]) at the realtime tier (all levers off).
+    /// Thin wrapper over [`build_with`]; mirrors `BA283::build` (`main.cpp:314-409`).
     pub fn build(internal_sr: f64, rgain: f64, bias: f64) -> Self {
+        Self::build_with(QualityConfig::realtime(), internal_sr, rgain, bias)
+    }
+
+    /// Build the circuit with an explicit [`QualityConfig`] (tier/lever selection). The topology
+    /// is fixed (RB off, U=16); only the solver levers vary. Mirrors `BA283::build` +
+    /// `qualityPreset` (`main.cpp:314-409`, `main.cpp:92`).
+    pub fn build_with(cfg: QualityConfig, internal_sr: f64, rgain: f64, bias: f64) -> Self {
         use node::*;
         let dt = 1.0 / internal_sr;
 
@@ -682,15 +777,37 @@ impl WdfModel {
             v_pprev: 0.0,
             v_sprev: 0.0,
             dt,
-            newton_tol: RT_NEWTON_TOL,
-            max_iters: RT_MAX_ITERS,
-            cap_tier: CapTier::Full,
+            newton_tol: cfg.newton_tol,
+            max_iters: cfg.max_iters,
+            cap_tier: cfg.cap_tier,
             hist: [0.0; NUM_NODES],
             f: [0.0; NUM_NODES],
             delta: [0.0; NUM_NODES],
             rn: [0.0; NUM_NODES],
             j: [0.0; NUM_NODES * NUM_NODES],
             g0: [0.0; NUM_NODES * NUM_NODES],
+            predict: cfg.predict,
+            solver: cfg.solver,
+            freeze_caps: cfg.freeze_caps,
+            ls_trim: cfg.ls_trim,
+            v_pred_prev: [0.0; NUM_NODES],
+            predict_primed: false,
+            in_audio_pass: false,
+            frozen_cap: [(0.0, 0.0, 0.0, 0.0); 3],
+            frozen_caps_valid: false,
+            n_idx: [0; NUM_NODES],
+            l_idx: [0; NUM_NODES],
+            n_sz: 0,
+            l_sz: 0,
+            schur_ready: false,
+            s_ll_fac: [0.0; NUM_NODES * NUM_NODES],
+            s_ll_piv: [0; NUM_NODES],
+            s_w: [0.0; NUM_NODES * NUM_NODES],
+            s_sconst: [0.0; NUM_NODES * NUM_NODES],
+            s_anl: [0.0; NUM_NODES * NUM_NODES],
+            s_aln: [0.0; NUM_NODES * NUM_NODES],
+            s_annlin: [0.0; NUM_NODES * NUM_NODES],
+            s_s: [0.0; NUM_NODES * NUM_NODES],
             dec1: Biquad::default(),
             dec2: Biquad::default(),
             sec_in_dc: 0.0,
@@ -698,6 +815,7 @@ impl WdfModel {
             last_snapshot: None,
         };
         model.build_g0();
+        model.build_schur_partition(); // sets n/l partition; runs first Schur prep if enabled
         model
     }
 
@@ -705,8 +823,13 @@ impl WdfModel {
     /// 4th-order Butterworth decimation filters (two biquads, `fc = 0.45*host_sr`, C++ Q values).
     /// Mirrors the C++ offline driver setup (`main.cpp:859-936`).
     pub fn new(host_sr: f64, rgain: f64, bias: f64) -> Self {
+        Self::new_with(QualityConfig::realtime(), host_sr, rgain, bias)
+    }
+
+    /// Like [`new`], but with an explicit [`QualityConfig`] (tier/lever selection).
+    pub fn new_with(cfg: QualityConfig, host_sr: f64, rgain: f64, bias: f64) -> Self {
         let internal_sr = host_sr * OS as f64;
-        let mut m = Self::build(internal_sr, rgain, bias);
+        let mut m = Self::build_with(cfg, internal_sr, rgain, bias);
         let fc = 0.45 * host_sr;
         m.dec1.set_lowpass(fc, internal_sr, 0.54119610);
         m.dec2.set_lowpass(fc, internal_sr, 1.30656296);
@@ -760,6 +883,12 @@ impl WdfModel {
                 self.g0[r_s as usize * u + r_p as usize] += self.gl[1][0];
             }
             self.g0[r_s as usize * u + r_s as usize] += self.gl[1][1];
+        }
+        // G0 is constant across a sample's Newton iters (changes only on set_bias/set_rgain),
+        // so refresh the Schur per-sample factorization here. Guarded until the partition
+        // exists (the first build_g0 in build_with runs before build_schur_partition).
+        if self.solver == Solver::Schur && self.n_sz > 0 {
+            self.prepare_schur();
         }
     }
 
@@ -852,10 +981,17 @@ impl WdfModel {
             if self.cap_tier != CapTier::Off {
                 let tf = if self.cap_tier == CapTier::Full { t.p.tf } else { 0.0 };
                 let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
-                let (qbe_dep, _) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
-                let (qbc_dep, _) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
-                let ibe = k2 * (qbe_dep + tf * o.itf - t.qbe_prev) - t.ibe_prev;
-                let ibc = k2 * (qbc_dep + tr * o.itr - t.qbc_prev) - t.ibc_prev;
+                // Match newton_iterate's F: use the frozen companion when active (`main.cpp:960`).
+                let (qbe, qbc) = if self.freeze_caps && self.frozen_caps_valid {
+                    let fc = self.frozen_cap[bi];
+                    (fc.2 + fc.0 * vbe, fc.3 + fc.1 * vbc)
+                } else {
+                    let (qbe_dep, _) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
+                    let (qbc_dep, _) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
+                    (qbe_dep + tf * o.itf, qbc_dep + tr * o.itr)
+                };
+                let ibe = k2 * (qbe - t.qbe_prev) - t.ibe_prev;
+                let ibc = k2 * (qbc - t.qbc_prev) - t.ibc_prev;
                 if rb >= 0 {
                     self.rn[rb as usize] += ibe + ibc;
                 }
@@ -929,14 +1065,248 @@ impl WdfModel {
         true
     }
 
+    /// Reusable LU (partial pivot, index-swap) for the constant per-sample A_LL block: factor
+    /// once, apply many times. Stores L/U in-place (row-permuted) + the pivot order so any RHS
+    /// can be solved without refactoring (`main.cpp:1026-1047`).
+    fn lu_factor(a: &mut [f64], piv: &mut [usize], n: usize) -> bool {
+        for (i, slot) in piv.iter_mut().enumerate().take(n) {
+            *slot = i;
+        }
+        for col in 0..n {
+            let mut p = col;
+            let mut best = a[piv[col] * n + col].abs();
+            for r in (col + 1)..n {
+                let val = a[piv[r] * n + col].abs();
+                if val > best {
+                    best = val;
+                    p = r;
+                }
+            }
+            if best < 1e-30 {
+                return false;
+            }
+            if p != col {
+                piv.swap(col, p);
+            }
+            let diag = a[piv[col] * n + col];
+            for r in (col + 1)..n {
+                let f = a[piv[r] * n + col] / diag;
+                a[piv[r] * n + col] = f; // store multiplier (L factor)
+                if f == 0.0 {
+                    continue;
+                }
+                for c in (col + 1)..n {
+                    a[piv[r] * n + c] -= f * a[piv[col] * n + c];
+                }
+            }
+        }
+        true
+    }
+
+    /// Solve `A x = b` in place (`x` in `b`) using LU factors + pivot order from [`lu_factor`]
+    /// (`main.cpp:1049-1062`). `y` scratch is a stack array (no heap alloc).
+    fn lu_solve(a: &[f64], piv: &[usize], n: usize, b: &mut [f64]) {
+        let mut y = [0.0f64; NUM_NODES];
+        for r in 0..n {
+            let mut s = b[piv[r]];
+            for c in 0..r {
+                s -= a[piv[r] * n + c] * y[c];
+            }
+            y[r] = s; // unit-diagonal L
+        }
+        for r in (0..n).rev() {
+            let mut s = y[r];
+            for c in (r + 1)..n {
+                s -= a[piv[r] * n + c] * b[c];
+            }
+            b[r] = s / a[piv[r] * n + r];
+        }
+    }
+
+    /// Build the Schur N/L partition once (at construction). N = every unknown row that a BJT
+    /// terminal (and thus its charge cap) stamps; L = the remaining linear-only unknowns. Derived
+    /// from the actual `bjts[]` terminal ids so it always matches the stamping (`main.cpp:483-527`).
+    fn build_schur_partition(&mut self) {
+        let mut in_n = [false; NUM_NODES];
+        for t in self.bjts.iter() {
+            for nd in [t.b, t.e, t.c] {
+                if nd >= 0 && self.urow[nd as usize] >= 0 {
+                    in_n[nd as usize] = true;
+                }
+            }
+        }
+        self.n_sz = 0;
+        for nd in 0..NUM_NODES {
+            if !in_n[nd] {
+                continue;
+            }
+            let r = self.urow[nd];
+            if r < 0 {
+                continue;
+            }
+            self.n_idx[self.n_sz] = r as usize;
+            self.n_sz += 1;
+        }
+        let mut is_n_row = [false; NUM_NODES];
+        for i in 0..self.n_sz {
+            is_n_row[self.n_idx[i]] = true;
+        }
+        self.l_sz = 0;
+        for r in 0..self.u {
+            if is_n_row[r] {
+                continue;
+            }
+            self.l_idx[self.l_sz] = r;
+            self.l_sz += 1;
+        }
+        self.schur_ready = false;
+        // First-time prep (build_with's initial build_g0 ran before the partition existed).
+        if self.solver == Solver::Schur {
+            self.prepare_schur();
+        }
+    }
+
+    /// Per-sample Schur setup (valid only on the `gmin == 0` path). Slices the CONSTANT linear
+    /// blocks out of G0, LU-factors A_LL, and precomputes `W = A_LL^{-1} A_LN` and
+    /// `S_const = A_NN_lin - A_NL W`. Sets `schur_ready`; returns false (→ dense fallback) if
+    /// A_LL is singular (`main.cpp:533-568`).
+    fn prepare_schur(&mut self) -> bool {
+        self.schur_ready = false;
+        let u = self.u;
+        let n = self.n_sz;
+        let l = self.l_sz;
+        for i in 0..n {
+            for j in 0..n {
+                self.s_annlin[i * n + j] = self.g0[self.n_idx[i] * u + self.n_idx[j]];
+            }
+        }
+        for i in 0..n {
+            for j in 0..l {
+                self.s_anl[i * l + j] = self.g0[self.n_idx[i] * u + self.l_idx[j]];
+            }
+        }
+        for i in 0..l {
+            for j in 0..n {
+                self.s_aln[i * n + j] = self.g0[self.l_idx[i] * u + self.n_idx[j]];
+            }
+        }
+        for i in 0..l {
+            for j in 0..l {
+                self.s_ll_fac[i * l + j] = self.g0[self.l_idx[i] * u + self.l_idx[j]];
+            }
+        }
+        if !Self::lu_factor(&mut self.s_ll_fac, &mut self.s_ll_piv, l) {
+            return false;
+        }
+        // W = A_LL^{-1} A_LN  (solve A_LL * W[:,c] = A_LN[:,c] for each N column)
+        let mut col = [0.0f64; NUM_NODES];
+        for c in 0..n {
+            for i in 0..l {
+                col[i] = self.s_aln[i * n + c];
+            }
+            Self::lu_solve(&self.s_ll_fac, &self.s_ll_piv, l, &mut col);
+            for i in 0..l {
+                self.s_w[i * n + c] = col[i];
+            }
+        }
+        // S_const = A_NN_lin - A_NL W
+        for i in 0..n {
+            for j in 0..n {
+                let mut acc = 0.0;
+                for k in 0..l {
+                    acc += self.s_anl[i * l + k] * self.s_w[k * n + j];
+                }
+                self.s_sconst[i * n + j] = self.s_annlin[i * n + j] - acc;
+            }
+        }
+        self.schur_ready = true;
+        true
+    }
+
+    /// Schur static-block solve of `J delta = -F`, reusing the per-sample A_LL factorization +
+    /// `S_const`. Reads the freshly built full `J` (`self.j`) and the RHS `-F` already scattered
+    /// into `self.delta`, and writes the solution back into `self.delta`. Only the NxN complement
+    /// is factored per iter (full partial pivot via [`gauss_solve`]). Caller guarantees
+    /// `gmin == 0` and `schur_ready`. Returns false if the complement is singular (→ dense
+    /// fallback; `self.delta` is left as `-F`, untouched) (`main.cpp:1069-1104`).
+    fn schur_solve(&mut self) -> bool {
+        let u = self.u;
+        let n = self.n_sz;
+        let l = self.l_sz;
+        let mut b_n = [0.0f64; NUM_NODES];
+        let mut y = [0.0f64; NUM_NODES];
+        for i in 0..n {
+            b_n[i] = self.delta[self.n_idx[i]];
+        }
+        for i in 0..l {
+            y[i] = self.delta[self.l_idx[i]]; // y starts as bL
+        }
+        // S = S_const + (J_NN - A_NN_lin)  (only the nonlinear block changes per iter)
+        for i in 0..n {
+            let gi = self.n_idx[i];
+            for j in 0..n {
+                let jnn = self.j[gi * u + self.n_idx[j]];
+                self.s_s[i * n + j] = self.s_sconst[i * n + j] + (jnn - self.s_annlin[i * n + j]);
+            }
+        }
+        // y = A_LL^{-1} bL (reuse per-sample factorization)
+        Self::lu_solve(&self.s_ll_fac, &self.s_ll_piv, l, &mut y);
+        // b~N = bN - A_NL y
+        let mut x_n = [0.0f64; NUM_NODES];
+        for i in 0..n {
+            let mut acc = 0.0;
+            for k in 0..l {
+                acc += self.s_anl[i * l + k] * y[k];
+            }
+            x_n[i] = b_n[i] - acc;
+        }
+        // solve S xN = b~N with full partial pivoting (S can be ill-conditioned)
+        if !Self::gauss_solve(&mut self.s_s, &mut x_n, n) {
+            return false;
+        }
+        // xL = y - W xN
+        for i in 0..l {
+            let mut acc = 0.0;
+            for k in 0..n {
+                acc += self.s_w[i * n + k] * x_n[k];
+            }
+            y[i] -= acc;
+        }
+        // scatter back into delta
+        for i in 0..n {
+            self.delta[self.n_idx[i]] = x_n[i];
+        }
+        for i in 0..l {
+            self.delta[self.l_idx[i]] = y[i];
+        }
+        true
+    }
+
     /// One Newton solve (up to `max_iters`) at the given `gmin` regularization. Returns iters used.
-    /// Realtime path only (`lsTrim=false`): the 3 trim regions (`main.cpp:634-651/665-679/702-712`)
-    /// are skipped; this is the eager backtracking-line-search path (`main.cpp:520-714`).
+    /// Honors the active levers: `ls_trim` (deferred line search), `freeze_caps` (frozen iter-0
+    /// cap companion), and `solver` (dense vs Schur) (`main.cpp:701-927`).
     fn newton_iterate(&mut self, gmin: f64) -> usize {
         use node::{N_A, N_PA, N_SA};
         let u = self.u;
         let mut iters_used = 0;
-        for iter in 0..self.max_iters {
+
+        // --freeze-caps: reset per newton_iterate call (NOT once per sample), so each
+        // gmin-stepping homotopy pass freezes its cap companion at ITS own iter-0 operating
+        // point rather than reusing a stale one from the gmin=0 attempt (`main.cpp:712`).
+        self.frozen_caps_valid = false;
+
+        // Deferred-acceptance line-search state (only used when ls_trim). Instead of verifying
+        // each Newton step with its own residual_norm call, take the full step optimistically and
+        // let the NEXT iter's mandatory F build double as verification; if the residual rose,
+        // retroactively restore and run a real backtracking line search (`main.cpp:714-723`).
+        let use_trim = self.ls_trim;
+        let mut prev_norm_f = f64::INFINITY; // guarded by `provisional`, never read on iter 0
+        let mut provisional = false;
+        let mut v_before_step = [0.0f64; NUM_NODES];
+        let mut last_delta = [0.0f64; NUM_NODES]; // first `u` entries valid
+
+        let mut iter = 0;
+        while iter < self.max_iters {
             iters_used = iter + 1;
             // J starts as the constant linear conductance matrix; F starts at history.
             self.j[..u * u].copy_from_slice(&self.g0[..u * u]);
@@ -1024,12 +1394,24 @@ impl WdfModel {
                 if self.cap_tier != CapTier::Off {
                     let tf = if self.cap_tier == CapTier::Full { t.p.tf } else { 0.0 };
                     let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
-                    let (qbe_dep, cbe_dep) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
-                    let (qbc_dep, cbc_dep) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
-                    let qbe = qbe_dep + tf * o.itf;
-                    let cbe = cbe_dep + tf * o.gtf;
-                    let qbc = qbc_dep + tr * o.itr;
-                    let cbc = cbc_dep + tr * o.gtr;
+                    // --freeze-caps: iters>=1 reuse the frozen linear-cap companion (Q = off +
+                    // C*v) with the iter-0 C — no depletion_charge/POW. Iter 0 computes the full
+                    // depletion charge and stores the companion (`main.cpp:782-798`).
+                    let (qbe, cbe, qbc, cbc) = if self.freeze_caps && self.frozen_caps_valid {
+                        let fc = self.frozen_cap[bi];
+                        (fc.2 + fc.0 * vbe, fc.0, fc.3 + fc.1 * vbc, fc.1)
+                    } else {
+                        let (qbe_dep, cbe_dep) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
+                        let (qbc_dep, cbc_dep) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
+                        let qbe = qbe_dep + tf * o.itf;
+                        let cbe = cbe_dep + tf * o.gtf;
+                        let qbc = qbc_dep + tr * o.itr;
+                        let cbc = cbc_dep + tr * o.gtr;
+                        if self.freeze_caps {
+                            self.frozen_cap[bi] = (cbe, cbc, qbe - cbe * vbe, qbc - cbc * vbc);
+                        }
+                        (qbe, cbe, qbc, cbc)
+                    };
                     let ibe = k2 * (qbe - t.qbe_prev) - t.ibe_prev; // b->e
                     let gbe = k2 * cbe;
                     let ibc = k2 * (qbc - t.qbc_prev) - t.ibc_prev; // b->c
@@ -1064,6 +1446,12 @@ impl WdfModel {
                 }
             }
 
+            // --freeze-caps: the iter that ran the full depletion_charge path has now populated
+            // frozen_cap[] for every BJT; subsequent iters reuse the frozen C (`main.cpp:819`).
+            if self.freeze_caps {
+                self.frozen_caps_valid = true;
+            }
+
             // gmin homotopy: conductance from each node to ground
             if gmin != 0.0 {
                 for i in 0..NUM_NODES {
@@ -1076,7 +1464,9 @@ impl WdfModel {
                 }
             }
 
-            // 2-norm of residual; Newton step is a descent direction for this.
+            // 2-norm of residual; Newton step is a descent direction for this. This F is
+            // evaluated at the current v, so in trim mode it also verifies the previous iter's
+            // optimistic full step.
             let mut norm_f = 0.0;
             for i in 0..u {
                 norm_f += self.f[i] * self.f[i];
@@ -1086,10 +1476,49 @@ impl WdfModel {
                 break;
             }
 
+            // Trim mode: retroactively reject a provisional step that increased the residual,
+            // falling back to a real backtracking line search from the saved iterate. (Eager mode
+            // never sets `provisional`, so this is skipped.) (`main.cpp:839-856`)
+            if use_trim && provisional && norm_f > prev_norm_f {
+                let mut lambda = 1.0;
+                let mut accepted = 0.0;
+                for _ls in 0..12 {
+                    self.v.copy_from_slice(&v_before_step);
+                    for i in 0..NUM_NODES {
+                        let r = self.urow[i];
+                        if r >= 0 {
+                            self.v[i] += lambda * last_delta[r as usize];
+                        }
+                    }
+                    let tn = self.residual_norm(gmin);
+                    if tn < prev_norm_f {
+                        accepted = lambda;
+                        break;
+                    }
+                    lambda *= 0.5;
+                }
+                if accepted == 0.0 {
+                    // no descent: restore and stop
+                    self.v.copy_from_slice(&v_before_step);
+                    break;
+                }
+                provisional = false; // corrected; rebuild + re-verify next iter
+                iter += 1;
+                continue;
+            }
+
             for i in 0..u {
                 self.delta[i] = -self.f[i];
             }
-            if !Self::gauss_solve(&mut self.j, &mut self.delta, u) {
+            // Solve J*delta = -F. Schur only on the gmin==0 hot path (gmin would perturb A_LL and
+            // invalidate the per-sample factorization); falls back to dense if Schur prep failed
+            // or the complement is singular this iter (`main.cpp:862-867`).
+            let solved = if self.solver == Solver::Schur && gmin == 0.0 && self.schur_ready {
+                self.schur_solve() || Self::gauss_solve(&mut self.j, &mut self.delta, u)
+            } else {
+                Self::gauss_solve(&mut self.j, &mut self.delta, u)
+            };
+            if !solved {
                 break;
             }
 
@@ -1104,6 +1533,31 @@ impl WdfModel {
                 for i in 0..u {
                     self.delta[i] *= s;
                 }
+            }
+
+            if use_trim {
+                // Save the iterate + step, take the full step optimistically, and defer
+                // verification to the next iter's F build. No residual_norm call on the common
+                // (monotone-converging) path (`main.cpp:878-892`).
+                v_before_step.copy_from_slice(&self.v);
+                last_delta[..u].copy_from_slice(&self.delta[..u]);
+                prev_norm_f = norm_f;
+                for i in 0..NUM_NODES {
+                    let r = self.urow[i];
+                    if r >= 0 {
+                        self.v[i] += self.delta[r as usize];
+                    }
+                }
+                provisional = true;
+                let mut maxd = 0.0f64;
+                for i in 0..u {
+                    maxd = maxd.max(self.delta[i].abs());
+                }
+                if maxd < 1e-9 {
+                    break;
+                }
+                iter += 1;
+                continue;
             }
 
             // Backtracking line search on 2-norm; scale whole vector (preserve direction).
@@ -1139,6 +1593,16 @@ impl WdfModel {
             if maxd < 1e-9 {
                 break;
             }
+            iter += 1;
+        }
+        // Trim mode: only when the loop hit the maxIters cap is the final optimistic step left
+        // unverified (no following F build checked it). Verify once and roll back to the pre-step
+        // iterate if the residual rose, so we never return a worse point than the step started
+        // from (the eager path guarantees this per-step) (`main.cpp:922-925`).
+        if use_trim && provisional && iter == self.max_iters {
+            if self.residual_norm(gmin) > prev_norm_f {
+                self.v.copy_from_slice(&v_before_step);
+            }
         }
         iters_used
     }
@@ -1147,6 +1611,26 @@ impl WdfModel {
     pub fn process(&mut self) {
         use node::{N_A, N_PA, N_SA};
         let u = self.u;
+        // Newton predictor: seed the solve with a 1st-order linear extrapolation of the last two
+        // converged internal samples (2*sol(n-1) - sol(n-2)) for UNKNOWN nodes only. Same fixed
+        // point + tol => identical converged v, just fewer iters. Off during DC warmup/rail-ramp/
+        // settle (in_audio_pass false), where transient swings would make it overshoot
+        // (`main.cpp:621-633`). Modifies only `v` (the guess); `hist` below reads `v_prev`.
+        if self.predict && self.in_audio_pass {
+            if !self.predict_primed {
+                self.v_pred_prev = self.v; // remember sol(n-1); no extrapolation yet
+                self.predict_primed = true;
+            } else {
+                for i in 0..NUM_NODES {
+                    if self.urow[i] < 0 {
+                        continue; // skip known/pinned nodes (same mask as the solver)
+                    }
+                    let cur = self.v[i]; // sol(n-1)
+                    self.v[i] = 2.0 * self.v[i] - self.v_pred_prev[i];
+                    self.v_pred_prev[i] = cur; // becomes sol(n-2) for the next call
+                }
+            }
+        }
         // Per-sample constant history offsets (do not depend on v[n]).
         for i in 0..u {
             self.hist[i] = 0.0;
@@ -1268,6 +1752,8 @@ impl WdfModel {
     /// the DC-corrected tap through the two Butterworth biquads (`main.cpp:942-953`).
     #[inline]
     pub fn process_host_sample(&mut self, x: f32) -> f32 {
+        // Audio pass: enable the Newton predictor (idempotent; warmup runs with it off).
+        self.in_audio_pass = true;
         let cur_in = x as f64;
         let mut decimated = 0.0;
         for j in 0..OS {
@@ -1329,6 +1815,10 @@ impl WdfModel {
         self.v_pprev = s.v_pprev;
         self.v_sprev = s.v_sprev;
         self.sec_in_dc = s.sec_in_dc;
+        // Re-prime the predictor on the first audio sample after a restore (the warmup snapshot
+        // carries no extrapolation history; a stale seed would overshoot sample 0).
+        self.predict_primed = false;
+        self.in_audio_pass = false;
         self.clear_driver_state();
     }
 
@@ -1368,6 +1858,9 @@ impl WdfModel {
             self.v_pprev = 0.0;
             self.v_sprev = 0.0;
             self.sec_in_dc = 0.0;
+            self.v_pred_prev = [0.0; NUM_NODES];
+            self.predict_primed = false;
+            self.in_audio_pass = false;
             self.clear_driver_state();
         }
     }

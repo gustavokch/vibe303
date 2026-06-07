@@ -22,10 +22,16 @@
 //!   --mix <f32>        (default 100) full-chain only, percent (wet %)
 //!   --backend <nn|wdf> (default nn)  full-chain only, inference backend
 //!   --circuit-gain <f32> (default 220) WDF R_KJ shunt in ohms, --backend wdf only
+//!   --tier <realtime|fast> (default realtime) WDF solver tier, --backend wdf only
+//!   --predict / --no-predict        WDF lever overrides (A/B), --backend wdf only
+//!   --ls-trim / --no-ls-trim        WDF lever overrides (A/B), --backend wdf only
+//!   --freeze-caps / --no-freeze-caps WDF lever overrides (A/B), --backend wdf only
+//!   --solver <dense|schur>          WDF linear-solve path (A/B), --backend wdf only
 //!   --raw              (flag) run the pure model (round-trip path)
 
 use ba283::dsp::ChannelDsp;
 use ba283::model::Ba283Model;
+use ba283::wdf::{QualityConfig, Solver};
 use ba283::InferenceBackend;
 use std::process::exit;
 
@@ -48,6 +54,9 @@ fn main() {
     let mut backend = InferenceBackend::NeuralNet;
     let mut circuit_gain: f32 = 220.0;
     let mut raw = false;
+    // WDF quality config: start at the realtime tier; `--tier fast` swaps in the fast preset, and
+    // the per-lever flags toggle individual levers on top (for A/B validation).
+    let mut wdf_cfg = QualityConfig::realtime();
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -98,6 +107,28 @@ fn main() {
                 circuit_gain = v
                     .parse()
                     .unwrap_or_else(|_| die("--circuit-gain must be a float"));
+            }
+            "--tier" => {
+                let v = args.next().unwrap_or_else(|| die("--tier needs a value"));
+                wdf_cfg = match v.as_str() {
+                    "realtime" => QualityConfig::realtime(),
+                    "fast" => QualityConfig::fast(),
+                    _ => die("--tier must be `realtime` or `fast`"),
+                };
+            }
+            "--predict" => wdf_cfg.predict = true,
+            "--no-predict" => wdf_cfg.predict = false,
+            "--ls-trim" => wdf_cfg.ls_trim = true,
+            "--no-ls-trim" => wdf_cfg.ls_trim = false,
+            "--freeze-caps" => wdf_cfg.freeze_caps = true,
+            "--no-freeze-caps" => wdf_cfg.freeze_caps = false,
+            "--solver" => {
+                let v = args.next().unwrap_or_else(|| die("--solver needs a value"));
+                wdf_cfg.solver = match v.as_str() {
+                    "dense" => Solver::Dense,
+                    "schur" => Solver::Schur,
+                    _ => die("--solver must be `dense` or `schur`"),
+                };
             }
             other => die(&format!("unknown argument: {other}")),
         }
@@ -171,7 +202,7 @@ fn main() {
     // audio thread here) so the offline render mirrors the warmed plugin. NeuralNet needs no setup.
     if backend == InferenceBackend::Wdf {
         for ch in chans.iter_mut() {
-            ch.wdf_rebuild(spec.sample_rate as f32, circuit_gain, bias);
+            ch.wdf_rebuild_with(wdf_cfg, spec.sample_rate as f32, circuit_gain, bias);
             ch.wdf_warmup();
         }
     }

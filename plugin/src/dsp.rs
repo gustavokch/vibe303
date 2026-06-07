@@ -17,7 +17,7 @@
 use crate::delay::ShortDelay;
 use crate::model::Ba283Model;
 use crate::oversample::Oversample2x;
-use crate::wdf::{WdfModel, WdfSnapshot};
+use crate::wdf::{QualityConfig, WdfModel, WdfSnapshot};
 use crate::InferenceBackend;
 
 /// Dry-path delay depth on the sub-96k oversampling path. MUST equal
@@ -35,6 +35,9 @@ pub struct ChannelDsp {
     /// Delays the WDF blended output by `OS_LATENCY_SAMPLES` sub-96k so the host-reported latency
     /// stays valid for BOTH backends (no renegotiation when switching).
     wdf_out_delay: ShortDelay<OS_LATENCY_SAMPLES>,
+    /// Last settled snapshot installed into `wdf` (from the shared warmup). Carried across a tier
+    /// rebuild so switching tiers does not require a fresh (expensive) warmup.
+    wdf_snap: Option<WdfSnapshot>,
 }
 
 impl ChannelDsp {
@@ -46,6 +49,7 @@ impl ChannelDsp {
             // Placeholder SR/bias; rebuilt + restored with the real settings in `initialize`.
             wdf: WdfModel::new(48_000.0, 220.0, 0.5),
             wdf_out_delay: ShortDelay::new(),
+            wdf_snap: None,
         }
     }
 
@@ -59,21 +63,42 @@ impl ChannelDsp {
 
     // --- WDF block-rate config (used by Phase D plugin wiring) ---
 
-    /// Rebuild the WDF model at the real host SR / gain / bias (e.g. in `initialize`).
+    /// Rebuild the WDF model at the real host SR / gain / bias (e.g. in `initialize`) at the
+    /// realtime tier (all levers off).
     pub fn wdf_rebuild(&mut self, host_sr: f32, rgain: f32, bias: f32) {
-        self.wdf = WdfModel::new(host_sr as f64, rgain as f64, bias as f64);
+        self.wdf_rebuild_with(QualityConfig::realtime(), host_sr, rgain, bias);
+    }
+
+    /// Rebuild the WDF model with an explicit [`QualityConfig`] (tier/lever selection).
+    pub fn wdf_rebuild_with(&mut self, cfg: QualityConfig, host_sr: f32, rgain: f32, bias: f32) {
+        self.wdf = WdfModel::new_with(cfg, host_sr as f64, rgain as f64, bias as f64);
+    }
+
+    /// Switch the WDF tier live: rebuild at `cfg` (rebuilds G0 + the Schur partition) and re-install
+    /// the carried settled snapshot so no fresh warmup is needed. The DC operating point is
+    /// tier-independent (freeze-caps only changes the per-iter companion), so the restored state
+    /// re-settles cleanly. NOTE: the rebuild constructs a fresh model (allocates) — call at block
+    /// rate on an actual tier change only, never per sample.
+    pub fn wdf_set_tier(&mut self, cfg: QualityConfig, host_sr: f32, rgain: f32, bias: f32) {
+        self.wdf_rebuild_with(cfg, host_sr, rgain, bias);
+        if let Some(snap) = self.wdf_snap {
+            self.wdf.restore(&snap);
+            self.wdf.save_snapshot();
+        }
     }
 
     /// Install a settled snapshot (from a single shared warmup) and make it the reset target.
     pub fn wdf_restore(&mut self, snap: &WdfSnapshot) {
         self.wdf.restore(snap);
         self.wdf.save_snapshot();
+        self.wdf_snap = Some(*snap);
     }
 
     /// Warm the WDF model in place and make the settled state the reset target. Off the audio thread.
     pub fn wdf_warmup(&mut self) {
         self.wdf.warmup();
         self.wdf.save_snapshot();
+        self.wdf_snap = Some(self.wdf.snapshot());
     }
 
     /// Capture the current WDF settled state (for sharing one warmup across channels).

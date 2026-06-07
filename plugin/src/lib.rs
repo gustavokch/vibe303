@@ -9,7 +9,7 @@ pub mod oversample;
 pub mod wdf;
 
 use dsp::ChannelDsp;
-use wdf::WdfModel;
+use wdf::{QualityConfig, WdfModel};
 
 /// Convert decibels to a linear gain factor.
 #[inline]
@@ -30,6 +30,9 @@ pub struct Ba283Plugin {
     /// apply. WDF-only; the NeuralNet path ignores these.
     last_rgain: f32,
     last_bias: f32,
+    /// Last WDF tier applied to the channels (block-rate). A change triggers a rebuild + snapshot
+    /// re-install on each channel.
+    last_tier: WdfTier,
 }
 
 /// Which emulation runs per sample. `NeuralNet` is the default (preserves current behaviour); `Wdf`
@@ -42,10 +45,33 @@ pub enum InferenceBackend {
     Wdf,
 }
 
+/// WDF solver tier. `Realtime` is the bit-exact reference (all speed levers off); `Fast` bakes in
+/// predict + schur + freeze-caps + ls-trim (~5x faster, near-transparent). WDF-only; the NeuralNet
+/// backend ignores it. Mirrors the C++ `qualityPreset("realtime"|"fast")`.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum WdfTier {
+    #[name = "Realtime"]
+    Realtime,
+    #[name = "Fast"]
+    Fast,
+}
+
+impl WdfTier {
+    fn config(self) -> QualityConfig {
+        match self {
+            WdfTier::Realtime => QualityConfig::realtime(),
+            WdfTier::Fast => QualityConfig::fast(),
+        }
+    }
+}
+
 #[derive(Params)]
 pub struct Ba283Params {
     #[id = "backend"]
     pub backend: EnumParam<InferenceBackend>,
+    /// WDF solver tier (Realtime vs Fast). WDF-only; inert for the NeuralNet backend.
+    #[id = "wdf_tier"]
+    pub wdf_tier: EnumParam<WdfTier>,
     #[id = "drive_db"]
     pub drive_db: FloatParam,
     #[id = "bias"]
@@ -64,6 +90,7 @@ impl Default for Ba283Params {
     fn default() -> Self {
         Self {
             backend: EnumParam::new("Backend", InferenceBackend::NeuralNet),
+            wdf_tier: EnumParam::new("WDF Tier", WdfTier::Realtime),
             drive_db: FloatParam::new(
                 "Drive",
                 0.0,
@@ -118,6 +145,7 @@ impl Default for Ba283Plugin {
             sample_rate: 96_000.0,
             last_rgain: f32::NAN,
             last_bias: f32::NAN,
+            last_tier: WdfTier::Realtime,
         }
     }
 }
@@ -179,15 +207,21 @@ impl Plugin for Ba283Plugin {
         // bounded (~1 s of internal-rate solves with early-exit), acceptable at plugin load.
         let rgain = self.params.circuit_gain.value();
         let bias = self.params.bias.value();
+        let tier = self.params.wdf_tier.value();
+        let cfg = tier.config();
+        // Warm at the realtime tier (the DC operating point is tier-independent — freeze-caps only
+        // changes the per-iter companion), then install the settled snapshot into each channel's
+        // tier-configured model.
         let mut warm = WdfModel::new(self.sample_rate as f64, rgain as f64, bias as f64);
         warm.warmup();
         let snap = warm.snapshot();
         for ch in self.channels.iter_mut() {
-            ch.wdf_rebuild(self.sample_rate, rgain, bias);
+            ch.wdf_rebuild_with(cfg, self.sample_rate, rgain, bias);
             ch.wdf_restore(&snap);
         }
         self.last_rgain = rgain;
         self.last_bias = bias;
+        self.last_tier = tier;
 
         // Report the oversampler latency to the host (this nih_plug rev exposes
         // latency via InitContext::set_latency_samples; there is no
@@ -220,6 +254,19 @@ impl Plugin for Ba283Plugin {
         if backend == InferenceBackend::Wdf {
             let rgain = self.params.circuit_gain.value();
             let bias = self.params.bias.value();
+            // Tier change: rebuild each channel at the new tier and re-install the settled snapshot
+            // (no fresh warmup). Block-rate, on actual change only. Reset rgain/bias trackers so the
+            // post-rebuild model picks up the current values via the cheap G0 path below.
+            let tier = self.params.wdf_tier.value();
+            if tier != self.last_tier {
+                let cfg = tier.config();
+                for ch in self.channels.iter_mut() {
+                    ch.wdf_set_tier(cfg, self.sample_rate, rgain, bias);
+                }
+                self.last_tier = tier;
+                self.last_rgain = rgain;
+                self.last_bias = bias;
+            }
             if rgain != self.last_rgain {
                 for ch in self.channels.iter_mut() {
                     ch.wdf_set_rgain(rgain);
