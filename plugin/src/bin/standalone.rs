@@ -20,10 +20,13 @@
 //!   --drive-db <f32>   (default 0)   full-chain only
 //!   --output-db <f32>  (default 0)   full-chain only
 //!   --mix <f32>        (default 100) full-chain only, percent (wet %)
+//!   --backend <nn|wdf> (default nn)  full-chain only, inference backend
+//!   --circuit-gain <f32> (default 220) WDF R_KJ shunt in ohms, --backend wdf only
 //!   --raw              (flag) run the pure model (round-trip path)
 
 use ba283::dsp::ChannelDsp;
 use ba283::model::Ba283Model;
+use ba283::InferenceBackend;
 use std::process::exit;
 
 fn die(msg: &str) -> ! {
@@ -42,6 +45,8 @@ fn main() {
     let mut drive_db: f32 = 0.0;
     let mut output_db: f32 = 0.0;
     let mut mix_pct: f32 = 100.0;
+    let mut backend = InferenceBackend::NeuralNet;
+    let mut circuit_gain: f32 = 220.0;
     let mut raw = false;
 
     let mut args = std::env::args().skip(1);
@@ -77,6 +82,22 @@ fn main() {
             "--mix" => {
                 let v = args.next().unwrap_or_else(|| die("--mix needs a value"));
                 mix_pct = v.parse().unwrap_or_else(|_| die("--mix must be a float"));
+            }
+            "--backend" => {
+                let v = args.next().unwrap_or_else(|| die("--backend needs a value"));
+                backend = match v.as_str() {
+                    "nn" => InferenceBackend::NeuralNet,
+                    "wdf" => InferenceBackend::Wdf,
+                    _ => die("--backend must be `nn` or `wdf`"),
+                };
+            }
+            "--circuit-gain" => {
+                let v = args
+                    .next()
+                    .unwrap_or_else(|| die("--circuit-gain needs a value"));
+                circuit_gain = v
+                    .parse()
+                    .unwrap_or_else(|_| die("--circuit-gain must be a float"));
             }
             other => die(&format!("unknown argument: {other}")),
         }
@@ -146,8 +167,14 @@ fn main() {
     let out_gain = db_to_gain(output_db);
     let mix = mix_pct * 0.01;
     let mut chans: Vec<ChannelDsp> = (0..channels).map(|_| ChannelDsp::new()).collect();
-    // Phase E wires `--backend wdf|nn` + warmup; default to the existing NeuralNet chain for now.
-    let backend = ba283::InferenceBackend::NeuralNet;
+    // WDF backend: rebuild each channel at the input SR / circuit-gain / bias and warm it (off the
+    // audio thread here) so the offline render mirrors the warmed plugin. NeuralNet needs no setup.
+    if backend == InferenceBackend::Wdf {
+        for ch in chans.iter_mut() {
+            ch.wdf_rebuild(spec.sample_rate as f32, circuit_gain, bias);
+            ch.wdf_warmup();
+        }
+    }
 
     let mut n_frames = 0usize;
     for frame in samples.chunks(channels) {
