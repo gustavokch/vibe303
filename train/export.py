@@ -1,69 +1,76 @@
-"""Self-describing JSON export of a trained BA283GRU model.
+"""Self-describing JSON export of a trained BA283LSTM model.
 
 This module is the weight-transfer contract between PyTorch (Phase 2) and the
 Rust inference engine (Phase 3, Task 3.2). The Rust backend is deferred and is
-expected to be a hand-coded pure-Rust GRU(2, 32) + Dense(1) forward pass with no
+expected to be a hand-coded pure-Rust LSTM(1, 32) + Dense(1) forward pass with no
 external NN crate. To keep the contract unambiguous regardless of which Rust
 backend is ultimately chosen, the exported JSON is *self-describing*: it carries
-explicit shapes, the input/hidden sizes, the GRU gate ordering and the exact GRU
-equations in-band, alongside every weight tensor.
+explicit shapes, the input/hidden sizes, the LSTM gate ordering and the exact
+LSTM equations in-band, alongside every weight tensor.
 
 The round-trip contract (PyTorch output == Rust output, max abs diff < 1e-5) is
 verified in Task 3.2; this exporter therefore captures every weight exactly,
 serializing Python floats (which round-trip f64) so the Rust side can read f32
 with values matching to well under 1e-5.
 
-PyTorch GRU weight conventions (for ``nn.GRU(input_size=2, hidden_size=H=32,
+PyTorch LSTM weight conventions (for ``nn.LSTM(input_size=I, hidden_size=H=32,
 num_layers=1, batch_first=True)``):
 
-- ``weight_ih_l0``: shape ``(3H, input_size)`` = ``(96, 2)`` -- input->hidden
-  weights for the 3 gates.
-- ``weight_hh_l0``: shape ``(3H, H)`` = ``(96, 32)`` -- hidden->hidden weights
-  for the 3 gates.
-- ``bias_ih_l0``: shape ``(3H,)`` = ``(96,)``.
-- ``bias_hh_l0``: shape ``(3H,)`` = ``(96,)``.
+- ``weight_ih_l0``: shape ``(4H, I)`` = ``(128, I)`` -- input->hidden weights
+  for the 4 gates.
+- ``weight_hh_l0``: shape ``(4H, H)`` = ``(128, 32)`` -- hidden->hidden weights
+  for the 4 gates.
+- ``bias_ih_l0``: shape ``(4H,)`` = ``(128,)``.
+- ``bias_hh_l0``: shape ``(4H,)`` = ``(128,)``.
 
-Gate ordering in the 3H rows is PyTorch's: **reset (r), update (z), new (n)** --
-rows ``[0:H]`` = r, ``[H:2H]`` = z, ``[2H:3H]`` = n. This is recorded as
-``gate_order: "rzn"``. The Rust GRU math MUST use the same ordering.
+Gate ordering in the 4H rows is PyTorch's: **input (i), forget (f), cell (g),
+output (o)** -- rows ``[0:H]`` = i, ``[H:2H]`` = f, ``[2H:3H]`` = g,
+``[3H:4H]`` = o. This is recorded as ``gate_order: "ifgo"``. The Rust LSTM math
+MUST use the same ordering.
 
 Dense layer: ``dense.weight`` shape ``(1, H)`` = ``(1, 32)``, ``dense.bias``
 shape ``(1,)``.
 
 PyTorch keeps the input bias (``b_ih``) and hidden bias (``b_hh``) *separate*;
-both are exported. That is why there are TWO bias vectors per GRU layer. The
-exact GRU equations (which the Rust side must reproduce) are::
+both are exported. That is why there are TWO bias vectors per LSTM layer. The
+LSTM carries BOTH a hidden state ``h`` and a cell state ``c`` (each size H); the
+Rust side must keep both. The exact LSTM equations (which the Rust side must
+reproduce) are::
 
-    r  = sigmoid(W_ir x + b_ir + W_hr h + b_hr)
-    z  = sigmoid(W_iz x + b_iz + W_hz h + b_hz)
-    n  = tanh(W_in x + b_in + r * (W_hn h + b_hn))
-    h' = (1 - z) * n + z * h
+    i  = sigmoid(W_ii x + b_ii + W_hi h + b_hi)
+    f  = sigmoid(W_if x + b_if + W_hf h + b_hf)
+    g  = tanh   (W_ig x + b_ig + W_hg h + b_hg)
+    o  = sigmoid(W_io x + b_io + W_ho h + b_ho)
+    c' = f * c + i * g
+    h' = o * tanh(c')
 """
 
 import json
 from pathlib import Path
 
 from train.dataset import INPUT_SCALE, OUTPUT_REF_V, OUTPUT_SCALE
-from train.model import BA283GRU
+from train.model import BA283LSTM
 
-GRU_EQUATIONS = (
-    "r=sig(Wir x+bir+Whr h+bhr); "
-    "z=sig(Wiz x+biz+Whz h+bhz); "
-    "n=tanh(Win x+bin+r*(Whn h+bhn)); "
-    "h'=(1-z)*n+z*h"
+LSTM_EQUATIONS = (
+    "i=sig(Wii x+bii+Whi h+bhi); "
+    "f=sig(Wif x+bif+Whf h+bhf); "
+    "g=tanh(Wig x+big+Whg h+bhg); "
+    "o=sig(Wio x+bio+Who h+bho); "
+    "c'=f*c+i*g; "
+    "h'=o*tanh(c')"
 )
 
 
-def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
-    """Export a trained BA283GRU to self-describing JSON plus a meta sidecar.
+def export_rtneural_json(model: BA283LSTM, out_path: Path, meta: dict) -> None:
+    """Export a trained BA283LSTM to self-describing JSON plus a meta sidecar.
 
     Writes ``out_path`` containing the full model description (shapes, gate
     order, equations and all 6 weight tensors as nested float lists) and
     ``out_path.with_suffix(".meta.json")`` containing just the ``meta`` dict.
 
     The 6 tensors come from ``model.state_dict()``:
-    ``gru.weight_ih_l0``, ``gru.weight_hh_l0``, ``gru.bias_ih_l0``,
-    ``gru.bias_hh_l0``, ``dense.weight``, ``dense.bias``.
+    ``lstm.weight_ih_l0``, ``lstm.weight_hh_l0``, ``lstm.bias_ih_l0``,
+    ``lstm.bias_hh_l0``, ``dense.weight``, ``dense.bias``.
     """
     out_path = Path(out_path)
     state = model.state_dict()
@@ -71,26 +78,26 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
     def to_list(key: str) -> list:
         return state[key].detach().cpu().numpy().tolist()
 
-    weight_ih = to_list("gru.weight_ih_l0")
-    weight_hh = to_list("gru.weight_hh_l0")
-    bias_ih = to_list("gru.bias_ih_l0")
-    bias_hh = to_list("gru.bias_hh_l0")
+    weight_ih = to_list("lstm.weight_ih_l0")
+    weight_hh = to_list("lstm.weight_hh_l0")
+    bias_ih = to_list("lstm.bias_ih_l0")
+    bias_hh = to_list("lstm.bias_hh_l0")
     dense_weight = to_list("dense.weight")
     dense_bias = to_list("dense.bias")
 
-    # FiLM mode: GRU sees only audio (input_size 1) + a film layer; bias drives
-    # the affine. Concat mode: bias is the 2nd GRU input channel, no film layer.
+    # FiLM mode: LSTM sees only audio (input_size 1) + a film layer; gain drives
+    # the affine. Concat mode: gain is the 2nd LSTM input channel, no film layer.
     conditioning = getattr(model, "conditioning", "film")
-    gru_input_size = state["gru.weight_ih_l0"].shape[1]
+    lstm_input_size = state["lstm.weight_ih_l0"].shape[1]
     hidden_size = model.hidden
 
-    gru_layer = {
-        "type": "gru",
+    lstm_layer = {
+        "type": "lstm",
         "shapes": {
-            "weight_ih": [3 * hidden_size, int(gru_input_size)],
-            "weight_hh": [3 * hidden_size, hidden_size],
-            "bias_ih": [3 * hidden_size],
-            "bias_hh": [3 * hidden_size],
+            "weight_ih": [4 * hidden_size, int(lstm_input_size)],
+            "weight_hh": [4 * hidden_size, hidden_size],
+            "bias_ih": [4 * hidden_size],
+            "bias_hh": [4 * hidden_size],
         },
         "weight_ih": weight_ih,
         "weight_hh": weight_hh,
@@ -103,7 +110,7 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
         "weight": dense_weight,
         "bias": dense_bias,
     }
-    layers = [gru_layer]
+    layers = [lstm_layer]
     if conditioning == "film":
         layers.append(
             {
@@ -116,15 +123,15 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
     layers.append(dense_layer)
 
     doc = {
-        # v2 = FiLM-capable schema (carries `conditioning` + optional film layer).
-        # concat models are also emitted as v2 with conditioning="concat".
-        "format": "ba283-gru-v2",
+        # v1 LSTM schema (carries `conditioning` + optional film layer).
+        # concat models are also emitted with conditioning="concat".
+        "format": "ba283-lstm-v1",
         "input_size": 2,
-        "gru_input_size": int(gru_input_size),
+        "lstm_input_size": int(lstm_input_size),
         "hidden_size": int(hidden_size),
         "conditioning": conditioning,
-        "film_equation": "out = dense((1 + gamma) * y + beta); [gamma,beta]=film(bias)",
-        "gate_order": "rzn",
+        "film_equation": "out = dense((1 + gamma) * y + beta); [gamma,beta]=film(gain)",
+        "gate_order": "ifgo",
         # Domain scaling contract (see train/dataset.py): the model trained on
         # input col 0 = dry_audio * input_scale, target = wet_volts * output_scale.
         # Plugin feeds model_in = audio * input_scale, recovers volts as
@@ -133,9 +140,9 @@ def export_rtneural_json(model: BA283GRU, out_path: Path, meta: dict) -> None:
         "output_scale": float(OUTPUT_SCALE),
         "output_ref_v": float(OUTPUT_REF_V),
         "bias_convention": (
-            "PyTorch keeps b_ih and b_hh separate; both exported per GRU layer."
+            "PyTorch keeps b_ih and b_hh separate; both exported per LSTM layer."
         ),
-        "gru_equations": GRU_EQUATIONS,
+        "lstm_equations": LSTM_EQUATIONS,
         "layers": layers,
         "meta": meta,
     }

@@ -81,7 +81,6 @@ def test_high_band_error_normalizer_bounded_when_target_has_hf():
     # error is 0.05/0.5 = 10% of the HF amplitude -> energy ratio ~0.01, bounded
     assert 0.005 < hbe < 0.02
 
-
 def test_esr_resampled_tolerates_length_mismatch():
     # resample can leave a few-sample length delta vs target; the truncation path
     # in esr must absorb it without error.

@@ -1,6 +1,6 @@
 //! 2x polyphase oversampler for bridging sub-96 kHz hosts to the 96 kHz model.
 //!
-//! The GRU is trained at 96 kHz. When the host runs below 96 kHz the plugin
+//! The LSTM is trained at 96 kHz. When the host runs below 96 kHz the plugin
 //! upsamples 2x, runs the model on each oversampled sample, then downsamples.
 //!
 //! Both directions use a single 63-tap windowed-sinc (Kaiser, beta = 8.6)

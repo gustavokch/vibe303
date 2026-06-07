@@ -10,7 +10,7 @@ crate-type = ["cdylib", "rlib"]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23", features = ["vst3", "standalone"] }
 serde_json = "1"
 atomic_float = "1"
-# Task 3.2: pure-Rust hand-coded GRU(2,32)+Dense(1) (see src/model.rs); rtneural-rs not used.
+# Task 3.2: pure-Rust hand-coded LSTM(1,32)+FiLM+Dense(1) (see src/model.rs); rtneural-rs not used.
 hound = "3"
 
 [dev-dependencies]
