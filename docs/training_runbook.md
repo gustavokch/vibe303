@@ -227,7 +227,32 @@ saves a PyTorch reference output (`/tmp/pytorch_ref.npy`) for the Rust side to
 compare against later. It does not, on its own, verify the round-trip. Defer the
 real comparison to Task 3.2.
 
-## 10. Troubleshooting
+## 10. Running on Colab (local staging)
+
+Both Colab notebooks stage the dataset onto the runtime's local disk **before**
+training, so the training phase never reads through Google Drive / a FUSE mount /
+a VFS cache. There is no `drive.mount`, no `rclone mount`, and no cache-warming
+step — the data is *copied* to `/content/dataset` first, then the manifests are
+remapped to those local paths.
+
+- **Ablation notebook (`ba283_ab_colab.ipynb`)** — copies the expanded dataset
+  from the rclone remote with `train.stage.stage_rclone` (`rclone copy <remote>
+  /content/dataset -P`, asserting `manifest.csv` landed), then rewrites
+  train/val/test paths with `train.stage.remap_manifests(... out_dir="/content")`
+  and trains against the `/content` manifests.
+- **Train notebook (`ba283_train_colab.ipynb`)** — upload
+  `ba283_train_bundle.zip` (built by `colab/make_bundle.sh`), then
+  `train.stage.stage_zip` extracts it to `/content/dataset` and
+  `train.stage.remap_manifests` rewrites the paths before training.
+
+`train.stage` is pure-python (pandas + stdlib) and ships inside
+`ba283_train_bundle.zip`, so rebuild the bundle after changing it:
+
+```bash
+bash colab/make_bundle.sh
+```
+
+## 11. Troubleshooting
 
 - **SPICE non-convergence** — check `data/failed.csv` and the matching
   `data/spice_logs/*.log`. The tolerances in `simulate_one` (reltol=1e-4,
