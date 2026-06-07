@@ -116,6 +116,16 @@ impl ChannelDsp {
         self.wdf.set_rgain(rgain as f64);
     }
 
+    /// Zero the WDF Newton-iteration counters (offline A/B: call after warmup, before the audio pass).
+    pub fn wdf_reset_iter_stats(&mut self) {
+        self.wdf.reset_iter_stats();
+    }
+
+    /// WDF Newton-iteration stats since the last reset: `(samples, avg_iters, max_iters)`.
+    pub fn wdf_iter_stats(&self) -> (u64, f64, usize) {
+        self.wdf.iter_stats()
+    }
+
     /// Run one sample through the selected backend. `drive`/`out_gain` are linear gains, `mix` is the
     /// wet fraction in 0..1. `bias` drives the NeuralNet path only — the WDF path uses the block-rate
     /// bias/gain set via `wdf_set_bias`/`wdf_set_rgain`. The host-reported latency

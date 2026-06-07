@@ -8,6 +8,7 @@ temp directory and run from there.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +16,17 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+
+# C++ binary prints e.g. "Newton: samples=391272 ... avgIters=2.2 maxIters=5 ...".
+_NEWTON_RE = re.compile(r"avgIters=([0-9.eE+-]+).*?maxIters=([0-9]+)")
+
+
+def parse_newton(text: str) -> dict:
+    """Extract {'avg_iters', 'max_iters'} from a binary's ``Newton: ...`` line (or {} if absent)."""
+    m = _NEWTON_RE.search(text or "")
+    if not m:
+        return {}
+    return {"avg_iters": float(m.group(1)), "max_iters": int(m.group(2))}
 
 WDF_DIR = Path.home() / "Git/ba283_wdf"
 BINARY = WDF_DIR / "ba283_sim"
@@ -86,8 +98,12 @@ def build_if_needed(allow_build: bool = True) -> None:
 
 
 def run_wdf(
-    dry_wav: Path, rgain: float = 220.0, bias: float = 0.77
-) -> tuple[np.ndarray, int]:
+    dry_wav: Path,
+    rgain: float = 220.0,
+    bias: float = 0.77,
+    quality: str | None = None,
+    return_stats: bool = False,
+):
     """Run the WDF model on *dry_wav* and return (samples_float32, sample_rate).
 
     Copies the binary and the dry WAV to a temp directory so the original
@@ -103,9 +119,16 @@ def run_wdf(
         dry_wav: Path to a 96 kHz mono float WAV (peak ≤ 0.5 V, in volts).
         rgain:   K↔J gain shunt R_KJ in ohms (lower → more gain).
         bias:    RV1 trim pot ∈ [0,1] (held at 0.77 for the gain-conditioned set).
+        quality: optional tier preset (``realtime``/``fast``/``medium``/``high``)
+                 appended as ``--quality <q>``. **Default ``None`` keeps the C++
+                 binary's own default tier (``high``, os=4)** — pass an explicit
+                 tier when comparing against the Rust port (which is os=2).
+        return_stats: when True, return ``(samples, sr, stats)`` where ``stats`` is
+                 the parsed ``Newton: ...`` line (avg_iters/max_iters) or ``{}``.
 
     Returns:
-        Tuple of (samples as float32 ndarray in volts, sample_rate as int).
+        ``(samples_float32, sample_rate)`` — or ``(samples, sr, stats)`` if
+        ``return_stats``.
     """
     build_if_needed()
     dry_wav = Path(dry_wav)
@@ -116,8 +139,11 @@ def run_wdf(
         shutil.copy2(BINARY, tmp / "ba283_sim")
         shutil.copy2(dry_wav, tmp / "input.wav")
 
+        argv = [str(tmp / "ba283_sim"), str(rgain), str(bias)]
+        if quality is not None:
+            argv += ["--quality", quality]
         result = subprocess.run(
-            [str(tmp / "ba283_sim"), str(rgain), str(bias)],
+            argv,
             cwd=tmp,
             capture_output=True,
             text=True,
@@ -135,4 +161,7 @@ def run_wdf(
         samples, sr = sf.read(out_wav, dtype="float32")
         if samples.ndim > 1:
             samples = samples[:, 0]
-        return np.asarray(samples, dtype=np.float32), int(sr)
+        samples = np.asarray(samples, dtype=np.float32)
+        if return_stats:
+            return samples, int(sr), parse_newton(result.stdout)
+        return samples, int(sr)
