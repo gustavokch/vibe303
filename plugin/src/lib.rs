@@ -6,6 +6,7 @@ pub mod delay;
 pub mod dsp;
 pub mod model;
 pub mod oversample;
+pub mod wdf;
 
 use dsp::ChannelDsp;
 
