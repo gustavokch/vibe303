@@ -18,6 +18,15 @@ def test_esr_zero_when_pred_equals_target():
     assert esr(t, t).item() < 1e-6
 
 
+def test_composite_loss_defaults_to_pure_preemph_esr():
+    # Default esr_weight=1.0 (arvidf/GuitarML recipe): composite_loss must equal
+    # ESR on the pre-emphasised signals, with no MSE contribution.
+    pred = torch.randn(2, 100, 1)
+    target = torch.randn(2, 100, 1)
+    expected = esr(pre_emphasis(pred, 0.85), pre_emphasis(target, 0.85))
+    assert torch.allclose(composite_loss(pred, target), expected)
+
+
 def test_composite_loss_decreases_when_pred_improves():
     target = torch.randn(2, 100, 1)
     bad = target + torch.randn_like(target)

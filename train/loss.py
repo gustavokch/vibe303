@@ -18,8 +18,11 @@ def esr(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Te
 
 
 def composite_loss(
-    pred: torch.Tensor, target: torch.Tensor, *, esr_weight: float = 0.75, alpha: float = 0.85
+    pred: torch.Tensor, target: torch.Tensor, *, esr_weight: float = 1.0, alpha: float = 0.85
 ) -> torch.Tensor:
+    # Default is pure pre-emphasised ESR (esr_weight=1.0), the arvidf/GuitarML
+    # recipe. The esr_weight knob keeps the ESR+MSE blend available for A/B; at
+    # 1.0 the MSE term vanishes.
     pe = pre_emphasis(pred, alpha)
     te = pre_emphasis(target, alpha)
     return esr_weight * esr(pe, te) + (1 - esr_weight) * F.mse_loss(pred, target)
