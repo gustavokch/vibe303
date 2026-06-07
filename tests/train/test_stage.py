@@ -92,3 +92,29 @@ def test_stage_rclone_raises_on_failure(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(RuntimeError, match="rclone copy"):
         stage_rclone("remote:x", dest=tmp_path / "d")
+
+
+def test_remapped_manifest_loads_in_make_loader(tmp_path):
+    from train.dataset import make_loader
+
+    ds = _make_dataset(tmp_path / "dataset")
+    out = remap_manifests(ds, out_dir=tmp_path / "content")
+    loader = make_loader(out["train"], batch_size=1, window=2048, stride=2048,
+                         num_workers=0, shuffle=False, drop_last=False)
+    x, y = next(iter(loader))
+    assert x.shape[-1] == 2  # dry + conditioning column
+    assert y.shape[-1] == 1
+
+
+def test_stage_rclone_raises_when_manifest_missing(tmp_path, monkeypatch):
+    dest = tmp_path / "content" / "dataset"
+
+    def fake_run(argv, **kw):
+        # rclone "succeeds" but copies nothing -> manifest.csv absent
+        Path(argv[3]).mkdir(parents=True, exist_ok=True)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    import pytest
+    with pytest.raises(FileNotFoundError, match=r"manifest\.csv"):
+        stage_rclone("remote:x", dest=dest)
