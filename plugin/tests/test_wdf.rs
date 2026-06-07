@@ -84,15 +84,16 @@ fn process_settles_toward_golden() {
         m.process();
     }
     m.v[node::N_A as usize] = 24.0;
-    // idle-settle with tap-delta early-exit (mirrors the C++ idleSettle), capped at 8 s.
+    // idle-settle with tap-delta early-exit, matching WdfModel::warmup's schedule (1e-4 threshold,
+    // 4 s cap) so we land on the same early-exit operating point as the golden capture.
     let chunk = (internal_sr * 0.25) as usize;
     let mut prev_tap = 1e9;
-    for _ in 0..32 {
+    for _ in 0..16 {
         for _ in 0..chunk {
             m.process();
         }
         let tap = m.node_v(node::N_SEC_IN);
-        if (tap - prev_tap).abs() < 1e-6 {
+        if (tap - prev_tap).abs() < 1e-4 {
             break;
         }
         prev_tap = tap;
@@ -102,5 +103,56 @@ fn process_settles_toward_golden() {
         let got = m.node_v(id);
         let exp = wdf_golden::SETTLED_V[id as usize];
         assert!((got - exp).abs() <= 1e-4, "node {id}: {got} vs {exp}");
+    }
+}
+
+// ---- A5: the acceptance gate — null the Rust port against the C++ golden vectors ----
+
+#[test]
+fn warmup_reaches_golden_operating_point() {
+    let mut m = wdf::WdfModel::new(wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS); // internal = *OS
+    m.warmup();
+    for (i, &exp) in wdf_golden::SETTLED_V.iter().enumerate() {
+        assert!((m.node_v(i as i32) - exp).abs() <= 1e-6, "node {i}: {} vs {exp}", m.node_v(i as i32));
+    }
+    assert!(
+        (m.sec_in_dc() - wdf_golden::SEC_IN_DC).abs() <= 1e-6,
+        "sec_in_dc: {} vs {}",
+        m.sec_in_dc(),
+        wdf_golden::SEC_IN_DC
+    );
+}
+
+#[test]
+fn decimated_output_matches_cpp() {
+    let mut m = wdf::WdfModel::new(wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
+    m.warmup();
+    for (i, &x) in wdf_golden::INPUT_256.iter().enumerate() {
+        let y = m.process_host_sample(x as f32);
+        assert!(
+            (y as f64 - wdf_golden::OUTPUT_256[i]).abs() <= 1e-5,
+            "sample {i}: {y} vs {}",
+            wdf_golden::OUTPUT_256[i]
+        );
+    }
+}
+
+#[test]
+fn snapshot_restore_round_trips() {
+    let mut m = wdf::WdfModel::new(wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
+    m.warmup();
+    m.save_snapshot();
+    // run some audio, then reset → should return to the settled operating point
+    for &x in wdf_golden::INPUT_256.iter().take(64) {
+        m.process_host_sample(x as f32);
+    }
+    m.reset();
+    for (i, &exp) in wdf_golden::SETTLED_V.iter().enumerate() {
+        assert!((m.node_v(i as i32) - exp).abs() <= 1e-6, "node {i} after reset");
+    }
+    // and replaying the input from the start should reproduce the golden onset again
+    for i in 0..4 {
+        let y = m.process_host_sample(wdf_golden::INPUT_256[i] as f32);
+        assert!((y as f64 - wdf_golden::OUTPUT_256[i]).abs() <= 1e-5, "replayed sample {i}");
     }
 }

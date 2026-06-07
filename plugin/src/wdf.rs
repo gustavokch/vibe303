@@ -444,9 +444,28 @@ pub enum CapTier {
 const RT_NEWTON_TOL: f64 = 1e-7;
 const RT_MAX_ITERS: usize = 30;
 
+/// Internal oversampling factor (realtime tier). Host rate × OS = internal solve rate.
+pub const OS: usize = 2;
+
 // Worst-case fixed-array bounds (RB off uses 17 resistors / 7 caps; sized for RB-on headroom).
 const MAX_RES: usize = 24;
 const MAX_CAPS: usize = 8;
+
+/// Settled-state snapshot for restore-on-reset (`main.cpp` warmup is bounded → snapshot once,
+/// restore cheaply). Decimation biquad state is NOT snapshotted (cleared on restore — the
+/// transient is sub-millisecond).
+#[derive(Clone, Copy, Debug)]
+pub struct WdfSnapshot {
+    v: [f64; NUM_NODES],
+    v_prev: [f64; NUM_NODES],
+    caps_i_prev: [f64; MAX_CAPS],
+    bjt_state: [(f64, f64, f64, f64); 3], // (qbe_prev, ibe_prev, qbc_prev, ibc_prev)
+    i_hist_p: f64,
+    i_hist_s: f64,
+    v_pprev: f64,
+    v_sprev: f64,
+    sec_in_dc: f64,
+}
 
 /// Coupled-circuit MNA + Newton solver. All scratch is fixed-size (no `Vec` on the process path)
 /// to satisfy the zero-alloc audio-thread contract.
@@ -486,6 +505,13 @@ pub struct WdfModel {
     rn: [f64; NUM_NODES],
     j: [f64; NUM_NODES * NUM_NODES],
     g0: [f64; NUM_NODES * NUM_NODES], // constant linear conductance matrix
+
+    // oversampling / decimation driver (set by `new`; unused when `build` is called directly)
+    dec1: Biquad,
+    dec2: Biquad,
+    sec_in_dc: f64, // output DC offset captured at warmup; subtracted from the tap
+    prev_in: f64,   // previous host input sample (linear-interpolation upsampling state)
+    last_snapshot: Option<WdfSnapshot>,
 }
 
 /// RV1 (4k7 preset) split. `bias` in [0,1] is remapped onto the stable pot range then split into
@@ -667,9 +693,26 @@ impl WdfModel {
             rn: [0.0; NUM_NODES],
             j: [0.0; NUM_NODES * NUM_NODES],
             g0: [0.0; NUM_NODES * NUM_NODES],
+            dec1: Biquad::default(),
+            dec2: Biquad::default(),
+            sec_in_dc: 0.0,
+            prev_in: 0.0,
+            last_snapshot: None,
         };
         model.build_g0();
         model
+    }
+
+    /// Construct at a **host** sample rate (internal solve rate = `host_sr * OS`) and configure the
+    /// 4th-order Butterworth decimation filters (two biquads, `fc = 0.45*host_sr`, C++ Q values).
+    /// Mirrors the C++ offline driver setup (`main.cpp:859-936`).
+    pub fn new(host_sr: f64, rgain: f64, bias: f64) -> Self {
+        let internal_sr = host_sr * OS as f64;
+        let mut m = Self::build(internal_sr, rgain, bias);
+        let fc = 0.45 * host_sr;
+        m.dec1.set_lowpass(fc, internal_sr, 0.54119610);
+        m.dec2.set_lowpass(fc, internal_sr, 1.30656296);
+        m
     }
 
     /// Precompute the constant linear conductance matrix G0 (resistors + cap Geq + coupled-inductor
@@ -1180,6 +1223,154 @@ impl WdfModel {
 
         for i in 0..NUM_NODES {
             self.v_prev[i] = self.v[i];
+        }
+    }
+
+    fn internal_sr(&self) -> f64 {
+        1.0 / self.dt
+    }
+
+    /// Idle settle with tap-delta early-exit (`main.cpp:874-886`), capped at `seconds`.
+    fn idle_settle(&mut self, seconds: f64) {
+        let internal_sr = self.internal_sr();
+        let chunk = (internal_sr * 0.25) as usize;
+        let idle_max = (internal_sr * seconds) as usize;
+        let mut done = 0;
+        let mut prev_tap = 1e9;
+        while done < idle_max {
+            for _ in 0..chunk {
+                self.process();
+            }
+            done += chunk;
+            let tap = self.v[node::N_SEC_IN as usize];
+            if (tap - prev_tap).abs() < 1e-4 {
+                break; // settled
+            }
+            prev_tap = tap;
+        }
+    }
+
+    /// Soft-start from cold: ramp the +24V rail (1 s homotopy), let the DC feedback loop self-bias
+    /// (idle-settle, early-exit), then capture the output DC offset. Mirrors `main.cpp:865-916`
+    /// MINUS auto-bias — the bias is a direct param here, not bisected to a target idle current.
+    pub fn warmup(&mut self) {
+        let internal_sr = self.internal_sr();
+        let ramp = internal_sr as usize; // 1 s
+        self.v[node::N_INPUT as usize] = 0.0;
+        for i in 0..ramp {
+            self.v[node::N_A as usize] = 24.0 * (i as f64) / (ramp as f64);
+            self.process();
+        }
+        self.v[node::N_A as usize] = 24.0;
+        self.idle_settle(4.0);
+        self.sec_in_dc = self.v[node::N_SEC_IN as usize];
+    }
+
+    /// Process one host-rate sample: linear-upsample to `OS` subsamples, Newton-solve each, decimate
+    /// the DC-corrected tap through the two Butterworth biquads (`main.cpp:942-953`).
+    #[inline]
+    pub fn process_host_sample(&mut self, x: f32) -> f32 {
+        let cur_in = x as f64;
+        let mut decimated = 0.0;
+        for j in 0..OS {
+            let frac = (j + 1) as f64 / OS as f64; // linear-interpolate upsample
+            self.v[node::N_INPUT as usize] = self.prev_in + (cur_in - self.prev_in) * frac;
+            self.process();
+            let y = self
+                .dec2
+                .process(self.dec1.process(self.v[node::N_SEC_IN as usize] - self.sec_in_dc));
+            decimated = y; // keep last filtered subsample
+        }
+        self.prev_in = cur_in;
+        decimated as f32
+    }
+
+    pub fn sec_in_dc(&self) -> f64 {
+        self.sec_in_dc
+    }
+
+    /// Capture the current settled state (`main.cpp` integrator + DC offset). Pure.
+    pub fn snapshot(&self) -> WdfSnapshot {
+        let mut caps_i_prev = [0.0; MAX_CAPS];
+        for i in 0..self.n_caps {
+            caps_i_prev[i] = self.caps[i].i_prev;
+        }
+        let mut bjt_state = [(0.0, 0.0, 0.0, 0.0); 3];
+        for (i, b) in self.bjts.iter().enumerate() {
+            bjt_state[i] = (b.qbe_prev, b.ibe_prev, b.qbc_prev, b.ibc_prev);
+        }
+        WdfSnapshot {
+            v: self.v,
+            v_prev: self.v_prev,
+            caps_i_prev,
+            bjt_state,
+            i_hist_p: self.i_hist_p,
+            i_hist_s: self.i_hist_s,
+            v_pprev: self.v_pprev,
+            v_sprev: self.v_sprev,
+            sec_in_dc: self.sec_in_dc,
+        }
+    }
+
+    /// Restore integrator state from a snapshot; clears decimation-biquad + upsample state (their
+    /// transient is sub-millisecond).
+    pub fn restore(&mut self, s: &WdfSnapshot) {
+        self.v = s.v;
+        self.v_prev = s.v_prev;
+        for i in 0..self.n_caps {
+            self.caps[i].i_prev = s.caps_i_prev[i];
+        }
+        for (i, b) in self.bjts.iter_mut().enumerate() {
+            b.qbe_prev = s.bjt_state[i].0;
+            b.ibe_prev = s.bjt_state[i].1;
+            b.qbc_prev = s.bjt_state[i].2;
+            b.ibc_prev = s.bjt_state[i].3;
+        }
+        self.i_hist_p = s.i_hist_p;
+        self.i_hist_s = s.i_hist_s;
+        self.v_pprev = s.v_pprev;
+        self.v_sprev = s.v_sprev;
+        self.sec_in_dc = s.sec_in_dc;
+        self.clear_driver_state();
+    }
+
+    /// Store the current state as the snapshot reset() restores to (call after `warmup`).
+    pub fn save_snapshot(&mut self) {
+        self.last_snapshot = Some(self.snapshot());
+    }
+
+    fn clear_driver_state(&mut self) {
+        self.prev_in = 0.0;
+        for bq in [&mut self.dec1, &mut self.dec2] {
+            bq.x1 = 0.0;
+            bq.x2 = 0.0;
+            bq.y1 = 0.0;
+            bq.y2 = 0.0;
+        }
+    }
+
+    /// Restore to the last snapshot if present, else zero all state. Clears the decimation filters.
+    pub fn reset(&mut self) {
+        if let Some(s) = self.last_snapshot {
+            self.restore(&s);
+        } else {
+            self.v = [0.0; NUM_NODES];
+            self.v_prev = [0.0; NUM_NODES];
+            for i in 0..self.n_caps {
+                self.caps[i].i_prev = 0.0;
+            }
+            for b in self.bjts.iter_mut() {
+                b.qbe_prev = 0.0;
+                b.ibe_prev = 0.0;
+                b.qbc_prev = 0.0;
+                b.ibc_prev = 0.0;
+            }
+            self.i_hist_p = 0.0;
+            self.i_hist_s = 0.0;
+            self.v_pprev = 0.0;
+            self.v_sprev = 0.0;
+            self.sec_in_dc = 0.0;
+            self.clear_driver_state();
         }
     }
 }
