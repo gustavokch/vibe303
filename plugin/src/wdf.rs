@@ -209,3 +209,218 @@ impl Biquad {
         y
     }
 }
+
+// ---------------------------------------------------------------------------
+// Fast transcendentals (`main.cpp:99-150`). Range-reduced, |rel err| < ~1e-11 over the domains
+// used here, far below the Newton tol — converged node voltages match the std path to ~12 digits.
+// The realtime tier runs the fast path (`gExactMath=false`); `EXACT` keeps the std A/B available.
+// ---------------------------------------------------------------------------
+
+/// Realtime tier uses fast math. Flip to `true` only for the lossless-validation A/B.
+pub const EXACT: bool = false;
+
+/// `exp` via range reduction + 9th-order Taylor + IEEE-754 exponent assembly (`main.cpp:109-128`).
+#[inline]
+pub fn fast_exp(x: f64) -> f64 {
+    const LN2: f64 = 0.6931471805599453;
+    const INV_LN2: f64 = 1.4426950408889634;
+    let kf = (x * INV_LN2 + 0.5).floor();
+    let k = kf as i32;
+    let r = x - kf * LN2; // |r| <= ln2/2 ~ 0.3466
+    let p = 1.0
+        + r * (1.0
+            + r * (1.0 / 2.0
+                + r * (1.0 / 6.0
+                    + r * (1.0 / 24.0
+                        + r * (1.0 / 120.0
+                            + r * (1.0 / 720.0
+                                + r * (1.0 / 5040.0
+                                    + r * (1.0 / 40320.0 + r * (1.0 / 362880.0)))))))));
+    // 2^k via the IEEE-754 exponent field. MUST guard negative k: reverse-biased junctions give
+    // v/Vt ~ -1000 -> k ~ -1339; without the guard, (k+1023) goes negative and the bit pattern
+    // wraps to garbage, poisoning the Jacobian.
+    if k <= -1023 {
+        return 0.0; // underflow: true exp is subnormal/negligible (<1e-308)
+    }
+    if k >= 1024 {
+        return p * f64::INFINITY; // never in domain
+    }
+    let u: u64 = ((k + 1023) as u64) << 52;
+    let pk = f64::from_bits(u);
+    p * pk
+}
+
+/// `log` via IEEE-754 exponent decomposition + atanh series (`main.cpp:130-142`).
+#[inline]
+pub fn fast_log(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let mut e = (((bits >> 52) & 0x7ff) as i32) - 1022; // m in [0.5,1)
+    let bits = (bits & 0x000f_ffff_ffff_ffff) | 0x3fe0_0000_0000_0000;
+    let mut m = f64::from_bits(bits);
+    if m < 0.707_106_781_186_547_6 {
+        m *= 2.0;
+        e -= 1;
+    } // center: m in [~0.707,~1.414)
+    let f = m - 1.0;
+    let s = f / (2.0 + f);
+    let s2 = s * s; // log(m) = 2*atanh(s)
+    let poly = 2.0
+        * s
+        * (1.0 + s2 * (1.0 / 3.0 + s2 * (1.0 / 5.0 + s2 * (1.0 / 7.0 + s2 * (1.0 / 9.0 + s2 / 11.0)))));
+    poly + (e as f64) * 0.6931471805599453
+}
+
+/// positive-base power via `exp(ex*log(base))`; only called with `base > 0` here (`main.cpp:145`).
+#[inline]
+pub fn fast_pow_pos(base: f64, ex: f64) -> f64 {
+    fast_exp(ex * fast_log(base))
+}
+
+/// `EXP` wrapper — std vs fast per `EXACT` (`main.cpp:149`).
+#[inline]
+pub fn exp_(x: f64) -> f64 {
+    if EXACT {
+        x.exp()
+    } else {
+        fast_exp(x)
+    }
+}
+
+/// `POW` wrapper — std vs fast per `EXACT` (`main.cpp:150`).
+#[inline]
+pub fn pow_(b: f64, e: f64) -> f64 {
+    if EXACT {
+        b.powf(e)
+    } else {
+        fast_pow_pos(b, e)
+    }
+}
+
+/// Junction depletion charge `Q(v)` and small-signal `C(v)=dQ/dv` for a SPICE pn junction, with
+/// the standard `FC=0.5` linear extrapolation above `FC*Vj` so it stays finite forward-biased.
+/// Returns `(q, c)` (`main.cpp:154-170`).
+#[inline]
+pub fn depletion_charge(v: f64, cj0: f64, vj: f64, m: f64) -> (f64, f64) {
+    const FC: f64 = 0.5;
+    if cj0 <= 0.0 {
+        return (0.0, 0.0);
+    }
+    if v < FC * vj {
+        let f = 1.0 - v / vj;
+        let c = cj0 * pow_(f, -m);
+        let q = cj0 * vj / (1.0 - m) * (1.0 - pow_(f, 1.0 - m));
+        (q, c)
+    } else {
+        let f0 = 1.0 - FC;
+        let c0 = cj0 * pow_(f0, -m);
+        let q0 = cj0 * vj / (1.0 - m) * (1.0 - pow_(f0, 1.0 - m));
+        let dcdv = cj0 * m / vj * pow_(f0, -m - 1.0);
+        let d = v - FC * vj;
+        let c = c0 + dcdv * d;
+        let q = q0 + c0 * d + 0.5 * dcdv * d * d;
+        (q, c)
+    }
+}
+
+/// Diode current + conductance, linearized beyond `vcrit` for Newton stability (SPICE pnjlim
+/// spirit). Returns `(i, g)` (`main.cpp:174-187`).
+#[inline]
+pub fn diode_branch(v: f64, is: f64, vt: f64, vcrit: f64) -> (f64, f64) {
+    if v < vcrit {
+        let e = exp_(v / vt);
+        (is * (e - 1.0), (is / vt) * e)
+    } else {
+        let ec = exp_(vcrit / vt);
+        let icrit = is * (ec - 1.0);
+        let gcrit = (is / vt) * ec;
+        (icrit + gcrit * (v - vcrit), gcrit) // C1-continuous linear extension
+    }
+}
+
+/// Gummel-Poon terminal currents (into the device) + node-form Jacobian. With Early effect
+/// (VAF/VAR) and high-injection (IKF/IKR); reduces to plain transport when those are disabled
+/// (`main.cpp:192-241`). `itf/gtf/itr/gtr` are returned for the diffusion-charge caps.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BjtOut {
+    pub ib: f64,
+    pub ic: f64,
+    pub ie: f64,
+    pub itf: f64,
+    pub gtf: f64,
+    pub itr: f64,
+    pub gtr: f64,
+    pub dib_b: f64,
+    pub dib_e: f64,
+    pub dib_c: f64,
+    pub dic_b: f64,
+    pub dic_e: f64,
+    pub dic_c: f64,
+    pub die_b: f64,
+    pub die_e: f64,
+    pub die_c: f64,
+}
+
+/// Compute Gummel-Poon BJT response (`main.cpp:197-241`). `sqrt` is exact (not fast math),
+/// matching the C++ `std::sqrt`.
+pub fn compute_bjt(vbe: f64, vbc: f64, p: &BjtParams) -> BjtOut {
+    let mut o = BjtOut::default();
+    let (itf, gtf) = diode_branch(vbe, p.is, p.vt, p.vcrit); // forward transport + d/dvbe
+    let (itr, gtr) = diode_branch(vbc, p.is, p.vt, p.vcrit); // reverse transport + d/dvbc
+    o.itf = itf;
+    o.gtf = gtf;
+    o.itr = itr;
+    o.gtr = gtr;
+
+    // base-charge factor qb = (q1/2)(1+sqrt(1+4 q2)); q1=Early, q2=high-injection
+    let inv_af = if p.vaf > 0.0 { 1.0 / p.vaf } else { 0.0 };
+    let inv_ar = if p.var > 0.0 { 1.0 / p.var } else { 0.0 };
+    let mut inv1 = 1.0 - vbc * inv_af - vbe * inv_ar;
+    if inv1 < 0.1 {
+        inv1 = 0.1; // guard against blow-up in saturation
+    }
+    let q1 = 1.0 / inv1;
+    let dq1_vbe = q1 * q1 * inv_ar; // d(1/inv1)/dvbe = q1^2 * inv_ar
+    let dq1_vbc = q1 * q1 * inv_af;
+    let inv_kf = if p.ikf > 0.0 { 1.0 / p.ikf } else { 0.0 };
+    let inv_kr = if p.ikr > 0.0 { 1.0 / p.ikr } else { 0.0 };
+    let q2 = itf * inv_kf + itr * inv_kr;
+    let dq2_vbe = gtf * inv_kf;
+    let dq2_vbc = gtr * inv_kr;
+    let s = (1.0 + 4.0 * q2).sqrt();
+    let qb = q1 * (1.0 + s) / 2.0;
+    let dqb_vbe = dq1_vbe * (1.0 + s) / 2.0 + q1 * dq2_vbe / s;
+    let dqb_vbc = dq1_vbc * (1.0 + s) / 2.0 + q1 * dq2_vbc / s;
+
+    let diff = itf - itr;
+    let it = diff / qb;
+    let dit_vbe = (gtf * qb - diff * dqb_vbe) / (qb * qb);
+    let dit_vbc = (-gtr * qb - diff * dqb_vbc) / (qb * qb);
+
+    let inv_bf = 1.0 / p.bf;
+    let inv_br = 1.0 / p.br;
+    let ic = it - itr * inv_br;
+    let ib = itf * inv_bf + itr * inv_br;
+    let ie = -(ic + ib);
+    o.ic = ic;
+    o.ib = ib;
+    o.ie = ie;
+
+    // derivatives wrt vbe, vbc
+    let dic_vbe = dit_vbe;
+    let dic_vbc = dit_vbc - gtr * inv_br;
+    let dib_vbe = gtf * inv_bf;
+    let dib_vbc = gtr * inv_br;
+    let die_vbe = -(dic_vbe + dib_vbe);
+    let die_vbc = -(dic_vbc + dib_vbc);
+    // node form: d/dVb = d/dvbe + d/dvbc, d/dVe = -d/dvbe, d/dVc = -d/dvbc
+    o.dic_b = dic_vbe + dic_vbc;
+    o.dic_e = -dic_vbe;
+    o.dic_c = -dic_vbc;
+    o.dib_b = dib_vbe + dib_vbc;
+    o.dib_e = -dib_vbe;
+    o.dib_c = -dib_vbc;
+    o.die_b = die_vbe + die_vbc;
+    o.die_e = -die_vbe;
+    o.die_c = -die_vbc;
+    o
+}

@@ -2,7 +2,7 @@
 // Capture cmd: BA283_DUMP_GOLDEN=1 BA283_QUALITY=realtime ./ba283_sim 220 auto --idle 65 --no-rb
 // Input: 48 kHz / 1 kHz / amp 0.5 (-6 dBFS) sine. Internal rate = 48k * OS(2) = 96 kHz.
 // These fixtures are the spec; do not edit by hand. See docs/plans/2026-06-07-wdf-backend.md Task A0.
-#![allow(dead_code)]
+// (include!-ed into a `#[allow(dead_code)] mod wdf_golden` by the test files.)
 
 pub const BIAS: f64 = 7.69515991210937500e-01;
 pub const HOST_SR: f64 = 48_000.0;
