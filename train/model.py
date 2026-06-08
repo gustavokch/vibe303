@@ -34,24 +34,71 @@ class BA283LSTM(nn.Module):
     audio and ``x[..., 1]`` the constant gain, so the dataset/training interface
     never changes. The carried state is the LSTM ``(h, c)`` tuple; ``film.*``
     params exist only in film mode.
+
+    Redesign knobs (all default to the shipped single-layer / linear graph, so
+    the export + Rust round-trip contract is unchanged until a knob is set):
+
+    - ``num_layers`` / ``dropout``: stack depth and inter-layer dropout (dropout
+      is a no-op at a single layer, matching PyTorch's own behaviour).
+    - ``head="mlp"``: insert a ``Linear(H,H) -> tanh`` block (``head_pre``)
+      before the dense readout -- a saturating output stage a bare linear readout
+      cannot shape.
+    - ``film_kind="mlp"``: replace the linear FiLM map with
+      ``Linear(1,G) -> tanh -> Linear(G,2H)`` (``G = film_hidden or hidden``),
+      giving the conditioning headroom over the ~19 dB gain span.
+
+    At the defaults ``self.film`` is a ``Linear`` and ``self.dense`` a
+    ``Linear``, and ``head_pre`` is absent, so ``state_dict`` keys match the v1
+    export (``film.weight``/``film.bias``, ``dense.weight``/``dense.bias``).
     """
 
-    def __init__(self, hidden: int = 32, conditioning: str = "film") -> None:
+    def __init__(
+        self,
+        hidden: int = 32,
+        conditioning: str = "film",
+        *,
+        num_layers: int = 1,
+        dropout: float = 0.0,
+        head: str = "linear",
+        film_kind: str = "linear",
+        film_hidden: int | None = None,
+    ) -> None:
         super().__init__()
         if conditioning not in ("film", "concat"):
             raise ValueError(f"conditioning must be 'film' or 'concat', got {conditioning!r}")
+        if head not in ("linear", "mlp"):
+            raise ValueError(f"head must be 'linear' or 'mlp', got {head!r}")
+        if film_kind not in ("linear", "mlp"):
+            raise ValueError(f"film_kind must be 'linear' or 'mlp', got {film_kind!r}")
         self.hidden = hidden
         self.conditioning = conditioning
+        self.head_kind = head
+        self.film_kind = film_kind
         lstm_in = 1 if conditioning == "film" else 2
         self.lstm = nn.LSTM(
             input_size=lstm_in,
             hidden_size=hidden,
-            num_layers=1,
+            num_layers=num_layers,
+            # PyTorch warns (and ignores) dropout at a single layer; gate it off.
+            dropout=dropout if num_layers > 1 else 0.0,
             batch_first=True,
         )
         if conditioning == "film":
-            self.film = nn.Linear(1, 2 * hidden)
+            if film_kind == "linear":
+                self.film = nn.Linear(1, 2 * hidden)
+            else:
+                g = film_hidden or hidden
+                self.film = nn.Sequential(
+                    nn.Linear(1, g), nn.Tanh(), nn.Linear(g, 2 * hidden)
+                )
+        if head == "mlp":
+            self.head_pre = nn.Linear(hidden, hidden)
         self.dense = nn.Linear(hidden, 1)
+
+    def _readout(self, y: torch.Tensor) -> torch.Tensor:
+        if self.head_kind == "mlp":
+            y = torch.tanh(self.head_pre(y))
+        return self.dense(y)
 
     def forward(
         self, x: torch.Tensor, state: LSTMState | None = None
@@ -62,7 +109,7 @@ class BA283LSTM(nn.Module):
             y, state_out = self.lstm(audio, state)
             gamma, beta = self.film(gain).chunk(2, dim=-1)
             y = (1.0 + gamma) * y + beta
-            return self.dense(y), state_out
+            return self._readout(y), state_out
         # concat: gain is the second input channel
         y, state_out = self.lstm(x, state)
-        return self.dense(y), state_out
+        return self._readout(y), state_out
