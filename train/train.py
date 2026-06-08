@@ -71,6 +71,13 @@ def train_main(
     seed: int = 0xBA283,
     patience: int = 10,
     conditioning: str = "film",
+    num_layers: int = 1,
+    dropout: float = 0.0,
+    head: str = "linear",
+    film_kind: str = "linear",
+    weight_decay: float = 0.0,
+    stft_weight: float = 0.0,
+    balance_by_kind: bool = False,
 ) -> None:
     torch.manual_seed(seed)
 
@@ -81,6 +88,7 @@ def train_main(
         stride=stride,
         num_workers=num_workers,
         shuffle=True,
+        balance_by_kind=balance_by_kind,
     )
     val_loader = make_loader(
         val_manifest,
@@ -92,8 +100,15 @@ def train_main(
         drop_last=False,
     )
 
-    model = BA283LSTM(hidden=hidden, conditioning=conditioning).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model = BA283LSTM(
+        hidden=hidden,
+        conditioning=conditioning,
+        num_layers=num_layers,
+        dropout=dropout,
+        head=head,
+        film_kind=film_kind,
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     writer = SummaryWriter(log_dir=str(log_dir))
 
@@ -140,7 +155,7 @@ def train_main(
                 state = tuple(s.detach() for s in state)
 
                 pred, _ = model(train_x, state)
-                loss = composite_loss(pred, train_y)
+                loss = composite_loss(pred, train_y, stft_weight=stft_weight)
 
                 if not torch.isfinite(loss):
                     warnings.warn(
@@ -289,6 +304,37 @@ def main() -> None:
         default="film",
         help="bias conditioning: 'film' (affine modulation) or 'concat' (input channel)",
     )
+    # --- Redesign knobs (all default to the shipped v1 behaviour) ---
+    parser.add_argument("--layers", type=int, default=1, help="LSTM stack depth")
+    parser.add_argument(
+        "--dropout", type=float, default=0.0, help="inter-layer LSTM dropout (needs --layers > 1)"
+    )
+    parser.add_argument(
+        "--head",
+        choices=("linear", "mlp"),
+        default="linear",
+        help="output readout: 'linear' (Dense) or 'mlp' (Dense->tanh->Dense)",
+    )
+    parser.add_argument(
+        "--film",
+        choices=("linear", "mlp"),
+        default="linear",
+        help="FiLM gain map: 'linear' or 'mlp' (Linear->tanh->Linear); film conditioning only",
+    )
+    parser.add_argument(
+        "--weight-decay", type=float, default=0.0, help="Adam L2 weight decay"
+    )
+    parser.add_argument(
+        "--stft-weight",
+        type=float,
+        default=0.0,
+        help="weight of the multi-resolution STFT loss term (0 = pure ESR)",
+    )
+    parser.add_argument(
+        "--balance-by-kind",
+        action="store_true",
+        help="weighted sampling to de-skew stim_kind imbalance (e.g. music dominance)",
+    )
     args = parser.parse_args()
 
     train_main(
@@ -311,6 +357,13 @@ def main() -> None:
         seed=args.seed,
         patience=args.patience,
         conditioning=args.conditioning,
+        num_layers=args.layers,
+        dropout=args.dropout,
+        head=args.head,
+        film_kind=args.film,
+        weight_decay=args.weight_decay,
+        stft_weight=args.stft_weight,
+        balance_by_kind=args.balance_by_kind,
     )
 
 

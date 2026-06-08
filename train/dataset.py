@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 _REQUIRED_COLUMNS = ("dry_path", "wet_path", "gain_value", "duration_s", "stim_kind")
 
@@ -198,6 +198,26 @@ class BA283Dataset(Dataset):
         return np.ascontiguousarray(data, dtype=np.float32)
 
 
+def _kind_balanced_sampler(dataset: BA283Dataset) -> WeightedRandomSampler:
+    """Inverse-frequency window sampler over ``stim_kind``.
+
+    The corpus is ~56% music; energy-weighted training then under-sees sweep /
+    synth / impulse character. Weighting each window by ``1 / count(its kind)``
+    makes the expected per-epoch draw uniform across kinds (with replacement),
+    de-skewing the imbalance without re-rendering. The per-window kind is the
+    kind of its source manifest row.
+    """
+    kinds = dataset.manifest["stim_kind"].to_numpy()
+    window_kinds = [kinds[row_idx] for row_idx, _ in dataset.index]
+    counts: dict[str, int] = {}
+    for k in window_kinds:
+        counts[k] = counts.get(k, 0) + 1
+    weights = torch.as_tensor(
+        [1.0 / counts[k] for k in window_kinds], dtype=torch.double
+    )
+    return WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+
+
 def make_loader(
     manifest_csv: str | Path,
     *,
@@ -207,6 +227,7 @@ def make_loader(
     num_workers: int = 6,
     shuffle: bool = True,
     drop_last: bool = True,
+    balance_by_kind: bool = False,
 ) -> DataLoader:
     """Build a ``DataLoader`` wrapping a :class:`BA283Dataset`.
 
@@ -214,12 +235,24 @@ def make_loader(
     dimension: the training loop pre-allocates the GRU hidden state for the
     batch size, and a short final batch would break the last TBPTT step of each
     epoch. Evaluation can pass ``drop_last=False`` to keep all samples.
+
+    ``balance_by_kind`` replaces uniform shuffling with an inverse-frequency
+    ``WeightedRandomSampler`` over ``stim_kind`` (see ``_kind_balanced_sampler``)
+    to de-skew the music-dominated corpus. It implies shuffling, so it is only
+    honoured when ``shuffle`` is set (validation/eval loaders pass
+    ``shuffle=False`` and keep deterministic order).
     """
     dataset = BA283Dataset(manifest_csv, window=window, stride=stride)
+    sampler = None
+    if balance_by_kind and shuffle:
+        sampler = _kind_balanced_sampler(dataset)
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
+        # A sampler and shuffle are mutually exclusive; the sampler carries the
+        # randomised draw when balancing is on.
+        shuffle=shuffle if sampler is None else False,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=num_workers > 0,

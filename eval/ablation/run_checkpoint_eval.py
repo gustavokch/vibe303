@@ -50,13 +50,28 @@ def load_model(
     *,
     hidden: int,
     conditioning: str = "film",
+    head: str = "linear",
+    film_kind: str = "linear",
+    num_layers: int = 1,
 ) -> BA283LSTM:
     """Construct a :class:`BA283LSTM` and load ``checkpoint`` into it (eval mode).
+
+    ``head`` / ``film_kind`` / ``num_layers`` must match the architecture the
+    checkpoint was trained with (the redesign knobs), or ``load_state_dict``
+    raises on a key/shape mismatch. They default to the v1 graph (linear head,
+    linear FiLM, single layer); ``dropout`` is irrelevant in eval mode and so is
+    not exposed.
 
     ``weights_only=True`` + ``map_location="cpu"`` so a GPU-trained checkpoint
     loads on a CPU-only eval host without unpickling arbitrary objects.
     """
-    model = BA283LSTM(hidden=hidden, conditioning=conditioning)
+    model = BA283LSTM(
+        hidden=hidden,
+        conditioning=conditioning,
+        head=head,
+        film_kind=film_kind,
+        num_layers=num_layers,
+    )
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     model.load_state_dict(state)
     model.train(False)
@@ -121,6 +136,9 @@ def run_cell(
     *,
     hidden: int,
     conditioning: str = "film",
+    head: str = "linear",
+    film_kind: str = "linear",
+    num_layers: int = 1,
     cell: str,
     trained_gains: set[float],
     sr_train: int | None = None,
@@ -139,7 +157,14 @@ def run_cell(
     scoring, and an ``aliasing_high_band`` field is populated with the mean
     high-band error over rows at ``sr_eval``.
     """
-    model = load_model(checkpoint, hidden=hidden, conditioning=conditioning)
+    model = load_model(
+        checkpoint,
+        hidden=hidden,
+        conditioning=conditioning,
+        head=head,
+        film_kind=film_kind,
+        num_layers=num_layers,
+    )
     manifest_df = pd.read_csv(manifest)
     rows = build_rows(manifest_df, output_scale=OUTPUT_SCALE, warmup=warmup)
     predict = make_predict(model, input_scale=INPUT_SCALE, warmup=warmup)

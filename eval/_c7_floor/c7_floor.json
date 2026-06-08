@@ -1,0 +1,17 @@
+{
+  "wdf_median": 5.854672284017608e-05,
+  "acme_median": 5.74116462207328e-05,
+  "target_bound": false,
+  "reference_models": [
+    "acme",
+    "wdf"
+  ],
+  "threshold": 0.05,
+  "n_points": {
+    "wdf": 24,
+    "acme": 23
+  },
+  "subset": "data/ablation/subset.csv (4 stems x 6 gains, bias 0.77)",
+  "wdf_median_db": -42.32,
+  "acme_median_db": -42.41
+}
