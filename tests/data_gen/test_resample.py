@@ -157,6 +157,31 @@ def test_write_aligned_dry_trims_head(tmp_path):
     assert got[0] == 4800.0  # first kept sample is the old index 4800
 
 
+def test_write_aligned_dry_resamples_to_target_sr(tmp_path):
+    # The build's real call: a 96 kHz dry source, a 44.1 kHz wet target. The
+    # aligned dry MUST be resampled to target_sr (not left at 96k) and trimmed at
+    # target_sr, or frame-indexed (dry[i], wet[i]) windows span different
+    # durations -> decorrelated -> unlearnable (zero-output collapse, ESR 1.0).
+    from data_gen.resample import write_aligned_dry
+
+    src_sr, tgt_sr = 96_000, 44_100
+    dur_s = 1.0
+    t = np.arange(int(src_sr * dur_s)) / src_sr
+    data = np.sin(2 * np.pi * 220.0 * t).astype(np.float32)  # tone survives resample
+    src = tmp_path / "dry96.wav"
+    sf.write(src, data, src_sr, subtype="FLOAT")
+
+    out = write_aligned_dry(src, tmp_path / "dry44.wav", target_sr=tgt_sr, head_trim_ms=50)
+    got, got_sr = sf.read(out, dtype="float32")
+
+    assert got_sr == tgt_sr  # written at the target rate, not the source rate
+    trim = int(50 * tgt_sr / 1000)  # 2205
+    expected = int(round(len(data) * tgt_sr / src_sr)) - trim
+    assert abs(len(got) - expected) <= 2  # polyphase length, within rounding
+    # The kept signal is a clean 220 Hz tone (resampled), not silence/garbage.
+    assert np.sqrt(np.mean(got**2)) > 0.5
+
+
 def test_main_writes_resolvable_dry_path(tmp_path):
     dry_dir = tmp_path / "dry"
     dry_dir.mkdir()
