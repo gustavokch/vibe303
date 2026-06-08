@@ -25,6 +25,18 @@ use crate::InferenceBackend;
 /// phase-aligned. At >= 96 kHz the dry delay is bypassed entirely.
 pub const OS_LATENCY_SAMPLES: usize = 32;
 
+/// Full-scale input voltage convention from the training data: 0 dBFS (a host sample of 1.0) maps to
+/// 0.5 V at the circuit input (`data_gen/stimulus.py`: "0 dBFS == 0.5 V"; dry block peak-normalized
+/// to 0.5 V). This closes the #30 de-norm contract.
+///
+/// NeuralNet input is fed `x` directly: the trained `input_scale = 2.0` cancels this 0.5
+/// (`x * 0.5 V/dBFS * 2.0 = x`), so we must NOT pre-multiply by `input_scale`. NeuralNet output is
+/// de-normed by `output_ref_v / INPUT_FS_VOLTS` (= x128 at the canonical 64 V ref): recover volts,
+/// then express them in the same dBFS convention. The WDF circuit is fed/observed in real volts, so
+/// its input is `driven * INPUT_FS_VOLTS` and its output is divided by `INPUT_FS_VOLTS`. Both
+/// backends therefore reference the same 0 dBFS ≡ 0.5 V scale and are level-matched.
+pub const INPUT_FS_VOLTS: f32 = 0.5;
+
 pub struct ChannelDsp {
     model: Ba283Model,
     os: Oversample2x,
@@ -38,6 +50,10 @@ pub struct ChannelDsp {
     /// Last settled snapshot installed into `wdf` (from the shared warmup). Carried across a tier
     /// rebuild so switching tiers does not require a fresh (expensive) warmup.
     wdf_snap: Option<WdfSnapshot>,
+    /// De-normed wet (volts→dBFS) from the most recent `process_sample`, BEFORE the levelNorm gain,
+    /// `out_gain`, and `mix` are applied. The plugin reads this to feed the stereo-linked levelNorm
+    /// RMS estimator (the norm gain is computed across both channels, so it lives one level up).
+    last_wet: f32,
 }
 
 impl ChannelDsp {
@@ -50,7 +66,21 @@ impl ChannelDsp {
             wdf: WdfModel::new(48_000.0, 220.0, 0.5),
             wdf_out_delay: ShortDelay::new(),
             wdf_snap: None,
+            last_wet: 0.0,
         }
+    }
+
+    /// De-normed wet (pre-levelNorm/out_gain/mix) from the last `process_sample` — for the
+    /// stereo-linked levelNorm RMS estimator in the plugin.
+    #[inline]
+    pub fn last_wet(&self) -> f32 {
+        self.last_wet
+    }
+
+    /// Replace the NeuralNet model (offline tools only — e.g. load a different trained export than
+    /// the embedded one for an A/B). The de-norm chain reads `output_ref_v` from the new model.
+    pub fn set_model(&mut self, model: Ba283Model) {
+        self.model = model;
     }
 
     pub fn reset(&mut self) {
@@ -59,6 +89,7 @@ impl ChannelDsp {
         self.dry_delay.reset();
         self.wdf.reset(); // restore the settled snapshot installed in initialize
         self.wdf_out_delay.reset();
+        self.last_wet = 0.0;
     }
 
     // --- WDF block-rate config (used by Phase D plugin wiring) ---
@@ -126,10 +157,14 @@ impl ChannelDsp {
         self.wdf.iter_stats()
     }
 
-    /// Run one sample through the selected backend. `drive`/`out_gain` are linear gains, `mix` is the
-    /// wet fraction in 0..1. `bias` drives the NeuralNet path only — the WDF path uses the block-rate
-    /// bias/gain set via `wdf_set_bias`/`wdf_set_rgain`. The host-reported latency
+    /// Run one sample through the selected backend. `drive`/`out_gain`/`norm_gain` are linear gains,
+    /// `mix` is the wet fraction in 0..1. `bias` drives the NeuralNet path only — the WDF path uses
+    /// the block-rate bias/gain set via `wdf_set_bias`/`wdf_set_rgain`. The host-reported latency
     /// (`Ba283Plugin::latency_samples`) is honoured for BOTH backends.
+    ///
+    /// `norm_gain` is the stereo-linked levelNorm gain (1.0 when levelNorm is off); it is applied to
+    /// the de-normed wet BEFORE `out_gain` and `mix`. The pre-norm de-normed wet is stashed in
+    /// `last_wet` so the plugin can drive the levelNorm RMS estimator across both channels.
     #[allow(clippy::too_many_arguments)]
     pub fn process_sample(
         &mut self,
@@ -137,6 +172,7 @@ impl ChannelDsp {
         drive: f32,
         bias: f32,
         out_gain: f32,
+        norm_gain: f32,
         mix: f32,
         host_ge_96k: bool,
         backend: InferenceBackend,
@@ -144,20 +180,30 @@ impl ChannelDsp {
         let driven = x * drive;
         match backend {
             InferenceBackend::NeuralNet => {
-                let wet = if host_ge_96k {
+                // De-norm: recover volts (`* output_ref_v`) then express in the 0 dBFS ≡ 0.5 V
+                // convention (`/ INPUT_FS_VOLTS`). Input stays `driven` (input_scale cancels 0.5).
+                let deref = self.model.output_ref_v() / INPUT_FS_VOLTS;
+                let model_out = if host_ge_96k {
                     self.model.forward(&[driven, bias])[0]
                 } else {
                     let (u0, u1) = self.os.upsample(driven);
                     let w0 = self.model.forward(&[u0, bias])[0];
                     let w1 = self.model.forward(&[u1, bias])[0];
                     self.os.downsample(w0, w1)
-                } * out_gain;
+                };
+                let wet = model_out * deref;
+                self.last_wet = wet;
+                let wet = wet * norm_gain * out_gain;
                 // Dry path delayed to match the wet-path latency so Mix aligns.
                 let dry_aligned = if host_ge_96k { x } else { self.dry_delay.push_pop(x) };
                 wet * mix + dry_aligned * (1.0 - mix)
             }
             InferenceBackend::Wdf => {
-                let wet = self.wdf.process_host_sample(driven) * out_gain;
+                // The circuit is fed/observed in volts: dBFS->volts in (`* INPUT_FS_VOLTS`),
+                // volts->dBFS out (`/ INPUT_FS_VOLTS`), matching the SPICE 0.5 V stimulus.
+                let wet = self.wdf.process_host_sample(driven * INPUT_FS_VOLTS) / INPUT_FS_VOLTS;
+                self.last_wet = wet;
+                let wet = wet * norm_gain * out_gain;
                 // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
                 let blended = wet * mix + x * (1.0 - mix);
                 // Keep the host-reported latency honest: delay the blended output by the same 32

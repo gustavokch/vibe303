@@ -20,6 +20,9 @@
 //!   --drive-db <f32>   (default 0)   full-chain only
 //!   --output-db <f32>  (default 0)   full-chain only
 //!   --mix <f32>        (default 100) full-chain only, percent (wet %)
+//!   --level-norm       (flag) full-chain only, RMS-match output level to input level
+//!   --weights <path>   (default embedded) load a NeuralNet weights JSON at runtime (e.g. the
+//!                      48-wide trained export) instead of the embedded placeholder
 //!   --backend <nn|wdf> (default nn)  full-chain only, inference backend
 //!   --circuit-gain <f32> (default 220) WDF R_KJ shunt in ohms, --backend wdf only
 //!   --tier <realtime|fast> (default realtime) WDF solver tier, --backend wdf only
@@ -30,6 +33,7 @@
 //!   --raw              (flag) run the pure model (round-trip path)
 
 use ba283::dsp::ChannelDsp;
+use ba283::levelnorm::LevelNorm;
 use ba283::model::Ba283Model;
 use ba283::wdf::{QualityConfig, Solver};
 use ba283::InferenceBackend;
@@ -53,6 +57,8 @@ fn main() {
     let mut mix_pct: f32 = 100.0;
     let mut backend = InferenceBackend::NeuralNet;
     let mut circuit_gain: f32 = 220.0;
+    let mut level_norm = false;
+    let mut weights: Option<String> = None;
     let mut raw = false;
     // WDF quality config: start at the realtime tier; `--tier fast` swaps in the fast preset, and
     // the per-lever flags toggle individual levers on top (for A/B validation).
@@ -62,6 +68,10 @@ fn main() {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--raw" => raw = true,
+            "--level-norm" => level_norm = true,
+            "--weights" => {
+                weights = Some(args.next().unwrap_or_else(|| die("--weights needs a value")));
+            }
             "--input" => {
                 input = Some(args.next().unwrap_or_else(|| die("--input needs a value")));
             }
@@ -174,7 +184,10 @@ fn main() {
     if raw {
         // Pure model per channel — the round-trip path (no Drive/Output/Mix/OS).
         let mut models: Vec<Ba283Model> = (0..channels)
-            .map(|_| Ba283Model::new_from_embedded_weights())
+            .map(|_| match &weights {
+                Some(p) => Ba283Model::from_json_path(p),
+                None => Ba283Model::new_from_embedded_weights(),
+            })
             .collect();
         let mut n_frames = 0usize;
         for frame in samples.chunks(channels) {
@@ -198,6 +211,12 @@ fn main() {
     let out_gain = db_to_gain(output_db);
     let mix = mix_pct * 0.01;
     let mut chans: Vec<ChannelDsp> = (0..channels).map(|_| ChannelDsp::new()).collect();
+    // Optional runtime weights override (NeuralNet only): load a different trained export.
+    if let Some(p) = &weights {
+        for ch in chans.iter_mut() {
+            ch.set_model(Ba283Model::from_json_path(p));
+        }
+    }
     // WDF backend: rebuild each channel at the input SR / circuit-gain / bias and warm it (off the
     // audio thread here) so the offline render mirrors the warmed plugin. NeuralNet needs no setup.
     if backend == InferenceBackend::Wdf {
@@ -210,15 +229,26 @@ fn main() {
         }
     }
 
+    // Stereo-linked levelNorm, mirroring the plugin (gain read per frame, estimator updated after).
+    let mut lvl = LevelNorm::new();
+    lvl.prepare(spec.sample_rate as f32);
+
     let mut n_frames = 0usize;
     for frame in samples.chunks(channels) {
+        let norm_gain = if level_norm { lvl.gain() } else { 1.0 };
+        let mut in_sq = 0.0f32;
+        let mut wet_sq = 0.0f32;
         for (ch, &s) in frame.iter().enumerate() {
+            in_sq += s * s;
             let y = chans[ch]
-                .process_sample(s, drive, bias, out_gain, mix, host_ge_96k, backend);
+                .process_sample(s, drive, bias, out_gain, norm_gain, mix, host_ge_96k, backend);
+            let w = chans[ch].last_wet();
+            wet_sq += w * w;
             writer
                 .write_sample(y)
                 .unwrap_or_else(|e| die(&format!("error writing sample: {e}")));
         }
+        lvl.update(in_sq, wet_sq);
         n_frames += 1;
     }
 
