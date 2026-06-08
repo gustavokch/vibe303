@@ -51,6 +51,32 @@ fn fast_math_matches_std() {
     }
 }
 
+/// `depletion_charge_pre` (precomputed saturated-branch constants) must be BIT-for-bit
+/// identical to the original `depletion_charge` across both branches. Pins the 3-way
+/// duplication so a future edit to one copy can't silently break parity with the golden
+/// vectors. Sweeps `v` through the reverse (`v < FC*vj`) and saturated (`v >= FC*vj`)
+/// regions for every real device junction.
+#[test]
+fn depletion_charge_pre_is_bit_exact() {
+    // (cj0, vj, m) for BC184C be/bc and 2N3055 be/bc — the only real junctions.
+    let junctions = [
+        (14.0e-12, 0.75, 0.33),
+        (4.5e-12, 0.75, 0.33),
+        (580.2e-12, 1.2, 0.45),
+        (212.1e-12, 0.75, 0.4),
+    ];
+    for (cj0, vj, m) in junctions {
+        let (c0, q0, dcdv) = wdf::dep_sat_consts(cj0, vj, m);
+        for k in -200i32..=200 {
+            let v = k as f64 * 0.01; // spans both branches around FC*vj
+            let (q_ref, c_ref) = wdf::depletion_charge(v, cj0, vj, m);
+            let (q_pre, c_pre) = wdf::depletion_charge_pre(v, cj0, vj, m, c0, q0, dcdv);
+            assert_eq!(q_ref.to_bits(), q_pre.to_bits(), "q mismatch v={v} cj0={cj0}");
+            assert_eq!(c_ref.to_bits(), c_pre.to_bits(), "c mismatch v={v} cj0={cj0}");
+        }
+    }
+}
+
 #[test]
 fn compute_bjt_against_golden() {
     // BC184C (TR1/TR2 card) and Q2N3055 (TR3 card) at fixed (vbe, vbc) points captured from the
@@ -224,5 +250,74 @@ fn snapshot_restore_round_trips() {
     for i in 0..4 {
         let y = m.process_host_sample(wdf_golden::INPUT_256[i] as f32);
         assert!((y as f64 - wdf_golden::OUTPUT_256[i]).abs() <= 1e-5, "replayed sample {i}");
+    }
+}
+
+#[test]
+#[ignore = "diagnostic: run with --ignored --nocapture to print the sparsity census"]
+fn sparsity_census() {
+    // Build + warm a realtime model EXACTLY as process_settles_toward_golden does
+    // (mini rail-ramp + idle settle), then drive ~256 samples to a realistic
+    // operating point before snapshotting the constant conductance matrix g0.
+    let internal_sr = 96_000.0;
+    let mut m = wdf::WdfModel::build(internal_sr, 220.0, wdf_golden::BIAS);
+    let ramp = internal_sr as usize; // 1 s
+    for i in 0..ramp {
+        m.v[node::N_INPUT as usize] = 0.0;
+        m.v[node::N_A as usize] = 24.0 * (i as f64) / (ramp as f64);
+        m.process();
+    }
+    m.v[node::N_A as usize] = 24.0;
+    let chunk = (internal_sr * 0.25) as usize;
+    let mut prev_tap = 1e9;
+    for _ in 0..16 {
+        for _ in 0..chunk {
+            m.process();
+        }
+        let tap = m.node_v(node::N_SEC_IN);
+        if (tap - prev_tap).abs() < 1e-4 {
+            break;
+        }
+        prev_tap = tap;
+    }
+    // drive ~256 samples to a realistic operating point
+    for _ in 0..256 {
+        m.process();
+    }
+
+    let u = m.u();
+    let g0 = m.g0_snapshot();
+    let mut zeros = 0usize;
+    for i in 0..u {
+        for j in 0..u {
+            if g0[i * u + j] == 0.0 {
+                zeros += 1;
+            }
+        }
+    }
+    eprintln!(
+        "U={u} entries={} structural_zeros={zeros} density={:.1}%",
+        u * u,
+        100.0 * (u * u - zeros) as f64 / (u * u) as f64
+    );
+
+    // simulate dense-elimination fill-in: print per-column trailing-submatrix nonzero counts
+    let mut nz: Vec<bool> = (0..u * u).map(|k| g0[k] != 0.0).collect();
+    for col in 0..u {
+        let live = (0..u)
+            .flat_map(|r| (0..u).map(move |c| (r, c)))
+            .filter(|&(r, c)| r >= col && c >= col && nz[r * u + c])
+            .count();
+        eprintln!("col {col:2}: live_nonzeros_in_trailing_submatrix={live}");
+        for r in (col + 1)..u {
+            if !nz[r * u + col] {
+                continue;
+            }
+            for c in (col + 1)..u {
+                if nz[col * u + c] {
+                    nz[r * u + c] = true;
+                }
+            }
+        }
     }
 }

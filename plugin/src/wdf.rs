@@ -65,6 +65,28 @@ pub struct BjtParams {
     pub var: f64,
     pub ikf: f64,
     pub ikr: f64,
+    // precomputed saturated-branch (v >= FC*vj) constants for depletion_charge,
+    // one set per junction — depend only on (cj0, vj, m). Avoids 3 pow_ per call.
+    pub je_c0: f64,
+    pub je_q0: f64,
+    pub je_dcdv: f64, // base-emitter (cje,vje,mje)
+    pub jc_c0: f64,
+    pub jc_q0: f64,
+    pub jc_dcdv: f64, // base-collector (cjc,vjc,mjc)
+}
+
+/// Precompute (c0, q0, dcdv) for the depletion_charge saturated branch (f0 = 1-FC = 0.5).
+/// MUST use the exact same expressions/order as depletion_charge's else branch for bit-exactness.
+pub fn dep_sat_consts(cj0: f64, vj: f64, m: f64) -> (f64, f64, f64) {
+    const FC: f64 = 0.5;
+    if cj0 <= 0.0 {
+        return (0.0, 0.0, 0.0);
+    }
+    let f0 = 1.0 - FC;
+    let c0 = cj0 * pow_(f0, -m);
+    let q0 = cj0 * vj / (1.0 - m) * (1.0 - pow_(f0, 1.0 - m));
+    let dcdv = cj0 * m / vj * pow_(f0, -m - 1.0);
+    (c0, q0, dcdv)
 }
 
 // vcrit = Vt*ln(Vt/(sqrt(2)*Is)). The C++ device cards use the truncated literal `1.41421356`
@@ -76,7 +98,7 @@ const SQRT2_TRUNC: f64 = 1.41421356;
 /// BC184C small-signal card (TR1, TR2) — `main.cpp:296-298`.
 pub fn bc184c() -> BjtParams {
     let is = 1.04e-14;
-    BjtParams {
+    let mut p = BjtParams {
         is,
         vt: 0.02585,
         alpha_f: 0.99834,
@@ -96,13 +118,23 @@ pub fn bc184c() -> BjtParams {
         var: 200.0,
         ikf: 0.05,
         ikr: 0.0,
-    }
+        ..BjtParams::default()
+    };
+    let (je_c0, je_q0, je_dcdv) = dep_sat_consts(p.cje, p.vje, p.mje);
+    p.je_c0 = je_c0;
+    p.je_q0 = je_q0;
+    p.je_dcdv = je_dcdv;
+    let (jc_c0, jc_q0, jc_dcdv) = dep_sat_consts(p.cjc, p.vjc, p.mjc);
+    p.jc_c0 = jc_c0;
+    p.jc_q0 = jc_q0;
+    p.jc_dcdv = jc_dcdv;
+    p
 }
 
 /// 2N3055 power card (TR3) — `main.cpp:299-301`.
 pub fn q2n3055() -> BjtParams {
     let is = 4.66e-12;
-    BjtParams {
+    let mut p = BjtParams {
         is,
         vt: 0.02585,
         alpha_f: 0.99723,
@@ -122,7 +154,17 @@ pub fn q2n3055() -> BjtParams {
         var: 0.0,
         ikf: 0.25,
         ikr: 0.0,
-    }
+        ..BjtParams::default()
+    };
+    let (je_c0, je_q0, je_dcdv) = dep_sat_consts(p.cje, p.vje, p.mje);
+    p.je_c0 = je_c0;
+    p.je_q0 = je_q0;
+    p.je_dcdv = je_dcdv;
+    let (jc_c0, jc_q0, jc_dcdv) = dep_sat_consts(p.cjc, p.vjc, p.mjc);
+    p.jc_c0 = jc_c0;
+    p.jc_q0 = jc_q0;
+    p.jc_dcdv = jc_dcdv;
+    p
 }
 
 /// BJT instance: terminal node ids + device params + trapezoidal charge-cap companion state
@@ -315,6 +357,36 @@ pub fn depletion_charge(v: f64, cj0: f64, vj: f64, m: f64) -> (f64, f64) {
         let c0 = cj0 * pow_(f0, -m);
         let q0 = cj0 * vj / (1.0 - m) * (1.0 - pow_(f0, 1.0 - m));
         let dcdv = cj0 * m / vj * pow_(f0, -m - 1.0);
+        let d = v - FC * vj;
+        let c = c0 + dcdv * d;
+        let q = q0 + c0 * d + 0.5 * dcdv * d * d;
+        (q, c)
+    }
+}
+
+/// Like [`depletion_charge`] but takes the saturated-branch constants `(c0, q0, dcdv)`
+/// precomputed once per junction (see [`dep_sat_consts`]). The else-branch arithmetic is
+/// byte-identical to `depletion_charge`; only the three `pow_` calls are hoisted out.
+#[inline]
+pub fn depletion_charge_pre(
+    v: f64,
+    cj0: f64,
+    vj: f64,
+    m: f64,
+    c0: f64,
+    q0: f64,
+    dcdv: f64,
+) -> (f64, f64) {
+    const FC: f64 = 0.5;
+    if cj0 <= 0.0 {
+        return (0.0, 0.0);
+    }
+    if v < FC * vj {
+        let f = 1.0 - v / vj;
+        let c = cj0 * pow_(f, -m);
+        let q = cj0 * vj / (1.0 - m) * (1.0 - pow_(f, 1.0 - m));
+        (q, c)
+    } else {
         let d = v - FC * vj;
         let c = c0 + dcdv * d;
         let q = q0 + c0 * d + 0.5 * dcdv * d * d;
@@ -662,6 +734,13 @@ impl WdfModel {
         self.ur(id)
     }
 
+    /// Flat row-major copy of the constant conductance matrix `g0` (first `u*u`
+    /// entries). Diagnostic/test use only.
+    pub fn g0_snapshot(&self) -> Vec<f64> {
+        let u = self.u;
+        self.g0[..u * u].to_vec()
+    }
+
     /// Build the circuit at the given **internal** sample rate (host × OS), gain shunt `rgain`
     /// (R_KJ ohms), and `bias` (RV1 pot [0,1]) at the realtime tier (all levers off).
     /// Thin wrapper over [`build_with`]; mirrors `BA283::build` (`main.cpp:314-409`).
@@ -997,8 +1076,10 @@ impl WdfModel {
                     let fc = self.frozen_cap[bi];
                     (fc.2 + fc.0 * vbe, fc.3 + fc.1 * vbc)
                 } else {
-                    let (qbe_dep, _) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
-                    let (qbc_dep, _) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
+                    let (qbe_dep, _) =
+                        depletion_charge_pre(vbe, t.p.cje, t.p.vje, t.p.mje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv);
+                    let (qbc_dep, _) =
+                        depletion_charge_pre(vbc, t.p.cjc, t.p.vjc, t.p.mjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv);
                     (qbe_dep + tf * o.itf, qbc_dep + tr * o.itr)
                 };
                 let ibe = k2 * (qbe - t.qbe_prev) - t.ibe_prev;
@@ -1412,8 +1493,10 @@ impl WdfModel {
                         let fc = self.frozen_cap[bi];
                         (fc.2 + fc.0 * vbe, fc.0, fc.3 + fc.1 * vbc, fc.1)
                     } else {
-                        let (qbe_dep, cbe_dep) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
-                        let (qbc_dep, cbc_dep) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
+                        let (qbe_dep, cbe_dep) =
+                            depletion_charge_pre(vbe, t.p.cje, t.p.vje, t.p.mje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv);
+                        let (qbc_dep, cbc_dep) =
+                            depletion_charge_pre(vbc, t.p.cjc, t.p.vjc, t.p.mjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv);
                         let qbe = qbe_dep + tf * o.itf;
                         let cbe = cbe_dep + tf * o.gtf;
                         let qbc = qbc_dep + tr * o.itr;
@@ -1702,8 +1785,10 @@ impl WdfModel {
                 let vbc = self.node_v(t.b) - self.node_v(t.c);
                 let (i_be, _) = diode_branch(vbe, t.p.is, t.p.vt, t.p.vcrit);
                 let (i_bc, _) = diode_branch(vbc, t.p.is, t.p.vt, t.p.vcrit);
-                let (qbe_dep, _) = depletion_charge(vbe, t.p.cje, t.p.vje, t.p.mje);
-                let (qbc_dep, _) = depletion_charge(vbc, t.p.cjc, t.p.vjc, t.p.mjc);
+                let (qbe_dep, _) =
+                    depletion_charge_pre(vbe, t.p.cje, t.p.vje, t.p.mje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv);
+                let (qbc_dep, _) =
+                    depletion_charge_pre(vbc, t.p.cjc, t.p.vjc, t.p.mjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv);
                 let qbe = qbe_dep + tf * i_be;
                 let qbc = qbc_dep + tr * i_bc;
                 let bjt = &mut self.bjts[bi];

@@ -51,71 +51,62 @@ exist on Drive, skip to §5.
 
 ## 3. Step 1 — Build the subsets (local)
 
-This builds on the data-gen pipeline in
-[`docs/training_runbook.md`](training_runbook.md) §3–5. The ablation uses a small
-**representative subset** (all gains × a few stimulus kinds, trimmed) so each cell
-finishes in ~45 min.
+The subsets are derived from the **validated gain-conditioned SPICE dataset** on
+Drive at `gdrive:ba283_spice_gain` (the leakage-free 6-pt set; the bias-conditioned
+`gdrive:ba283_spice` is oscillation garbage — do not use). That set is stored as
+*already-rendered* 96 kHz float WAVs (`dry/`, `wet/`) plus a `manifest.csv` — there
+are **no raw `.npz`** in it, and it carries a 6-pt gain grid `{0, .2, .4, .6, .8, 1}`
+over stim kinds `impulse / music / sweep / synth`. So base44k/c4 are **resampled**
+from those WAVs (not from raw npz), and C5 is a **fresh ngspice re-render** (its 4
+held-out gains were never in the 6-pt set). The old recipe assuming
+gain-conditioned raw npz at `data/wet_raw` was wrong — that dir is the bias set.
 
-**3a. Pick representative stems.** From a full dataset manifest, keep all gains for
-one stem of each kind, trimmed to ~20 s, with `eval.ablation.subset.build_subset`:
-
-```bash
-uv run python - <<'PY'
-import pandas as pd
-from eval.ablation.subset import build_subset
-df = pd.read_csv("data/manifest.csv")
-sub = build_subset(df, kinds=("music", "pink_burst", "sweep", "multisine"), max_trim_s=20.0)
-sub.to_csv("data/ablation/subset.csv", index=False)
-print(len(sub), "rows;", sorted(set(sub.stim_kind)), "gains", sorted(set(sub.gain_value)))
-PY
-```
-
-**3b. B0/C1 subset (44.1 kHz).** Resample the existing 96 kHz raw SPICE `.npz`
-renders for the subset stems to 44.1 kHz. `data_gen/resample.py` takes
-`--target-sr` (default 96000) and writes `train/val/test.csv` alongside the
-manifest — no `run_spice` change is needed:
+**3a. Pull the gain set local.**
 
 ```bash
-uv run python -m data_gen.resample \
-  --raw-dir data/wet_raw --out-dir data/ablation/base44k/wet \
-  --dry-dir data/ablation/base44k/dry \
-  --manifest data/ablation/base44k/manifest.csv --target-sr 44100
+rclone copy gdrive:ba283_spice_gain data/spice_gain -P --transfers 8
+rclone cat gdrive:ba283_spice_gain/manifest.csv > /tmp/gain_manifest.csv
 ```
 
-**3c. C4 subset (88.2 kHz).** Same raw renders, `--target-sr 88200`, so the model
-trains and evals on native-rate input:
+**3b. B0/C1 subset (44.1 kHz)** and **3c. C4 subset (88.2 kHz).** `data_gen.resample_wav`
+polyphase-downsamples a representative stem subset of the gain WAVs (default
+`--per-kind impulse:1,music:6,sweep:4,synth:4` = 15 stems, all gains kept) and
+writes `dry/`, `wet/`, `manifest.csv`, and a leakage-free `train/val/test` split.
+base44k and c4 use the **same stems** so absolute ESR stays comparable:
 
 ```bash
-uv run python -m data_gen.resample \
-  --raw-dir data/wet_raw --out-dir data/ablation/c4_88k/wet \
-  --dry-dir data/ablation/c4_88k/dry \
-  --manifest data/ablation/c4_88k/manifest.csv --target-sr 88200
+uv run python -m data_gen.resample_wav \
+  --manifest /tmp/gain_manifest.csv --src-root data/spice_gain \
+  --out-dir data/ablation/base44k --target-sr 44100
+uv run python -m data_gen.resample_wav \
+  --manifest /tmp/gain_manifest.csv --src-root data/spice_gain \
+  --out-dir data/ablation/c4_88k --target-sr 88200
 ```
 
-**3d. C5 subset (9-pt gain grid).** Re-render the subset stems across **9** gains
-(the dataset stores gains normalized in `[0,1]`; `run_spice --gains` wants K↔J
-ohms, so convert with `data_gen.netlist.gain_norm_to_rkj`), then resample to
-44.1 kHz:
+**3d. C5 subset (9-pt gain grid).** `data_gen.build_c5` re-renders the **same 15
+stems** through ngspice across the 9-pt grid at the card's fixed bias (0.77),
+converting normalized gain → R_KJ ohms internally, then resamples to 44.1 kHz. It
+writes the manifest's `gain_value` as the **normalized** gain so the held-out-gain
+eval can filter on it; `train.csv` = the 5 trained gains `{0, .25, .5, .75, 1}`,
+`val.csv` = all 9.
 
 ```bash
-uv run python - <<'PY'
-from data_gen.netlist import gain_norm_to_rkj
-grid = [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0]
-print(",".join(f"{gain_norm_to_rkj(g):.1f}" for g in grid))
-PY
-# feed that ohms list to the gain sweep at the dataset's fixed bias (0.77):
-uv run python -m data_gen.run_spice --manifest data/ablation/subset_stems/ \
-  --gains <ohms-from-above> --fixed-bias 0.77
-uv run python -m data_gen.resample \
-  --raw-dir data/wet_raw --out-dir data/ablation/c5_9pt/wet \
-  --dry-dir data/ablation/c5_9pt/dry \
-  --manifest data/ablation/c5_9pt/manifest.csv --target-sr 44100
+uv run python -m data_gen.build_c5 \
+  --ref-manifest data/ablation/base44k/manifest.csv \
+  --dry-src-dir data/spice_gain/dry \
+  --out-dir data/ablation/c5_9pt --target-sr 44100 --workers 5
 ```
 
-Then split the 9-pt manifest: `train.csv` keeps the 5 trained gains
-`{0, .25, .5, .75, 1}`, `val.csv` keeps **all 9** (so held-out-gain eval can run).
+> **RAM / `--workers`.** PySpice holds each full transient in RAM, so high
+> concurrency OOM-kills the bigger (music) renders — surfacing as
+> `ngSpice_Command 'run' returned 1`. Keep `--workers` low (≈ RAM_GB / 2.5; e.g. 5
+> on a 14 GB box). The builder is resume-safe (re-running skips renders that
+> already exist *and* validate) and retries stragglers at decreasing concurrency,
+> dropping the rare broadband point that never converges (mirroring `run_spice`'s
+> `failed.csv`). 135 renders take ~15–25 min depending on `--workers`.
 
-Each subdir needs `manifest.csv` + `train.csv`/`val.csv` before upload.
+Each subdir ends up with `manifest.csv` + `train.csv`/`val.csv` (base44k/c4 also
+`test.csv`) before upload.
 
 ## 4. Step 2 — Upload subsets to Drive
 
