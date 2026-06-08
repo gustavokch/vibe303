@@ -1067,18 +1067,27 @@ impl WdfModel {
                 if f == 0.0 {
                     continue;
                 }
+                let pr = row[col] * n;
+                let rr = row[r] * n;
                 for c in col..n {
-                    a[row[r] * n + c] -= f * a[row[col] * n + c];
+                    let piv_entry = a[pr + c];
+                    if piv_entry != 0.0 {
+                        a[rr + c] -= f * piv_entry;
+                    }
                 }
                 b[r] -= f * b[col];
             }
         }
         for r in (0..n).rev() {
+            let rr = row[r] * n;
             let mut s = b[r];
             for c in (r + 1)..n {
-                s -= a[row[r] * n + c] * b[c];
+                let e = a[rr + c];
+                if e != 0.0 {
+                    s -= e * b[c];
+                }
             }
-            b[r] = s / a[row[r] * n + r];
+            b[r] = s / a[rr + r];
         }
         true
     }
@@ -1107,14 +1116,19 @@ impl WdfModel {
                 piv.swap(col, p);
             }
             let diag = a[piv[col] * n + col];
+            let pr = piv[col] * n;
             for r in (col + 1)..n {
                 let f = a[piv[r] * n + col] / diag;
                 a[piv[r] * n + col] = f; // store multiplier (L factor)
                 if f == 0.0 {
                     continue;
                 }
+                let rr = piv[r] * n;
                 for c in (col + 1)..n {
-                    a[piv[r] * n + c] -= f * a[piv[col] * n + c];
+                    let piv_entry = a[pr + c];
+                    if piv_entry != 0.0 {
+                        a[rr + c] -= f * piv_entry;
+                    }
                 }
             }
         }
@@ -1126,18 +1140,26 @@ impl WdfModel {
     fn lu_solve(a: &[f64], piv: &[usize], n: usize, b: &mut [f64]) {
         let mut y = [0.0f64; NUM_NODES];
         for r in 0..n {
+            let rr = piv[r] * n;
             let mut s = b[piv[r]];
             for c in 0..r {
-                s -= a[piv[r] * n + c] * y[c];
+                let e = a[rr + c];
+                if e != 0.0 {
+                    s -= e * y[c];
+                }
             }
             y[r] = s; // unit-diagonal L
         }
         for r in (0..n).rev() {
+            let rr = piv[r] * n;
             let mut s = y[r];
             for c in (r + 1)..n {
-                s -= a[piv[r] * n + c] * b[c];
+                let e = a[rr + c];
+                if e != 0.0 {
+                    s -= e * b[c];
+                }
             }
-            b[r] = s / a[piv[r] * n + r];
+            b[r] = s / a[rr + r];
         }
     }
 
