@@ -13,11 +13,11 @@ from eval.ablation.run_checkpoint_eval import (
     run_cell,
 )
 from train.dataset import INPUT_SCALE, OUTPUT_SCALE
-from train.model import BA283GRU
+from train.model import BA283LSTM
 
 
 def test_load_model_roundtrips_state(tmp_path):
-    src = BA283GRU(hidden=8)
+    src = BA283LSTM(hidden=8)
     ckpt = tmp_path / "best.pth"
     torch.save(src.state_dict(), ckpt)
 
@@ -104,12 +104,12 @@ def test_build_rows_applies_output_scale_and_trims_target(tmp_path):
 
 
 def _make_fixture(tmp_path, gains, *, n=4096, sr=44100):
-    """Save a tiny BA283GRU checkpoint + a manifest of dry/wet wavs.
+    """Save a tiny BA283LSTM checkpoint + a manifest of dry/wet wavs.
 
     Returns ``(checkpoint_path, manifest_csv_path, hidden)``.
     """
     hidden = 4
-    model = BA283GRU(hidden=hidden)
+    model = BA283LSTM(hidden=hidden)
     ckpt = tmp_path / "best.pth"
     torch.save(model.state_dict(), ckpt)
 
