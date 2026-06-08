@@ -22,10 +22,13 @@ import re
 import warnings
 from pathlib import Path
 
+from math import gcd
+
 import numpy as np
 import pandas as pd
 import soundfile as sf
 from scipy.interpolate import PchipInterpolator
+from scipy.signal import resample_poly
 
 TARGET_SR = 96_000
 MANIFEST_COLUMNS = ["dry_path", "wet_path", "gain_value", "duration_s", "stim_kind"]
@@ -117,11 +120,29 @@ def write_aligned_dry(
     data, sr = sf.read(str(dry_src), dtype="float32")
     if data.ndim == 2:
         data = data.mean(axis=1)
+    # Resample the dry to the wet's grid rate. ``resample_to_grid`` renders the
+    # wet at ``target_sr``; if the dry source is at a different rate (e.g. the
+    # 96 kHz SPICE inputs vs a 44.1 kHz wet target) and is left at its native
+    # rate, the training loader's frame-indexed (dry[i], wet[i]) windows span
+    # DIFFERENT durations -> the pair is decorrelated and the dry->wet map is
+    # unlearnable (the model collapses to zero output, ESR -> 1.0). Polyphase
+    # resampling (linear phase, near-zero group delay) keeps dry[i] time-aligned
+    # with the PCHIP wet grid.
+    if sr != target_sr:
+        g = gcd(int(target_sr), int(sr))
+        data = resample_poly(data, int(target_sr) // g, int(sr) // g).astype(
+            np.float32
+        )
+        sr = target_sr
+    # Mirror resample_to_grid's head trim EXACTLY (same ms at the SAME, now
+    # target, rate) so the kept dry head lines up with the kept wet head.
     trim = int(head_trim_ms * target_sr / 1000)
     if trim < len(data):
         data = data[trim:]
     out_wav.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(out_wav, np.ascontiguousarray(data, dtype=np.float32), sr, subtype="FLOAT")
+    sf.write(
+        out_wav, np.ascontiguousarray(data, dtype=np.float32), target_sr, subtype="FLOAT"
+    )
     return out_wav
 
 
