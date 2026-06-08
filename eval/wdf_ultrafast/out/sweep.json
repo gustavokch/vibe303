@@ -1,0 +1,208 @@
+{
+  "config": {
+    "stims": [
+      "pink_m3_s0"
+    ],
+    "gain_norm": 0.5,
+    "rkj_ohm": 905.5,
+    "bias": 0.77,
+    "runs": 2,
+    "spice": false
+  },
+  "levers": [
+    {
+      "label": "realtime",
+      "tier": "realtime",
+      "extra": []
+    },
+    {
+      "label": "fast",
+      "tier": "fast",
+      "extra": []
+    },
+    {
+      "label": "cheap_exp",
+      "tier": "fast",
+      "extra": [
+        "--cheap-exp"
+      ]
+    },
+    {
+      "label": "tol_1e-4",
+      "tier": "fast",
+      "extra": [
+        "--tol",
+        "1e-4"
+      ]
+    },
+    {
+      "label": "tol_1e-3",
+      "tier": "fast",
+      "extra": [
+        "--tol",
+        "1e-3"
+      ]
+    },
+    {
+      "label": "maxiters_8",
+      "tier": "fast",
+      "extra": [
+        "--max-iters",
+        "8"
+      ]
+    },
+    {
+      "label": "cap_depletion",
+      "tier": "fast",
+      "extra": [
+        "--cap-tier",
+        "depletion"
+      ]
+    },
+    {
+      "label": "no_ls_trim",
+      "tier": "fast",
+      "extra": [
+        "--no-ls-trim"
+      ]
+    },
+    {
+      "label": "ultra_fast",
+      "tier": "ultra-fast",
+      "extra": []
+    }
+  ],
+  "per_stim": {
+    "pink_m3_s0": {
+      "rkj_ohm": 905.5,
+      "rows": [
+        {
+          "label": "realtime",
+          "tier": "realtime",
+          "extra": [],
+          "wall_s": 14.210615507996408,
+          "avg_iters": 2.108,
+          "max_iters": 3,
+          "speedup_vs_fast": 0.593,
+          "added_esr_db": null,
+          "spice_esr_db": null
+        },
+        {
+          "label": "fast",
+          "tier": "fast",
+          "extra": [],
+          "wall_s": 8.430802208997193,
+          "avg_iters": 1.807,
+          "max_iters": 4,
+          "speedup_vs_fast": 1.0,
+          "added_esr_db": -79.55,
+          "spice_esr_db": null
+        },
+        {
+          "label": "cheap_exp",
+          "tier": "fast",
+          "extra": [
+            "--cheap-exp"
+          ],
+          "wall_s": 8.198421773005975,
+          "avg_iters": 1.808,
+          "max_iters": 4,
+          "speedup_vs_fast": 1.028,
+          "added_esr_db": -79.54,
+          "spice_esr_db": null
+        },
+        {
+          "label": "tol_1e-4",
+          "tier": "fast",
+          "extra": [
+            "--tol",
+            "1e-4"
+          ],
+          "wall_s": 7.844869997003116,
+          "avg_iters": 1.628,
+          "max_iters": 2,
+          "speedup_vs_fast": 1.075,
+          "added_esr_db": -24.28,
+          "spice_esr_db": null
+        },
+        {
+          "label": "tol_1e-3",
+          "tier": "fast",
+          "extra": [
+            "--tol",
+            "1e-3"
+          ],
+          "wall_s": 6.488735528997495,
+          "avg_iters": 1.605,
+          "max_iters": 3,
+          "speedup_vs_fast": 1.299,
+          "added_esr_db": -9.15,
+          "spice_esr_db": null
+        },
+        {
+          "label": "maxiters_8",
+          "tier": "fast",
+          "extra": [
+            "--max-iters",
+            "8"
+          ],
+          "wall_s": 8.682135513998219,
+          "avg_iters": 1.807,
+          "max_iters": 4,
+          "speedup_vs_fast": 0.971,
+          "added_esr_db": -79.55,
+          "spice_esr_db": null
+        },
+        {
+          "label": "cap_depletion",
+          "tier": "fast",
+          "extra": [
+            "--cap-tier",
+            "depletion"
+          ],
+          "wall_s": 8.75715625299199,
+          "avg_iters": 1.813,
+          "max_iters": 4,
+          "speedup_vs_fast": 0.963,
+          "added_esr_db": -58.53,
+          "spice_esr_db": null
+        },
+        {
+          "label": "no_ls_trim",
+          "tier": "fast",
+          "extra": [
+            "--no-ls-trim"
+          ],
+          "wall_s": 9.004789974002051,
+          "avg_iters": 1.807,
+          "max_iters": 4,
+          "speedup_vs_fast": 0.936,
+          "added_esr_db": -79.55,
+          "spice_esr_db": null
+        },
+        {
+          "label": "ultra_fast",
+          "tier": "ultra-fast",
+          "extra": [],
+          "wall_s": 7.072722905999399,
+          "avg_iters": 1.628,
+          "max_iters": 2,
+          "speedup_vs_fast": 1.192,
+          "added_esr_db": -24.28,
+          "spice_esr_db": null
+        }
+      ]
+    }
+  },
+  "gate": {
+    "ultra_fast_added_esr_db_worst": -24.28,
+    "ultra_fast_speedup_vs_fast_worst": 1.192,
+    "ultra_fast_spice_esr_db_worst": null,
+    "realtime_spice_esr_db_worst": null,
+    "added_budget_db": -40.0,
+    "speedup_target": 1.5,
+    "added_pass": false,
+    "speed_pass": false,
+    "spice_pass": null
+  }
+}

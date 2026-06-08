@@ -44,7 +44,8 @@ REPO = Path(__file__).resolve().parents[2]
 
 # Pass thresholds (dB). realtime must hold near golden parity (cross-compiler f64 drift only);
 # fast is looser because both run the lossy freeze-caps lever and g++/rustc fast-math diverge.
-GATE_ESR_DB = {"realtime": -60.0, "fast": -40.0}
+# ultra-fast = fast + os1 + no-decimate (same lossy levers) → same parity budget as fast.
+GATE_ESR_DB = {"realtime": -60.0, "fast": -40.0, "ultra-fast": -40.0}
 FR_MAX_HZ = 15_000.0   # FR-error gate band ceiling
 GATE_FR_DB = 0.1       # max |Rust-C++| FR error to FR_MAX_HZ
 

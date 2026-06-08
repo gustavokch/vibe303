@@ -22,16 +22,21 @@
 //!   --mix <f32>        (default 100) full-chain only, percent (wet %)
 //!   --backend <nn|wdf> (default nn)  full-chain only, inference backend
 //!   --circuit-gain <f32> (default 220) WDF R_KJ shunt in ohms, --backend wdf only
-//!   --tier <realtime|fast> (default realtime) WDF solver tier, --backend wdf only
+//!   --tier <realtime|fast|ultra-fast> (default realtime) WDF solver tier, --backend wdf only
 //!   --predict / --no-predict        WDF lever overrides (A/B), --backend wdf only
 //!   --ls-trim / --no-ls-trim        WDF lever overrides (A/B), --backend wdf only
 //!   --freeze-caps / --no-freeze-caps WDF lever overrides (A/B), --backend wdf only
+//!   --cheap-exp / --no-cheap-exp    WDF lever override (ultra-fast low-order exp), --backend wdf only
+//!   --tol <f64>                     WDF Newton tolerance override (A/B), --backend wdf only
+//!   --max-iters <usize>             WDF Newton iteration cap override (A/B), --backend wdf only
+//!   --cap-tier <full|depletion|off> WDF BJT charge-cap detail (A/B), --backend wdf only
+//!   --os <usize>                    WDF internal oversampling (2 normal, 1 ultra-fast), --backend wdf only
 //!   --solver <dense|schur>          WDF linear-solve path (A/B), --backend wdf only
 //!   --raw              (flag) run the pure model (round-trip path)
 
 use ba283::dsp::ChannelDsp;
 use ba283::model::Ba283Model;
-use ba283::wdf::{QualityConfig, Solver};
+use ba283::wdf::{CapTier, QualityConfig, Solver};
 use ba283::InferenceBackend;
 use std::process::exit;
 
@@ -113,7 +118,8 @@ fn main() {
                 wdf_cfg = match v.as_str() {
                     "realtime" => QualityConfig::realtime(),
                     "fast" => QualityConfig::fast(),
-                    _ => die("--tier must be `realtime` or `fast`"),
+                    "ultra-fast" => QualityConfig::ultra_fast(),
+                    _ => die("--tier must be `realtime`, `fast`, or `ultra-fast`"),
                 };
             }
             "--predict" => wdf_cfg.predict = true,
@@ -122,6 +128,34 @@ fn main() {
             "--no-ls-trim" => wdf_cfg.ls_trim = false,
             "--freeze-caps" => wdf_cfg.freeze_caps = true,
             "--no-freeze-caps" => wdf_cfg.freeze_caps = false,
+            "--cheap-exp" => wdf_cfg.cheap_exp = true,
+            "--no-cheap-exp" => wdf_cfg.cheap_exp = false,
+            "--os" => {
+                let v = args.next().unwrap_or_else(|| die("--os needs a value"));
+                wdf_cfg.os = v.parse().unwrap_or_else(|_| die("--os must be a positive integer"));
+                if wdf_cfg.os == 0 {
+                    die("--os must be >= 1");
+                }
+            }
+            "--decimate" => wdf_cfg.decimate = true,
+            "--no-decimate" => wdf_cfg.decimate = false,
+            "--tol" => {
+                let v = args.next().unwrap_or_else(|| die("--tol needs a value"));
+                wdf_cfg.newton_tol = v.parse().unwrap_or_else(|_| die("--tol must be a float"));
+            }
+            "--max-iters" => {
+                let v = args.next().unwrap_or_else(|| die("--max-iters needs a value"));
+                wdf_cfg.max_iters = v.parse().unwrap_or_else(|_| die("--max-iters must be an integer"));
+            }
+            "--cap-tier" => {
+                let v = args.next().unwrap_or_else(|| die("--cap-tier needs a value"));
+                wdf_cfg.cap_tier = match v.as_str() {
+                    "full" => CapTier::Full,
+                    "depletion" => CapTier::Depletion,
+                    "off" => CapTier::Off,
+                    _ => die("--cap-tier must be `full`, `depletion`, or `off`"),
+                };
+            }
             "--solver" => {
                 let v = args.next().unwrap_or_else(|| die("--solver needs a value"));
                 wdf_cfg.solver = match v.as_str() {

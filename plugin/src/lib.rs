@@ -46,14 +46,19 @@ pub enum InferenceBackend {
 }
 
 /// WDF solver tier. `Realtime` is the bit-exact reference (all speed levers off); `Fast` bakes in
-/// predict + schur + freeze-caps + ls-trim (~5x faster, near-transparent). WDF-only; the NeuralNet
-/// backend ignores it. Mirrors the C++ `qualityPreset("realtime"|"fast")`.
+/// predict + schur + freeze-caps + ls-trim (~5x faster, near-transparent); `UltraFast` additionally
+/// drops internal oversampling 2→1 and bypasses the (now-needless) output decimation — ≈2x over
+/// fast, and actually *better* than realtime vs SPICE (the os=2 decimation Butterworth deviates
+/// from the circuit's true HF response). WDF-only; the NeuralNet backend ignores it. Mirrors the
+/// C++ `qualityPreset("realtime"|"fast"|"ultra-fast")`.
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum WdfTier {
     #[name = "Realtime"]
     Realtime,
     #[name = "Fast"]
     Fast,
+    #[name = "Ultra Fast"]
+    UltraFast,
 }
 
 impl WdfTier {
@@ -61,6 +66,7 @@ impl WdfTier {
         match self {
             WdfTier::Realtime => QualityConfig::realtime(),
             WdfTier::Fast => QualityConfig::fast(),
+            WdfTier::UltraFast => QualityConfig::ultra_fast(),
         }
     }
 }

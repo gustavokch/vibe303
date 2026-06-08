@@ -69,6 +69,7 @@ def run_rust_wdf(
     tier: str = "realtime",
     return_stats: bool = False,
     allow_build: bool = True,
+    extra_args: list[str] | tuple[str, ...] = (),
 ):
     """Run the Rust WDF model on *dry_wav* at *tier* and return (samples_float32, sr).
 
@@ -76,8 +77,10 @@ def run_rust_wdf(
         dry_wav: 96 kHz mono float WAV (volts, peak ≤ 0.5 V).
         rgain:   K↔J gain shunt R_KJ in ohms (``--circuit-gain``).
         bias:    RV1 trim pot ∈ [0,1].
-        tier:    ``realtime`` | ``fast`` (``--tier``).
+        tier:    ``realtime`` | ``fast`` | ``ultra-fast`` (``--tier``).
         return_stats: when True, return ``(samples, sr, stats)`` (parsed Newton line).
+        extra_args:  appended verbatim after the tier — per-lever overrides for the
+                     ultra-fast sweep (e.g. ``["--cheap-exp", "--tol", "1e-4"]``).
 
     Returns:
         ``(samples_float32, sample_rate)`` — or ``(samples, sr, stats)`` if ``return_stats``.
@@ -99,6 +102,7 @@ def run_rust_wdf(
                 "--output-db", "0",
                 "--input", str(dry_wav),
                 "--output", str(out_wav),
+                *extra_args,
             ],
             capture_output=True,
             text=True,
