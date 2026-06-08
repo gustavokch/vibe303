@@ -109,6 +109,7 @@ Current dataset: `ba283_spice_gain` (gain-conditioned, leakage-free split).
 Cloud training is available via `colab/ba283_train_colab.ipynb`.
 
 - **How (operator runbook):** [`docs/training_runbook.md`](docs/training_runbook.md)
+- **Ablation studies (Colab):** [`docs/colab_ablation_runbook.md`](docs/colab_ablation_runbook.md)
 - **Why (concepts — ESR, TBPTT, FiLM):** [`docs/training_explained.md`](docs/training_explained.md)
 
 ## Evaluation
