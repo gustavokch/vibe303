@@ -163,9 +163,22 @@ git commit -m "test(wdf): add ignored sparsity census + g0_snapshot accessor"
 
 ---
 
-### Task 1: Dirty-entry Jacobian reset (free, always do)
+### Task 1: Dirty-entry Jacobian reset — **DROPPED (invalid, 2026-06-07)**
 
-**Why:** `newton_iterate` rebuilds `J` each iter with
+**Outcome:** abandoned during execution. The premise — "entries outside the BJT
+stamp set still equal `g0` between iters" — is **false**: `gauss_solve` solves
+**in-place on `self.j`** (`wdf.rs:1586`), overwriting the entire upper triangle
+with LU factors each iter. Restoring only stamped indices leaves elimination
+garbage everywhere else → ~1e-3 divergence (golden/lossless tests failed). The
+full `g0→j` copy is load-bearing precisely because the dense solve is destructive;
+a non-destructive solve would need a `u*u` scratch copy = the same cost we tried to
+remove. **A pattern-based copy reduction is only safe once the solver provably
+writes within a known sparsity set (zero fill-in) — so it can only follow Task 2,
+not precede it.** See Task 2b.
+
+Original (invalid) rationale kept for the record below.
+
+> **Why:** `newton_iterate` rebuilds `J` each iter with
 `self.j[..u*u].copy_from_slice(&self.g0[..u*u])` — a full 256-element copy. Only
 the BJT loop writes to `J` (linear branches stamp `F` only; their `J` entries are
 already baked into `g0`). So between iters we need restore only the BJT-touched

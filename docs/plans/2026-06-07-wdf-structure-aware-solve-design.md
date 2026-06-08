@@ -91,6 +91,38 @@ the per-solve cost drops.
 Singular-matrix `< 1e-30` bailout preserved exactly: pivot search still scans the
 full column (skipping zeros in the *update* must not mask a true singular pivot).
 
+## Results (measured 2026-06-07/08, sweep_m6 @96k, gain 0.5)
+
+Wall-clock bench was too noisy (machine under load 5–7; the *unchanged* C++ binary
+drifted ±0.1–0.4 rt-factor between runs), so the verdict metric is **instructions
+retired** (`perf stat -r3`, contention-immune; run-to-run jitter ±0.01–0.02%).
+
+Baseline (post-census, pre-changes): realtime **84.290 B**, fast **45.338 B**.
+
+- **Task 2 (sparsity-skip in gauss/LU) — 0%, REVERTED.** Bit-exact and clean, but
+  instruction-flat: realtime 84.296 B (+0.007%), fast 45.331 B (−0.015%) — both
+  inside jitter. A per-element `if entry != 0.0` guard does NOT cut the loop
+  trip-count; it swaps each skipped FMA for a load+cmp+branch (instruction-neutral).
+  Capturing the census's 17% density requires *not iterating* the zeros (compressed
+  / codegen sparse solve), which fights partial pivoting — out of scope. Reverted
+  (commit `9b84503`) to keep the audio hot path branch-free.
+- **Approach B reframed → "B1" (precompute depletion_charge saturated-branch
+  constants) — REAL WIN, no `unsafe`.** `perf record` put `depletion_charge` at 25%
+  realtime self-time; its `v >= FC·vj` (saturated/forward-biased) branch recomputed
+  3 `pow_` (= 3 `fast_exp` + 3 `fast_log`) per call from inputs that are constant
+  per junction. Precomputed once into `BjtParams` (`je_*`/`jc_*`). Bit-exact
+  (golden/lossless unchanged; pinned by `depletion_charge_pre_is_bit_exact`).
+  **Instructions: realtime 84.290→81.036 B (−3.86%), fast 45.338→43.826 B
+  (−3.33%).** Commits `dd43943` (opt) + `0d9714b` (equivalence guard test).
+
+**Hot-path after B1 (realtime self-time, pre-B1 profile):** `gauss_solve` 35%,
+`depletion_charge` 25% (now reduced), `newton_iterate` 19%, `residual_norm` 12%,
+`diode_branch` 5.5%. Remaining bit-exact levers both carry real cost: (a) SIMD the
+residual `depletion_charge` depletion-region `pow_` + `diode_branch` `exp` —
+needs `std::arch`+`unsafe` (stable Rust has no `portable_simd`), 6-junction AVX2
+underfill; (b) a true sparse/codegen replacement of the 35% `gauss_solve` —
+larger, partial-pivoting bit-exactness risk.
+
 ## Critical files
 
 - `plugin/src/wdf.rs` — sparsity-skip + indirection removal + dirty-`j` reset in
