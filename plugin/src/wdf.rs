@@ -987,6 +987,10 @@ impl WdfModel {
     pub fn new_with(cfg: QualityConfig, host_sr: f64, rgain: f64, bias: f64) -> Self {
         let internal_sr = host_sr * cfg.os.max(1) as f64;
         let mut m = Self::build_with(cfg, internal_sr, rgain, bias);
+        // Decimation biquads are always configured, but only used when `cfg.decimate` (see
+        // `process_host_sample`). At the ultra-fast tier (os=1, decimate=false) they are dead state:
+        // internal_sr == host_sr so fc=0.45*host_sr stays below Nyquist (no blowup), and the tap is
+        // returned un-filtered. Configuring them unconditionally keeps this path branch-free.
         let fc = 0.45 * host_sr;
         m.dec1.set_lowpass(fc, internal_sr, 0.54119610);
         m.dec2.set_lowpass(fc, internal_sr, 1.30656296);
@@ -2313,6 +2317,30 @@ mod tests {
             let y = m.process_host_sample((i as f32 / 256.0) * 0.4 - 0.2);
             assert!(y.is_finite(), "ultra-fast output non-finite at sample {i}");
         }
+    }
+
+    #[test]
+    fn decimate_flag_changes_output() {
+        // Guards against the `decimate` lever silently no-op'ing: at os=1 the only difference between
+        // the two configs is whether the decimation biquads filter the tap, so the outputs MUST diverge.
+        // (Same input, same circuit, same seed — only `decimate` toggled.)
+        let host = 48_000.0;
+        let mut base = QualityConfig::ultra_fast(); // os=1, decimate=false
+        base.decimate = false;
+        let mut filt = base; // os=1, decimate=true
+        filt.decimate = true;
+
+        let mut m_off = WdfModel::new_with(base, host, 220.0, 0.5);
+        let mut m_on = WdfModel::new_with(filt, host, 220.0, 0.5);
+        let mut max_abs_diff = 0.0f32;
+        for i in 0..512 {
+            // Bright tone so the biquad lowpass has audible HF content to act on.
+            let x = (i as f32 * 0.3).sin() * 0.3;
+            let d = (m_off.process_host_sample(x) - m_on.process_host_sample(x)).abs();
+            max_abs_diff = max_abs_diff.max(d);
+        }
+        assert!(max_abs_diff > 1e-5,
+                "decimate flag had no audible effect (max |Δ| {max_abs_diff:e}) — lever may be a no-op");
     }
 
     #[test]

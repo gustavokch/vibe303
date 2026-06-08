@@ -69,7 +69,23 @@ fn main() {
     // the per-lever flags toggle individual levers on top (for A/B validation).
     let mut wdf_cfg = QualityConfig::realtime();
 
-    let mut args = std::env::args().skip(1);
+    // Resolve `--tier` up-front (last one wins) before the per-lever flags are applied. `--tier`
+    // rebuilds the whole QualityConfig, so a tier appearing *after* a lever flag would otherwise
+    // silently clobber it — making `--os 1 --tier fast` differ from `--tier fast --os 1`. Pre-scanning
+    // makes lever flags layer on top of the tier regardless of arg order.
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    for w in raw_args.windows(2) {
+        if w[0] == "--tier" {
+            wdf_cfg = match w[1].as_str() {
+                "realtime" => QualityConfig::realtime(),
+                "fast" => QualityConfig::fast(),
+                "ultra-fast" => QualityConfig::ultra_fast(),
+                _ => die("--tier must be `realtime`, `fast`, or `ultra-fast`"),
+            };
+        }
+    }
+
+    let mut args = raw_args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--raw" => raw = true,
@@ -124,13 +140,8 @@ fn main() {
                     .unwrap_or_else(|_| die("--circuit-gain must be a float"));
             }
             "--tier" => {
-                let v = args.next().unwrap_or_else(|| die("--tier needs a value"));
-                wdf_cfg = match v.as_str() {
-                    "realtime" => QualityConfig::realtime(),
-                    "fast" => QualityConfig::fast(),
-                    "ultra-fast" => QualityConfig::ultra_fast(),
-                    _ => die("--tier must be `realtime`, `fast`, or `ultra-fast`"),
-                };
+                // Resolved in the pre-scan above; consume its value so lever flags still apply on top.
+                let _ = args.next().unwrap_or_else(|| die("--tier needs a value"));
             }
             "--predict" => wdf_cfg.predict = true,
             "--no-predict" => wdf_cfg.predict = false,

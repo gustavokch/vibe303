@@ -17,13 +17,31 @@ Final preset: `QualityConfig::ultra_fast()` = `fast()` + `os: 1` + `decimate: fa
 | speed | **≈2.0× over fast** (≈3.9× over realtime); avgIters≈1.9 |
 | ESR vs SPICE | **−30 to −36 dB** (realtime −25 to −26) — *better* than realtime |
 | midband coherence | 1.000 |
-| points | pink@0.5, sweep_m3@0.5, sweep_m3@1.0 (pink@1.0 lost to ngspice OOM) |
+| points | pink@0.5, sweep_m3@0.5, sweep_m3@1.0 (vs-SPICE); pink@1.0 via os=8 self-ref |
 
 Why better-than-realtime: at os=2 the output is antialias-decimated by a 43 kHz
 4th-order Butterworth, whose HF magnitude/phase **deviates from the circuit's true
 response**. At os=1 there is nothing to decimate, so bypassing those biquads tracks
 SPICE more faithfully. The os=1 nonlinear-harmonic aliasing fear did not
 materialise (coherence stays 1.0 even on a bright sweep at full gain).
+
+### Full-gain aliasing — closed without ngspice (`alias_probe.py`)
+
+The vs-SPICE gate could not cover the single scariest point — **full-gain pink**, the
+worst nonlinear-harmonic case — because ngspice OOMs on it. Rather than leave it open,
+`alias_probe.py` validates it SPICE-free: ultra-fast (os=1) vs a high-OS self-reference
+(os=8, alias-free truth) on the same circuit + solver, isolating *only* the aliasing term.
+
+| stim (gain 1.0) | midband coherence | HF>12k vs os=8 ref | verdict |
+|---|---|---|---|
+| pink_m3_s0  | 1.0000 | −1.07 dB | no in-band aliasing; no HF alias inflation |
+| pink_m12_s0 | 1.0000 | −1.06 dB | same |
+
+Coherence 1.0 means os=1 does not corrupt in-band linearity, and the *negative* HF
+delta means harmonics are **not** folding back down into the top octave (an alias build-up
+would read positive). The os=1↔os=8 broadband ESR (≈−12.6 dB) is legitimate HF
+magnitude/phase resolution along the OS axis, not aliasing — coherence is the discriminator.
+The full-gain aliasing fear is empirically dead.
 
 Levers that were measured and rejected (≈no speed within budget): `cheap-exp`
 (1.03×), looser `newton_tol` (−24 dB error at 1e-4 for 1.07×), capped `max_iters`

@@ -7,3 +7,19 @@ resolver = "2"
 lto = "fat"
 codegen-units = 1
 opt-level = 3
+
+# Profile-first optimization round.  Two variants for symbol attribution:
+#   profiling     — matches release (fat-LTO) but with debuginfo + frame-pointers;
+#                   symbols may be inlined/blurred under fat-LTO — use as baseline.
+#   profiling-thin — thin-LTO for cleaner per-function attribution; otherwise same.
+# Render with: cargo build --profile profiling --bin standalone
+[profile.profiling]
+inherits = "release"
+debug = 2
+strip = "none"
+# force-frame-pointers is a codegen-options flag; set via RUSTFLAGS in the harness.
+
+[profile.profiling-thin]
+inherits = "profiling"
+lto = "thin"
+codegen-units = 4   # thin-LTO benefits from >1 CGU for better attribution
