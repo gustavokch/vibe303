@@ -46,7 +46,7 @@ quality tiers — `Realtime` (bit-exact reference, all speed levers off) and
 you use rustup).
 
 ```bash
-cargo xtask build --release      # → VST3 bundle under target/bundled/
+cargo xtask bundle ba283 --release      # → VST3 bundle under target/bundled/
 ```
 
 Standalone CLI renderer (offline processing, no DAW):
@@ -123,7 +123,7 @@ Cloud training is available via `colab/ba283_train_colab.ipynb`.
 | Path | Purpose |
 |------|---------|
 | `plugin/` | Rust VST3 plugin (nih-plug): `lib.rs`, `model.rs`, `wdf.rs`, `dsp.rs`, weights |
-| `xtask/` | nih-plug build runner (`cargo xtask build`) |
+| `xtask/` | nih-plug build runner (`cargo xtask bundle ba283`) |
 | `train/` | PyTorch training pipeline (`train.py`, `model.py`, `export.py`) |
 | `data_gen/` | SPICE dataset generation (PySpice + ngspice) |
 | `eval/` | Validation harnesses (`wdf_vs_spice`, `acme_vs_spice`) |
