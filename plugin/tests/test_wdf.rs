@@ -226,3 +226,72 @@ fn snapshot_restore_round_trips() {
         assert!((y as f64 - wdf_golden::OUTPUT_256[i]).abs() <= 1e-5, "replayed sample {i}");
     }
 }
+
+#[test]
+#[ignore = "diagnostic: run with --ignored --nocapture to print the sparsity census"]
+fn sparsity_census() {
+    // Build + warm a realtime model EXACTLY as process_settles_toward_golden does
+    // (mini rail-ramp + idle settle), then drive ~256 samples to a realistic
+    // operating point before snapshotting the constant conductance matrix g0.
+    let internal_sr = 96_000.0;
+    let mut m = wdf::WdfModel::build(internal_sr, 220.0, wdf_golden::BIAS);
+    let ramp = internal_sr as usize; // 1 s
+    for i in 0..ramp {
+        m.v[node::N_INPUT as usize] = 0.0;
+        m.v[node::N_A as usize] = 24.0 * (i as f64) / (ramp as f64);
+        m.process();
+    }
+    m.v[node::N_A as usize] = 24.0;
+    let chunk = (internal_sr * 0.25) as usize;
+    let mut prev_tap = 1e9;
+    for _ in 0..16 {
+        for _ in 0..chunk {
+            m.process();
+        }
+        let tap = m.node_v(node::N_SEC_IN);
+        if (tap - prev_tap).abs() < 1e-4 {
+            break;
+        }
+        prev_tap = tap;
+    }
+    // drive ~256 samples to a realistic operating point
+    for _ in 0..256 {
+        m.process();
+    }
+
+    let u = m.u();
+    let g0 = m.g0_snapshot();
+    let mut zeros = 0usize;
+    for i in 0..u {
+        for j in 0..u {
+            if g0[i * u + j] == 0.0 {
+                zeros += 1;
+            }
+        }
+    }
+    eprintln!(
+        "U={u} entries={} structural_zeros={zeros} density={:.1}%",
+        u * u,
+        100.0 * (u * u - zeros) as f64 / (u * u) as f64
+    );
+
+    // simulate dense-elimination fill-in: print per-column trailing-submatrix nonzero counts
+    let mut nz: Vec<bool> = (0..u * u).map(|k| g0[k] != 0.0).collect();
+    for col in 0..u {
+        let live = (0..u)
+            .flat_map(|r| (0..u).map(move |c| (r, c)))
+            .filter(|&(r, c)| r >= col && c >= col && nz[r * u + c])
+            .count();
+        eprintln!("col {col:2}: live_nonzeros_in_trailing_submatrix={live}");
+        for r in (col + 1)..u {
+            if !nz[r * u + col] {
+                continue;
+            }
+            for c in (col + 1)..u {
+                if nz[col * u + c] {
+                    nz[r * u + c] = true;
+                }
+            }
+        }
+    }
+}

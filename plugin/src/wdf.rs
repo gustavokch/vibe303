@@ -662,6 +662,13 @@ impl WdfModel {
         self.ur(id)
     }
 
+    /// Flat row-major copy of the constant conductance matrix `g0` (first `u*u`
+    /// entries). Diagnostic/test use only.
+    pub fn g0_snapshot(&self) -> Vec<f64> {
+        let u = self.u;
+        self.g0[..u * u].to_vec()
+    }
+
     /// Build the circuit at the given **internal** sample rate (host × OS), gain shunt `rgain`
     /// (R_KJ ohms), and `bias` (RV1 pot [0,1]) at the realtime tier (all levers off).
     /// Thin wrapper over [`build_with`]; mirrors `BA283::build` (`main.cpp:314-409`).
