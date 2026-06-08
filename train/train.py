@@ -137,6 +137,7 @@ def train_main(
 
     try:
         for e in range(start_epoch, epochs):
+            epoch_start = time.monotonic()
             # --- Train ---
             model.train()
             loss_sum = 0.0
@@ -244,7 +245,8 @@ def train_main(
                 f"epoch {e:3d}  train_loss={mean_train_loss:.4f}  "
                 f"val_esr={val_esr:.4f}  best={best_esr:.4f}"
                 f"{'  *' if improved else ''}  "
-                f"no_improve={epochs_since_improvement}",
+                f"no_improve={epochs_since_improvement}  "
+                f"dt={time.monotonic() - epoch_start:.1f}s",
                 flush=True,
             )
 
