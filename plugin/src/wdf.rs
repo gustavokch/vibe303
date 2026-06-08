@@ -292,85 +292,6 @@ pub fn fast_exp(x: f64) -> f64 {
     p * pk
 }
 
-/// Branchless single-lane equivalent of [`fast_exp`]. The underflow/overflow guards become SELECTs
-/// over the already-computed result (no control flow skips the polynomial), so a loop over this can
-/// vectorize. The exponent is clamped BEFORE the IEEE-754 shift so a discarded lane never wraps.
-/// BIT-EXACT vs `fast_exp` across the junction domain (pinned by `exp_bl_is_bit_exact`).
-/// Validated in `tests/autovec_spike.rs` (commit 8625362).
-#[inline]
-pub fn exp_bl(x: f64) -> f64 {
-    const LN2: f64 = 0.6931471805599453;
-    const INV_LN2: f64 = 1.4426950408889634;
-    let kf = (x * INV_LN2 + 0.5).floor();
-    let k = kf as i32;
-    let r = x - kf * LN2;
-    let p = 1.0
-        + r * (1.0
-            + r * (1.0 / 2.0
-                + r * (1.0 / 6.0
-                    + r * (1.0 / 24.0
-                        + r * (1.0 / 120.0
-                            + r * (1.0 / 720.0
-                                + r * (1.0 / 5040.0
-                                    + r * (1.0 / 40320.0 + r * (1.0 / 362880.0)))))))));
-    let kc = k.clamp(-1022, 1023);
-    let u: u64 = ((kc + 1023) as u64) << 52;
-    let pk = f64::from_bits(u);
-    let mut res = p * pk;
-    if k <= -1023 {
-        res = 0.0;
-    }
-    if k >= 1024 {
-        res = p * f64::INFINITY;
-    }
-    res
-}
-
-/// Branchless single-junction diode (`i`, `g`), bit-exact analog of [`diode_branch`] using
-/// [`exp_bl`]. The `v < vcrit` linearization becomes a SELECT over both already-computed branches
-/// so the per-junction body has no control flow and the batch loop can vectorize.
-#[inline]
-pub fn diode_branch_bl(v: f64, is: f64, vt: f64, vcrit: f64) -> (f64, f64) {
-    let inv_vt = is / vt;
-    // sub-vcrit branch
-    let e = exp_bl(v / vt);
-    let i_lo = is * (e - 1.0);
-    let g_lo = inv_vt * e;
-    // >= vcrit linearized branch (C1-continuous)
-    let ec = exp_bl(vcrit / vt);
-    let icrit = is * (ec - 1.0);
-    let gcrit = inv_vt * ec;
-    let i_hi = icrit + gcrit * (v - vcrit);
-    let g_hi = gcrit;
-    if v < vcrit {
-        (i_lo, g_lo)
-    } else {
-        (i_hi, g_hi)
-    }
-}
-
-/// Number of pn junctions evaluated per Newton iter: 3 BJTs x (vbe, vbc).
-pub(crate) const N_JUNC: usize = 6;
-
-/// SoA-batched branchless diode evaluator over `N_JUNC` junctions. Fills `i`/`g` from the gathered
-/// `v`/`is`/`vt`/`vcrit` arrays. Branchless body (SELECTs only) so LLVM can autovectorize the loop.
-/// Each output is bit-identical to the scalar [`diode_branch`] for that junction's params.
-#[inline]
-pub(crate) fn diode_branch_batch(
-    v: &[f64; N_JUNC],
-    is: &[f64; N_JUNC],
-    vt: &[f64; N_JUNC],
-    vcrit: &[f64; N_JUNC],
-    i_out: &mut [f64; N_JUNC],
-    g_out: &mut [f64; N_JUNC],
-) {
-    for j in 0..N_JUNC {
-        let (i, g) = diode_branch_bl(v[j], is[j], vt[j], vcrit[j]);
-        i_out[j] = i;
-        g_out[j] = g;
-    }
-}
-
 /// `log` via IEEE-754 exponent decomposition + atanh series (`main.cpp:130-142`).
 #[inline]
 pub fn fast_log(x: f64) -> f64 {
@@ -514,27 +435,9 @@ pub struct BjtOut {
 /// Compute Gummel-Poon BJT response (`main.cpp:197-241`). `sqrt` is exact (not fast math),
 /// matching the C++ `std::sqrt`.
 pub fn compute_bjt(vbe: f64, vbc: f64, p: &BjtParams) -> BjtOut {
+    let mut o = BjtOut::default();
     let (itf, gtf) = diode_branch(vbe, p.is, p.vt, p.vcrit); // forward transport + d/dvbe
     let (itr, gtr) = diode_branch(vbc, p.is, p.vt, p.vcrit); // reverse transport + d/dvbc
-    compute_bjt_from_diode(vbe, vbc, p, itf, gtf, itr, gtr)
-}
-
-/// Transcendental-free part of [`compute_bjt`]: the Gummel-Poon qb/Early/high-injection algebra,
-/// derivatives, and node-form assembly. Takes the four diode-branch outputs as inputs instead of
-/// calling [`diode_branch`]. Byte-identical to the original `compute_bjt` body from line 441 on —
-/// same ops, same order. Split out so the diode transcendentals can be batched (autovec) while
-/// this scalar finish runs per BJT.
-#[allow(clippy::too_many_arguments)]
-pub fn compute_bjt_from_diode(
-    vbe: f64,
-    vbc: f64,
-    p: &BjtParams,
-    itf: f64,
-    gtf: f64,
-    itr: f64,
-    gtr: f64,
-) -> BjtOut {
-    let mut o = BjtOut::default();
     o.itf = itf;
     o.gtf = gtf;
     o.itr = itr;
@@ -1150,47 +1053,11 @@ impl WdfModel {
         }
         // BJTs (transport + charge caps — must match newton_iterate's F)
         let k2 = 2.0 / self.dt;
-        // Pass 1 (gather): per-BJT junction voltages + diode params into SoA arrays.
-        // Junction layout: [2*bi] = vbe(bi), [2*bi+1] = vbc(bi).
-        let mut jv = [0.0f64; N_JUNC];
-        let mut jis = [0.0f64; N_JUNC];
-        let mut jvt = [0.0f64; N_JUNC];
-        let mut jvcrit = [0.0f64; N_JUNC];
-        let mut vbe_a = [0.0f64; 3];
-        let mut vbc_a = [0.0f64; 3];
         for bi in 0..self.bjts.len() {
             let t = self.bjts[bi];
             let vbe = self.node_v(t.b) - self.node_v(t.e);
             let vbc = self.node_v(t.b) - self.node_v(t.c);
-            vbe_a[bi] = vbe;
-            vbc_a[bi] = vbc;
-            jv[2 * bi] = vbe;
-            jv[2 * bi + 1] = vbc;
-            jis[2 * bi] = t.p.is;
-            jis[2 * bi + 1] = t.p.is;
-            jvt[2 * bi] = t.p.vt;
-            jvt[2 * bi + 1] = t.p.vt;
-            jvcrit[2 * bi] = t.p.vcrit;
-            jvcrit[2 * bi + 1] = t.p.vcrit;
-        }
-        // Pass 2 (batch-diode): vectorizable branchless evaluation of all 6 junctions.
-        let mut ji = [0.0f64; N_JUNC];
-        let mut jg = [0.0f64; N_JUNC];
-        diode_branch_batch(&jv, &jis, &jvt, &jvcrit, &mut ji, &mut jg);
-        // Pass 3 (finish + scatter): per-BJT algebra + scatter, identical to the original.
-        for bi in 0..self.bjts.len() {
-            let t = self.bjts[bi];
-            let vbe = vbe_a[bi];
-            let vbc = vbc_a[bi];
-            let o = compute_bjt_from_diode(
-                vbe,
-                vbc,
-                &t.p,
-                ji[2 * bi],
-                jg[2 * bi],
-                ji[2 * bi + 1],
-                jg[2 * bi + 1],
-            );
+            let o = compute_bjt(vbe, vbc, &t.p);
             let (rb, re, rc) = (self.ur(t.b), self.ur(t.e), self.ur(t.c));
             if rb >= 0 {
                 self.rn[rb as usize] += o.ib;
@@ -1575,47 +1442,11 @@ impl WdfModel {
 
             // BJTs (Gummel-Poon transport form). Currents flow INTO the device.
             let k2 = 2.0 / self.dt;
-            // Pass 1 (gather): junction voltages + diode params into SoA arrays.
-            // Junction layout: [2*bi] = vbe(bi), [2*bi+1] = vbc(bi).
-            let mut jv = [0.0f64; N_JUNC];
-            let mut jis = [0.0f64; N_JUNC];
-            let mut jvt = [0.0f64; N_JUNC];
-            let mut jvcrit = [0.0f64; N_JUNC];
-            let mut vbe_a = [0.0f64; 3];
-            let mut vbc_a = [0.0f64; 3];
             for bi in 0..self.bjts.len() {
                 let t = self.bjts[bi];
                 let vbe = self.node_v(t.b) - self.node_v(t.e);
                 let vbc = self.node_v(t.b) - self.node_v(t.c);
-                vbe_a[bi] = vbe;
-                vbc_a[bi] = vbc;
-                jv[2 * bi] = vbe;
-                jv[2 * bi + 1] = vbc;
-                jis[2 * bi] = t.p.is;
-                jis[2 * bi + 1] = t.p.is;
-                jvt[2 * bi] = t.p.vt;
-                jvt[2 * bi + 1] = t.p.vt;
-                jvcrit[2 * bi] = t.p.vcrit;
-                jvcrit[2 * bi + 1] = t.p.vcrit;
-            }
-            // Pass 2 (batch-diode): vectorizable branchless evaluation of all 6 junctions.
-            let mut ji = [0.0f64; N_JUNC];
-            let mut jg = [0.0f64; N_JUNC];
-            diode_branch_batch(&jv, &jis, &jvt, &jvcrit, &mut ji, &mut jg);
-            // Pass 3 (finish + scatter): per-BJT algebra + jacobian scatter, identical to original.
-            for bi in 0..self.bjts.len() {
-                let t = self.bjts[bi];
-                let vbe = vbe_a[bi];
-                let vbc = vbc_a[bi];
-                let o = compute_bjt_from_diode(
-                    vbe,
-                    vbc,
-                    &t.p,
-                    ji[2 * bi],
-                    jg[2 * bi],
-                    ji[2 * bi + 1],
-                    jg[2 * bi + 1],
-                );
+                let o = compute_bjt(vbe, vbc, &t.p);
                 let (rb, re, rc) = (self.urow[t.b as usize], self.urow[t.e as usize], self.urow[t.c as usize]);
                 if rb >= 0 {
                     let rb = rb as usize;
