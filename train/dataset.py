@@ -198,22 +198,35 @@ class BA283Dataset(Dataset):
         return np.ascontiguousarray(data, dtype=np.float32)
 
 
-def _kind_balanced_sampler(dataset: BA283Dataset) -> WeightedRandomSampler:
-    """Inverse-frequency window sampler over ``stim_kind``.
+def _kind_balanced_sampler(
+    dataset: BA283Dataset, *, max_ratio: float = 8.0
+) -> WeightedRandomSampler:
+    """Inverse-frequency window sampler over ``stim_kind``, ratio-capped.
 
     The corpus is ~56% music; energy-weighted training then under-sees sweep /
     synth / impulse character. Weighting each window by ``1 / count(its kind)``
     makes the expected per-epoch draw uniform across kinds (with replacement),
     de-skewing the imbalance without re-rendering. The per-window kind is the
     kind of its source manifest row.
+
+    ``max_ratio`` caps how hard a rare kind can be upweighted: a class with very
+    few windows (e.g. the 9-pt set's ~5 impulse rows) would otherwise get a
+    ~count(music)/count(impulse) ≈ 40x per-window weight and be drawn almost
+    every step, so the model memorises those few files and the loss destabilises.
+    The effective count is floored at ``max_count / max_ratio``, bounding any
+    kind's per-window weight to ``max_ratio`` x the most-common kind's. The rare
+    kind stays under-sampled (honest: 5 files cannot carry equal epoch mass) but
+    no longer dominates. ``max_ratio = inf`` recovers pure inverse-frequency.
     """
     kinds = dataset.manifest["stim_kind"].to_numpy()
     window_kinds = [kinds[row_idx] for row_idx, _ in dataset.index]
     counts: dict[str, int] = {}
     for k in window_kinds:
         counts[k] = counts.get(k, 0) + 1
+    floor = max(counts.values()) / max_ratio if counts else 1.0
+    eff = {k: max(float(c), floor) for k, c in counts.items()}
     weights = torch.as_tensor(
-        [1.0 / counts[k] for k in window_kinds], dtype=torch.double
+        [1.0 / eff[k] for k in window_kinds], dtype=torch.double
     )
     return WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
 
