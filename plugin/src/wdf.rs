@@ -1327,6 +1327,82 @@ impl WdfModel {
         }
     }
 
+    /// Fixed-size (n=10) specialization of [`lu_factor`] using PHYSICAL row swaps instead of
+    /// `piv[]` index indirection. Records the row permutation in `perm` (output position -> original
+    /// row index), exactly mirroring the generic `piv[]` semantics, so [`lu_solve_10`] can permute
+    /// the RHS while reading the contiguous (`a[r*10+c]`) factor storage. Bit-identical to
+    /// `lu_factor(a, piv, 10)`: same pivot selection (max-abs in column `col`, scan `col+1..10`,
+    /// strict `>` tie-break), same `f`, same operand order, same loop bounds (`col+1..10`), same
+    /// unit-diagonal-L multiplier storage, same `f == 0.0` short-circuit, same `best < 1e-30` bail.
+    /// Physical-swap vs index-swap differs only in memory address.
+    fn lu_factor_10(a: &mut [f64], perm: &mut [usize]) -> bool {
+        const N: usize = 10;
+        for (i, slot) in perm.iter_mut().enumerate().take(N) {
+            *slot = i;
+        }
+        for col in 0..N {
+            // Pivot selection over physical rows col..N (identity-permuted, matches generic order).
+            let mut p = col;
+            let mut best = a[col * N + col].abs();
+            for r in (col + 1)..N {
+                let val = a[r * N + col].abs();
+                if val > best {
+                    best = val;
+                    p = r;
+                }
+            }
+            if best < 1e-30 {
+                return false;
+            }
+            if p != col {
+                // PHYSICAL swap of the two 10-element rows; record in perm for the RHS.
+                for c in 0..N {
+                    a.swap(col * N + c, p * N + c);
+                }
+                perm.swap(col, p);
+            }
+            let col_base = col * N;
+            let diag = a[col_base + col];
+            for r in (col + 1)..N {
+                let r_base = r * N;
+                let f = a[r_base + col] / diag;
+                a[r_base + col] = f; // store multiplier (L factor)
+                if f == 0.0 {
+                    continue;
+                }
+                for c in (col + 1)..N {
+                    a[r_base + c] -= f * a[col_base + c];
+                }
+            }
+        }
+        true
+    }
+
+    /// Solve `A x = b` in place (`x` in `b`) using the contiguous (physical-swap) LU factors +
+    /// `perm` row permutation from [`lu_factor_10`]. Bit-identical to `lu_solve(a, piv, 10, b)`:
+    /// the RHS read `b[perm[r]]` matches `b[piv[r]]`, factor reads are the same values in natural
+    /// row order, forward/back substitution are SCALAR reductions in the same summation order.
+    fn lu_solve_10(a: &[f64], perm: &[usize], b: &mut [f64]) {
+        const N: usize = 10;
+        let mut y = [0.0f64; NUM_NODES];
+        for r in 0..N {
+            let r_base = r * N;
+            let mut s = b[perm[r]];
+            for c in 0..r {
+                s -= a[r_base + c] * y[c];
+            }
+            y[r] = s; // unit-diagonal L
+        }
+        for r in (0..N).rev() {
+            let r_base = r * N;
+            let mut s = y[r];
+            for c in (r + 1)..N {
+                s -= a[r_base + c] * b[c];
+            }
+            b[r] = s / a[r_base + r];
+        }
+    }
+
     /// Build the Schur N/L partition once (at construction). N = every unknown row that a BJT
     /// terminal (and thus its charge cap) stamps; L = the remaining linear-only unknowns. Derived
     /// from the actual `bjts[]` terminal ids so it always matches the stamping (`main.cpp:483-527`).
@@ -1399,7 +1475,14 @@ impl WdfModel {
                 self.s_ll_fac[i * l + j] = self.g0[self.l_idx[i] * u + self.l_idx[j]];
             }
         }
-        if !Self::lu_factor(&mut self.s_ll_fac, &mut self.s_ll_piv, l) {
+        // Use the contiguous physical-swap LU pair when l == 10 (fast tier's A_LL block);
+        // generic index-swap pair otherwise. Both are bit-identical; only storage layout differs.
+        let factored = if l == 10 {
+            Self::lu_factor_10(&mut self.s_ll_fac, &mut self.s_ll_piv)
+        } else {
+            Self::lu_factor(&mut self.s_ll_fac, &mut self.s_ll_piv, l)
+        };
+        if !factored {
             return false;
         }
         // W = A_LL^{-1} A_LN  (solve A_LL * W[:,c] = A_LN[:,c] for each N column)
@@ -1408,7 +1491,11 @@ impl WdfModel {
             for i in 0..l {
                 col[i] = self.s_aln[i * n + c];
             }
-            Self::lu_solve(&self.s_ll_fac, &self.s_ll_piv, l, &mut col);
+            if l == 10 {
+                Self::lu_solve_10(&self.s_ll_fac, &self.s_ll_piv, &mut col);
+            } else {
+                Self::lu_solve(&self.s_ll_fac, &self.s_ll_piv, l, &mut col);
+            }
             for i in 0..l {
                 self.s_w[i * n + c] = col[i];
             }
@@ -1454,7 +1541,11 @@ impl WdfModel {
             }
         }
         // y = A_LL^{-1} bL (reuse per-sample factorization)
-        Self::lu_solve(&self.s_ll_fac, &self.s_ll_piv, l, &mut y);
+        if l == 10 {
+            Self::lu_solve_10(&self.s_ll_fac, &self.s_ll_piv, &mut y);
+        } else {
+            Self::lu_solve(&self.s_ll_fac, &self.s_ll_piv, l, &mut y);
+        }
         // b~N = bN - A_NL y
         let mut x_n = [0.0f64; NUM_NODES];
         for i in 0..n {
@@ -2342,5 +2433,112 @@ mod tests {
             }
         }
         eprintln!("gauss_solve_6_is_bit_exact: {cases} systems all bit-identical");
+    }
+
+    /// The physical-swap `lu_factor_10` + `lu_solve_10` pair must produce BIT-FOR-BIT identical
+    /// solutions to the generic index-swap `lu_factor(.., 10)` + `lu_solve(.., 10, ..)` pair across
+    /// many 10x10 systems (well-conditioned, pivot-triggering, near-singular, negative, mixed).
+    /// Storage layout (physical rows + perm vs `piv[]` indirection) differs; arithmetic must not.
+    #[test]
+    fn lu_10_is_bit_exact() {
+        const N: usize = 10;
+        let mut state: u64 = 0x0fed_cba9_8765_4321;
+        let mut next = || -> f64 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((state >> 11) as f64) / ((1u64 << 53) as f64)
+        };
+
+        let make = |flavor: u32, next: &mut dyn FnMut() -> f64| -> ([f64; N * N], [f64; N]) {
+            let mut a = [0.0f64; N * N];
+            let mut b = [0.0f64; N];
+            for r in 0..N {
+                for c in 0..N {
+                    let base = next() * 2.0 - 1.0;
+                    a[r * N + c] = match flavor {
+                        0 => {
+                            if r == c {
+                                base + (N as f64) * 4.0
+                            } else {
+                                base
+                            }
+                        }
+                        1 => {
+                            if r == c {
+                                base * 1e-6
+                            } else if c > r {
+                                base * 1e6
+                            } else {
+                                base
+                            }
+                        }
+                        2 => {
+                            if r == 6 {
+                                a[(5) * N + c] * (1.0 + 1e-9) + base * 1e-12
+                            } else if r == c {
+                                base + 2.0
+                            } else {
+                                base
+                            }
+                        }
+                        3 => {
+                            let scale = 10f64.powi(((next() * 12.0) as i32) - 6);
+                            base * scale
+                        }
+                        _ => {
+                            if r == c {
+                                -(base.abs() + 5.0)
+                            } else {
+                                -base.abs()
+                            }
+                        }
+                    };
+                }
+                b[r] = next() * 20.0 - 10.0;
+            }
+            (a, b)
+        };
+
+        let mut cases = 0usize;
+        for flavor in 0..5u32 {
+            for _ in 0..400 {
+                let (a0, b0) = make(flavor, &mut next);
+
+                // Reference path: generic index-swap lu_factor + lu_solve.
+                let mut a_ref = a0;
+                let mut piv_ref = [0usize; NUM_NODES];
+                let ok_ref = WdfModel::lu_factor(&mut a_ref, &mut piv_ref, N);
+                let mut b_ref = b0;
+                if ok_ref {
+                    WdfModel::lu_solve(&a_ref, &piv_ref, N, &mut b_ref);
+                }
+
+                // Physical-swap path.
+                let mut a_10 = a0;
+                let mut perm_10 = [0usize; NUM_NODES];
+                let ok_10 = WdfModel::lu_factor_10(&mut a_10, &mut perm_10);
+                let mut b_10 = b0;
+                if ok_10 {
+                    WdfModel::lu_solve_10(&a_10, &perm_10, &mut b_10);
+                }
+
+                assert_eq!(
+                    ok_ref, ok_10,
+                    "case {cases} (flavor {flavor}): singular-bool mismatch ref={ok_ref} 10={ok_10}"
+                );
+                if ok_ref {
+                    for i in 0..N {
+                        let rb = b_ref[i].to_bits();
+                        let xb = b_10[i].to_bits();
+                        assert_eq!(
+                            rb, xb,
+                            "case {cases} (flavor {flavor}) elem {i}: bit divergence ref={:#018x} ({}) 10={:#018x} ({})",
+                            rb, b_ref[i], xb, b_10[i]
+                        );
+                    }
+                }
+                cases += 1;
+            }
+        }
+        eprintln!("lu_10_is_bit_exact: {cases} systems all bit-identical");
     }
 }
