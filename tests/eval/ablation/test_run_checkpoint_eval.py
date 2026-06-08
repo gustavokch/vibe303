@@ -13,11 +13,11 @@ from eval.ablation.run_checkpoint_eval import (
     run_cell,
 )
 from train.dataset import INPUT_SCALE, OUTPUT_SCALE
-from train.model import BA283GRU
+from train.model import BA283LSTM
 
 
 def test_load_model_roundtrips_state(tmp_path):
-    src = BA283GRU(hidden=8)
+    src = BA283LSTM(hidden=8)
     ckpt = tmp_path / "best.pth"
     torch.save(src.state_dict(), ckpt)
 
@@ -104,12 +104,12 @@ def test_build_rows_applies_output_scale_and_trims_target(tmp_path):
 
 
 def _make_fixture(tmp_path, gains, *, n=4096, sr=44100):
-    """Save a tiny BA283GRU checkpoint + a manifest of dry/wet wavs.
+    """Save a tiny BA283LSTM checkpoint + a manifest of dry/wet wavs.
 
     Returns ``(checkpoint_path, manifest_csv_path, hidden)``.
     """
     hidden = 4
-    model = BA283GRU(hidden=hidden)
+    model = BA283LSTM(hidden=hidden)
     ckpt = tmp_path / "best.pth"
     torch.save(model.state_dict(), ckpt)
 
@@ -179,6 +179,41 @@ def test_run_cell_resampled_path_populates_aliasing(tmp_path):
     assert isinstance(cell["aliasing_high_band"], float)
     assert np.isfinite(cell["aliasing_high_band"])
     assert isinstance(cell["val_esr"], float)
+
+
+def test_run_cell_rescaled_scores_both_operands_resampled(tmp_path):
+    # Regression: the C4 cross-rate path must resample BOTH pred and target to
+    # sr_eval before ESR. Scoring a resampled pred against a target still at
+    # sr_train compares half-duration, half-rate slices and corrupts val_esr.
+    from eval.ablation.metrics import esr, resample_to
+
+    gains = [0.0, 0.5, 1.0]
+    warmup = 256
+    ckpt, manifest, hidden = _make_fixture(tmp_path, gains, sr=88200)
+
+    cell = run_cell(
+        ckpt,
+        manifest,
+        hidden=hidden,
+        cell="c4",
+        trained_gains=set(gains),
+        sr_train=88200,
+        sr_eval=44100,
+        warmup=warmup,
+    )
+
+    # independent reference: resample both operands to sr_eval, equal-weight gains
+    model = load_model(ckpt, hidden=hidden)
+    predict = make_predict(model, input_scale=INPUT_SCALE, warmup=warmup)
+    rows = build_rows(pd.read_csv(manifest), output_scale=OUTPUT_SCALE, warmup=warmup)
+    per_gain = {}
+    for dry, g, target in rows:
+        p = resample_to(predict(dry, g), sr_from=88200, sr_to=44100)
+        t = resample_to(target, sr_from=88200, sr_to=44100)
+        per_gain[g] = esr(p, t)
+    expected = float(np.mean(list(per_gain.values())))
+
+    assert cell["val_esr"] == pytest.approx(expected, rel=1e-6)
 
 
 def test_main_writes_json_consumable_by_report(tmp_path):

@@ -244,6 +244,11 @@ remapped to those local paths.
   `ba283_train_bundle.zip` (built by `colab/make_bundle.sh`), then
   `train.stage.stage_zip` extracts it to `/content/dataset` and
   `train.stage.remap_manifests` rewrites the paths before training.
+- **Ablation notebook (`ba283_ablation_colab.ipynb`)** — runs the Core-4
+  fidelity-ablation cells (B0/C1/C4/C5) on a single GPU venue and scores them with
+  the `eval/ablation/` harness. Stages each subset with `train.stage.stage_rclone`
+  from `gdrive:ba283_ablation/`. See the dedicated runbook:
+  [`docs/colab_ablation_runbook.md`](colab_ablation_runbook.md).
 
 `train.stage` is pure-python (pandas + stdlib) and ships inside
 `ba283_train_bundle.zip`, so rebuild the bundle after changing it:

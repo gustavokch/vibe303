@@ -1,6 +1,6 @@
 """Checkpoint -> ablation-metrics bridge.
 
-Loads a trained ``best.pth`` into a :class:`train.model.BA283GRU`, builds a
+Loads a trained ``best.pth`` into a :class:`train.model.BA283LSTM`, builds a
 ``Predict`` closure that operates in the dataset's NORMALIZED domain (dry scaled
 by ``INPUT_SCALE`` on input, wet scaled by ``OUTPUT_SCALE`` on target), runs the
 existing ablation metrics, and emits a results dict that
@@ -28,7 +28,7 @@ import torch
 from eval.ablation.gain_eval import Predict, Row, held_out_gain_esr, per_gain_esr
 from eval.ablation.metrics import high_band_error, resample_to
 from train.dataset import INPUT_SCALE, OUTPUT_SCALE, _resolve_path
-from train.model import BA283GRU
+from train.model import BA283LSTM
 
 
 def _read_mono(path: str) -> np.ndarray:
@@ -50,13 +50,13 @@ def load_model(
     *,
     hidden: int,
     conditioning: str = "film",
-) -> BA283GRU:
-    """Construct a :class:`BA283GRU` and load ``checkpoint`` into it (eval mode).
+) -> BA283LSTM:
+    """Construct a :class:`BA283LSTM` and load ``checkpoint`` into it (eval mode).
 
     ``weights_only=True`` + ``map_location="cpu"`` so a GPU-trained checkpoint
     loads on a CPU-only eval host without unpickling arbitrary objects.
     """
-    model = BA283GRU(hidden=hidden, conditioning=conditioning)
+    model = BA283LSTM(hidden=hidden, conditioning=conditioning)
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     model.load_state_dict(state)
     model.train(False)
@@ -69,7 +69,7 @@ def make_predict(model, *, input_scale: float, warmup: int) -> Predict:
     The returned callable takes a RAW dry signal and a gain, scales the dry by
     ``input_scale`` (column 0), broadcasts gain as column 1, runs a single
     forward pass with a fresh hidden state, and returns a 1-D numpy array with
-    the first ``warmup`` samples discarded (the GRU hidden state has not settled
+    the first ``warmup`` samples discarded (the LSTM hidden state has not settled
     there, so those samples would pollute the ESR score).
     """
 
@@ -154,6 +154,13 @@ def run_cell(
             return resample_to(predict(dry, gain), sr_from=sr_train, sr_to=sr_eval)
 
         scored_predict = _resample_wrap
+        # Score at sr_eval: the target must be downsampled through the SAME
+        # polyphase path as the pred, otherwise ESR compares half-duration,
+        # half-rate slices (pred at sr_eval vs target still at sr_train).
+        rows = [
+            (dry, gain, resample_to(target, sr_from=sr_train, sr_to=sr_eval))
+            for dry, gain, target in rows
+        ]
 
     per_gain = per_gain_esr(scored_predict, rows)
     # equal-weight per gain (ablation fairness): each gain setting counts
