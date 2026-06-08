@@ -64,8 +64,34 @@ drop. Otherwise **NO-GO** — the only remaining lever (static-pattern sparse co
 is blocked by data-dependent pivoting bit-exactly. Report numbers; user decides
 ship/extend/stop.
 
+## Result (measured 2026-06-08) — GO, SHIPPED. Best win of the effort.
+
+`gauss_solve_16` (hardcoded N=16, physical row swaps, contiguous inner loops),
+dispatched from the realtime dense path when `u == 16` (`wdf.rs:1670`). Generic
+`gauss_solve` retained for the Schur small-n call + non-16 fallback.
+
+- **Realtime instructions −4.07%** (86.184 → 82.676 B). **Realtime wall-min −5.93%**
+  (24.801 → 23.330 s, min-of-5). Wall BEATS instructions — real SIMD throughput, the
+  inverse of the get_unchecked round (−12% insns / −2% wall, ILP-hidden). This stacks
+  on top of B1's −3.9%.
+- **Fast tier unaffected** (+0.15%, noise) — correctly gated on `u == 16`; the fast
+  tier's Schur path and the small-n N-block still use the untouched generic solver.
+- **Bit-exact:** the relocated in-module `gauss_solve_16_is_bit_exact` (2000 systems:
+  diagonally-dominant, pivot-triggering 1e6 off-diagonals, near-singular proportional
+  rows, mixed 1e±6 magnitudes, all-negative) — every `b[i].to_bits()` identical and
+  the singular-bool matched. End-to-end render `cmp` byte-identical to baseline, so the
+  rust-vs-cpp ESR parity gate carries over unchanged. Full suite (36) green.
+- **objdump (elimination loop):** packed `vbroadcastsd` f → `vmulpd` (ymm) → `vsubpd`
+  (ymm), separate (NOT fused) — **zero `vfmadd…pd`**, which is exactly why output stays
+  bit-identical. Scalar `vmulsd`/`vsubsd` remain for the `col..16` remainder and the
+  back-sub reduction (kept scalar by design). The physical-swap 16-elem row memcpy also
+  vectorized; the elimination SIMD gain more than pays for it.
+
+Commits: `c9b31d2` (spike/impl) + the in-module-test/private-visibility cleanup.
+**lu_factor (fast tier) deferred to a follow-on round** (same technique applies).
+
 ## Critical files
 
-- `plugin/src/wdf.rs` — add `gauss_solve_16` + realtime dispatch; `lu_factor`
-  follow-on if the spike is GO.
-- `plugin/tests/test_wdf.rs` — `gauss_solve_16` `to_bits` equivalence test.
+- `plugin/src/wdf.rs` — `gauss_solve_16` + realtime dispatch (`wdf.rs:1670`); generic
+  `gauss_solve` retained; `gauss_solve_16_is_bit_exact` in the in-module test mod.
+  `lu_factor` follow-on round.
