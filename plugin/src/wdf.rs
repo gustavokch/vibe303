@@ -1113,7 +1113,7 @@ impl WdfModel {
     /// Dense Gaussian elimination with index-swap partial pivoting. Solves `A x = b` in place
     /// (`x` in `b`). `A` is accessed through the `row[]` permutation; `b` is swapped physically —
     /// the asymmetry is bit-identical to row-swap (`main.cpp:764-794`, commit 42b51ef).
-    pub fn gauss_solve(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
+    fn gauss_solve(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
         let mut row = [0usize; NUM_NODES];
         for (i, slot) in row.iter_mut().enumerate().take(n) {
             *slot = i;
@@ -1163,7 +1163,7 @@ impl WdfModel {
     /// same pivot selection (max-abs, `>` tie-break, scan `col+1..16`), same `f`, same operand
     /// order, same loop bounds (`col..16` / `r+1..16`), same `f == 0.0` short-circuit and
     /// `best < 1e-30` bail. Physical-swap vs index-swap differs only in memory address.
-    pub fn gauss_solve_16(a: &mut [f64], b: &mut [f64]) -> bool {
+    fn gauss_solve_16(a: &mut [f64], b: &mut [f64]) -> bool {
         const N: usize = 16;
         for col in 0..N {
             // Pivot selection: max-abs in column `col`, scan col+1..N, strict `>` tie-break.
@@ -2070,5 +2070,111 @@ mod tests {
         assert!((b[0] - 2.0).abs() < 1e-12, "x0={}", b[0]);
         assert!((b[1] - 3.0).abs() < 1e-12, "x1={}", b[1]);
         assert!((b[2] + 1.0).abs() < 1e-12, "x2={}", b[2]);
+    }
+
+    /// `gauss_solve_16` must be BIT-FOR-BIT identical to `gauss_solve(.., 16)` across a wide range
+    /// of 16x16 systems (well-conditioned, pivot-triggering, near-singular, negative, mixed
+    /// magnitudes). Physical-swap vs index-swap is bit-identical; this also guards against fma
+    /// contraction in the vectorized elimination loop (which would diverge in the last bit).
+    #[test]
+    fn gauss_solve_16_is_bit_exact() {
+        const N: usize = 16;
+        // Deterministic LCG (Numerical Recipes constants), no external crates.
+        let mut state: u64 = 0x1234_5678_9abc_def0;
+        let mut next = || -> f64 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            // top 53 bits -> [0,1)
+            ((state >> 11) as f64) / ((1u64 << 53) as f64)
+        };
+
+        // Build a 16x16 system with a chosen "flavor" controlling conditioning/magnitudes.
+        let make = |flavor: u32, next: &mut dyn FnMut() -> f64| -> ([f64; N * N], [f64; N]) {
+            let mut a = [0.0f64; N * N];
+            let mut b = [0.0f64; N];
+            for r in 0..N {
+                for c in 0..N {
+                    let base = next() * 2.0 - 1.0; // [-1,1]
+                    a[r * N + c] = match flavor {
+                        // Well-conditioned, diagonally dominant.
+                        0 => {
+                            if r == c {
+                                base + (N as f64) * 4.0
+                            } else {
+                                base
+                            }
+                        }
+                        // Pivot-triggering: huge off-diagonals, small diagonal.
+                        1 => {
+                            if r == c {
+                                base * 1e-6
+                            } else if c > r {
+                                base * 1e6
+                            } else {
+                                base
+                            }
+                        }
+                        // Near-singular-ish: two nearly-proportional rows.
+                        2 => {
+                            if r == 5 {
+                                a[(4) * N + c] * (1.0 + 1e-9) + base * 1e-12
+                            } else if r == c {
+                                base + 2.0
+                            } else {
+                                base
+                            }
+                        }
+                        // Mixed magnitudes / negatives.
+                        3 => {
+                            let scale = 10f64.powi(((next() * 12.0) as i32) - 6);
+                            base * scale
+                        }
+                        // All negative-ish with moderate diagonal.
+                        _ => {
+                            if r == c {
+                                -(base.abs() + 5.0)
+                            } else {
+                                -base.abs()
+                            }
+                        }
+                    };
+                }
+                b[r] = next() * 20.0 - 10.0;
+            }
+            (a, b)
+        };
+
+        let mut cases = 0usize;
+        for flavor in 0..5u32 {
+            for _ in 0..400 {
+                let (a0, b0) = make(flavor, &mut next);
+
+                // Reference path: gauss_solve over a 16x16 region of an N-wide buffer.
+                let mut a_ref = a0;
+                let mut b_ref = b0;
+                let ok_ref = WdfModel::gauss_solve(&mut a_ref, &mut b_ref, N);
+
+                let mut a_16 = a0;
+                let mut b_16 = b0;
+                let ok_16 = WdfModel::gauss_solve_16(&mut a_16, &mut b_16);
+
+                assert_eq!(
+                    ok_ref, ok_16,
+                    "case {cases} (flavor {flavor}): singular-bool mismatch ref={ok_ref} 16={ok_16}"
+                );
+                if ok_ref {
+                    for i in 0..N {
+                        let rb = b_ref[i].to_bits();
+                        let xb = b_16[i].to_bits();
+                        assert_eq!(
+                            rb, xb,
+                            "case {cases} (flavor {flavor}) elem {i}: bit divergence ref={:#018x} ({}) 16={:#018x} ({})",
+                            rb, b_ref[i], xb, b_16[i]
+                        );
+                    }
+                }
+                cases += 1;
+            }
+        }
+        eprintln!("gauss_solve_16_is_bit_exact: {cases} systems all bit-identical");
     }
 }
