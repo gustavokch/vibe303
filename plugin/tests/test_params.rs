@@ -9,6 +9,8 @@ fn default_params_have_expected_values() {
     assert!((p.bias.value() - 0.5).abs() < 1e-6);
     assert!((p.output_db.value() - 0.0).abs() < 1e-6);
     assert!((p.mix.value() - 100.0).abs() < 1e-6);
+    // levelNorm defaults OFF: faithful preamp gain out of the box.
+    assert!(!p.level_norm.value());
 }
 
 #[test]

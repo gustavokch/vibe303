@@ -4,12 +4,22 @@ use std::sync::Arc;
 
 pub mod delay;
 pub mod dsp;
+pub mod levelnorm;
 pub mod model;
 pub mod oversample;
 pub mod wdf;
 
 use dsp::ChannelDsp;
+use levelnorm::LevelNorm;
 use wdf::{QualityConfig, WdfModel};
+
+/// Time constant (seconds) for the per-block glide of the WDF block-rate params (circuit_gain,
+/// bias). Smooths coarse host automation steps into small per-block increments so the G0 rebuild
+/// re-settles cleanly instead of stepping. Below these epsilons the glide snaps to the target so it
+/// fully settles (no perpetual rebuilds from a never-quite-equal one-pole).
+const WDF_PARAM_TAU_S: f32 = 0.02;
+const WDF_RGAIN_EPS: f32 = 1.0e-3;
+const WDF_BIAS_EPS: f32 = 1.0e-5;
 
 /// Convert decibels to a linear gain factor.
 #[inline]
@@ -33,6 +43,13 @@ pub struct Ba283Plugin {
     /// Last WDF tier applied to the channels (block-rate). A change triggers a rebuild + snapshot
     /// re-install on each channel.
     last_tier: WdfTier,
+    /// Stereo-linked levelNorm gain tracker (shared across channels so the stereo image is
+    /// preserved). Always updated; its gain is applied only when the `level_norm` param is on.
+    level_norm: LevelNorm,
+    /// Per-block-glided WDF R_KJ gain / bias (smooth the coarse block-rate steps into the G0
+    /// rebuild). Distinct from the NeuralNet per-sample bias smoother.
+    wdf_rgain_smooth: f32,
+    wdf_bias_smooth: f32,
 }
 
 /// Which emulation runs per sample. `NeuralNet` is the default (preserves current behaviour); `Wdf`
@@ -80,8 +97,13 @@ pub struct Ba283Params {
     pub output_db: FloatParam,
     #[id = "mix"]
     pub mix: FloatParam,
-    /// R_KJ gain shunt (ohms), WDF-only. Inert for the NeuralNet backend. No smoother — consumed at
-    /// block rate via a `G0` rebuild (matches the C++ `setBias`/`setRgain`).
+    /// When on, scale the wet signal so output RMS tracks input RMS (stereo-linked, applied before
+    /// `output_db`/`mix`). Off = faithful preamp gain (the default).
+    #[id = "level_norm"]
+    pub level_norm: BoolParam,
+    /// R_KJ gain shunt (ohms), WDF-only. Inert for the NeuralNet backend. Block-rate via a `G0`
+    /// rebuild (matches the C++ `setBias`/`setRgain`); the plugin glides it per block to smooth
+    /// coarse automation steps.
     #[id = "circuit_gain"]
     pub circuit_gain: FloatParam,
 }
@@ -123,6 +145,7 @@ impl Default for Ba283Params {
             )
             .with_unit(" %")
             .with_smoother(SmoothingStyle::Linear(20.0)),
+            level_norm: BoolParam::new("Level Norm", false),
             circuit_gain: FloatParam::new(
                 "Circuit Gain",
                 220.0,
@@ -146,6 +169,9 @@ impl Default for Ba283Plugin {
             last_rgain: f32::NAN,
             last_bias: f32::NAN,
             last_tier: WdfTier::Realtime,
+            level_norm: LevelNorm::new(),
+            wdf_rgain_smooth: 220.0,
+            wdf_bias_smooth: 0.5,
         }
     }
 }
@@ -222,6 +248,11 @@ impl Plugin for Ba283Plugin {
         self.last_rgain = rgain;
         self.last_bias = bias;
         self.last_tier = tier;
+        self.wdf_rgain_smooth = rgain;
+        self.wdf_bias_smooth = bias;
+
+        // levelNorm envelope coefficient depends on the host sample rate.
+        self.level_norm.prepare(self.sample_rate);
 
         // Report the oversampler latency to the host (this nih_plug rev exposes
         // latency via InitContext::set_latency_samples; there is no
@@ -234,6 +265,7 @@ impl Plugin for Ba283Plugin {
         for ch in self.channels.iter_mut() {
             ch.reset();
         }
+        self.level_norm.reset();
     }
 
     fn process(
@@ -252,8 +284,23 @@ impl Plugin for Ba283Plugin {
         // to both channels only when changed; integrator state is preserved so the model re-settles
         // dynamically. NeuralNet blocks skip this entirely.
         if backend == InferenceBackend::Wdf {
-            let rgain = self.params.circuit_gain.value();
-            let bias = self.params.bias.value();
+            // Glide the block-rate WDF params toward their targets so a fast knob drag turns into
+            // small per-block G0 rebuilds (smooth re-settle) instead of coarse steps. Snap within an
+            // epsilon so the one-pole fully settles (no endless near-equal rebuilds).
+            let n = buffer.samples().max(1) as f32;
+            let a = 1.0 - (-(n / self.sample_rate) / WDF_PARAM_TAU_S).exp();
+            let rgain_t = self.params.circuit_gain.value();
+            let bias_t = self.params.bias.value();
+            self.wdf_rgain_smooth += a * (rgain_t - self.wdf_rgain_smooth);
+            self.wdf_bias_smooth += a * (bias_t - self.wdf_bias_smooth);
+            if (rgain_t - self.wdf_rgain_smooth).abs() < WDF_RGAIN_EPS {
+                self.wdf_rgain_smooth = rgain_t;
+            }
+            if (bias_t - self.wdf_bias_smooth).abs() < WDF_BIAS_EPS {
+                self.wdf_bias_smooth = bias_t;
+            }
+            let rgain = self.wdf_rgain_smooth;
+            let bias = self.wdf_bias_smooth;
             // Tier change: rebuild each channel at the new tier and re-install the settled snapshot
             // (no fresh warmup). Block-rate, on actual change only. Reset rgain/bias trackers so the
             // post-rebuild model picks up the current values via the cheap G0 path below.
@@ -281,19 +328,31 @@ impl Plugin for Ba283Plugin {
             }
         }
 
+        let level_norm_on = self.params.level_norm.value();
         for mut frame in buffer.iter_samples() {
             let drive = db_to_gain(self.params.drive_db.smoothed.next());
             let bias = self.params.bias.smoothed.next();
             let out_g = db_to_gain(self.params.output_db.smoothed.next());
             let mix = self.params.mix.smoothed.next() * 0.01;
+            // Stereo-linked: one gain for the whole frame (read before processing; the estimator is
+            // updated after, so it lags by one frame — negligible for a ~75 ms envelope). Applied
+            // only when on; the estimator is updated unconditionally so toggling on is seamless.
+            let norm_gain = if level_norm_on { self.level_norm.gain() } else { 1.0 };
+            let mut in_sq = 0.0f32;
+            let mut wet_sq = 0.0f32;
             for (ch, sample) in frame.iter_mut().enumerate() {
                 // AUDIO_IO_LAYOUTS only declare mono/stereo, but guard anyway.
                 if ch >= self.channels.len() {
                     break;
                 }
+                let x = *sample;
+                in_sq += x * x;
                 *sample = self.channels[ch]
-                    .process_sample(*sample, drive, bias, out_g, mix, host_ge_96k, backend);
+                    .process_sample(x, drive, bias, out_g, norm_gain, mix, host_ge_96k, backend);
+                let w = self.channels[ch].last_wet();
+                wet_sq += w * w;
             }
+            self.level_norm.update(in_sq, wet_sq);
         }
         ProcessStatus::Normal
     }

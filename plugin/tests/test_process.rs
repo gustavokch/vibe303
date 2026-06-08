@@ -2,7 +2,8 @@
 mod common;
 
 use ba283::delay::ShortDelay;
-use ba283::dsp::ChannelDsp;
+use ba283::dsp::{ChannelDsp, INPUT_FS_VOLTS};
+use ba283::model::Ba283Model;
 use ba283::InferenceBackend;
 
 #[test]
@@ -37,7 +38,7 @@ fn mix_zero_is_dry_passthrough_at_96k() {
     let mut dsp = ChannelDsp::new();
     for i in 0..256 {
         let x = (i as f32 * 0.05).sin();
-        let y = dsp.process_sample(x, 1.0, 0.5, 1.0, 0.0, true, InferenceBackend::NeuralNet);
+        let y = dsp.process_sample(x, 1.0, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::NeuralNet);
         assert!(
             (y - x).abs() < 1e-6,
             "dry passthrough failed at {i}: {y} != {x}"
@@ -54,7 +55,7 @@ fn mix_zero_dry_is_latency_aligned_sub96k() {
     let input: Vec<f32> = (0..n).map(|i| (i as f32 * 0.03).sin()).collect();
     let mut out = vec![0.0f32; n];
     for i in 0..n {
-        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 0.0, false, InferenceBackend::NeuralNet);
+        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, false, InferenceBackend::NeuralNet);
     }
     let lat = 32;
     let mut max_err = 0.0f32;
@@ -71,6 +72,29 @@ fn mix_zero_dry_is_latency_aligned_sub96k() {
 }
 
 #[test]
+fn nn_output_is_denormed_by_output_ref_over_input_fs() {
+    // The NeuralNet wet path must de-norm by `output_ref_v / INPUT_FS_VOLTS` (= x128 at the 64 V
+    // ref): recover volts, then express in the 0 dBFS == 0.5 V convention. With drive=out=norm=1
+    // and mix=100% (full wet) at >=96k, the chain output must equal a fresh model forward on the
+    // same input times that factor. A fresh ChannelDsp and a fresh model share identical initial
+    // state, so their hidden-state trajectories match sample-for-sample.
+    let mut dsp = ChannelDsp::new();
+    let mut model = Ba283Model::new_from_embedded_weights();
+    let deref = model.output_ref_v() / INPUT_FS_VOLTS;
+    assert!((deref - 128.0).abs() < 1e-3, "expected x128 de-norm, got {deref}");
+    let bias = 0.5;
+    for i in 0..256 {
+        let x = (i as f32 * 0.05).sin() * 0.4;
+        let y = dsp.process_sample(x, 1.0, bias, 1.0, 1.0, 1.0, true, InferenceBackend::NeuralNet);
+        let expected = model.forward(&[x, bias])[0] * deref;
+        assert!(
+            (y - expected).abs() <= 1e-4 * expected.abs().max(1.0),
+            "de-norm mismatch at {i}: {y} != {expected}"
+        );
+    }
+}
+
+#[test]
 fn wdf_backend_produces_finite_output() {
     // The WDF path runs the unwarmed default model here; we only assert it is finite and bounded
     // (no NaN/blowup — guarded by the Newton step-bound + gmin homotopy).
@@ -78,7 +102,7 @@ fn wdf_backend_produces_finite_output() {
     dsp.wdf_warmup(); // off-thread settle before audio
     for i in 0..256 {
         let x = (i as f32 * 0.05).sin() * 0.3;
-        let y = dsp.process_sample(x, 1.0, 0.5, 0.05, 1.0, true, InferenceBackend::Wdf);
+        let y = dsp.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf);
         assert!(y.is_finite(), "non-finite WDF output at {i}: {y}");
         assert!(y.abs() < 100.0, "WDF output blew up at {i}: {y}");
     }
@@ -95,7 +119,7 @@ fn wdf_backend_latency_aligned_sub96k() {
     let input: Vec<f32> = (0..n).map(|i| (i as f32 * 0.03).sin()).collect();
     let mut out = vec![0.0f32; n];
     for i in 0..n {
-        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 0.0, false, InferenceBackend::Wdf);
+        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, false, InferenceBackend::Wdf);
     }
     let lat = 32;
     let mut max_err = 0.0f32;
