@@ -1113,7 +1113,7 @@ impl WdfModel {
     /// Dense Gaussian elimination with index-swap partial pivoting. Solves `A x = b` in place
     /// (`x` in `b`). `A` is accessed through the `row[]` permutation; `b` is swapped physically —
     /// the asymmetry is bit-identical to row-swap (`main.cpp:764-794`, commit 42b51ef).
-    fn gauss_solve(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
+    pub fn gauss_solve(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
         let mut row = [0usize; NUM_NODES];
         for (i, slot) in row.iter_mut().enumerate().take(n) {
             *slot = i;
@@ -1153,6 +1153,62 @@ impl WdfModel {
                 s -= a[row[r] * n + c] * b[c];
             }
             b[r] = s / a[row[r] * n + r];
+        }
+        true
+    }
+
+    /// Fixed-size (n=16) specialization of [`gauss_solve`] using PHYSICAL row swaps instead of
+    /// `row[]` index indirection, so the elimination inner loop is contiguous (`a[col_base + c]`,
+    /// `a[r_base + c]`) and LLVM can autovectorize it. Bit-identical to `gauss_solve(a, b, 16)`:
+    /// same pivot selection (max-abs, `>` tie-break, scan `col+1..16`), same `f`, same operand
+    /// order, same loop bounds (`col..16` / `r+1..16`), same `f == 0.0` short-circuit and
+    /// `best < 1e-30` bail. Physical-swap vs index-swap differs only in memory address.
+    pub fn gauss_solve_16(a: &mut [f64], b: &mut [f64]) -> bool {
+        const N: usize = 16;
+        for col in 0..N {
+            // Pivot selection: max-abs in column `col`, scan col+1..N, strict `>` tie-break.
+            let mut piv = col;
+            let mut best = a[col * N + col].abs();
+            for r in (col + 1)..N {
+                let val = a[r * N + col].abs();
+                if val > best {
+                    best = val;
+                    piv = r;
+                }
+            }
+            if best < 1e-30 {
+                return false;
+            }
+            if piv != col {
+                // PHYSICAL swap of the two 16-element A rows AND the b entries.
+                for c in 0..N {
+                    a.swap(col * N + c, piv * N + c);
+                }
+                b.swap(col, piv);
+            }
+            let col_base = col * N;
+            let diag = a[col_base + col];
+            for r in (col + 1)..N {
+                let r_base = r * N;
+                let f = a[r_base + col] / diag;
+                if f == 0.0 {
+                    continue;
+                }
+                // Contiguous: matches `gauss_solve`'s `c in col..n`. Vectorizable.
+                for c in col..N {
+                    a[r_base + c] -= f * a[col_base + c];
+                }
+                b[r] -= f * b[col];
+            }
+        }
+        // Back-substitution: SCALAR reduction, same summation order as `gauss_solve`.
+        for r in (0..N).rev() {
+            let r_base = r * N;
+            let mut s = b[r];
+            for c in (r + 1)..N {
+                s -= a[r_base + c] * b[c];
+            }
+            b[r] = s / a[r_base + r];
         }
         true
     }
@@ -1609,6 +1665,9 @@ impl WdfModel {
             // or the complement is singular this iter (`main.cpp:862-867`).
             let solved = if self.solver == Solver::Schur && gmin == 0.0 && self.schur_ready {
                 self.schur_solve() || Self::gauss_solve(&mut self.j, &mut self.delta, u)
+            } else if u == 16 {
+                // Realtime tier's U: fixed-size, physical-swap specialization (bit-exact).
+                Self::gauss_solve_16(&mut self.j, &mut self.delta)
             } else {
                 Self::gauss_solve(&mut self.j, &mut self.delta, u)
             };
