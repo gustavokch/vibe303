@@ -435,9 +435,27 @@ pub struct BjtOut {
 /// Compute Gummel-Poon BJT response (`main.cpp:197-241`). `sqrt` is exact (not fast math),
 /// matching the C++ `std::sqrt`.
 pub fn compute_bjt(vbe: f64, vbc: f64, p: &BjtParams) -> BjtOut {
-    let mut o = BjtOut::default();
     let (itf, gtf) = diode_branch(vbe, p.is, p.vt, p.vcrit); // forward transport + d/dvbe
     let (itr, gtr) = diode_branch(vbc, p.is, p.vt, p.vcrit); // reverse transport + d/dvbc
+    compute_bjt_from_diode(vbe, vbc, p, itf, gtf, itr, gtr)
+}
+
+/// Transcendental-free part of [`compute_bjt`]: the Gummel-Poon qb/Early/high-injection algebra,
+/// derivatives, and node-form assembly. Takes the four diode-branch outputs as inputs instead of
+/// calling [`diode_branch`]. Byte-identical to the original `compute_bjt` body from line 441 on —
+/// same ops, same order. Split out so the diode transcendentals can be batched (autovec) while
+/// this scalar finish runs per BJT.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_bjt_from_diode(
+    vbe: f64,
+    vbc: f64,
+    p: &BjtParams,
+    itf: f64,
+    gtf: f64,
+    itr: f64,
+    gtr: f64,
+) -> BjtOut {
+    let mut o = BjtOut::default();
     o.itf = itf;
     o.gtf = gtf;
     o.itr = itr;
