@@ -7,6 +7,7 @@ import pandas as pd
 import soundfile as sf
 
 from train.stage import (
+    assert_matched_sr,
     remap_manifests,
     stage_rclone,
     stage_zip,
@@ -104,6 +105,43 @@ def test_remapped_manifest_loads_in_make_loader(tmp_path):
     x, y = next(iter(loader))
     assert x.shape[-1] == 2  # dry + conditioning column
     assert y.shape[-1] == 1
+
+
+def _write_pair_manifest(root: Path, dry_sr: int, wet_sr: int) -> Path:
+    """Write a dry/wet pair at the given rates + a manifest pointing at them."""
+    (root / "dry").mkdir(parents=True, exist_ok=True)
+    (root / "wet").mkdir(parents=True, exist_ok=True)
+    dry = root / "dry" / "sweepa_dry.wav"
+    wet = root / "wet" / "sweepa_gain1.000.wav"
+    sf.write(dry, np.sin(np.linspace(0, 6.28, dry_sr)).astype(np.float32), dry_sr)
+    sf.write(wet, np.sin(np.linspace(0, 6.28, wet_sr)).astype(np.float32), wet_sr)
+    mani = root / "train.csv"
+    pd.DataFrame([{
+        "dry_path": str(dry), "wet_path": str(wet),
+        "gain_value": 1.0, "duration_s": 1.0, "stim_kind": "sweep",
+    }]).to_csv(mani, index=False)
+    return mani
+
+
+def test_assert_matched_sr_passes_when_equal(tmp_path):
+    ds = _make_dataset(tmp_path / "dataset")  # dry+wet both 8000 Hz
+    assert assert_matched_sr(ds / "train.csv", expected_sr=8000) == 8000
+
+
+def test_assert_matched_sr_raises_on_mismatch(tmp_path):
+    import pytest
+    # The shipped bug: 96 kHz dry vs 44.1 kHz wet -> frame-misaligned -> collapse.
+    mani = _write_pair_manifest(tmp_path / "bad", dry_sr=96000, wet_sr=44100)
+    with pytest.raises(RuntimeError, match=r"sample-rate mismatch.*96000.*44100"):
+        assert_matched_sr(mani, expected_sr=None)
+
+
+def test_assert_matched_sr_enforces_expected(tmp_path):
+    import pytest
+    # Matched pair, but not the rate the run expects -> still a hard failure.
+    mani = _write_pair_manifest(tmp_path / "wrongrate", dry_sr=8000, wet_sr=8000)
+    with pytest.raises(RuntimeError, match=r"!= expected 44100"):
+        assert_matched_sr(mani, expected_sr=44100)
 
 
 def test_stage_rclone_raises_when_manifest_missing(tmp_path, monkeypatch):
