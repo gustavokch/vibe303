@@ -88,10 +88,45 @@ dispatched from the realtime dense path when `u == 16` (`wdf.rs:1670`). Generic
   vectorized; the elimination SIMD gain more than pays for it.
 
 Commits: `c9b31d2` (spike/impl) + the in-module-test/private-visibility cleanup.
-**lu_factor (fast tier) deferred to a follow-on round** (same technique applies).
+
+## Fast-tier follow-on (2026-06-08) — GO, SHIPPED. Bigger than expected.
+
+Profiled the FAST tier (`perf record`) first: `lu_factor` is **cold** (once/sample,
+amortized — not in the profile), so the named "lu_factor round" target was a
+non-lever. The real fast-tier solver hot spots are the **Schur complement
+`gauss_solve` at n=6** (12.5% self-time) and **`lu_solve` at l=10** (9%). Schur
+dims are fixed: `n_sz=6, l_sz=10, u=16`.
+
+Prediction was DUD (n=6 below SIMD break-even like the BJT-autovec dud; `lu_solve`
+is dot-product reductions → can't vectorize bit-exactly → "get_unchecked
+ILP-hidden" regime). **Prediction was wrong on the conclusion.** Neither change
+vectorizes (objdump: scalar `vmulsd`/`vsubsd`, zero packed, zero `vfmadd`) — but
+removing the `row[]`/`piv[]` **indirection** (physical row layout) + bounds checks
+is itself a real, measurable win. Distinct mechanism from the prior `get_unchecked`
+attempt, which *kept* the indirection structure; physical-swap *eliminates* it
+(fewer loads, contiguous addressing).
+
+- **`gauss_solve_6`** (fixed N=6, physical swaps; dispatched from `schur_solve` when
+  `n == 6`; generic retained): **fast −6.66%** insns (45.31→42.29 B), wall-min
+  −4.17%. Realtime unchanged. Commit `7a1c8b8`.
+- **`lu_factor_10` + `lu_solve_10`** (fixed n=10, physical-swap A_LL so `lu_solve`
+  reads contiguous; reductions stay scalar; RHS permutation in `perm[]` mirrors the
+  generic `piv[]` exactly): **fast −7.73%** insns (42.29→39.02 B). Commit `b01e01c`.
+- **Cumulative fast tier: −13.9% instructions / −8.0% wall-min** vs the post-gauss16
+  baseline. **Instructions and wall AGREE** (unlike `get_unchecked`), confirming the
+  indirection cost was real, not ILP-hidden.
+- **Bit-exact:** `gauss_solve_6_is_bit_exact` + `lu_10_is_bit_exact` (2000 systems
+  each, 5 flavors). End-to-end render `cmp` **byte-identical** for BOTH fast AND
+  realtime vs baseline. Full suite (38) green.
+
+**Lesson:** indirection removal via physical row layout is a real lever
+*independent of SIMD* — it won where vectorization couldn't fire (small n). The
+`get_unchecked` "bounds-checks are ILP-hidden" finding did NOT generalize: removing
+the index *indirection* (not just the bounds *checks*) cuts real load/address work.
 
 ## Critical files
 
-- `plugin/src/wdf.rs` — `gauss_solve_16` + realtime dispatch (`wdf.rs:1670`); generic
-  `gauss_solve` retained; `gauss_solve_16_is_bit_exact` in the in-module test mod.
-  `lu_factor` follow-on round.
+- `plugin/src/wdf.rs` — `gauss_solve_16` + realtime dispatch (`wdf.rs:1670`);
+  `gauss_solve_6` + `lu_factor_10`/`lu_solve_10` + fast-tier (Schur) dispatch;
+  generic `gauss_solve`/`lu_factor`/`lu_solve` retained for other sizes; all
+  `*_is_bit_exact` tests in the in-module test mod.
