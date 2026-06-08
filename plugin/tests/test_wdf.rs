@@ -51,6 +51,32 @@ fn fast_math_matches_std() {
     }
 }
 
+/// `depletion_charge_pre` (precomputed saturated-branch constants) must be BIT-for-bit
+/// identical to the original `depletion_charge` across both branches. Pins the 3-way
+/// duplication so a future edit to one copy can't silently break parity with the golden
+/// vectors. Sweeps `v` through the reverse (`v < FC*vj`) and saturated (`v >= FC*vj`)
+/// regions for every real device junction.
+#[test]
+fn depletion_charge_pre_is_bit_exact() {
+    // (cj0, vj, m) for BC184C be/bc and 2N3055 be/bc — the only real junctions.
+    let junctions = [
+        (14.0e-12, 0.75, 0.33),
+        (4.5e-12, 0.75, 0.33),
+        (580.2e-12, 1.2, 0.45),
+        (212.1e-12, 0.75, 0.4),
+    ];
+    for (cj0, vj, m) in junctions {
+        let (c0, q0, dcdv) = wdf::dep_sat_consts(cj0, vj, m);
+        for k in -200i32..=200 {
+            let v = k as f64 * 0.01; // spans both branches around FC*vj
+            let (q_ref, c_ref) = wdf::depletion_charge(v, cj0, vj, m);
+            let (q_pre, c_pre) = wdf::depletion_charge_pre(v, cj0, vj, m, c0, q0, dcdv);
+            assert_eq!(q_ref.to_bits(), q_pre.to_bits(), "q mismatch v={v} cj0={cj0}");
+            assert_eq!(c_ref.to_bits(), c_pre.to_bits(), "c mismatch v={v} cj0={cj0}");
+        }
+    }
+}
+
 #[test]
 fn compute_bjt_against_golden() {
     // BC184C (TR1/TR2 card) and Q2N3055 (TR3 card) at fixed (vbe, vbc) points captured from the

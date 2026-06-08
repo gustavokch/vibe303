@@ -77,7 +77,7 @@ pub struct BjtParams {
 
 /// Precompute (c0, q0, dcdv) for the depletion_charge saturated branch (f0 = 1-FC = 0.5).
 /// MUST use the exact same expressions/order as depletion_charge's else branch for bit-exactness.
-fn dep_sat_consts(cj0: f64, vj: f64, m: f64) -> (f64, f64, f64) {
+pub fn dep_sat_consts(cj0: f64, vj: f64, m: f64) -> (f64, f64, f64) {
     const FC: f64 = 0.5;
     if cj0 <= 0.0 {
         return (0.0, 0.0, 0.0);
