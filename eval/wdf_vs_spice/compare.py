@@ -44,6 +44,8 @@ WDF_CRASHES: list[str] = []
 # Stimuli that crashed at least once but succeeded on a later retry.
 WDF_RECOVERED: list[str] = []
 WDF_RETRIES = 3
+# Tier preset passed to the WDF binary (--quality). None = binary default (high, os=4).
+WDF_QUALITY: str | None = None
 # (stim, gain_norm) SPICE points that failed (e.g. ngspice memory cap on ~5 s sims).
 SPICE_FAILURES: list[str] = []
 SPICE_RETRIES = 2
@@ -101,7 +103,7 @@ def try_run_wdf(dry_path: Path, rgain: float, bias: float) -> np.ndarray | None:
     last_err = ""
     for attempt in range(1, WDF_RETRIES + 1):
         try:
-            out, _ = run_wdf(dry_path, rgain=rgain, bias=bias)
+            out, _ = run_wdf(dry_path, rgain=rgain, bias=bias, quality=WDF_QUALITY)
             out = out.astype(np.float64)
             if not np.all(np.isfinite(out)):
                 last_err = "non-finite output"
@@ -367,7 +369,7 @@ def _overlay(ref: np.ndarray, mod: np.ndarray, label: str, out_dir: Path,
 
 
 def main() -> None:
-    global BIAS
+    global BIAS, WDF_QUALITY
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--stims", default=",".join(DEFAULT_STIMS),
@@ -379,9 +381,13 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("eval/wdf_vs_spice/out"))
     ap.add_argument("--no-build", action="store_true",
                     help="never rebuild ba283_sim; use the binary on disk as-is.")
+    ap.add_argument("--quality", default=None,
+                    help="WDF tier preset (--quality): realtime/fast/ultra-fast/high. "
+                         "Default keeps the binary's own default (high, os=4).")
     args = ap.parse_args()
 
     BIAS = args.bias
+    WDF_QUALITY = args.quality
     args.out.mkdir(parents=True, exist_ok=True)
     build_if_needed(allow_build=not args.no_build)
 
@@ -391,6 +397,7 @@ def main() -> None:
     print("=" * 64)
     print("WDF (full-chain MNA) vs SPICE — GAIN-conditioned evaluation")
     print(f"  bias (fixed) : {BIAS}")
+    print(f"  WDF tier     : {WDF_QUALITY or 'high (binary default, os=4)'}")
     print(f"  gain grid    : {gains} (gain_norm → R_KJ via netlist)")
     print(f"  stimuli      : {stims}")
     print(f"  metric       : raw-volts ESR, |lag|<={SPAN}, {ONSET_SKIP}s onset-skip")
@@ -409,6 +416,7 @@ def main() -> None:
 
     summary = {
         "config": {"bias_fixed": BIAS, "gain_norm_grid": gains, "stims": stims,
+                   "wdf_tier": WDF_QUALITY or "high(os=4,default)",
                    "max_lag_samples": SPAN, "onset_skip_s": ONSET_SKIP,
                    "metric": "raw-volts ESR (dB), 0.5s onset-skipped",
                    "spice": "on-the-fly from data_gen/netlist.py (corrected EX/10283)"},

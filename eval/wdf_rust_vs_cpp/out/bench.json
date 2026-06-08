@@ -1,46 +1,63 @@
 {
   "config": {
-    "stim": "sweep_m6",
-    "audio_dur_s": 9.0,
+    "stim": "sweep_m3",
+    "audio_dur_s": 7.45,
     "gain_norm": 0.5,
     "rgain_ohm": 905.5385138137417,
     "bias": 0.77,
     "runs": 5,
     "warmup": 1,
-    "note": "both os=2, native opt, single-thread; wall incl. warmup+I/O"
+    "note": "realtime/fast os=2, ultra-fast os=1+no-decimate; native opt, single-thread; wall incl. warmup+I/O"
   },
   "results": {
     "cpp/realtime": {
-      "wall_s": 21.973987543000476,
-      "rt_factor": 2.4415541714444973,
-      "avg_iters": 2.45647,
+      "wall_s": 19.459387974013225,
+      "rt_factor": 2.611998385773587,
+      "avg_iters": 2.5223,
       "max_iters": 4
     },
     "cpp/fast": {
-      "wall_s": 13.145281662000343,
-      "rt_factor": 1.4605868513333715,
-      "avg_iters": 2.21487,
-      "max_iters": 4
+      "wall_s": 11.433943152005668,
+      "rt_factor": 1.5347574700678748,
+      "avg_iters": 2.25469,
+      "max_iters": 5
+    },
+    "cpp/ultra-fast": {
+      "wall_s": 6.1693775939929765,
+      "rt_factor": 0.8281043750326142,
+      "avg_iters": 2.38836,
+      "max_iters": 5
     },
     "rust/realtime": {
-      "wall_s": 25.55893344800006,
-      "rt_factor": 2.839881494222229,
-      "avg_iters": 2.456,
+      "wall_s": 19.398466861006455,
+      "rt_factor": 2.6038210551686514,
+      "avg_iters": 2.522,
       "max_iters": 4
     },
     "rust/fast": {
-      "wall_s": 14.48169825199966,
-      "rt_factor": 1.6090775835555178,
-      "avg_iters": 2.215,
-      "max_iters": 4
+      "wall_s": 11.22016033998807,
+      "rt_factor": 1.5060617906024254,
+      "avg_iters": 2.255,
+      "max_iters": 5
+    },
+    "rust/ultra-fast": {
+      "wall_s": 5.740978652000194,
+      "rt_factor": 0.7706011613423079,
+      "avg_iters": 2.388,
+      "max_iters": 5
     }
   },
   "fast_speedup": {
-    "rust": 1.7649127197130237,
-    "cpp": 1.6716254628854146
+    "rust": 1.7288939082154935,
+    "cpp": 1.701896512455529
+  },
+  "ultra_over_fast": {
+    "rust": 1.954398547724767,
+    "cpp": 1.8533381978659749
   },
   "rust_over_cpp": {
-    "realtime": 1.163144986679558,
-    "fast": 1.1016651163787958
+    "realtime": 0.9968693201919748,
+    "fast": 0.9813027921185618,
+    "ultra-fast": 0.9305604276175433
   }
 }

@@ -1,0 +1,139 @@
+{
+  "config": {
+    "bias_fixed": 0.77,
+    "gain_norm_grid": [
+      0.0,
+      0.5,
+      1.0
+    ],
+    "stims": [
+      "pink_m3_s0",
+      "sweep_m3",
+      "music3_08 - Shed - Rave Echoes_m1"
+    ],
+    "wdf_tier": "realtime",
+    "max_lag_samples": 64,
+    "onset_skip_s": 0.5,
+    "metric": "raw-volts ESR (dB), 0.5s onset-skipped",
+    "spice": "on-the-fly from data_gen/netlist.py (corrected EX/10283)"
+  },
+  "model": "full-chain BA283 (TR1+TR2+TR3+LO1166), nodal MNA + Newton, gain-conditioned",
+  "wdf_stability": {
+    "crashed_stimuli": [],
+    "recovered_on_retry": [],
+    "retry_budget": 3
+  },
+  "spice_failures": {
+    "points": [],
+    "note": "ngspice memory cap on ~5 s 96 kHz\u00d72 sims (affects gain_validate.py too)."
+  },
+  "frequency_response": {
+    "stimulus": "pink_m3_s0",
+    "gain_norm": 0.5,
+    "rkj_ohm": 905.5,
+    "max_err_db_20Hz_20kHz": 0.6,
+    "max_err_db_midband_200_5k": 0.01,
+    "mean_coherence_midband": 1.0
+  },
+  "gain_ladder": {
+    "pink_m3_s0": [
+      {
+        "gain_norm": 0.0,
+        "rkj_ohm": 10000.0,
+        "esr_db": -25.16,
+        "nrmse": 0.0035,
+        "rms_db": 0.02,
+        "ref_pk": 1.31,
+        "mod_pk": 1.31
+      },
+      {
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -25.58,
+        "nrmse": 0.0032,
+        "rms_db": 0.02,
+        "ref_pk": 2.192,
+        "mod_pk": 2.184
+      },
+      {
+        "gain_norm": 1.0,
+        "rkj_ohm": 82.0,
+        "esr_db": -25.16,
+        "nrmse": 0.003,
+        "rms_db": 0.01,
+        "ref_pk": 9.309,
+        "mod_pk": 9.424
+      }
+    ],
+    "sweep_m3": [
+      {
+        "gain_norm": 0.0,
+        "rkj_ohm": 10000.0,
+        "esr_db": -24.45,
+        "nrmse": 0.0198,
+        "rms_db": 0.02,
+        "ref_pk": 1.939,
+        "mod_pk": 1.894
+      },
+      {
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -24.75,
+        "nrmse": 0.0193,
+        "rms_db": 0.01,
+        "ref_pk": 3.368,
+        "mod_pk": 3.356
+      },
+      {
+        "gain_norm": 1.0,
+        "rkj_ohm": 82.0,
+        "esr_db": -26.16,
+        "nrmse": 0.0159,
+        "rms_db": 0.0,
+        "ref_pk": 16.125,
+        "mod_pk": 16.122
+      }
+    ],
+    "music3_08 - Shed - Rave Echoes_m1": [
+      {
+        "gain_norm": 0.0,
+        "rkj_ohm": 10000.0,
+        "esr_db": -38.58,
+        "nrmse": 0.0018,
+        "rms_db": -0.0,
+        "ref_pk": 2.361,
+        "mod_pk": 2.362
+      },
+      {
+        "gain_norm": 0.5,
+        "rkj_ohm": 905.5,
+        "esr_db": -38.96,
+        "nrmse": 0.0017,
+        "rms_db": -0.0,
+        "ref_pk": 4.186,
+        "mod_pk": 4.187
+      },
+      {
+        "gain_norm": 1.0,
+        "rkj_ohm": 82.0,
+        "esr_db": -39.36,
+        "nrmse": 0.0016,
+        "rms_db": -0.0,
+        "ref_pk": 20.737,
+        "mod_pk": 20.732
+      }
+    ]
+  },
+  "esr_summary_db": {
+    "median": -25.58,
+    "best": -39.36,
+    "worst": -24.45,
+    "n_points": 9
+  },
+  "notes": [
+    "Dataset is conditioned on GAIN at fixed bias 0.77 (the corrected netlist).",
+    "SPICE wet is regenerated per point from data_gen/netlist.py \u2014 no stale pre-rendered set.",
+    "ESR is time-domain L2 (phase-sensitive on clean broadband/sweeps); the Welch FR + coherence is the authoritative linear-fidelity check.",
+    "First 0.5 s skipped: SPICE starts from .op steady-state, the model from a rail-ramp warmup \u2014 a switch-on artifact a streaming plugin never sees."
+  ]
+}

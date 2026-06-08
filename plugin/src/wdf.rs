@@ -73,6 +73,9 @@ pub struct BjtParams {
     pub jc_c0: f64,
     pub jc_q0: f64,
     pub jc_dcdv: f64, // base-collector (cjc,vjc,mjc)
+    // Ultra-fast tier: use the cheap low-order `ultra_exp` in `diode_branch`. Set from
+    // `QualityConfig::cheap_exp` at build; false at realtime/fast (near-exact `fast_exp`).
+    pub cheap_exp: bool,
 }
 
 /// Precompute (c0, q0, dcdv) for the depletion_charge saturated branch (f0 = 1-FC = 0.5).
@@ -292,6 +295,30 @@ pub fn fast_exp(x: f64) -> f64 {
     p * pk
 }
 
+/// Cheap `exp` for the ultra-fast tier: same range reduction + IEEE-754 exponent assembly as
+/// [`fast_exp`], but a 4th-order Taylor on the reduced argument (|r| <= ln2/2 ~ 0.347), so the
+/// truncation is ~r^5/120 ~ 4e-5 relative — well inside the ultra-fast error budget while saving
+/// five Horner terms per call. The exponent guards are identical (reverse-biased junctions push
+/// k very negative). Used only when `QualityConfig::cheap_exp` is set.
+#[inline]
+pub fn ultra_exp(x: f64) -> f64 {
+    const LN2: f64 = 0.6931471805599453;
+    const INV_LN2: f64 = 1.4426950408889634;
+    let kf = (x * INV_LN2 + 0.5).floor();
+    let k = kf as i32;
+    let r = x - kf * LN2;
+    let p = 1.0 + r * (1.0 + r * (1.0 / 2.0 + r * (1.0 / 6.0 + r * (1.0 / 24.0))));
+    if k <= -1023 {
+        return 0.0;
+    }
+    if k >= 1024 {
+        return p * f64::INFINITY;
+    }
+    let u: u64 = ((k + 1023) as u64) << 52;
+    let pk = f64::from_bits(u);
+    p * pk
+}
+
 /// `log` via IEEE-754 exponent decomposition + atanh series (`main.cpp:130-142`).
 #[inline]
 pub fn fast_log(x: f64) -> f64 {
@@ -397,12 +424,13 @@ pub fn depletion_charge_pre(
 /// Diode current + conductance, linearized beyond `vcrit` for Newton stability (SPICE pnjlim
 /// spirit). Returns `(i, g)` (`main.cpp:174-187`).
 #[inline]
-pub fn diode_branch(v: f64, is: f64, vt: f64, vcrit: f64) -> (f64, f64) {
+pub fn diode_branch(v: f64, is: f64, vt: f64, vcrit: f64, cheap_exp: bool) -> (f64, f64) {
+    let expf = |z: f64| if cheap_exp { ultra_exp(z) } else { exp_(z) };
     if v < vcrit {
-        let e = exp_(v / vt);
+        let e = expf(v / vt);
         (is * (e - 1.0), (is / vt) * e)
     } else {
-        let ec = exp_(vcrit / vt);
+        let ec = expf(vcrit / vt);
         let icrit = is * (ec - 1.0);
         let gcrit = (is / vt) * ec;
         (icrit + gcrit * (v - vcrit), gcrit) // C1-continuous linear extension
@@ -436,8 +464,8 @@ pub struct BjtOut {
 /// matching the C++ `std::sqrt`.
 pub fn compute_bjt(vbe: f64, vbc: f64, p: &BjtParams) -> BjtOut {
     let mut o = BjtOut::default();
-    let (itf, gtf) = diode_branch(vbe, p.is, p.vt, p.vcrit); // forward transport + d/dvbe
-    let (itr, gtr) = diode_branch(vbc, p.is, p.vt, p.vcrit); // reverse transport + d/dvbc
+    let (itf, gtf) = diode_branch(vbe, p.is, p.vt, p.vcrit, p.cheap_exp); // forward transport + d/dvbe
+    let (itr, gtr) = diode_branch(vbc, p.is, p.vt, p.vcrit, p.cheap_exp); // reverse transport + d/dvbc
     o.itf = itf;
     o.gtf = gtf;
     o.itr = itr;
@@ -543,6 +571,18 @@ pub struct QualityConfig {
     pub freeze_caps: bool,
     /// Deferred-acceptance line search (`--ls-trim`). Lossless.
     pub ls_trim: bool,
+    /// Cheap low-order (`ultra_exp`, ~1e-4 rel) transport exponential instead of the
+    /// near-exact `fast_exp` (`--cheap-exp`). Lossy: perturbs the BJT operating point
+    /// slightly (small DC/gain bias). Ultra-fast tier only.
+    pub cheap_exp: bool,
+    /// Internal oversampling factor (host_rate × os = solve rate). 2 at realtime/fast; the
+    /// ultra-fast tier drops to 1 (`--os 1`) — the dominant speed lever (halves the solve rate),
+    /// lossy via reduced nonlinear-harmonic antialiasing. Gated vs SPICE, not vs realtime.
+    pub os: usize,
+    /// Apply the output decimation biquads. At `os > 1` these are the antialiasing decimator and
+    /// MUST stay on; at `os == 1` there is nothing to decimate, so they only add phase/group delay
+    /// — bypassing (`--no-decimate`) can recover some of the os=1 fidelity cost. Default on.
+    pub decimate: bool,
 }
 
 impl QualityConfig {
@@ -555,6 +595,9 @@ impl QualityConfig {
             solver: Solver::Dense,
             freeze_caps: false,
             ls_trim: false,
+            cheap_exp: false,
+            os: OS,
+            decimate: true,
         }
     }
     pub fn fast() -> Self {
@@ -564,6 +607,24 @@ impl QualityConfig {
             freeze_caps: true,
             ls_trim: true,
             ..Self::realtime()
+        }
+    }
+    /// Ultra-fast tier: `fast()` + internal oversampling dropped 2→1 (the dominant speed lever, ≈2×
+    /// over fast) with the output decimation bypassed. The `eval/wdf_ultrafast` measure-first sweep
+    /// showed the per-iteration / iteration-count levers (looser tol, capped iters, depletion-only
+    /// caps, no-ls-trim, cheap exp) buy almost no speed — predict warm-start already pins
+    /// avgIters≈1.8 — so the OS drop is the only lever that reaches the 1.5–2× target. Naively os=1
+    /// costs ~3 dB ESR vs SPICE; but the os=2 decimation biquads (43 kHz Butterworth) themselves
+    /// deviate from the circuit's true HF response, so at os=1 — where there is nothing to decimate
+    /// — bypassing them (`decimate=false`) makes it *better* than realtime: ESR −30 to −36 dB vs
+    /// SPICE (realtime −25 to −26) across pink/sweep at gains 0.5/1.0, coherence 1.0. The cheap
+    /// low-order exp is left OFF (it only perturbs the operating point for ~3 % speed). Newton
+    /// tol/iters stay at the `fast` values.
+    pub fn ultra_fast() -> Self {
+        Self {
+            os: 1,
+            decimate: false,
+            ..Self::fast()
         }
     }
 }
@@ -640,6 +701,8 @@ pub struct WdfModel {
     solver: Solver,
     freeze_caps: bool,
     ls_trim: bool,
+    os: usize, // internal oversampling factor (host_rate * os = solve rate); 2 normally, 1 ultra-fast
+    decimate: bool, // apply output decimation biquads (needless at os==1)
 
     // Newton predictor: cross-sample voltage extrapolation (audio pass only).
     v_pred_prev: [f64; NUM_NODES], // sol(n-2) for the unknown nodes
@@ -826,8 +889,10 @@ impl WdfModel {
         caps[..n_caps].copy_from_slice(&cv);
 
         // --- BJTs (RB off: external base directly) ---
-        let bc = bc184c();
-        let q = q2n3055();
+        let mut bc = bc184c();
+        let mut q = q2n3055();
+        bc.cheap_exp = cfg.cheap_exp; // ultra-fast tier: low-order transport exp
+        q.cheap_exp = cfg.cheap_exp;
         let bjts = [
             Bjt::new(N_TR1_B, N_TR1_E, N_TR1_C, bc), // TR1
             Bjt::new(N_TR1_C, N_TR2_E, N_F, bc),     // TR2 (base = TR1_C, collector = F)
@@ -877,6 +942,8 @@ impl WdfModel {
             solver: cfg.solver,
             freeze_caps: cfg.freeze_caps,
             ls_trim: cfg.ls_trim,
+            os: cfg.os.max(1),
+            decimate: cfg.decimate,
             v_pred_prev: [0.0; NUM_NODES],
             predict_primed: false,
             in_audio_pass: false,
@@ -918,7 +985,7 @@ impl WdfModel {
 
     /// Like [`new`], but with an explicit [`QualityConfig`] (tier/lever selection).
     pub fn new_with(cfg: QualityConfig, host_sr: f64, rgain: f64, bias: f64) -> Self {
-        let internal_sr = host_sr * OS as f64;
+        let internal_sr = host_sr * cfg.os.max(1) as f64;
         let mut m = Self::build_with(cfg, internal_sr, rgain, bias);
         let fc = 0.45 * host_sr;
         m.dec1.set_lowpass(fc, internal_sr, 0.54119610);
@@ -1994,8 +2061,8 @@ impl WdfModel {
                 let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
                 let vbe = self.node_v(t.b) - self.node_v(t.e);
                 let vbc = self.node_v(t.b) - self.node_v(t.c);
-                let (i_be, _) = diode_branch(vbe, t.p.is, t.p.vt, t.p.vcrit);
-                let (i_bc, _) = diode_branch(vbc, t.p.is, t.p.vt, t.p.vcrit);
+                let (i_be, _) = diode_branch(vbe, t.p.is, t.p.vt, t.p.vcrit, t.p.cheap_exp);
+                let (i_bc, _) = diode_branch(vbc, t.p.is, t.p.vt, t.p.vcrit, t.p.cheap_exp);
                 let (qbe_dep, _) =
                     depletion_charge_pre(vbe, t.p.cje, t.p.vje, t.p.mje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv);
                 let (qbc_dep, _) =
@@ -2089,14 +2156,18 @@ impl WdfModel {
         self.in_audio_pass = true;
         let cur_in = x as f64;
         let mut decimated = 0.0;
-        for j in 0..OS {
-            let frac = (j + 1) as f64 / OS as f64; // linear-interpolate upsample
+        for j in 0..self.os {
+            let frac = (j + 1) as f64 / self.os as f64; // linear-interpolate upsample
             self.v[node::N_INPUT as usize] = self.prev_in + (cur_in - self.prev_in) * frac;
             self.process();
-            let y = self
-                .dec2
-                .process(self.dec1.process(self.v[node::N_SEC_IN as usize] - self.sec_in_dc));
-            decimated = y; // keep last filtered subsample
+            let tap = self.v[node::N_SEC_IN as usize] - self.sec_in_dc;
+            // At os>1 the biquads are the antialiasing decimator; at os==1 they only add phase, so
+            // `decimate=false` bypasses them (the `--no-decimate` ultra-fast lever).
+            decimated = if self.decimate {
+                self.dec2.process(self.dec1.process(tap))
+            } else {
+                tap
+            };
         }
         self.prev_in = cur_in;
         decimated as f32
@@ -2202,6 +2273,47 @@ impl WdfModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ultra_exp_within_budget() {
+        // ultra_exp must stay within ~1e-4 relative over the transport-exp operating range
+        // (v/vt up to ~vcrit/vt ~ 28 forward; reverse-biased args go very negative -> ~0).
+        let mut worst = 0.0f64;
+        let mut x = -40.0;
+        while x <= 30.0 {
+            let a = ultra_exp(x);
+            let e = x.exp();
+            if e > 1e-12 {
+                worst = worst.max(((a - e) / e).abs());
+            }
+            x += 0.01;
+        }
+        assert!(worst < 1e-4, "ultra_exp worst rel err {worst:e} exceeds 1e-4 budget");
+        // exponent guards match fast_exp (no garbage for very negative k).
+        assert_eq!(ultra_exp(-1000.0), 0.0);
+    }
+
+    #[test]
+    fn ultra_fast_preset_drops_os_and_decimation() {
+        let cfg = QualityConfig::ultra_fast();
+        assert_eq!(cfg.os, 1, "ultra-fast must solve at os=1");
+        assert!(!cfg.decimate, "ultra-fast must bypass the needless decimation");
+        assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
+                "ultra-fast inherits the fast-tier levers");
+        // The model picks the levers up: os=1 halves the internal solve rate vs realtime.
+        let host = 48_000.0;
+        let rt = WdfModel::new_with(QualityConfig::realtime(), host, 220.0, 0.5);
+        let uf = WdfModel::new_with(cfg, host, 220.0, 0.5);
+        assert_eq!(rt.os, 2);
+        assert_eq!(uf.os, 1);
+        assert!(!uf.decimate);
+        // ultra-fast still produces finite output (no NaN/instability) on a quick ramp.
+        let mut m = uf;
+        for i in 0..256 {
+            let y = m.process_host_sample((i as f32 / 256.0) * 0.4 - 0.2);
+            assert!(y.is_finite(), "ultra-fast output non-finite at sample {i}");
+        }
+    }
 
     #[test]
     fn gauss_solve_3x3() {

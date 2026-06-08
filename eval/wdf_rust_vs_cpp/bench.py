@@ -39,7 +39,7 @@ from eval.wdf_rust_vs_cpp.run_rust_wdf import (
     REPO, BINARY as RUST_BIN, build_if_needed as build_rust, parse_newton as parse_rust,
 )
 
-TIERS = ("realtime", "fast")
+TIERS = ("realtime", "fast", "ultra-fast")
 
 
 def build_cpp_native() -> None:
@@ -127,10 +127,13 @@ def main() -> None:
     summary = {
         "config": {"stim": args.stim, "audio_dur_s": audio_dur, "gain_norm": args.gain,
                    "rgain_ohm": rgain, "bias": args.bias, "runs": args.runs, "warmup": args.warmup,
-                   "note": "both os=2, native opt, single-thread; wall incl. warmup+I/O"},
+                   "note": "realtime/fast os=2, ultra-fast os=1+no-decimate; native opt, "
+                           "single-thread; wall incl. warmup+I/O"},
         "results": results,
         "fast_speedup": {lang: results[f"{lang}/realtime"]["rt_factor"] / results[f"{lang}/fast"]["rt_factor"]
                          for lang in ("rust", "cpp")},
+        "ultra_over_fast": {lang: results[f"{lang}/fast"]["rt_factor"] / results[f"{lang}/ultra-fast"]["rt_factor"]
+                            for lang in ("rust", "cpp")},
         "rust_over_cpp": {tier: results[f"rust/{tier}"]["rt_factor"] / results[f"cpp/{tier}"]["rt_factor"]
                           for tier in TIERS},
     }
@@ -139,12 +142,15 @@ def main() -> None:
     print(f"\nstim={args.stim} ({audio_dur:.1f}s @ {info.samplerate} Hz), "
           f"gain_norm={args.gain} (R_KJ={rgain:.0f} Ω), min of {args.runs} runs\n")
     print(f"{'config':14s} {'wall(s)':>8s} {'rt-factor':>10s} {'avgIters':>9s} {'maxIters':>9s}")
-    for key in ("cpp/realtime", "rust/realtime", "cpp/fast", "rust/fast"):
+    for key in ("cpp/realtime", "rust/realtime", "cpp/fast", "rust/fast",
+                "cpp/ultra-fast", "rust/ultra-fast"):
         r = results[key]
         print(f"{key:14s} {r['wall_s']:8.3f} {r['rt_factor']:10.4f} "
               f"{r.get('avg_iters', float('nan')):9.3f} {r.get('max_iters', -1):9d}")
     print("\nfast/realtime speedup:  " +
           "  ".join(f"{lang}={summary['fast_speedup'][lang]:.2f}x" for lang in ("rust", "cpp")))
+    print("ultra/fast speedup:     " +
+          "  ".join(f"{lang}={summary['ultra_over_fast'][lang]:.2f}x" for lang in ("rust", "cpp")))
     print("rust/cpp rt-factor:     " +
           "  ".join(f"{tier}={summary['rust_over_cpp'][tier]:.2f}x" for tier in TIERS))
     print(f"\nwrote {out_dir/'bench.json'}")
