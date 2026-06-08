@@ -154,6 +154,13 @@ def run_cell(
             return resample_to(predict(dry, gain), sr_from=sr_train, sr_to=sr_eval)
 
         scored_predict = _resample_wrap
+        # Score at sr_eval: the target must be downsampled through the SAME
+        # polyphase path as the pred, otherwise ESR compares half-duration,
+        # half-rate slices (pred at sr_eval vs target still at sr_train).
+        rows = [
+            (dry, gain, resample_to(target, sr_from=sr_train, sr_to=sr_eval))
+            for dry, gain, target in rows
+        ]
 
     per_gain = per_gain_esr(scored_predict, rows)
     # equal-weight per gain (ablation fairness): each gain setting counts

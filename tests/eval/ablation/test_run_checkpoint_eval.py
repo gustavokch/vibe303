@@ -181,6 +181,41 @@ def test_run_cell_resampled_path_populates_aliasing(tmp_path):
     assert isinstance(cell["val_esr"], float)
 
 
+def test_run_cell_rescaled_scores_both_operands_resampled(tmp_path):
+    # Regression: the C4 cross-rate path must resample BOTH pred and target to
+    # sr_eval before ESR. Scoring a resampled pred against a target still at
+    # sr_train compares half-duration, half-rate slices and corrupts val_esr.
+    from eval.ablation.metrics import esr, resample_to
+
+    gains = [0.0, 0.5, 1.0]
+    warmup = 256
+    ckpt, manifest, hidden = _make_fixture(tmp_path, gains, sr=88200)
+
+    cell = run_cell(
+        ckpt,
+        manifest,
+        hidden=hidden,
+        cell="c4",
+        trained_gains=set(gains),
+        sr_train=88200,
+        sr_eval=44100,
+        warmup=warmup,
+    )
+
+    # independent reference: resample both operands to sr_eval, equal-weight gains
+    model = load_model(ckpt, hidden=hidden)
+    predict = make_predict(model, input_scale=INPUT_SCALE, warmup=warmup)
+    rows = build_rows(pd.read_csv(manifest), output_scale=OUTPUT_SCALE, warmup=warmup)
+    per_gain = {}
+    for dry, g, target in rows:
+        p = resample_to(predict(dry, g), sr_from=88200, sr_to=44100)
+        t = resample_to(target, sr_from=88200, sr_to=44100)
+        per_gain[g] = esr(p, t)
+    expected = float(np.mean(list(per_gain.values())))
+
+    assert cell["val_esr"] == pytest.approx(expected, rel=1e-6)
+
+
 def test_main_writes_json_consumable_by_report(tmp_path):
     import json
 
