@@ -1,0 +1,50 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 95K of event 'task-clock:u'
+# Event count (approx.): 23788000000
+#
+# Overhead  Command          Shared Object     Symbol                                  
+# ........  ...............  ................  ........................................
+#
+    52.89%  ba283_standalon  ba283_standalone  [.] ba283::wdf::WdfModel::newton_iterate
+            |          
+            |--21.68%--newton_iterate (inlined)
+            |          |          
+            |           --21.67%--process (inlined)
+            |                     |          
+            |                     |--19.02%--process_host_sample (inlined)
+            |                     |          process_sample (inlined)
+            |                     |          main (inlined)
+            |                     |          
+            |                      --2.19%--idle_settle (inlined)
+            |                                warmup (inlined)
+            |                                wdf_warmup (inlined)
+            |                                main (inlined)
+            |          
+            |--8.32%--schur_solve (inlined)
+            |          newton_iterate (inlined)
+            |          process (inlined)
+            |          |          
+            |          |--7.54%--process_host_sample (inlined)
+            |          |          process_sample (inlined)
+            |          |          main (inlined)
+            |          |          
+            |           --0.61%--idle_settle (inlined)
+            |                     warmup (inlined)
+            |                     wdf_warmup (inlined)
+            |                     main (inlined)
+            |          
+            |--6.37%--gauss_solve_6 (inlined)
+            |          schur_solve (inlined)
+            |          newton_iterate (inlined)
+            |          process (inlined)
+            |          |          
+            |           --5.79%--process_host_sample (inlined)
+            |                     process_sample (inlined)
+            |                     main (inlined)
+            |          
+            |--4.36%--{closure#0} (inlined)
+            |          diode_branch (inlined)
