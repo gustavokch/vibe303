@@ -643,6 +643,10 @@ pub fn compute_bjt(vbe: f64, vbc: f64, p: &BjtParams) -> BjtOut {
 /// Generic over `const FMA: bool`: `FMA=false` is bit-identical to the pre-T3 scalar reference
 /// (every conversion is `coeff + a*b` ≡ `a*b + coeff`, or `c - a*b` ≡ `(-a)*b + c`, both exact
 /// under FP add-commutativity / exact negation). `FMA=true` fuses to `vfmadd` (lossy fast/ultra).
+///
+/// Production-dead since the post-exp algebra was width-4 batched into [`compute_bjt_preexp_batch`];
+/// retained under `#[cfg(test)]` as the scalar reference for `compute_bjt_preexp_batch_is_bit_exact`.
+#[cfg(test)]
 #[inline(always)]
 fn compute_bjt_preexp<const FMA: bool>(vbe: f64, vbc: f64, p: &BjtParams, ef: f64, er: f64, ec: f64) -> BjtOut {
     let inv_vt_is = p.is / p.vt;
@@ -701,6 +705,89 @@ fn compute_bjt_preexp<const FMA: bool>(vbe: f64, vbc: f64, p: &BjtParams, ef: f6
     }
 }
 
+/// Width-4 SoA mirror of [`compute_bjt_preexp`] — the post-exp Gummel-Poon algebra (currents +
+/// 16-field Jacobian) for 3 BJTs at once (lane 3 = padding, never scattered). Reuses the
+/// caller's already-batched `ef4/er4/ec4` (NO exp recompute — the reverted `b6e5d59` diode batch
+/// lost precisely because it doubled the exp work; this batches only the divide-/sqrt-heavy tail).
+/// Params are extracted into `[f64;4]` SoA (stride-8 loads) so LLVM SLP-fuses the 4 lanes into
+/// AVX2 packed `vdivpd`/`vsqrtpd`/`vmulpd`. Bit-exact with `compute_bjt_preexp` at `FMA=false`
+/// (same per-lane op tree); guarded by `compute_bjt_preexp_batch_is_bit_exact`.
+#[inline]
+fn compute_bjt_preexp_batch<const FMA: bool>(
+    vbe: &[f64; 4],
+    vbc: &[f64; 4],
+    bjts: &[Bjt; 3],
+    ef: &[f64; 4],
+    er: &[f64; 4],
+    ec: &[f64; 4],
+) -> BjtOutSoA {
+    // Extract params to SoA. Lane 3 = safe defaults (finite, never scattered).
+    let is4    = [bjts[0].p.is,    bjts[1].p.is,    bjts[2].p.is,    1e-14];
+    let vt4    = [bjts[0].p.vt,    bjts[1].p.vt,    bjts[2].p.vt,    0.02585];
+    let vcrit4 = [bjts[0].p.vcrit, bjts[1].p.vcrit, bjts[2].p.vcrit, 0.0];
+    let vaf4   = [bjts[0].p.vaf,   bjts[1].p.vaf,   bjts[2].p.vaf,   0.0];
+    let var4   = [bjts[0].p.var,   bjts[1].p.var,   bjts[2].p.var,   0.0];
+    let ikf4   = [bjts[0].p.ikf,   bjts[1].p.ikf,   bjts[2].p.ikf,   0.0];
+    let ikr4   = [bjts[0].p.ikr,   bjts[1].p.ikr,   bjts[2].p.ikr,   0.0];
+    let bf4    = [bjts[0].p.bf,    bjts[1].p.bf,    bjts[2].p.bf,    1.0];
+    let br4    = [bjts[0].p.br,    bjts[1].p.br,    bjts[2].p.br,    1.0];
+
+    let mut o = BjtOutSoA::default();
+    for l in 0..4 {
+        let inv_vt_is = is4[l] / vt4[l];
+        let icrit = is4[l] * (ec[l] - 1.0);
+        let gcrit = inv_vt_is * ec[l];
+        let (itf, gtf) = if vbe[l] < vcrit4[l] {
+            (is4[l] * (ef[l] - 1.0), inv_vt_is * ef[l])
+        } else {
+            (fma::<FMA>(gcrit, vbe[l] - vcrit4[l], icrit), gcrit)
+        };
+        let (itr, gtr) = if vbc[l] < vcrit4[l] {
+            (is4[l] * (er[l] - 1.0), inv_vt_is * er[l])
+        } else {
+            (fma::<FMA>(gcrit, vbc[l] - vcrit4[l], icrit), gcrit)
+        };
+        let inv_af = if vaf4[l] > 0.0 { 1.0 / vaf4[l] } else { 0.0 };
+        let inv_ar = if var4[l] > 0.0 { 1.0 / var4[l] } else { 0.0 };
+        let mut inv1 = fma::<FMA>(vbe[l], -inv_ar, fma::<FMA>(vbc[l], -inv_af, 1.0));
+        if inv1 < 0.1 { inv1 = 0.1; }
+        let q1 = 1.0 / inv1;
+        let dq1_vbe = q1 * q1 * inv_ar;
+        let dq1_vbc = q1 * q1 * inv_af;
+        let inv_kf = if ikf4[l] > 0.0 { 1.0 / ikf4[l] } else { 0.0 };
+        let inv_kr = if ikr4[l] > 0.0 { 1.0 / ikr4[l] } else { 0.0 };
+        let q2 = fma::<FMA>(itf, inv_kf, itr * inv_kr);
+        let dq2_vbe = gtf * inv_kf;
+        let dq2_vbc = gtr * inv_kr;
+        let s = fma::<FMA>(4.0, q2, 1.0).sqrt();
+        let qb = q1 * (1.0 + s) / 2.0;
+        let dqb_vbe = dq1_vbe * (1.0 + s) / 2.0 + q1 * dq2_vbe / s;
+        let dqb_vbc = dq1_vbc * (1.0 + s) / 2.0 + q1 * dq2_vbc / s;
+        let diff = itf - itr;
+        let it = diff / qb;
+        let qbsq = qb * qb;
+        let dit_vbe = fma::<FMA>(diff, -dqb_vbe, gtf * qb) / qbsq;
+        let dit_vbc = fma::<FMA>(diff, -dqb_vbc, -gtr * qb) / qbsq;
+        let inv_bf = 1.0 / bf4[l];
+        let inv_br = 1.0 / br4[l];
+        let ic = fma::<FMA>(itr, -inv_br, it);
+        let ib = fma::<FMA>(itf, inv_bf, itr * inv_br);
+        let ie = -(ic + ib);
+        let dic_vbe = dit_vbe;
+        let dic_vbc = fma::<FMA>(gtr, -inv_br, dit_vbc);
+        let dib_vbe = gtf * inv_bf;
+        let dib_vbc = gtr * inv_br;
+        let die_vbe = -(dic_vbe + dib_vbe);
+        let die_vbc = -(dic_vbc + dib_vbc);
+        o.ib[l] = ib; o.ic[l] = ic; o.ie[l] = ie;
+        o.itf[l] = itf; o.gtf[l] = gtf; o.itr[l] = itr; o.gtr[l] = gtr;
+        o.dic_b[l] = dic_vbe + dic_vbc; o.dic_e[l] = -dic_vbe; o.dic_c[l] = -dic_vbc;
+        o.dib_b[l] = dib_vbe + dib_vbc; o.dib_e[l] = -dib_vbe; o.dib_c[l] = -dib_vbc;
+        o.die_b[l] = die_vbe + die_vbc; o.die_e[l] = -die_vbe; o.die_c[l] = -die_vbc;
+    }
+    o
+}
+
 // ---------------------------------------------------------------------------
 // Width-4 SoA batch device eval. Lane 3 = padding (vbe=vbc=0, params zeroed);
 // only lanes 0-2 are ever scattered. Bit-exact with the scalar path on EXACT=false.
@@ -708,8 +795,8 @@ fn compute_bjt_preexp<const FMA: bool>(vbe: f64, vbc: f64, p: &BjtParams, ef: f6
 // ---------------------------------------------------------------------------
 
 /// SoA output for a width-4 [`compute_bjt`] batch. Mirrors all 16 [`BjtOut`] fields.
-/// Production-dead with `compute_bjt_batch`; retained under `#[cfg(test)]` for its contract guard.
-#[cfg(test)]
+/// Produced by `compute_bjt_preexp_batch` on the production path and by `compute_bjt_batch`
+/// under `#[cfg(test)]` for its contract guard.
 #[derive(Clone, Copy, Debug, Default)]
 struct BjtOutSoA {
     ib:    [f64; 4],
@@ -737,8 +824,9 @@ struct BjtOutSoA {
 /// independent computation chains into AVX2 ymm ops. Takes `&[Bjt;3]` directly
 /// to avoid the ~832-byte intermediate `[BjtParams;4]` copy in `newton_iterate`.
 /// Bit-exact with [`compute_bjt`] on the `EXACT=false, cheap_exp=false` path.
-/// Production-dead: `newton_iterate` uses `exp4` + `compute_bjt_preexp` inline. Retained under
-/// `#[cfg(test)]` for the `compute_bjt_batch_is_bit_exact` SoA contract guard.
+/// Production path uses `exp4` + [`compute_bjt_preexp_batch`] (reusing the already-batched exp).
+/// This full-batch variant (which recomputes exp internally) is retained under `#[cfg(test)]`
+/// for the `compute_bjt_batch_is_bit_exact` SoA contract guard.
 #[cfg(test)]
 #[inline(never)]
 fn compute_bjt_batch(vbe: &[f64; 4], vbc: &[f64; 4], bjts: &[Bjt; 3]) -> BjtOutSoA {
@@ -981,7 +1069,7 @@ pub struct QualityConfig {
     /// MUST stay on; at `os == 1` there is nothing to decimate, so they only add phase/group delay
     /// — bypassing (`--no-decimate`) can recover some of the os=1 fidelity cost. Default on.
     pub decimate: bool,
-    /// FMA (fused multiply-add) contraction in the batched device kernels (`compute_bjt_preexp`,
+    /// FMA (fused multiply-add) contraction in the batched device kernels (`compute_bjt_preexp_batch`,
     /// `exp_bl`/`log_bl`, depletion charge). Single-rounding `vfmadd` instead of `a*b+c`; ~1 ULP/op
     /// numeric change → measured +2.3% (fast) / +3.8% (ultra), ~half the fp-contract=fast ceiling.
     /// Lossy: off at realtime (bit-identical), on for fast/ultra (gated by `compare.py` −40 dB ESR).
@@ -1017,8 +1105,14 @@ impl QualityConfig {
     /// Ultra-fast tier: `fast()` + internal oversampling dropped 2→1 (the dominant speed lever, ≈2×
     /// over fast) with the output decimation bypassed. The `eval/wdf_ultrafast` measure-first sweep
     /// showed the per-iteration / iteration-count levers (looser tol, capped iters, depletion-only
-    /// caps, no-ls-trim, cheap exp) buy almost no speed — predict warm-start already pins
-    /// avgIters≈1.8 — so the OS drop is the only lever that reaches the 1.5–2× target. Naively os=1
+    /// caps, no-ls-trim, cheap exp) buy almost no speed — so the OS drop is the only lever that
+    /// reaches the 1.5–2× target. Measured avgIters on a 20 Hz–18 kHz −6 dBFS log sweep
+    /// (`ba283_standalone --backend wdf`, 2026-06-09): realtime 2.835 (predict off, cold start),
+    /// fast 2.546 (predict on), ultra-fast 2.939 (predict on but os=1 → larger cross-sample
+    /// jumps). Capping fast to exactly 2 iters (avgIters 2.546→2.003, −21 % iterations) buys only
+    /// ~1.7 % wall for −53.7 dB ESR — the iteration tail is the cheap near-solution part; the fixed
+    /// per-sample device cost (`residual_norm` runs 4×/sample regardless of iter count + the always-
+    /// run first Jacobian) dominates, so iteration count is not the bottleneck. Naively os=1
     /// costs ~3 dB ESR vs SPICE; but the os=2 decimation biquads (43 kHz Butterworth) themselves
     /// deviate from the circuit's true HF response, so at os=1 — where there is nothing to decimate
     /// — bypassing them (`decimate=false`) makes it *better* than realtime: ESR −30 to −36 dB vs
@@ -2183,16 +2277,24 @@ impl WdfModel {
                 ([0.0_f64; 4], [0.0_f64; 4], [0.0_f64; 4], [0.0_f64; 4])
             };
 
-            // Per-BJT arithmetic + stamp. compute_bjt_preexp is #[inline(always)] so
-            // BjtOut stays register-resident (same behaviour as the inlined baseline).
+            // Post-exp Gummel-Poon algebra: batch the divide-/sqrt-heavy 16-field Jacobian for
+            // all 3 BJTs into one width-4 SoA call (SLP → packed vdivpd/vsqrtpd), reusing the
+            // already-batched ef4/er4/ec4. The scatter tail stays scalar (AoS stamps).
+            let bout = if fma_on {
+                compute_bjt_preexp_batch::<true>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
+            } else {
+                compute_bjt_preexp_batch::<false>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
+            };
             for bi in 0..3 {
                 let t = self.bjts[bi];
                 let vbe = vbe4[bi];
                 let vbc = vbc4[bi];
-                let o = if fma_on {
-                    compute_bjt_preexp::<true>(vbe, vbc, &t.p, ef4[bi], er4[bi], ec4[bi])
-                } else {
-                    compute_bjt_preexp::<false>(vbe, vbc, &t.p, ef4[bi], er4[bi], ec4[bi])
+                let o = BjtOut {
+                    ib: bout.ib[bi], ic: bout.ic[bi], ie: bout.ie[bi],
+                    itf: bout.itf[bi], gtf: bout.gtf[bi], itr: bout.itr[bi], gtr: bout.gtr[bi],
+                    dib_b: bout.dib_b[bi], dib_e: bout.dib_e[bi], dib_c: bout.dib_c[bi],
+                    dic_b: bout.dic_b[bi], dic_e: bout.dic_e[bi], dic_c: bout.dic_c[bi],
+                    die_b: bout.die_b[bi], die_e: bout.die_e[bi], die_c: bout.die_c[bi],
                 };
                 let (rb, re, rc) = (self.urow[t.b as usize], self.urow[t.e as usize], self.urow[t.c as usize]);
                 if rb >= 0 {
@@ -3292,6 +3394,64 @@ mod tests {
             vbe += 0.1;
         }
         eprintln!("compute_bjt_batch_is_bit_exact: {cases} cases all bit-identical");
+    }
+
+    #[test]
+    fn compute_bjt_preexp_batch_is_bit_exact() {
+        // Production guard: the width-4 post-exp batch must be bit-identical to the scalar
+        // `compute_bjt_preexp` reference at FMA=false, lane-for-lane, across the junction domain.
+        let tr1 = bc184c();
+        let tr3 = q2n3055();
+        let bjts: [Bjt; 3] = [
+            Bjt::new(0, 1, 2, tr1),
+            Bjt::new(3, 4, 5, tr1),
+            Bjt::new(6, 7, 8, tr3),
+        ];
+        let exp_lane = |v: f64, vt: f64| exp_bl::<false>(v / vt);
+
+        let mut cases = 0usize;
+        let mut vbe = -0.5_f64;
+        while vbe <= 0.8 {
+            let mut vbc = -0.5_f64;
+            while vbc <= 0.8 {
+                let vbe4 = [vbe, vbe + 0.05, vbe - 0.05, 0.0];
+                let vbc4 = [vbc, vbc - 0.05, vbc + 0.05, 0.0];
+                // ef/er/ec exactly as newton_iterate batches them (lane 3 = padding params).
+                let mk = |sel: &dyn Fn(usize) -> f64| {
+                    [
+                        exp_lane(sel(0), bjts[0].p.vt),
+                        exp_lane(sel(1), bjts[1].p.vt),
+                        exp_lane(sel(2), bjts[2].p.vt),
+                        exp_lane(0.0, 0.02585),
+                    ]
+                };
+                let ef4 = mk(&|i| vbe4[i]);
+                let er4 = mk(&|i| vbc4[i]);
+                let ec4 = mk(&|i| bjts[i].p.vcrit);
+                let soa = compute_bjt_preexp_batch::<false>(&vbe4, &vbc4, &bjts, &ef4, &er4, &ec4);
+                for bi in 0..3 {
+                    let s = compute_bjt_preexp::<false>(vbe4[bi], vbc4[bi], &bjts[bi].p, ef4[bi], er4[bi], ec4[bi]);
+                    macro_rules! check_field {
+                        ($field:ident) => {
+                            let got = soa.$field[bi].to_bits();
+                            let want = s.$field.to_bits();
+                            assert_eq!(got, want,
+                                "compute_bjt_preexp_batch: field={} lane={bi} vbe={} vbc={} got=0x{got:016x} want=0x{want:016x}",
+                                stringify!($field), vbe4[bi], vbc4[bi]);
+                        }
+                    }
+                    check_field!(ib); check_field!(ic); check_field!(ie);
+                    check_field!(itf); check_field!(gtf); check_field!(itr); check_field!(gtr);
+                    check_field!(dib_b); check_field!(dib_e); check_field!(dib_c);
+                    check_field!(dic_b); check_field!(dic_e); check_field!(dic_c);
+                    check_field!(die_b); check_field!(die_e); check_field!(die_c);
+                }
+                cases += 1;
+                vbc += 0.1;
+            }
+            vbe += 0.1;
+        }
+        eprintln!("compute_bjt_preexp_batch_is_bit_exact: {cases} cases all bit-identical");
     }
 
     #[test]
