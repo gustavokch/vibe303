@@ -238,10 +238,12 @@ fn fma_lever_is_near_lossless() {
     // T3: FMA contraction in the device kernels (single vs double rounding, ~1 ULP/op). On its own
     // it perturbs which equally-valid iterate Newton lands on at hard onsets — well under the lossy
     // budget (measured ESR vs the non-FMA build is ≈ −180 dB on fast, −157 dB on ultra). Guards the
-    // const-generic `<true>` conversions against a future mis-transcription.
+    // const-generic `<true>` conversions against a future mis-transcription. Measured max-sample dev
+    // on the fixed INPUT_256 vector is ≈2.2e-12; 1e-9 keeps ~450× margin yet still trips on a single
+    // diverged Newton iterate (which surfaces at f32-ULP ≈1e-7).
     let cfg = QualityConfig { fma: true, ..QualityConfig::realtime() };
     let dev = max_dev_vs_realtime(cfg);
-    assert!(dev <= 1e-4, "fma deviation {dev} exceeds 1e-4");
+    assert!(dev <= 1e-9, "fma deviation {dev} exceeds 1e-9");
 }
 
 #[test]
