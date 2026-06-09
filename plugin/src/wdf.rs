@@ -1044,7 +1044,7 @@ pub enum Solver {
 /// Quality/speed levers (`main.cpp:77` `QualityConfig` + the per-model lever fields).
 /// `realtime()` = every lever off (bit-identical to the reference); `fast()` = predict + schur
 /// + freeze-caps + ls-trim all on (`qualityPreset("fast")`, ~0.195x realtime, near-transparent).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct QualityConfig {
     pub newton_tol: f64,
     pub max_iters: usize,
@@ -1074,6 +1074,23 @@ pub struct QualityConfig {
     /// numeric change → measured +2.3% (fast) / +3.8% (ultra), ~half the fp-contract=fast ceiling.
     /// Lossy: off at realtime (bit-identical), on for fast/ultra (gated by `compare.py` −40 dB ESR).
     pub fma: bool,
+    /// Fixed-step Newton: run exactly `max_iters` iterations and drop the convergence machinery —
+    /// no `ls_trim` line search and no per-sample `residual_norm` gate / gmin-homotopy (`process`).
+    /// Removes the dominant fixed per-sample cost (one full device re-stamp every sample) that
+    /// iteration-capping leaves running. Lossy (no convergence guarantee on transients); set by the
+    /// Med/Low Precision settings only — realtime/HIGH keep `false` and stay bit-identical.
+    pub fixed_step: bool,
+}
+
+/// Lossy precision setting, orthogonal to [`WdfTier`](crate). A modifier layered on a tier's
+/// `QualityConfig` via [`QualityConfig::with_precision`]: `High` is the identity (so Realtime+High
+/// stays bit-identical / golden), `Med`/`Low` trade output fidelity for speed within the harness
+/// budget (ESR loss vs Realtime+High ≤ −50 dB; ACME absolute floor is ~−23 dB, model-bound).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Precision {
+    High,
+    Med,
+    Low,
 }
 
 impl QualityConfig {
@@ -1090,6 +1107,7 @@ impl QualityConfig {
             os: OS,
             decimate: true,
             fma: false,
+            fixed_step: false,
         }
     }
     pub fn fast() -> Self {
@@ -1125,6 +1143,31 @@ impl QualityConfig {
             decimate: false,
             cheap_exp: true, // T3: low-order transport exp (~2%); ultra-fast tier accepts the op-point bias
             ..Self::fast()
+        }
+    }
+
+    /// Layer a lossy [`Precision`] setting onto this tier config. `High` is the identity (preserves
+    /// the bit-exact realtime/golden contract); `Med`/`Low` enable the fixed-step solver (exactly 2
+    /// Newton iters, no `residual_norm` gate / line search) and drop the BJT charge model — these are
+    /// the structural levers the `eval/wdf_ultrafast` sweep never tested (looser tol / capped iters
+    /// alone buy ~nothing because the per-sample `residual_norm` keeps running). Gated by the harness
+    /// at ESR loss ≤ −50 dB vs Realtime+High. (f32 device kernels and sub-rate solving land in later
+    /// phases; this is the in-house, low-risk first cut.)
+    pub fn with_precision(self, p: Precision) -> Self {
+        match p {
+            Precision::High => self,
+            Precision::Med => Self {
+                fixed_step: true,
+                max_iters: 2,
+                cap_tier: CapTier::Depletion,
+                ..self
+            },
+            Precision::Low => Self {
+                fixed_step: true,
+                max_iters: 2,
+                cap_tier: CapTier::Off,
+                ..self
+            },
         }
     }
 }
@@ -1202,6 +1245,7 @@ pub struct WdfModel {
     freeze_caps: bool,
     ls_trim: bool,
     fma: bool, // T3: FMA contraction in device kernels (lossy fast/ultra); false at realtime
+    fixed_step: bool, // Med/Low precision: exactly max_iters, no residual_norm gate / line search
     os: usize, // internal oversampling factor (host_rate * os = solve rate); 2 normally, 1 ultra-fast
     decimate: bool, // apply output decimation biquads (needless at os==1)
 
@@ -1444,6 +1488,7 @@ impl WdfModel {
             freeze_caps: cfg.freeze_caps,
             ls_trim: cfg.ls_trim,
             fma: cfg.fma,
+            fixed_step: cfg.fixed_step,
             os: cfg.os.max(1),
             decimate: cfg.decimate,
             v_pred_prev: [0.0; NUM_NODES],
@@ -2172,7 +2217,11 @@ impl WdfModel {
         // each Newton step with its own residual_norm call, take the full step optimistically and
         // let the NEXT iter's mandatory F build double as verification; if the residual rose,
         // retroactively restore and run a real backtracking line search (`main.cpp:714-723`).
-        let use_trim = self.ls_trim;
+        // Fixed-step (Med/Low precision): never trim, never run the per-step `residual_norm` line
+        // search; take the bounded full Newton step each iter (the cheap `norm_f` tol-break still
+        // short-circuits a converged sample). Lossy on transients; gated by the harness.
+        let fixed = self.fixed_step;
+        let use_trim = self.ls_trim && !fixed;
         let mut prev_norm_f = f64::INFINITY; // guarded by `provisional`, never read on iter 0
         let mut provisional = false;
         let mut v_before_step = [0.0f64; NUM_NODES];
@@ -2502,6 +2551,24 @@ impl WdfModel {
                 continue;
             }
 
+            if fixed {
+                // Fixed-step: accept the full bounded Newton step, no `residual_norm` line search.
+                let mut maxd = 0.0f64;
+                for i in 0..NUM_NODES {
+                    let r = self.urow[i];
+                    if r >= 0 {
+                        let d = self.delta[r as usize];
+                        self.v[i] += d;
+                        maxd = maxd.max(d.abs());
+                    }
+                }
+                if maxd < 1e-9 {
+                    break;
+                }
+                iter += 1;
+                continue;
+            }
+
             // Backtracking line search on 2-norm; scale whole vector (preserve direction).
             let mut v_save = [0.0f64; NUM_NODES];
             v_save.copy_from_slice(&self.v);
@@ -2601,13 +2668,18 @@ impl WdfModel {
 
         let mut sample_iters = self.newton_iterate(0.0);
         let mut sample_max = sample_iters;
-        let resid = self.residual_norm(0.0);
-        if resid > 1e-3 {
-            // hard sample: gmin-stepping homotopy
-            for g in [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 0.0] {
-                let it = self.newton_iterate(g);
-                sample_iters += it;
-                sample_max = sample_max.max(it);
+        // Fixed-step (Med/Low precision) skips the per-sample convergence gate entirely: the
+        // `residual_norm` re-stamp + gmin-homotopy fallback are the dominant fixed per-sample cost,
+        // and the budget tolerates the occasional unconverged hard sample. HIGH/realtime keep it.
+        if !self.fixed_step {
+            let resid = self.residual_norm(0.0);
+            if resid > 1e-3 {
+                // hard sample: gmin-stepping homotopy
+                for g in [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 0.0] {
+                    let it = self.newton_iterate(g);
+                    sample_iters += it;
+                    sample_max = sample_max.max(it);
+                }
             }
         }
         // Instrumentation only (see field comment): never read back during the solve.
@@ -2843,6 +2915,41 @@ impl WdfModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn precision_high_is_identity() {
+        // HIGH precision MUST be the identity modifier on every tier — this is what keeps
+        // Realtime+High bit-identical to the golden reference. Field-equality is exact (the struct
+        // derives PartialEq), so `with_precision(High)` returning `self` is fully verified here.
+        for base in [
+            QualityConfig::realtime(),
+            QualityConfig::fast(),
+            QualityConfig::ultra_fast(),
+        ] {
+            assert_eq!(
+                base,
+                base.with_precision(Precision::High),
+                "with_precision(High) must not alter the tier config"
+            );
+            // The bit-exact path is gated on `!fixed_step`; HIGH must never enable it.
+            assert!(!base.with_precision(Precision::High).fixed_step);
+        }
+    }
+
+    #[test]
+    fn precision_med_low_enable_fixed_step() {
+        // Med/Low must engage the structural lossy levers (fixed-step solver + reduced charge
+        // model). These are the levers the prior sweep never tested; the harness gates their ESR.
+        let rt = QualityConfig::realtime();
+        for p in [Precision::Med, Precision::Low] {
+            let c = rt.with_precision(p);
+            assert!(c.fixed_step, "{p:?} must enable fixed-step");
+            assert_eq!(c.max_iters, 2, "{p:?} must cap Newton at 2 iters");
+            assert_ne!(c.cap_tier, CapTier::Full, "{p:?} must reduce the charge model");
+        }
+        assert_eq!(rt.with_precision(Precision::Med).cap_tier, CapTier::Depletion);
+        assert_eq!(rt.with_precision(Precision::Low).cap_tier, CapTier::Off);
+    }
 
     #[test]
     fn ultra_exp_within_budget() {

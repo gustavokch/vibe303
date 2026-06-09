@@ -43,6 +43,9 @@ pub struct Ba283Plugin {
     /// Last WDF tier applied to the channels (block-rate). A change triggers a rebuild + snapshot
     /// re-install on each channel.
     last_tier: WdfTier,
+    /// Last WDF precision applied (block-rate). A change triggers the same rebuild path as a tier
+    /// change (the precision is folded into the `QualityConfig` via `with_precision`).
+    last_precision: Precision,
     /// Stereo-linked levelNorm gain tracker (shared across channels so the stereo image is
     /// preserved). Always updated; its gain is applied only when the `level_norm` param is on.
     level_norm: LevelNorm,
@@ -88,6 +91,30 @@ impl WdfTier {
     }
 }
 
+/// Lossy precision dial, orthogonal to [`WdfTier`]. `High` is the identity (Realtime+High stays
+/// bit-exact / golden); `Medium`/`Low` layer the fixed-step solver + reduced charge model onto the
+/// selected tier, trading fidelity for speed within the harness budget (ESR loss ≤ −50 dB vs
+/// Realtime+High). WDF-only; the NeuralNet backend ignores it. Maps 1:1 to [`wdf::Precision`].
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum Precision {
+    #[name = "High"]
+    High,
+    #[name = "Medium"]
+    Medium,
+    #[name = "Low"]
+    Low,
+}
+
+impl Precision {
+    fn to_wdf(self) -> wdf::Precision {
+        match self {
+            Precision::High => wdf::Precision::High,
+            Precision::Medium => wdf::Precision::Med,
+            Precision::Low => wdf::Precision::Low,
+        }
+    }
+}
+
 #[derive(Params)]
 pub struct Ba283Params {
     #[id = "backend"]
@@ -95,6 +122,10 @@ pub struct Ba283Params {
     /// WDF solver tier (Realtime vs Fast). WDF-only; inert for the NeuralNet backend.
     #[id = "wdf_tier"]
     pub wdf_tier: EnumParam<WdfTier>,
+    /// Lossy precision dial (High/Medium/Low), orthogonal to the tier. High = no extra loss
+    /// (bit-exact at Realtime). WDF-only; inert for the NeuralNet backend.
+    #[id = "precision"]
+    pub precision: EnumParam<Precision>,
     #[id = "drive_db"]
     pub drive_db: FloatParam,
     #[id = "bias"]
@@ -119,6 +150,7 @@ impl Default for Ba283Params {
         Self {
             backend: EnumParam::new("Backend", InferenceBackend::NeuralNet),
             wdf_tier: EnumParam::new("WDF Tier", WdfTier::Realtime),
+            precision: EnumParam::new("Precision", Precision::High),
             drive_db: FloatParam::new(
                 "Drive",
                 0.0,
@@ -175,6 +207,7 @@ impl Default for Ba283Plugin {
             last_rgain: f32::NAN,
             last_bias: f32::NAN,
             last_tier: WdfTier::Realtime,
+            last_precision: Precision::High,
             level_norm: LevelNorm::new(),
             wdf_rgain_smooth: 220.0,
             wdf_bias_smooth: 0.5,
@@ -240,7 +273,8 @@ impl Plugin for Ba283Plugin {
         let rgain = self.params.circuit_gain.value();
         let bias = self.params.bias.value();
         let tier = self.params.wdf_tier.value();
-        let cfg = tier.config();
+        let precision = self.params.precision.value();
+        let cfg = tier.config().with_precision(precision.to_wdf());
         // Warm at the realtime tier (the DC operating point is tier-independent — freeze-caps only
         // changes the per-iter companion), then install the settled snapshot into each channel's
         // tier-configured model.
@@ -254,6 +288,7 @@ impl Plugin for Ba283Plugin {
         self.last_rgain = rgain;
         self.last_bias = bias;
         self.last_tier = tier;
+        self.last_precision = precision;
         self.wdf_rgain_smooth = rgain;
         self.wdf_bias_smooth = bias;
 
@@ -311,12 +346,14 @@ impl Plugin for Ba283Plugin {
             // (no fresh warmup). Block-rate, on actual change only. Reset rgain/bias trackers so the
             // post-rebuild model picks up the current values via the cheap G0 path below.
             let tier = self.params.wdf_tier.value();
-            if tier != self.last_tier {
-                let cfg = tier.config();
+            let precision = self.params.precision.value();
+            if tier != self.last_tier || precision != self.last_precision {
+                let cfg = tier.config().with_precision(precision.to_wdf());
                 for ch in self.channels.iter_mut() {
                     ch.wdf_set_tier(cfg, self.sample_rate, rgain, bias);
                 }
                 self.last_tier = tier;
+                self.last_precision = precision;
                 self.last_rgain = rgain;
                 self.last_bias = bias;
             }
