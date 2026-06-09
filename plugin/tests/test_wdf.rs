@@ -245,6 +245,14 @@ fn fma_lever_is_near_lossless() {
 }
 
 #[test]
+fn fma_preset_wiring() {
+    // Lock the lever→tier wiring: realtime must stay bit-exact (FMA off); fast/ultra opt in.
+    assert!(!QualityConfig::realtime().fma, "realtime must not use FMA (bit-identical contract)");
+    assert!(QualityConfig::fast().fma, "fast preset must enable FMA");
+    assert!(QualityConfig::ultra_fast().fma, "ultra_fast preset must enable FMA");
+}
+
+#[test]
 fn snapshot_restore_round_trips() {
     let mut m = wdf::WdfModel::new(wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
     m.warmup();

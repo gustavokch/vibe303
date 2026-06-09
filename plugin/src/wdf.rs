@@ -453,7 +453,7 @@ pub fn diode_branch(v: f64, is: f64, vt: f64, vcrit: f64, cheap_exp: bool) -> (f
 // - FMA=true:  `a.mul_add(b,c)` → fused multiply-add (single rounding), a small
 //   numeric change (~1 ULP/op) that LLVM lowers to `vfmadd`. Lossy: fast/ultra
 //   tiers only, gated by `compare.py` −40 dB ESR. Monomorphized → zero runtime branch.
-// `fma_false`/`fma_true` callers below pick the instantiation per tier.
+// Call sites pick the instantiation per tier via `::<true>`/`::<false>` turbofish.
 // ---------------------------------------------------------------------------
 
 /// `a*b + c`, fused (single rounding) when `FMA`. For `FMA=false` this is the
@@ -708,6 +708,8 @@ fn compute_bjt_preexp<const FMA: bool>(vbe: f64, vbc: f64, p: &BjtParams, ef: f6
 // ---------------------------------------------------------------------------
 
 /// SoA output for a width-4 [`compute_bjt`] batch. Mirrors all 16 [`BjtOut`] fields.
+/// Production-dead with `compute_bjt_batch`; retained under `#[cfg(test)]` for its contract guard.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default)]
 struct BjtOutSoA {
     ib:    [f64; 4],
@@ -735,6 +737,9 @@ struct BjtOutSoA {
 /// independent computation chains into AVX2 ymm ops. Takes `&[Bjt;3]` directly
 /// to avoid the ~832-byte intermediate `[BjtParams;4]` copy in `newton_iterate`.
 /// Bit-exact with [`compute_bjt`] on the `EXACT=false, cheap_exp=false` path.
+/// Production-dead: `newton_iterate` uses `exp4` + `compute_bjt_preexp` inline. Retained under
+/// `#[cfg(test)]` for the `compute_bjt_batch_is_bit_exact` SoA contract guard.
+#[cfg(test)]
 #[inline(never)]
 fn compute_bjt_batch(vbe: &[f64; 4], vbc: &[f64; 4], bjts: &[Bjt; 3]) -> BjtOutSoA {
     // Extract to [f64;4] SoA. AoS stride≈208 bytes blocks SLP; SoA stride=8 enables it.
@@ -978,8 +983,8 @@ pub struct QualityConfig {
     pub decimate: bool,
     /// FMA (fused multiply-add) contraction in the batched device kernels (`compute_bjt_preexp`,
     /// `exp_bl`/`log_bl`, depletion charge). Single-rounding `vfmadd` instead of `a*b+c`; ~1 ULP/op
-    /// numeric change → measured ~4.5% on fast/ultra. Lossy: off at realtime (bit-identical), on for
-    /// fast/ultra (gated by `compare.py` −40 dB ESR).
+    /// numeric change → measured +2.3% (fast) / +3.8% (ultra), ~half the fp-contract=fast ceiling.
+    /// Lossy: off at realtime (bit-identical), on for fast/ultra (gated by `compare.py` −40 dB ESR).
     pub fma: bool,
 }
 
@@ -1005,7 +1010,7 @@ impl QualityConfig {
             solver: Solver::Schur,
             freeze_caps: true,
             ls_trim: true,
-            fma: true, // T3: FMA contraction in device kernels (lossy, ~4.5%); realtime stays false
+            fma: true, // T3: FMA contraction in device kernels (lossy, +2.3% fast); realtime stays false
             ..Self::realtime()
         }
     }
