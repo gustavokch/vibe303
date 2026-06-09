@@ -28,7 +28,7 @@ import torch
 from eval.ablation.gain_eval import Predict, Row, held_out_gain_esr, per_gain_esr
 from eval.ablation.metrics import high_band_error, resample_to
 from train.dataset import INPUT_SCALE, OUTPUT_SCALE, _resolve_path
-from train.model import BA283LSTM
+from train.factory import make_model
 
 
 def _read_mono(path: str) -> np.ndarray:
@@ -53,24 +53,33 @@ def load_model(
     head: str = "linear",
     film_kind: str = "linear",
     num_layers: int = 1,
-) -> BA283LSTM:
-    """Construct a :class:`BA283LSTM` and load ``checkpoint`` into it (eval mode).
+    model_type: str = "lstm",
+    d_state: int = 64,
+    d_conv: int = 4,
+    expand: int = 2,
+):
+    """Construct the model via :func:`train.factory.make_model` and load
+    ``checkpoint`` into it (eval mode).
 
-    ``head`` / ``film_kind`` / ``num_layers`` must match the architecture the
-    checkpoint was trained with (the redesign knobs), or ``load_state_dict``
-    raises on a key/shape mismatch. They default to the v1 graph (linear head,
-    linear FiLM, single layer); ``dropout`` is irrelevant in eval mode and so is
-    not exposed.
+    ``model_type`` / ``head`` / ``film_kind`` / ``num_layers`` (and the SSM dims
+    ``d_state`` / ``d_conv`` / ``expand`` when ``model_type`` is ``s4d``/``s6``)
+    must match the architecture the checkpoint was trained with, or
+    ``load_state_dict`` raises on a key/shape mismatch. They default to the v1
+    LSTM graph; ``dropout`` is irrelevant in eval mode and so is not exposed.
 
     ``weights_only=True`` + ``map_location="cpu"`` so a GPU-trained checkpoint
     loads on a CPU-only eval host without unpickling arbitrary objects.
     """
-    model = BA283LSTM(
+    model = make_model(
+        model_type,
         hidden=hidden,
         conditioning=conditioning,
         head=head,
         film_kind=film_kind,
         num_layers=num_layers,
+        d_state=d_state,
+        d_conv=d_conv,
+        expand=expand,
     )
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     model.load_state_dict(state)
@@ -139,6 +148,10 @@ def run_cell(
     head: str = "linear",
     film_kind: str = "linear",
     num_layers: int = 1,
+    model_type: str = "lstm",
+    d_state: int = 64,
+    d_conv: int = 4,
+    expand: int = 2,
     cell: str,
     trained_gains: set[float],
     sr_train: int | None = None,
@@ -164,6 +177,10 @@ def run_cell(
         head=head,
         film_kind=film_kind,
         num_layers=num_layers,
+        model_type=model_type,
+        d_state=d_state,
+        d_conv=d_conv,
+        expand=expand,
     )
     manifest_df = pd.read_csv(manifest)
     rows = build_rows(manifest_df, output_scale=OUTPUT_SCALE, warmup=warmup)
@@ -224,6 +241,10 @@ def _main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--hidden", type=int, required=True)
     parser.add_argument("--conditioning", default="film")
+    parser.add_argument("--model", default="lstm", choices=("lstm", "s4d", "s6"))
+    parser.add_argument("--d-state", type=int, default=64)
+    parser.add_argument("--d-conv", type=int, default=4)
+    parser.add_argument("--expand", type=int, default=2)
     parser.add_argument("--cell", required=True)
     parser.add_argument(
         "--trained-gains",
@@ -243,6 +264,10 @@ def _main(argv: Sequence[str] | None = None) -> None:
         args.manifest,
         hidden=args.hidden,
         conditioning=args.conditioning,
+        model_type=args.model,
+        d_state=args.d_state,
+        d_conv=args.d_conv,
+        expand=args.expand,
         cell=args.cell,
         trained_gains=trained_gains,
         sr_train=args.sr_train,
