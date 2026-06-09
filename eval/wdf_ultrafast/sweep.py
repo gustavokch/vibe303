@@ -53,8 +53,9 @@ LEVERS: list[tuple[str, str, list[str]]] = [
     # ultra-fast with the BJT junction charge model dropped (== QualityConfig::warp / WdfTier::Warp).
     # The caps shape only the top octave (already altered by os=1), so this is ~free vs SPICE.
     ("warp", "warp", []),
-    # Sub-rate Newton spike (GO/NO-GO): full solve every K-th sample, frozen-Jacobian linear
-    # update on the rest. subrate_2_hold is the naive-hold baseline (what the linear update buys).
+    # Sub-rate Newton spike (NO-GO, verdict 2026-06-09): full solve every K-th sample, frozen-
+    # Jacobian linear update on the rest. subrate_2_hold is the naive-hold baseline.
+    # REQUIRES: `cargo build --features subrate-spike` before running these levers.
     ("subrate_2", "fast", ["--subrate", "2"]),
     ("subrate_3", "fast", ["--subrate", "3"]),
     ("subrate_4", "fast", ["--subrate", "4"]),

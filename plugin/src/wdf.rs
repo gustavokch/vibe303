@@ -1080,12 +1080,16 @@ pub struct QualityConfig {
     /// iteration-capping leaves running. Lossy (no convergence guarantee on transients); set by the
     /// Med/Low Precision settings only — realtime/HIGH keep `false` and stay bit-identical.
     pub fixed_step: bool,
-    /// Sub-rate Newton (GO/NO-GO spike, Rust-only). Run the full nonlinear Newton solve only every
-    /// `subrate`-th internal sample; on the in-between samples freeze the converged Jacobian (the
-    /// BJTs' Norton linearization) and its LU factorization and do one linear back-substitution —
-    /// skipping all `exp4`/depletion/Gummel-Poon assembly + the matrix factor. `1` = off (every
-    /// sample, fully inert / bit-exact). Lossy (operating point lags ≤ subrate-1 samples); gated vs
-    /// Realtime+High and vs SPICE, never vs C++ parity (the golden has no such path).
+    /// Sub-rate Newton spike lever — **NO-GO, behind `subrate-spike` feature only**.
+    /// See the full verdict in the `#[cfg(feature = "subrate-spike")]`-gated field below.
+    /// Not present in the default build; compile with `--features subrate-spike` to access.
+    #[cfg(feature = "subrate-spike")]
+    /// Run the full nonlinear Newton solve only every `subrate`-th internal sample; on the
+    /// in-between samples freeze the converged Jacobian (the BJTs' Norton linearization) and its LU
+    /// factorization and do one linear back-substitution — skipping all `exp4`/depletion/Gummel-Poon
+    /// assembly + the matrix factor. `1` = off (every sample, fully inert / bit-exact). Lossy
+    /// (operating point lags ≤ subrate-1 samples); gated vs Realtime+High and vs SPICE, never vs
+    /// C++ parity (the golden has no such path).
     ///
     /// VERDICT 2026-06-09: **NO-GO**, kept as a hidden A/B lever only. The `eval/wdf_ultrafast` sweep
     /// confirmed avgIters drops as designed (fast 1.75 → K2 1.08 / K3 0.84 / K4 0.55, i.e. the freeze
@@ -1098,10 +1102,12 @@ pub struct QualityConfig {
     /// long-standing read held: iteration count was never the bottleneck — the fixed per-sample
     /// device cost is, and sub-rate just trades it for its own per-sample factor/solve. Do not retry
     /// the dense-frozen form; a Schur-reuse variant could recover (1) but cannot fix (2).
+    #[cfg(feature = "subrate-spike")]
     pub subrate: usize,
     /// Sub-rate naive-hold baseline (spike measurement only): on a skipped sample hold `v` frozen
     /// instead of running the frozen linear solve. Quantifies what the linear update buys. Ignored
     /// when `subrate <= 1`.
+    #[cfg(feature = "subrate-spike")]
     pub subrate_hold: bool,
 }
 
@@ -1131,7 +1137,9 @@ impl QualityConfig {
             decimate: true,
             fma: false,
             fixed_step: false,
+            #[cfg(feature = "subrate-spike")]
             subrate: 1,
+            #[cfg(feature = "subrate-spike")]
             subrate_hold: false,
         }
     }
@@ -1337,18 +1345,28 @@ pub struct WdfModel {
     iter_total: u64,
     iter_max: usize,
 
-    // --- sub-rate Newton spike (all inert when subrate <= 1; the bit-exact golden path never
-    // touches `capture_j`/`j_frozen_raw`/etc.) ---
+    // --- sub-rate Newton spike (behind `subrate-spike` feature; zero overhead in default build) ---
+    #[cfg(feature = "subrate-spike")]
     subrate: usize,        // full Newton every K-th internal audio sample (1 = off)
+    #[cfg(feature = "subrate-spike")]
     subrate_hold: bool,    // naive-hold baseline: freeze v on skipped samples (no linear update)
+    #[cfg(feature = "subrate-spike")]
     subrate_phase: usize,  // internal audio samples since last full solve (0 => full solve due)
+    #[cfg(feature = "subrate-spike")]
     subrate_valid: bool,   // a frozen model has been captured and is usable
+    #[cfg(feature = "subrate-spike")]
     capture_j: bool,       // gate: snapshot the converged J in `newton_iterate` (full-solve sample)
+    #[cfg(feature = "subrate-spike")]
     j_captured: bool,      // set by `newton_iterate` when it actually snapshot a converged J
+    #[cfg(feature = "subrate-spike")]
     j_frozen_raw: [f64; NUM_NODES * NUM_NODES], // converged J at the last full solve (= g0 + J_dev)
+    #[cfg(feature = "subrate-spike")]
     j_dev: [f64; NUM_NODES * NUM_NODES],        // j_frozen_raw - g0 (frozen device conductances)
+    #[cfg(feature = "subrate-spike")]
     lu_frozen: [f64; NUM_NODES * NUM_NODES],    // LU factors of j_frozen_raw (stride u)
+    #[cfg(feature = "subrate-spike")]
     piv_frozen: [usize; NUM_NODES],
+    #[cfg(feature = "subrate-spike")]
     i0_const: [f64; NUM_NODES],                 // frozen device Norton constant (reduced rows)
 }
 
@@ -1582,16 +1600,27 @@ impl WdfModel {
             iter_samples: 0,
             iter_total: 0,
             iter_max: 0,
+            #[cfg(feature = "subrate-spike")]
             subrate: cfg.subrate.max(1),
+            #[cfg(feature = "subrate-spike")]
             subrate_hold: cfg.subrate_hold,
+            #[cfg(feature = "subrate-spike")]
             subrate_phase: 0,
+            #[cfg(feature = "subrate-spike")]
             subrate_valid: false,
+            #[cfg(feature = "subrate-spike")]
             capture_j: false,
+            #[cfg(feature = "subrate-spike")]
             j_captured: false,
+            #[cfg(feature = "subrate-spike")]
             j_frozen_raw: [0.0; NUM_NODES * NUM_NODES],
+            #[cfg(feature = "subrate-spike")]
             j_dev: [0.0; NUM_NODES * NUM_NODES],
+            #[cfg(feature = "subrate-spike")]
             lu_frozen: [0.0; NUM_NODES * NUM_NODES],
+            #[cfg(feature = "subrate-spike")]
             piv_frozen: [0; NUM_NODES],
+            #[cfg(feature = "subrate-spike")]
             i0_const: [0.0; NUM_NODES],
         };
         model.build_g0();
@@ -2545,10 +2574,9 @@ impl WdfModel {
             }
             norm_f = norm_f.sqrt();
             if norm_f < self.newton_tol {
-                // Sub-rate spike: this iter assembled J at the (converged) v and has not yet been
-                // mutated by the linear solve (the break skips it), so `self.j` is exactly the
-                // converged Jacobian at v0. Snapshot it for the frozen-linear skipped samples.
-                // `capture_j` is false on the bit-exact golden path → zero overhead there.
+                // Sub-rate spike: snapshot the converged J for the frozen-linear skipped samples.
+                // Compiled away in the default build (no `capture_j` field without the feature).
+                #[cfg(feature = "subrate-spike")]
                 if self.capture_j {
                     self.j_frozen_raw[..u * u].copy_from_slice(&self.j[..u * u]);
                     self.j_captured = true;
@@ -2737,6 +2765,7 @@ impl WdfModel {
     /// Sub-rate spike helper: add the linear branch residuals (resistors + linear-cap companions +
     /// coupled inductor) at the current `v` into the reduced residual `f`. Byte-for-byte the same
     /// stamps as `newton_iterate`'s linear block, but without touching `self.j` or the devices.
+    #[cfg(feature = "subrate-spike")]
     fn add_linear_residual(&self, f: &mut [f64]) {
         use node::{N_A, N_PA, N_SA};
         for i in 0..self.n_res {
@@ -2772,6 +2801,7 @@ impl WdfModel {
         }
     }
 
+    #[cfg(feature = "subrate-spike")]
     /// Sub-rate spike: after a converged full solve at `v0`, build the frozen linear model used by
     /// the next `subrate-1` skipped samples. `newton_iterate` already snapshot the converged J into
     /// `j_frozen_raw` (= G0 + J_dev(v0)). LU-factor it; derive `j_dev = j_frozen_raw - g0`; and
@@ -2817,6 +2847,7 @@ impl WdfModel {
         self.subrate_valid = true;
     }
 
+    #[cfg(feature = "subrate-spike")]
     /// Sub-rate spike: solve one skipped sample with the frozen model. The residual is affine in
     /// `v` — `F(v) = j_frozen·v + (hist + known-node const) + i0_const` — so one LU back-substitution
     /// against the pre-factored `lu_frozen` lands on the exact frozen-linear solution regardless of
@@ -2862,10 +2893,14 @@ impl WdfModel {
     pub fn process(&mut self) {
         use node::{N_A, N_PA, N_SA};
         let u = self.u;
-        // Sub-rate Newton (spike, audio pass only): full solve on phase 0 or when no frozen model is
-        // valid yet; otherwise a skipped sample reuses the frozen Jacobian. Inert at subrate <= 1.
+        // Sub-rate Newton spike (behind `subrate-spike` feature). In the default build these two
+        // lines are replaced by `let skipped = false` so the feature-gated solve block compiles away.
+        #[cfg(feature = "subrate-spike")]
         let subrate_on = self.subrate > 1 && self.in_audio_pass;
+        #[cfg(feature = "subrate-spike")]
         let skipped = subrate_on && self.subrate_valid && self.subrate_phase != 0;
+        #[cfg(not(feature = "subrate-spike"))]
+        let skipped = false;
         // Newton predictor: seed the solve with a 1st-order linear extrapolation of the last two
         // converged internal samples (2*sol(n-1) - sol(n-2)) for UNKNOWN nodes only. Same fixed
         // point + tol => identical converged v, just fewer iters. Off during DC warmup/rail-ramp/
@@ -2913,6 +2948,9 @@ impl WdfModel {
             self.hist[rs as usize] += ind_hist_s;
         }
 
+        // Sub-rate spike solve path. With the feature, may skip Newton and reuse the frozen model.
+        // Without the feature, this block is absent; the non-feature block below is the only path.
+        #[cfg(feature = "subrate-spike")]
         if skipped {
             // Frozen sub-rate sample: reuse the captured Jacobian + LU. `solve_frozen` does one
             // back-substitution; `subrate_hold` is the naive baseline that freezes v instead.
@@ -2960,8 +2998,34 @@ impl WdfModel {
             self.iter_total += sample_iters as u64;
             self.iter_max = self.iter_max.max(sample_max);
         }
+        #[cfg(feature = "subrate-spike")]
         if subrate_on {
             self.subrate_phase = (self.subrate_phase + 1) % self.subrate;
+        }
+        // Default (no sub-rate spike): straight full-solve path with no extra branches.
+        #[cfg(not(feature = "subrate-spike"))]
+        {
+            let mut sample_iters = self.newton_iterate(0.0);
+            let mut sample_max = sample_iters;
+            // Fixed-step (Med/Low precision) skips the per-sample convergence gate entirely: the
+            // `residual_norm` re-stamp + gmin-homotopy fallback are the dominant fixed per-sample
+            // cost, and the budget tolerates the occasional unconverged hard sample. HIGH/realtime
+            // keep it.
+            if !self.fixed_step {
+                let resid = self.residual_norm(0.0);
+                if resid > 1e-3 {
+                    // hard sample: gmin-stepping homotopy
+                    for g in [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 0.0] {
+                        let it = self.newton_iterate(g);
+                        sample_iters += it;
+                        sample_max = sample_max.max(it);
+                    }
+                }
+            }
+            // Instrumentation only (see field comment): never read back during the solve.
+            self.iter_samples += 1;
+            self.iter_total += sample_iters as u64;
+            self.iter_max = self.iter_max.max(sample_max);
         }
 
         // Fixed-step (Med/Low) drops the gmin-homotopy fallback, so a hard transient that fails to
@@ -2972,7 +3036,8 @@ impl WdfModel {
         // output and forward state stays clean. HIGH/realtime never reach this (the gmin gate above
         // keeps `v` finite), and the finite path is a no-op, so the bit-exact contract is untouched.
         // Sub-rate skipped samples share the risk (a singular frozen solve could go non-finite and
-        // poison forward state), so guard them the same way.
+        // poison forward state), so guard them the same way. Without `subrate-spike`, `skipped` is
+        // always `false` and the optimizer elides the `|| skipped` term in release builds.
         if (self.fixed_step || skipped) && !self.v.iter().all(|x| x.is_finite()) {
             self.v.copy_from_slice(&self.v_prev);
         }

@@ -1,3 +1,4 @@
+#![cfg(feature = "subrate-spike")]
 //! Sub-rate Newton spike guards (`QualityConfig::subrate`). These are smoke/safety checks, NOT the
 //! fidelity gate — the GO/NO-GO accuracy/speed decision lives in `eval/wdf_ultrafast` + `wdf_vs_spice`.
 //! Here we only pin: (1) subrate==1 is fully inert (bit-exact contract), (2) the frozen-Jacobian and
