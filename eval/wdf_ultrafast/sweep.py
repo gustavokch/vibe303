@@ -50,12 +50,22 @@ LEVERS: list[tuple[str, str, list[str]]] = [
     ("os_1", "fast", ["--os", "1"]),
     ("os_1_nodec", "fast", ["--os", "1", "--no-decimate"]),
     ("ultra_fast", "ultra-fast", []),  # == fast + os1 + no-decimate
+    # ultra-fast with the BJT junction charge model dropped (== QualityConfig::warp / WdfTier::Warp).
+    # The caps shape only the top octave (already altered by os=1), so this is ~free vs SPICE.
+    ("warp", "warp", []),
+    # Sub-rate Newton spike (NO-GO, verdict 2026-06-09): full solve every K-th sample, frozen-
+    # Jacobian linear update on the rest. subrate_2_hold is the naive-hold baseline.
+    # REQUIRES: `cargo build --features subrate-spike` before running these levers.
+    ("subrate_2", "fast", ["--subrate", "2"]),
+    ("subrate_3", "fast", ["--subrate", "3"]),
+    ("subrate_4", "fast", ["--subrate", "4"]),
+    ("subrate_2_hold", "fast", ["--subrate", "2", "--subrate-hold"]),
 ]
 # Levers that get a SPICE fidelity check (kept small — SPICE is slow / RAM-bound).
 # NOTE: for the OS levers the `added_esr vs realtime` column is MISLEADING (it counts the
 # realtime model's own os=2 decimation phase, which is uncorrelated with SPICE error). The
 # authoritative fidelity check for ultra-fast is ESR vs SPICE — use `measure.py` (cached ref).
-SPICE_LABELS = {"realtime", "fast", "os_1", "os_1_nodec", "ultra_fast"}
+SPICE_LABELS = {"realtime", "fast", "os_1", "os_1_nodec", "ultra_fast", "warp"}
 
 
 def render(dry: Path, rgain: float, bias: float, tier: str, extra: list[str],

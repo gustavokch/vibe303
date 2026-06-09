@@ -25,7 +25,7 @@
 //!                      48-wide trained export) instead of the embedded placeholder
 //!   --backend <nn|wdf> (default nn)  full-chain only, inference backend
 //!   --circuit-gain <f32> (default 220) WDF R_KJ shunt in ohms, --backend wdf only
-//!   --tier <realtime|fast|ultra-fast> (default realtime) WDF solver tier, --backend wdf only
+//!   --tier <realtime|fast|ultra-fast|warp> (default realtime) WDF solver tier, --backend wdf only
 //!   --precision <high|medium|low>   (default high) lossy precision dial layered on the tier;
 //!                      medium/low enable the fixed-step solver + reduced charge model, --backend wdf only
 //!   --predict / --no-predict        WDF lever overrides (A/B), --backend wdf only
@@ -38,6 +38,8 @@
 //!   --cap-tier <full|depletion|off> WDF BJT charge-cap detail (A/B), --backend wdf only
 //!   --os <usize>                    WDF internal oversampling (2 normal, 1 ultra-fast), --backend wdf only
 //!   --solver <dense|schur>          WDF linear-solve path (A/B), --backend wdf only
+//!   --subrate <usize>               WDF sub-rate Newton spike (requires `--features subrate-spike`)
+//!   --subrate-hold     (flag)       WDF sub-rate naive-hold baseline (requires `--features subrate-spike`)
 //!   --raw              (flag) run the pure model (round-trip path)
 
 use ba283::dsp::ChannelDsp;
@@ -83,7 +85,8 @@ fn main() {
                 "realtime" => QualityConfig::realtime(),
                 "fast" => QualityConfig::fast(),
                 "ultra-fast" => QualityConfig::ultra_fast(),
-                _ => die("--tier must be `realtime`, `fast`, or `ultra-fast`"),
+                "warp" => QualityConfig::warp(),
+                _ => die("--tier must be `realtime`, `fast`, `ultra-fast`, or `warp`"),
             };
         }
     }
@@ -187,6 +190,20 @@ fn main() {
             }
             "--decimate" => wdf_cfg.decimate = true,
             "--no-decimate" => wdf_cfg.decimate = false,
+            #[cfg(feature = "subrate-spike")]
+            "--subrate" => {
+                let v = args.next().unwrap_or_else(|| die("--subrate needs a value"));
+                wdf_cfg.subrate = v.parse().unwrap_or_else(|_| die("--subrate must be a positive integer"));
+                if wdf_cfg.subrate == 0 {
+                    die("--subrate must be >= 1");
+                }
+            }
+            #[cfg(not(feature = "subrate-spike"))]
+            "--subrate" => die("--subrate requires `--features subrate-spike`"),
+            #[cfg(feature = "subrate-spike")]
+            "--subrate-hold" => wdf_cfg.subrate_hold = true,
+            #[cfg(not(feature = "subrate-spike"))]
+            "--subrate-hold" => die("--subrate-hold requires `--features subrate-spike`"),
             "--tol" => {
                 let v = args.next().unwrap_or_else(|| die("--tol needs a value"));
                 wdf_cfg.newton_tol = v.parse().unwrap_or_else(|_| die("--tol must be a float"));

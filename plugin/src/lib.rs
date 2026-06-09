@@ -69,8 +69,10 @@ pub enum InferenceBackend {
 /// predict + schur + freeze-caps + ls-trim (~5x faster, near-transparent); `UltraFast` additionally
 /// drops internal oversampling 2→1 and bypasses the (now-needless) output decimation — ≈2x over
 /// fast, and actually *better* than realtime vs SPICE (the os=2 decimation Butterworth deviates
-/// from the circuit's true HF response). WDF-only; the NeuralNet backend ignores it. Mirrors the
-/// C++ `qualityPreset("realtime"|"fast"|"ultra-fast")`.
+/// from the circuit's true HF response). `Warp` additionally drops the BJT junction charge model
+/// (~19 % more per-sample cost gone, ~1.3× over ultra-fast, ~2.6× over fast) — the caps shape only
+/// the top octave, so vs SPICE it is equal-or-better than ultra-fast (−31/−37 dB). WDF-only;
+/// the NeuralNet backend ignores it. Mirrors the C++ `qualityPreset("realtime"|"fast"|"ultra-fast")`.
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum WdfTier {
     #[name = "Realtime"]
@@ -79,6 +81,8 @@ pub enum WdfTier {
     Fast,
     #[name = "Ultra Fast"]
     UltraFast,
+    #[name = "Warp"]
+    Warp,
 }
 
 impl WdfTier {
@@ -87,6 +91,7 @@ impl WdfTier {
             WdfTier::Realtime => QualityConfig::realtime(),
             WdfTier::Fast => QualityConfig::fast(),
             WdfTier::UltraFast => QualityConfig::ultra_fast(),
+            WdfTier::Warp => QualityConfig::warp(),
         }
     }
 }
