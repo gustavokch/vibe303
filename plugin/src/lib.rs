@@ -109,7 +109,7 @@ impl Precision {
     fn to_wdf(self) -> wdf::Precision {
         match self {
             Precision::High => wdf::Precision::High,
-            Precision::Medium => wdf::Precision::Med,
+            Precision::Medium => wdf::Precision::Medium,
             Precision::Low => wdf::Precision::Low,
         }
     }

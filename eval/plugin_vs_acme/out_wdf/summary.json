@@ -6,7 +6,9 @@
     ],
     "gains": [
       0.0,
+      0.25,
       0.5,
+      0.75,
       1.0
     ],
     "fixed_bias": 0.77,
@@ -36,6 +38,20 @@
     },
     {
       "stim": "sweep_m3",
+      "gain_norm": 0.25,
+      "rkj_ohm": 3009.2,
+      "level_rms_db": -0.02,
+      "esr_db": -23.1,
+      "model_faithful": true,
+      "acme_pk": 2.238,
+      "plugin_pk": 2.237,
+      "lag": -1,
+      "levelnorm_rms_db": -0.14,
+      "level_ok": true,
+      "levelnorm_ok": true
+    },
+    {
+      "stim": "sweep_m3",
       "gain_norm": 0.5,
       "rkj_ohm": 905.5,
       "level_rms_db": -0.01,
@@ -45,6 +61,20 @@
       "plugin_pk": 3.355,
       "lag": -1,
       "levelnorm_rms_db": -0.15,
+      "level_ok": true,
+      "levelnorm_ok": true
+    },
+    {
+      "stim": "sweep_m3",
+      "gain_norm": 0.75,
+      "rkj_ohm": 272.5,
+      "level_rms_db": 0.01,
+      "esr_db": -22.8,
+      "model_faithful": true,
+      "acme_pk": 6.808,
+      "plugin_pk": 6.821,
+      "lag": -1,
+      "levelnorm_rms_db": -0.16,
       "level_ok": true,
       "levelnorm_ok": true
     },

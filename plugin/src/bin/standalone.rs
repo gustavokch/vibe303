@@ -88,17 +88,22 @@ fn main() {
         }
     }
     // `--precision` layers on the resolved tier (second pass so tier always wins first regardless of
-    // arg order); the per-lever flags below can still override individual fields it sets.
+    // arg order); the per-lever flags below can still override individual fields it sets. Last `--precision`
+    // wins and is applied exactly once: `with_precision(High)` is identity-on-a-fresh-tier, not a reset,
+    // so applying each occurrence would let `... medium ... high` leave the fixed-step lever stuck on.
+    let mut precision: Option<Precision> = None;
     for w in raw_args.windows(2) {
         if w[0] == "--precision" {
-            let p = match w[1].as_str() {
+            precision = Some(match w[1].as_str() {
                 "high" => Precision::High,
-                "medium" | "med" => Precision::Med,
+                "medium" | "med" => Precision::Medium,
                 "low" => Precision::Low,
                 _ => die("--precision must be `high`, `medium`, or `low`"),
-            };
-            wdf_cfg = wdf_cfg.with_precision(p);
+            });
         }
+    }
+    if let Some(p) = precision {
+        wdf_cfg = wdf_cfg.with_precision(p);
     }
 
     let mut args = raw_args.into_iter();
