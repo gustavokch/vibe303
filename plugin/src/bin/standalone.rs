@@ -26,6 +26,8 @@
 //!   --backend <nn|wdf> (default nn)  full-chain only, inference backend
 //!   --circuit-gain <f32> (default 220) WDF R_KJ shunt in ohms, --backend wdf only
 //!   --tier <realtime|fast|ultra-fast> (default realtime) WDF solver tier, --backend wdf only
+//!   --precision <high|medium|low>   (default high) lossy precision dial layered on the tier;
+//!                      medium/low enable the fixed-step solver + reduced charge model, --backend wdf only
 //!   --predict / --no-predict        WDF lever overrides (A/B), --backend wdf only
 //!   --ls-trim / --no-ls-trim        WDF lever overrides (A/B), --backend wdf only
 //!   --freeze-caps / --no-freeze-caps WDF lever overrides (A/B), --backend wdf only
@@ -41,7 +43,7 @@
 use ba283::dsp::ChannelDsp;
 use ba283::levelnorm::LevelNorm;
 use ba283::model::Ba283Model;
-use ba283::wdf::{CapTier, QualityConfig, Solver};
+use ba283::wdf::{CapTier, Precision, QualityConfig, Solver};
 use ba283::InferenceBackend;
 use std::process::exit;
 
@@ -84,6 +86,24 @@ fn main() {
                 _ => die("--tier must be `realtime`, `fast`, or `ultra-fast`"),
             };
         }
+    }
+    // `--precision` layers on the resolved tier (second pass so tier always wins first regardless of
+    // arg order); the per-lever flags below can still override individual fields it sets. Last `--precision`
+    // wins and is applied exactly once: `with_precision(High)` is identity-on-a-fresh-tier, not a reset,
+    // so applying each occurrence would let `... medium ... high` leave the fixed-step lever stuck on.
+    let mut precision: Option<Precision> = None;
+    for w in raw_args.windows(2) {
+        if w[0] == "--precision" {
+            precision = Some(match w[1].as_str() {
+                "high" => Precision::High,
+                "medium" | "med" => Precision::Medium,
+                "low" => Precision::Low,
+                _ => die("--precision must be `high`, `medium`, or `low`"),
+            });
+        }
+    }
+    if let Some(p) = precision {
+        wdf_cfg = wdf_cfg.with_precision(p);
     }
 
     let mut args = raw_args.into_iter();
@@ -143,6 +163,10 @@ fn main() {
             "--tier" => {
                 // Resolved in the pre-scan above; consume its value so lever flags still apply on top.
                 let _ = args.next().unwrap_or_else(|| die("--tier needs a value"));
+            }
+            "--precision" => {
+                // Resolved in the pre-scan above; consume its value so lever flags still apply on top.
+                let _ = args.next().unwrap_or_else(|| die("--precision needs a value"));
             }
             "--predict" => wdf_cfg.predict = true,
             "--no-predict" => wdf_cfg.predict = false,
