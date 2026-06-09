@@ -2,7 +2,8 @@
 import pytest
 import torch
 
-from train.factory import MODEL_TYPES, make_model
+from train.factory import MODEL_TYPES, make_model, resolve_d_state
+from train.loss import composite_loss
 from train.ssm import BA283SSM
 
 SSM_KINDS = ("s4d", "s6")
@@ -95,3 +96,77 @@ def test_lstm_path_unchanged():
 def test_unknown_model_type_raises():
     with pytest.raises(ValueError):
         make_model("transformer", hidden=16)
+
+
+@pytest.mark.parametrize("kind", SSM_KINDS)
+def test_dropout_between_layers_only(kind):
+    # Dropout must sit BETWEEN layers, never after the last (matching nn.LSTM):
+    # a single-layer model has no inter-layer slot, so its train-mode output is
+    # identical to eval (no dangling final-layer drop).
+    torch.manual_seed(3)
+    model = make_model(kind, hidden=12, num_layers=1, d_state=8, dropout=0.5)
+    x = torch.randn(2, 16, 2)
+    model.train(True)
+    with torch.no_grad():
+        y_train, _ = model(x)
+    model.train(False)
+    with torch.no_grad():
+        y_eval, _ = model(x)
+    assert torch.allclose(y_train, y_eval), f"{kind} dropped the final layer's output"
+
+
+@pytest.mark.parametrize("kind", SSM_KINDS)
+def test_dropout_active_between_stacked_layers(kind):
+    # With >1 layer the inter-layer dropout IS exercised in train mode, so the
+    # stochastic train output differs from the deterministic eval output.
+    torch.manual_seed(5)
+    model = make_model(kind, hidden=12, num_layers=2, d_state=8, dropout=0.5)
+    x = torch.randn(2, 16, 2)
+    model.train(True)
+    with torch.no_grad():
+        y_train, _ = model(x)
+    model.train(False)
+    with torch.no_grad():
+        y_eval, _ = model(x)
+    assert not torch.allclose(y_train, y_eval)
+
+
+@pytest.mark.parametrize("kind", SSM_KINDS)
+def test_one_train_step_updates_params(kind):
+    # A full TBPTT-shaped step (warmup-primed detached state -> forward -> loss
+    # -> backward -> step) must produce finite grads and actually move params.
+    torch.manual_seed(11)
+    model = make_model(kind, hidden=12, num_layers=2, d_state=8)
+    model.train(True)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-2)
+    x = torch.randn(2, 48, 2)
+    target = torch.randn(2, 32, 1)
+
+    with torch.no_grad():
+        _, state = model(x[:, :16])
+    state = tuple(s.detach() for s in state)
+    pred, _ = model(x[:, 16:], state)
+    loss = composite_loss(pred, target, stft_weight=0.5)
+    assert torch.isfinite(loss)
+
+    before = [p.detach().clone() for p in model.parameters()]
+    opt.zero_grad()
+    loss.backward()
+    for p in model.parameters():
+        if p.grad is not None:
+            assert torch.all(torch.isfinite(p.grad))
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    opt.step()
+
+    moved = any(
+        not torch.equal(b, p) for b, p in zip(before, model.parameters(), strict=True)
+    )
+    assert moved, f"{kind} params did not update after one step"
+
+
+def test_resolve_d_state_per_model_default():
+    # Unset -> per-model default (s6 cheaper); explicit value passes through.
+    assert resolve_d_state("s4d", None) == 64
+    assert resolve_d_state("s6", None) == 16
+    assert resolve_d_state("lstm", None) == 64
+    assert resolve_d_state("s6", 32) == 32

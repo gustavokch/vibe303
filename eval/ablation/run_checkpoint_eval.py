@@ -28,7 +28,7 @@ import torch
 from eval.ablation.gain_eval import Predict, Row, held_out_gain_esr, per_gain_esr
 from eval.ablation.metrics import high_band_error, resample_to
 from train.dataset import INPUT_SCALE, OUTPUT_SCALE, _resolve_path
-from train.factory import make_model
+from train.factory import ARCH_FILENAME, arch_spec, make_model, resolve_d_state
 
 
 def _read_mono(path: str) -> np.ndarray:
@@ -57,6 +57,7 @@ def load_model(
     d_state: int = 64,
     d_conv: int = 4,
     expand: int = 2,
+    ignore_arch_meta: bool = False,
 ):
     """Construct the model via :func:`train.factory.make_model` and load
     ``checkpoint`` into it (eval mode).
@@ -67,9 +68,42 @@ def load_model(
     ``load_state_dict`` raises on a key/shape mismatch. They default to the v1
     LSTM graph; ``dropout`` is irrelevant in eval mode and so is not exposed.
 
+    If an ``arch.json`` sidecar (written by :mod:`train.train`) sits next to the
+    checkpoint, the passed knobs are cross-checked against it FIRST and a
+    mismatch raises a clear :class:`ValueError` -- catching a wrong-config score
+    that ``load_state_dict`` would miss whenever the shapes happen to line up.
+    Pass ``ignore_arch_meta=True`` to skip the check (e.g. a deliberately
+    re-pointed graph). Checkpoints without a sidecar (legacy LSTM runs) load
+    unchanged.
+
     ``weights_only=True`` + ``map_location="cpu"`` so a GPU-trained checkpoint
     loads on a CPU-only eval host without unpickling arbitrary objects.
     """
+    want = arch_spec(
+        model_type,
+        hidden=hidden,
+        conditioning=conditioning,
+        num_layers=num_layers,
+        head=head,
+        film_kind=film_kind,
+        d_state=d_state,
+        d_conv=d_conv,
+        expand=expand,
+    )
+    arch_path = Path(checkpoint).parent / ARCH_FILENAME
+    if arch_path.exists() and not ignore_arch_meta:
+        saved = json.loads(arch_path.read_text())
+        diffs = {
+            k: (saved.get(k), want[k]) for k in want if saved.get(k) != want[k]
+        }
+        if diffs:
+            detail = ", ".join(
+                f"{k}: checkpoint={s!r} requested={r!r}" for k, (s, r) in diffs.items()
+            )
+            raise ValueError(
+                f"architecture mismatch vs {arch_path} ({detail}); pass "
+                f"ignore_arch_meta=True to override"
+            )
     model = make_model(
         model_type,
         hidden=hidden,
@@ -152,6 +186,7 @@ def run_cell(
     d_state: int = 64,
     d_conv: int = 4,
     expand: int = 2,
+    ignore_arch_meta: bool = False,
     cell: str,
     trained_gains: set[float],
     sr_train: int | None = None,
@@ -181,6 +216,7 @@ def run_cell(
         d_state=d_state,
         d_conv=d_conv,
         expand=expand,
+        ignore_arch_meta=ignore_arch_meta,
     )
     manifest_df = pd.read_csv(manifest)
     rows = build_rows(manifest_df, output_scale=OUTPUT_SCALE, warmup=warmup)
@@ -242,9 +278,19 @@ def _main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--hidden", type=int, required=True)
     parser.add_argument("--conditioning", default="film")
     parser.add_argument("--model", default="lstm", choices=("lstm", "s4d", "s6"))
-    parser.add_argument("--d-state", type=int, default=64)
+    parser.add_argument(
+        "--d-state",
+        type=int,
+        default=None,
+        help="SSM state size N; default 64 for s4d, 16 for s6 (must match training)",
+    )
     parser.add_argument("--d-conv", type=int, default=4)
     parser.add_argument("--expand", type=int, default=2)
+    parser.add_argument(
+        "--ignore-arch-meta",
+        action="store_true",
+        help="skip the arch.json cross-check next to the checkpoint",
+    )
     parser.add_argument("--cell", required=True)
     parser.add_argument(
         "--trained-gains",
@@ -265,9 +311,10 @@ def _main(argv: Sequence[str] | None = None) -> None:
         hidden=args.hidden,
         conditioning=args.conditioning,
         model_type=args.model,
-        d_state=args.d_state,
+        d_state=resolve_d_state(args.model, args.d_state),
         d_conv=args.d_conv,
         expand=args.expand,
+        ignore_arch_meta=args.ignore_arch_meta,
         cell=args.cell,
         trained_gains=trained_gains,
         sr_train=args.sr_train,

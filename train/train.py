@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import math
 import os
 import time
@@ -27,7 +28,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from train.dataset import make_loader
-from train.factory import make_model
+from train.factory import ARCH_FILENAME, arch_spec, make_model, resolve_d_state
 from train.loss import composite_loss, esr
 
 
@@ -123,6 +124,24 @@ def train_main(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     best_path = checkpoint_dir / "best.pth"
     last_path = checkpoint_dir / "last.pth"
+    # Record the architecture next to the weights so the eval harness can
+    # reconstruct (and cross-check) the model without being hand-fed every knob.
+    (checkpoint_dir / ARCH_FILENAME).write_text(
+        json.dumps(
+            arch_spec(
+                model_type,
+                hidden=hidden,
+                conditioning=conditioning,
+                num_layers=num_layers,
+                head=head,
+                film_kind=film_kind,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+            ),
+            indent=2,
+        )
+    )
 
     best_esr = float("inf")
     epochs_since_improvement = 0
@@ -353,7 +372,10 @@ def main() -> None:
         help="architecture: 'lstm' (shipped baseline), 's4d' or 's6' (state-space)",
     )
     parser.add_argument(
-        "--d-state", type=int, default=64, help="SSM state size N (s4d/s6 only)"
+        "--d-state",
+        type=int,
+        default=None,
+        help="SSM state size N (s4d/s6 only); default 64 for s4d, 16 for s6",
     )
     parser.add_argument(
         "--d-conv", type=int, default=4, help="S6 causal-conv kernel (s6 only)"
@@ -391,7 +413,7 @@ def main() -> None:
         stft_weight=args.stft_weight,
         balance_by_kind=args.balance_by_kind,
         model_type=args.model,
-        d_state=args.d_state,
+        d_state=resolve_d_state(args.model, args.d_state),
         d_conv=args.d_conv,
         expand=args.expand,
     )

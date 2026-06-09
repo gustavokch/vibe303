@@ -213,7 +213,7 @@ class BA283SSM(nn.Module):
         hidden: int = 48,
         conditioning: str = "film",
         *,
-        num_layers: int = 2,
+        num_layers: int = 1,
         dropout: float = 0.0,
         head: str = "linear",
         film_kind: str = "linear",
@@ -288,9 +288,14 @@ class BA283SSM(nn.Module):
             gain = None
         in_states = self._split_state(state)
         out_states: list[torch.Tensor] = []
-        for layer, st in zip(self.layers, in_states, strict=True):
+        last = len(self.layers) - 1
+        for i, (layer, st) in enumerate(zip(self.layers, in_states, strict=True)):
             u, new_st = layer(u, st)
-            u = self.dropout(u)
+            # Dropout BETWEEN layers only (never after the last), matching
+            # ``nn.LSTM``'s own placement so the SSM stays a faithful A/B against
+            # the LSTM baseline it is compared with.
+            if i != last:
+                u = self.dropout(u)
             if isinstance(new_st, tuple):
                 out_states.extend(new_st)
             else:
