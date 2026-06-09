@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import math
 import os
 import time
@@ -27,8 +28,8 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from train.dataset import make_loader
+from train.factory import ARCH_FILENAME, arch_spec, make_model, resolve_d_state
 from train.loss import composite_loss, esr
-from train.model import BA283LSTM
 
 
 def _atomic_save(state: object, path: Path) -> None:
@@ -78,6 +79,10 @@ def train_main(
     weight_decay: float = 0.0,
     stft_weight: float = 0.0,
     balance_by_kind: bool = False,
+    model_type: str = "lstm",
+    d_state: int = 64,
+    d_conv: int = 4,
+    expand: int = 2,
 ) -> None:
     torch.manual_seed(seed)
 
@@ -100,13 +105,17 @@ def train_main(
         drop_last=False,
     )
 
-    model = BA283LSTM(
+    model = make_model(
+        model_type,
         hidden=hidden,
         conditioning=conditioning,
         num_layers=num_layers,
         dropout=dropout,
         head=head,
         film_kind=film_kind,
+        d_state=d_state,
+        d_conv=d_conv,
+        expand=expand,
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -115,6 +124,24 @@ def train_main(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     best_path = checkpoint_dir / "best.pth"
     last_path = checkpoint_dir / "last.pth"
+    # Record the architecture next to the weights so the eval harness can
+    # reconstruct (and cross-check) the model without being hand-fed every knob.
+    (checkpoint_dir / ARCH_FILENAME).write_text(
+        json.dumps(
+            arch_spec(
+                model_type,
+                hidden=hidden,
+                conditioning=conditioning,
+                num_layers=num_layers,
+                head=head,
+                film_kind=film_kind,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+            ),
+            indent=2,
+        )
+    )
 
     best_esr = float("inf")
     epochs_since_improvement = 0
@@ -337,6 +364,25 @@ def main() -> None:
         action="store_true",
         help="weighted sampling to de-skew stim_kind imbalance (e.g. music dominance)",
     )
+    # --- Model selection (LSTM baseline vs state-space models) ---
+    parser.add_argument(
+        "--model",
+        choices=("lstm", "s4d", "s6"),
+        default="lstm",
+        help="architecture: 'lstm' (shipped baseline), 's4d' or 's6' (state-space)",
+    )
+    parser.add_argument(
+        "--d-state",
+        type=int,
+        default=None,
+        help="SSM state size N (s4d/s6 only); default 64 for s4d, 16 for s6",
+    )
+    parser.add_argument(
+        "--d-conv", type=int, default=4, help="S6 causal-conv kernel (s6 only)"
+    )
+    parser.add_argument(
+        "--expand", type=int, default=2, help="S6 inner expansion factor (s6 only)"
+    )
     args = parser.parse_args()
 
     train_main(
@@ -366,6 +412,10 @@ def main() -> None:
         weight_decay=args.weight_decay,
         stft_weight=args.stft_weight,
         balance_by_kind=args.balance_by_kind,
+        model_type=args.model,
+        d_state=resolve_d_state(args.model, args.d_state),
+        d_conv=args.d_conv,
+        expand=args.expand,
     )
 
 

@@ -33,6 +33,56 @@ def test_load_model_roundtrips_state(tmp_path):
         assert torch.equal(src_state[k], loaded_state[k])
 
 
+def _save_ssm(tmp_path, **kw):
+    """Save a tiny SSM checkpoint plus its arch.json sidecar, return the path."""
+    import json
+
+    from train.factory import ARCH_FILENAME, arch_spec, make_model
+
+    model = make_model(kw["model_type"], hidden=kw["hidden"], **{
+        k: v for k, v in kw.items() if k not in ("model_type", "hidden")
+    })
+    ckpt = tmp_path / "best.pth"
+    torch.save(model.state_dict(), ckpt)
+    (tmp_path / ARCH_FILENAME).write_text(json.dumps(arch_spec(**kw)))
+    return ckpt
+
+
+def test_load_model_accepts_matching_arch_meta(tmp_path):
+    kw = dict(model_type="s4d", hidden=8, num_layers=1, d_state=8)
+    ckpt = _save_ssm(tmp_path, **kw)
+    # Matching knobs -> loads clean.
+    loaded = load_model(ckpt, **kw)
+    assert loaded.kind == "s4d"
+
+
+def test_load_model_rejects_mismatched_arch_meta(tmp_path):
+    ckpt = _save_ssm(tmp_path, model_type="s4d", hidden=8, num_layers=1, d_state=8)
+    # Wrong d_state vs the sidecar -> caught BEFORE load_state_dict, clear error.
+    with pytest.raises(ValueError, match="architecture mismatch"):
+        load_model(ckpt, model_type="s4d", hidden=8, num_layers=1, d_state=16)
+
+
+def test_load_model_ignore_arch_meta_skips_check(tmp_path):
+    ckpt = _save_ssm(tmp_path, model_type="s4d", hidden=8, num_layers=1, d_state=8)
+    # Override the guard: now the (genuine) shape mismatch surfaces from torch
+    # instead of our pre-check -- proving the check, not the load, was bypassed.
+    with pytest.raises(RuntimeError):
+        load_model(
+            ckpt, model_type="s4d", hidden=8, num_layers=1, d_state=16,
+            ignore_arch_meta=True,
+        )
+
+
+def test_load_model_without_sidecar_is_unchanged(tmp_path):
+    # Legacy LSTM checkpoint, no arch.json -> loads exactly as before.
+    src = BA283LSTM(hidden=8)
+    ckpt = tmp_path / "best.pth"
+    torch.save(src.state_dict(), ckpt)
+    loaded = load_model(ckpt, hidden=8)
+    assert loaded.hidden == 8
+
+
 class _FakeModel:
     """Records the forward input tensor and echoes its audio column."""
 
