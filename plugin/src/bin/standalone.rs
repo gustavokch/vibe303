@@ -30,6 +30,7 @@
 //!   --ls-trim / --no-ls-trim        WDF lever overrides (A/B), --backend wdf only
 //!   --freeze-caps / --no-freeze-caps WDF lever overrides (A/B), --backend wdf only
 //!   --cheap-exp / --no-cheap-exp    WDF lever override (ultra-fast low-order exp), --backend wdf only
+//!   --fma / --no-fma                WDF lever override (FMA contraction in device kernels, lossy), --backend wdf only
 //!   --tol <f64>                     WDF Newton tolerance override (A/B), --backend wdf only
 //!   --max-iters <usize>             WDF Newton iteration cap override (A/B), --backend wdf only
 //!   --cap-tier <full|depletion|off> WDF BJT charge-cap detail (A/B), --backend wdf only
@@ -151,6 +152,8 @@ fn main() {
             "--no-freeze-caps" => wdf_cfg.freeze_caps = false,
             "--cheap-exp" => wdf_cfg.cheap_exp = true,
             "--no-cheap-exp" => wdf_cfg.cheap_exp = false,
+            "--fma" => wdf_cfg.fma = true,
+            "--no-fma" => wdf_cfg.fma = false,
             "--os" => {
                 let v = args.next().unwrap_or_else(|| die("--os needs a value"));
                 wdf_cfg.os = v.parse().unwrap_or_else(|_| die("--os must be a positive integer"));
