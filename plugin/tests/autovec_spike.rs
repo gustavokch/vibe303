@@ -186,8 +186,9 @@ fn bench_scalar() {
 // =====================================================================
 // Phase 2.0 — f32 device-kernel GO/NO-GO spike (Precision dial Phase 2)
 //
-// The hot kernel is `compute_bjt_preexp_batch` (wdf.rs:716): the divide-/sqrt-
-// heavy post-exp Gummel-Poon Jacobian, run width-4 SoA (3 BJTs + 1 pad lane).
+// The hot kernel is `compute_bjt_preexp_batch` (in plugin/src/wdf.rs): the
+// divide-/sqrt-heavy post-exp Gummel-Poon Jacobian, run width-4 SoA (3 BJTs +
+// 1 pad lane).
 // Question: does an f32 mirror run materially faster (cheaper vdivps/vsqrtps),
 // and does it stay accurate enough (rel-err <= 1e-4) to hold the -50 dB budget
 // when wired into Precision::Low?  NOTE: only 3 BJTs → no extra lane-parallelism
@@ -198,23 +199,32 @@ fn bench_scalar() {
 // =====================================================================
 
 /// Six representative outputs of the post-exp algebra: the three terminal
-/// currents plus three base-referred Jacobian entries (keeps the divide-heavy
-/// derivative chain live so it isn't DCE'd, and gives the accuracy probe
-/// coverage on the `/qbsq` terms — the f32-riskiest ops).
+/// currents plus three **vbe-partial** Jacobian entries (`dic_vbe`/`dib_vbe`/
+/// `die_vbe` — NOT the production base derivatives `dic_b = dic_vbe + dic_vbc`;
+/// the spike omits the vbc branch, see `preexp_lane_f64` doc). Keeps the
+/// divide-heavy derivative chain live so it isn't DCE'd, and gives the accuracy
+/// probe coverage on the `/qbsq` terms — the f32-riskiest ops.
 #[derive(Clone, Copy, Debug, Default)]
-struct PreOut6 {
+pub struct PreOut6 {
     ib: f64,
     ic: f64,
     ie: f64,
-    dic_b: f64,
-    dib_b: f64,
-    die_b: f64,
+    dic_vbe: f64,
+    dib_vbe: f64,
+    die_vbe: f64,
 }
 
 /// f64 reference: faithful single-lane port of `compute_bjt_preexp_batch`'s
-/// per-lane body (wdf.rs:737-786). `ef/er/ec` are the pre-exp transport terms
-/// (computed upstream in f64 and reused — same as production), so this isolates
-/// the post-exp divide/sqrt algebra.
+/// per-lane body. `ef/er/ec` are the pre-exp transport terms (computed upstream
+/// in f64 and reused — same as production), so this isolates the post-exp
+/// divide/sqrt algebra.
+///
+/// NOTE: only the **vbe-partial** derivatives are kept (`dic_vbe`/`dib_vbe`/
+/// `die_vbe`); the production vbc-derivative branch (`dq1_vbc`, `dq2_vbc`,
+/// `dqb_vbc`, `dit_vbc`, …) is omitted, so this probes ~half the full Jacobian.
+/// That subset suffices for the GO/NO-GO: the omitted half is more divide-heavy
+/// algebra where f32 is *cheaper*, so including it could only widen f32's edge —
+/// even doubling the measured +6.1% stays under the 15% bar, so the NO-GO holds.
 #[inline(always)]
 fn preexp_lane_f64(vbe: f64, vbc: f64, ef: f64, er: f64, ec: f64, p: &BjtParams) -> PreOut6 {
     let is = p.is;
@@ -227,7 +237,8 @@ fn preexp_lane_f64(vbe: f64, vbc: f64, ef: f64, er: f64, ec: f64, p: &BjtParams)
     } else {
         (gcrit * (vbe - vcrit) + icrit, gcrit)
     };
-    let (itr, gtr) = if vbc < vcrit {
+    // `_gtr`: production uses gtr only in the omitted vbc branch (see doc above).
+    let (itr, _gtr) = if vbc < vcrit {
         (is * (er - 1.0), inv_vt_is * er)
     } else {
         (gcrit * (vbc - vcrit) + icrit, gcrit)
@@ -263,9 +274,9 @@ fn preexp_lane_f64(vbe: f64, vbc: f64, ef: f64, er: f64, ec: f64, p: &BjtParams)
         ib,
         ic,
         ie,
-        dic_b: dic_vbe,
-        dib_b: dib_vbe,
-        die_b: die_vbe,
+        dic_vbe,
+        dib_vbe,
+        die_vbe,
     }
 }
 
@@ -282,7 +293,7 @@ fn preexp_lane_f32(vbe: f32, vbc: f32, ef: f32, er: f32, ec: f32, p: &BjtParams)
     } else {
         (gcrit * (vbe - vcrit) + icrit, gcrit)
     };
-    let (itr, gtr) = if vbc < vcrit {
+    let (itr, _gtr) = if vbc < vcrit {
         (is * (er - 1.0), inv_vt_is * er)
     } else {
         (gcrit * (vbc - vcrit) + icrit, gcrit)
@@ -318,17 +329,18 @@ fn preexp_lane_f32(vbe: f32, vbc: f32, ef: f32, er: f32, ec: f32, p: &BjtParams)
         ib: ib as f64,
         ic: ic as f64,
         ie: ie as f64,
-        dic_b: dic_vbe as f64,
-        dib_b: dib_vbe as f64,
-        die_b: die_vbe as f64,
+        dic_vbe: dic_vbe as f64,
+        dib_vbe: dib_vbe as f64,
+        die_vbe: die_vbe as f64,
     }
 }
 
-/// Width-4 f64 batch — production shape (3 BJTs + pad lane). Distinct symbol
-/// for objdump (expect packed vdivpd/vsqrtpd over the lanes).
+/// Width-4 f64 batch — production shape (3 BJTs + pad lane). `#[no_mangle]` gives
+/// objdump a stable symbol (expect packed vdivpd/vsqrtpd over the lanes); plain
+/// `fn` (not `extern "C"`) avoids FFI-safety lints on the by-ref array args.
 #[no_mangle]
 #[inline(never)]
-pub extern "C" fn preexp_batch4_f64(
+pub fn preexp_batch4_f64(
     vbe: &[f64; 4],
     vbc: &[f64; 4],
     ef: &[f64; 4],
@@ -345,7 +357,7 @@ pub extern "C" fn preexp_batch4_f64(
 /// Width-4 f32 batch — same shape, f32 algebra. Expect packed vdivps/vsqrtps.
 #[no_mangle]
 #[inline(never)]
-pub extern "C" fn preexp_batch4_f32(
+pub fn preexp_batch4_f32(
     vbe: &[f32; 4],
     vbc: &[f32; 4],
     ef: &[f32; 4],
@@ -416,9 +428,9 @@ fn preexp_f32_accuracy() {
                 rel(a.ib, b.ib, "ib");
                 rel(a.ic, b.ic, "ic");
                 rel(a.ie, b.ie, "ie");
-                rel(a.dic_b, b.dic_b, "dic_b");
-                rel(a.dib_b, b.dib_b, "dib_b");
-                rel(a.die_b, b.die_b, "die_b");
+                rel(a.dic_vbe, b.dic_vbe, "dic_vbe");
+                rel(a.dib_vbe, b.dib_vbe, "dib_vbe");
+                rel(a.die_vbe, b.die_vbe, "die_vbe");
             }
             vbc += 0.05;
         }
@@ -489,7 +501,7 @@ fn bench_preexp() {
                 std::hint::black_box(&ec),
                 std::hint::black_box(&mut out),
             );
-            acc += out[2].ic + out[0].dic_b;
+            acc += out[2].ic + out[0].dic_vbe;
         }
         best_f64 = best_f64.min(t.elapsed().as_secs_f64());
 
@@ -503,7 +515,7 @@ fn bench_preexp() {
                 std::hint::black_box(&ec32),
                 std::hint::black_box(&mut out),
             );
-            acc += out[2].ic + out[0].dic_b;
+            acc += out[2].ic + out[0].dic_vbe;
         }
         best_f32 = best_f32.min(t.elapsed().as_secs_f64());
     }
