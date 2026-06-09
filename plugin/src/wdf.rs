@@ -1171,6 +1171,22 @@ impl QualityConfig {
         }
     }
 
+    /// `ultra_fast()` with the BJT junction charge model dropped (`cap_tier = Off`): the depletion +
+    /// diffusion charge batch and its trapezoidal trailing update (~19 % of the per-sample cost) are
+    /// removed entirely, leaving transport-only devices. Measured 2026-06-09 (`ba283_standalone
+    /// --backend wdf`, sweep_m6): 1.30× over ultra-fast (≈4.2× over realtime). The caps shape only
+    /// the very top octave, which os=1 already alters, so dropping them perturbs the output by just
+    /// −55 dB vs ultra-fast — far below the −23 dB WDF-vs-ACME model floor — i.e. vs SPICE it stays
+    /// within a hair of ultra-fast's −30 to −36 dB. Distinct from `with_precision(Low)`, which also
+    /// sets `cap_tier = Off` but additionally forces the fixed-step solver (max_iters = 2); this tier
+    /// keeps the full convergence gate, so the only change vs ultra-fast is the charge model.
+    pub fn warp() -> Self {
+        Self {
+            cap_tier: CapTier::Off,
+            ..Self::ultra_fast()
+        }
+    }
+
     /// Layer a lossy [`Precision`] setting onto this tier config. `High` is the identity (preserves
     /// the bit-exact realtime/golden contract); `Medium`/`Low` enable the fixed-step solver (exactly 2
     /// Newton iters, no `residual_norm` gate / line search) and drop the BJT charge model — these are
@@ -1282,6 +1298,14 @@ pub struct WdfModel {
     // Freeze-caps: cached iter-0 junction-cap companion per BJT: (cbe, cbc, off_be, off_bc).
     frozen_cap: [(f64, f64, f64, f64); 3],
     frozen_caps_valid: bool,
+
+    // Trailing-state reuse (lossless): the converged junction charges (qbe, qbc) per BJT, stored by
+    // the Newton iter that hits the convergence break. The per-sample trapezoidal trailing update
+    // then reuses them instead of re-running diode_branch + depletion_charge_pre at the same v.
+    // Valid only when the solve converged via the tol break AND freeze_caps is off — the frozen
+    // companion (Q = off + C*v) is an approximation, not the true charge, so fast/ultra recompute.
+    cap_q_cache: [(f64, f64); 3],
+    cap_cache_valid: bool,
 
     // Schur static-block partition (built once) + per-sample scratch.
     n_idx: [usize; NUM_NODES], // global unknown-row indices in the N (nonlinear-coupled) set
@@ -1535,6 +1559,8 @@ impl WdfModel {
             in_audio_pass: false,
             frozen_cap: [(0.0, 0.0, 0.0, 0.0); 3],
             frozen_caps_valid: false,
+            cap_q_cache: [(0.0, 0.0); 3],
+            cap_cache_valid: false,
             n_idx: [0; NUM_NODES],
             l_idx: [0; NUM_NODES],
             n_sz: 0,
@@ -2262,6 +2288,9 @@ impl WdfModel {
         // gmin-stepping homotopy pass freezes its cap companion at ITS own iter-0 operating
         // point rather than reusing a stale one from the gmin=0 attempt (`main.cpp:712`).
         self.frozen_caps_valid = false;
+        // Trailing-state reuse: invalidate per call; only the convergence break re-arms it. After the
+        // gmin homotopy the last (gmin=0) call's break leaves the cache at the returned `v`.
+        self.cap_cache_valid = false;
 
         // Deferred-acceptance line-search state (only used when ls_trim). Instead of verifying
         // each Newton step with its own residual_norm call, take the full step optimistically and
@@ -2450,6 +2479,11 @@ impl WdfModel {
                         }
                         (qbe, cbe, qbc, cbc)
                     };
+                    // Trailing-state reuse: remember this iter's charges. Only read back (post-loop)
+                    // when the solve converged with freeze_caps off, where these are the true
+                    // depletion+diffusion charges at the converged v (frozen path stores the
+                    // companion approximation, never read because cap_cache_valid stays false).
+                    self.cap_q_cache[bi] = (qbe, qbc);
                     let ibe = k2 * (qbe - t.qbe_prev) - t.ibe_prev; // b->e
                     let gbe = k2 * cbe;
                     let ibc = k2 * (qbc - t.qbc_prev) - t.ibc_prev; // b->c
@@ -2519,6 +2553,13 @@ impl WdfModel {
                     self.j_frozen_raw[..u * u].copy_from_slice(&self.j[..u * u]);
                     self.j_captured = true;
                 }
+                // Trailing-state reuse: this iter built the device charges at the converged v and the
+                // break skips the step, so `cap_q_cache` matches the returned v. Arm reuse only when
+                // the cached charges are bit-identical to the scalar trailing recompute:
+                //  - freeze_caps off — else the stored charges are the frozen companion, not true;
+                //  - cheap_exp off — the batch always uses the accurate exp, but the scalar
+                //    diode_branch would use ultra_exp, so they'd diverge.
+                self.cap_cache_valid = !self.freeze_caps && !self.bjts[0].p.cheap_exp;
                 break;
             }
 
@@ -2672,6 +2713,25 @@ impl WdfModel {
             }
         }
         iters_used
+    }
+
+    /// True trapezoidal junction charges `(qbe, qbc)` for `t` at the current `v` (depletion +
+    /// diffusion). Single source for the trailing-state update's recompute path AND its debug
+    /// bit-exactness guard, so the two can't silently drift (cf. the duplication warning on the
+    /// `depletion_charge_pre` golden test). Mirrors the per-BJT charge built in `newton_iterate`.
+    #[inline]
+    fn junction_charges(&self, t: &Bjt) -> (f64, f64) {
+        let tf = if self.cap_tier == CapTier::Full { t.p.tf } else { 0.0 };
+        let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
+        let vbe = self.node_v(t.b) - self.node_v(t.e);
+        let vbc = self.node_v(t.b) - self.node_v(t.c);
+        let (i_be, _) = diode_branch(vbe, t.p.is, t.p.vt, t.p.vcrit, t.p.cheap_exp);
+        let (i_bc, _) = diode_branch(vbc, t.p.is, t.p.vt, t.p.vcrit, t.p.cheap_exp);
+        let (qbe_dep, _) =
+            depletion_charge_pre(vbe, t.p.cje, t.p.vje, t.p.mje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv);
+        let (qbc_dep, _) =
+            depletion_charge_pre(vbc, t.p.cjc, t.p.vjc, t.p.mjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv);
+        (qbe_dep + tf * i_be, qbc_dep + tr * i_bc)
     }
 
     /// Sub-rate spike helper: add the linear branch residuals (resistors + linear-cap companions +
@@ -2859,6 +2919,8 @@ impl WdfModel {
             if !self.subrate_hold {
                 self.solve_frozen();
             }
+            // No Newton ran, so any armed charge cache is stale; force the trailing recompute.
+            self.cap_cache_valid = false;
             // Instrumentation: counts as a sample with 0 device-Newton iters (the cost proxy the
             // harness reads — avgIters drops ~1/subrate when the freeze is doing real work).
             self.iter_samples += 1;
@@ -2922,23 +2984,36 @@ impl WdfModel {
             let dv_prev = self.node_v_prev(c.a) - self.node_v_prev(c.b);
             self.caps[i].i_prev = c.geq * (dv - dv_prev) - c.i_prev;
         }
-        // update BJT charge-cap state (trapezoidal) for next sample
+        // update BJT charge-cap state (trapezoidal) for next sample. Reuse the converged charges the
+        // Newton solve already built (cap_cache_valid) instead of re-running diode_branch +
+        // depletion_charge_pre here — lossless, since on the armed path the cached charges are
+        // bit-identical to this recompute (verified every sample in debug builds).
         if self.cap_tier != CapTier::Off {
             let k2 = 2.0 / self.dt;
             for bi in 0..self.bjts.len() {
                 let t = self.bjts[bi];
-                let tf = if self.cap_tier == CapTier::Full { t.p.tf } else { 0.0 };
-                let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
-                let vbe = self.node_v(t.b) - self.node_v(t.e);
-                let vbc = self.node_v(t.b) - self.node_v(t.c);
-                let (i_be, _) = diode_branch(vbe, t.p.is, t.p.vt, t.p.vcrit, t.p.cheap_exp);
-                let (i_bc, _) = diode_branch(vbc, t.p.is, t.p.vt, t.p.vcrit, t.p.cheap_exp);
-                let (qbe_dep, _) =
-                    depletion_charge_pre(vbe, t.p.cje, t.p.vje, t.p.mje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv);
-                let (qbc_dep, _) =
-                    depletion_charge_pre(vbc, t.p.cjc, t.p.vjc, t.p.mjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv);
-                let qbe = qbe_dep + tf * i_be;
-                let qbc = qbc_dep + tr * i_bc;
+                let (qbe, qbc) = if self.cap_cache_valid {
+                    let cached = self.cap_q_cache[bi];
+                    // Near-lossless, not bit-exact: the cached charges come from the batched device
+                    // kernel (exp arg = vbe*(1/vt), multiply-by-reciprocal) while `junction_charges`
+                    // uses scalar `diode_branch` (vbe/vt, true division) — they agree to a few ULP.
+                    // That's ~1e-15 relative on a charge ~1e-12, far below the model's −23 dB floor
+                    // and the 1e-5 golden gate. Debug builds verify the cache tracks the recompute
+                    // on every sample (catches a wrong node/index/v bug — relative drift would be
+                    // O(1), not O(ULP) — at near-zero release cost).
+                    #[cfg(debug_assertions)]
+                    {
+                        let (rq_be, rq_bc) = self.junction_charges(&t);
+                        let close = |a: f64, b: f64| {
+                            (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-30)
+                        };
+                        debug_assert!(close(cached.0, rq_be), "qbe cache drift bjt {bi}: {} vs {}", cached.0, rq_be);
+                        debug_assert!(close(cached.1, rq_bc), "qbc cache drift bjt {bi}: {} vs {}", cached.1, rq_bc);
+                    }
+                    cached
+                } else {
+                    self.junction_charges(&t)
+                };
                 let bjt = &mut self.bjts[bi];
                 bjt.ibe_prev = k2 * (qbe - bjt.qbe_prev) - bjt.ibe_prev;
                 bjt.qbe_prev = qbe;
@@ -3307,6 +3382,26 @@ mod tests {
         for i in 0..256 {
             let y = m.process_host_sample((i as f32 / 256.0) * 0.4 - 0.2);
             assert!(y.is_finite(), "ultra-fast output non-finite at sample {i}");
+        }
+    }
+
+    #[test]
+    fn warp_drops_charge_model_only() {
+        let cfg = QualityConfig::warp();
+        // It is ultra-fast with cap_tier=Off and nothing else changed.
+        assert_eq!(cfg.cap_tier, CapTier::Off, "must drop the BJT charge model");
+        assert_eq!(cfg.os, 1, "inherits ultra-fast os=1");
+        assert!(!cfg.decimate, "inherits ultra-fast decimation bypass");
+        assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
+                "inherits the fast-tier levers");
+        // Distinct from Precision::Low: this keeps the full convergence gate (no fixed-step cap).
+        assert!(!cfg.fixed_step, "warp keeps the convergence gate (unlike Precision::Low)");
+        assert_eq!(cfg, QualityConfig { cap_tier: CapTier::Off, ..QualityConfig::ultra_fast() });
+        // Finite, stable output on a quick ramp.
+        let mut m = WdfModel::new_with(cfg, 48_000.0, 220.0, 0.5);
+        for i in 0..256 {
+            let y = m.process_host_sample((i as f32 / 256.0) * 0.4 - 0.2);
+            assert!(y.is_finite(), "warp output non-finite at sample {i}");
         }
     }
 
