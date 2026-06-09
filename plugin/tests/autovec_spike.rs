@@ -112,6 +112,39 @@ fn exp_bl_is_bit_exact() {
     assert_eq!(mismatches, 0);
 }
 
+// ---- Phase 0.5 — SLP spike: [f64;4] SoA straight-line probe ----
+//
+// LLVM's SLP vectorizer fuses 4 independent scalar lanes into a single AVX2
+// packed-double op when it sees straight-line code on a [f64;4] input.
+// `#[no_mangle] #[inline(never)]` keeps it as a distinct symbol for objdump.
+//
+// GO  → objdump shows vmulpd/vaddpd/etc over 4 lanes → proceed to Phase 1.
+// NO-GO → scalar sequence → stop, report, decide with user before any rewrite.
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn exp_bl_slp4(xs: [f64; 4]) -> [f64; 4] {
+    [
+        exp_bl(xs[0]),
+        exp_bl(xs[1]),
+        exp_bl(xs[2]),
+        exp_bl(xs[3]),
+    ]
+}
+
+#[test]
+fn exp_bl_slp4_is_bit_exact() {
+    for i in 0..100 {
+        let x = -20.0 + (i as f64) * 0.6;
+        let xs = [x, x + 0.1, x + 0.2, x + 0.3];
+        let got = exp_bl_slp4(xs);
+        let want = [exp_bl(xs[0]), exp_bl(xs[1]), exp_bl(xs[2]), exp_bl(xs[3])];
+        assert_eq!(got[0].to_bits(), want[0].to_bits(), "lane 0 x={x}");
+        assert_eq!(got[1].to_bits(), want[1].to_bits(), "lane 1 x={x}");
+        assert_eq!(got[2].to_bits(), want[2].to_bits(), "lane 2 x={x}");
+        assert_eq!(got[3].to_bits(), want[3].to_bits(), "lane 3 x={x}");
+    }
+}
+
 // ---- Step 4 — instruction A/B benches (run individually under perf) ----
 
 const BENCH_N: usize = 4096;

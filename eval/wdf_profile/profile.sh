@@ -43,6 +43,7 @@ mkdir -p "$OUT_DIR" "$PERF_STORE"
 
 # ---- Build a ~10-15 s profiling stimulus (avoids /tmp space explosion) ----
 STIM="$PERF_STORE/profile_stim.wav"
+export STIM
 if [[ ! -f "$STIM" ]]; then
   echo "[profile] building stimulus..."
   uv run python3 - <<'PYEOF'
