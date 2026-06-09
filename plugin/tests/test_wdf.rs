@@ -234,6 +234,17 @@ fn fast_tier_is_near_lossless() {
 }
 
 #[test]
+fn fma_lever_is_near_lossless() {
+    // T3: FMA contraction in the device kernels (single vs double rounding, ~1 ULP/op). On its own
+    // it perturbs which equally-valid iterate Newton lands on at hard onsets — well under the lossy
+    // budget (measured ESR vs the non-FMA build is ≈ −180 dB on fast, −157 dB on ultra). Guards the
+    // const-generic `<true>` conversions against a future mis-transcription.
+    let cfg = QualityConfig { fma: true, ..QualityConfig::realtime() };
+    let dev = max_dev_vs_realtime(cfg);
+    assert!(dev <= 1e-4, "fma deviation {dev} exceeds 1e-4");
+}
+
+#[test]
 fn snapshot_restore_round_trips() {
     let mut m = wdf::WdfModel::new(wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
     m.warmup();
