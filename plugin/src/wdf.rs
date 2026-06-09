@@ -1080,6 +1080,29 @@ pub struct QualityConfig {
     /// iteration-capping leaves running. Lossy (no convergence guarantee on transients); set by the
     /// Med/Low Precision settings only — realtime/HIGH keep `false` and stay bit-identical.
     pub fixed_step: bool,
+    /// Sub-rate Newton (GO/NO-GO spike, Rust-only). Run the full nonlinear Newton solve only every
+    /// `subrate`-th internal sample; on the in-between samples freeze the converged Jacobian (the
+    /// BJTs' Norton linearization) and its LU factorization and do one linear back-substitution —
+    /// skipping all `exp4`/depletion/Gummel-Poon assembly + the matrix factor. `1` = off (every
+    /// sample, fully inert / bit-exact). Lossy (operating point lags ≤ subrate-1 samples); gated vs
+    /// Realtime+High and vs SPICE, never vs C++ parity (the golden has no such path).
+    ///
+    /// VERDICT 2026-06-09: **NO-GO**, kept as a hidden A/B lever only. The `eval/wdf_ultrafast` sweep
+    /// confirmed avgIters drops as designed (fast 1.75 → K2 1.08 / K3 0.84 / K4 0.55, i.e. the freeze
+    /// really does skip device Newton iters) but **two independent gates fail**: (1) speed — K=2 is
+    /// *slower* than fast (0.88×), best K=4 only 1.06× (target ≥1.3×), because the frozen path swaps
+    /// the fast tier's cheap Schur small-block factor for a full DENSE O(u³) LU factor on every
+    /// capture + dense O(u²) back-sub on every skip, which costs ~what the skipped device evals save;
+    /// (2) fidelity — added-ESR vs Realtime+High is only −37.9 dB at K=2 (budget ≤ −50 dB), and the
+    /// frozen op-point lag error is intrinsic, not an implementation artifact. The profiler's
+    /// long-standing read held: iteration count was never the bottleneck — the fixed per-sample
+    /// device cost is, and sub-rate just trades it for its own per-sample factor/solve. Do not retry
+    /// the dense-frozen form; a Schur-reuse variant could recover (1) but cannot fix (2).
+    pub subrate: usize,
+    /// Sub-rate naive-hold baseline (spike measurement only): on a skipped sample hold `v` frozen
+    /// instead of running the frozen linear solve. Quantifies what the linear update buys. Ignored
+    /// when `subrate <= 1`.
+    pub subrate_hold: bool,
 }
 
 /// Lossy precision setting, orthogonal to [`WdfTier`](crate). A modifier layered on a tier's
@@ -1108,6 +1131,8 @@ impl QualityConfig {
             decimate: true,
             fma: false,
             fixed_step: false,
+            subrate: 1,
+            subrate_hold: false,
         }
     }
     pub fn fast() -> Self {
@@ -1287,6 +1312,20 @@ pub struct WdfModel {
     iter_samples: u64,
     iter_total: u64,
     iter_max: usize,
+
+    // --- sub-rate Newton spike (all inert when subrate <= 1; the bit-exact golden path never
+    // touches `capture_j`/`j_frozen_raw`/etc.) ---
+    subrate: usize,        // full Newton every K-th internal audio sample (1 = off)
+    subrate_hold: bool,    // naive-hold baseline: freeze v on skipped samples (no linear update)
+    subrate_phase: usize,  // internal audio samples since last full solve (0 => full solve due)
+    subrate_valid: bool,   // a frozen model has been captured and is usable
+    capture_j: bool,       // gate: snapshot the converged J in `newton_iterate` (full-solve sample)
+    j_captured: bool,      // set by `newton_iterate` when it actually snapshot a converged J
+    j_frozen_raw: [f64; NUM_NODES * NUM_NODES], // converged J at the last full solve (= g0 + J_dev)
+    j_dev: [f64; NUM_NODES * NUM_NODES],        // j_frozen_raw - g0 (frozen device conductances)
+    lu_frozen: [f64; NUM_NODES * NUM_NODES],    // LU factors of j_frozen_raw (stride u)
+    piv_frozen: [usize; NUM_NODES],
+    i0_const: [f64; NUM_NODES],                 // frozen device Norton constant (reduced rows)
 }
 
 /// RV1 (4k7 preset) split. `bias` in [0,1] is remapped onto the stable pot range then split into
@@ -1517,6 +1556,17 @@ impl WdfModel {
             iter_samples: 0,
             iter_total: 0,
             iter_max: 0,
+            subrate: cfg.subrate.max(1),
+            subrate_hold: cfg.subrate_hold,
+            subrate_phase: 0,
+            subrate_valid: false,
+            capture_j: false,
+            j_captured: false,
+            j_frozen_raw: [0.0; NUM_NODES * NUM_NODES],
+            j_dev: [0.0; NUM_NODES * NUM_NODES],
+            lu_frozen: [0.0; NUM_NODES * NUM_NODES],
+            piv_frozen: [0; NUM_NODES],
+            i0_const: [0.0; NUM_NODES],
         };
         model.build_g0();
         model.build_schur_partition(); // sets n/l partition; runs first Schur prep if enabled
@@ -2461,6 +2511,14 @@ impl WdfModel {
             }
             norm_f = norm_f.sqrt();
             if norm_f < self.newton_tol {
+                // Sub-rate spike: this iter assembled J at the (converged) v and has not yet been
+                // mutated by the linear solve (the break skips it), so `self.j` is exactly the
+                // converged Jacobian at v0. Snapshot it for the frozen-linear skipped samples.
+                // `capture_j` is false on the bit-exact golden path → zero overhead there.
+                if self.capture_j {
+                    self.j_frozen_raw[..u * u].copy_from_slice(&self.j[..u * u]);
+                    self.j_captured = true;
+                }
                 break;
             }
 
@@ -2616,16 +2674,145 @@ impl WdfModel {
         iters_used
     }
 
+    /// Sub-rate spike helper: add the linear branch residuals (resistors + linear-cap companions +
+    /// coupled inductor) at the current `v` into the reduced residual `f`. Byte-for-byte the same
+    /// stamps as `newton_iterate`'s linear block, but without touching `self.j` or the devices.
+    fn add_linear_residual(&self, f: &mut [f64]) {
+        use node::{N_A, N_PA, N_SA};
+        for i in 0..self.n_res {
+            let r = self.res[i];
+            let d = r.g * (self.node_v(r.a) - self.node_v(r.b));
+            let (ra, rb) = (self.ur(r.a), self.ur(r.b));
+            if ra >= 0 {
+                f[ra as usize] += d;
+            }
+            if rb >= 0 {
+                f[rb as usize] -= d;
+            }
+        }
+        for i in 0..self.n_caps {
+            let c = self.caps[i];
+            let d = c.geq * (self.node_v(c.a) - self.node_v(c.b));
+            let (ra, rb) = (self.ur(c.a), self.ur(c.b));
+            if ra >= 0 {
+                f[ra as usize] += d;
+            }
+            if rb >= 0 {
+                f[rb as usize] -= d;
+            }
+        }
+        let vp = self.node_v(N_PA) - self.node_v(N_A);
+        let vs = self.node_v(N_SA);
+        let (rp, rs) = (self.ur(N_PA), self.ur(N_SA));
+        if rp >= 0 {
+            f[rp as usize] += self.gl[0][0] * vp + self.gl[0][1] * vs;
+        }
+        if rs >= 0 {
+            f[rs as usize] += self.gl[1][0] * vp + self.gl[1][1] * vs;
+        }
+    }
+
+    /// Sub-rate spike: after a converged full solve at `v0`, build the frozen linear model used by
+    /// the next `subrate-1` skipped samples. `newton_iterate` already snapshot the converged J into
+    /// `j_frozen_raw` (= G0 + J_dev(v0)). LU-factor it; derive `j_dev = j_frozen_raw - g0`; and
+    /// capture the device Norton constant `i0_const = D(v0) - J_dev·v0`, computed from the converged
+    /// identity `D(v0) = -L(v0)` (full residual ≈ 0 ⇒ device residual = −linear residual). On failure
+    /// (no converged J this sample, or singular J) clears `subrate_valid` so the next sample also
+    /// full-solves.
+    fn capture_frozen(&mut self) {
+        let u = self.u;
+        if !self.j_captured {
+            self.subrate_valid = false;
+            return;
+        }
+        self.lu_frozen[..u * u].copy_from_slice(&self.j_frozen_raw[..u * u]);
+        if !Self::lu_factor(&mut self.lu_frozen[..u * u], &mut self.piv_frozen[..u], u) {
+            self.subrate_valid = false;
+            return;
+        }
+        for i in 0..u * u {
+            self.j_dev[i] = self.j_frozen_raw[i] - self.g0[i];
+        }
+        // Reduced converged voltages.
+        let mut v0_red = [0.0f64; NUM_NODES];
+        for n in 0..NUM_NODES {
+            let r = self.urow[n];
+            if r >= 0 {
+                v0_red[r as usize] = self.v[n];
+            }
+        }
+        // L(v0) = hist + linear residuals at v0 (self.hist still holds this sample's history).
+        let mut lv = [0.0f64; NUM_NODES];
+        lv[..u].copy_from_slice(&self.hist[..u]);
+        self.add_linear_residual(&mut lv[..u]);
+        // i0_const[r] = D(v0) - (J_dev·v0)[r] = -L(v0)[r] - (J_dev·v0)[r].
+        for r in 0..u {
+            let mut s = -lv[r];
+            let base = r * u;
+            for c in 0..u {
+                s -= self.j_dev[base + c] * v0_red[c];
+            }
+            self.i0_const[r] = s;
+        }
+        self.subrate_valid = true;
+    }
+
+    /// Sub-rate spike: solve one skipped sample with the frozen model. The residual is affine in
+    /// `v` — `F(v) = j_frozen·v + (hist + known-node const) + i0_const` — so one LU back-substitution
+    /// against the pre-factored `lu_frozen` lands on the exact frozen-linear solution regardless of
+    /// the starting guess. No `exp4` / depletion / Gummel-Poon, no re-factor.
+    fn solve_frozen(&mut self) {
+        let u = self.u;
+        // F = hist + linear residuals + frozen device residual, evaluated at the current v.
+        self.f[..u].copy_from_slice(&self.hist[..u]);
+        // Borrow split: add_linear_residual reads &self, so stage into a temp then fold in.
+        let mut lin = [0.0f64; NUM_NODES];
+        self.add_linear_residual(&mut lin[..u]);
+        for r in 0..u {
+            self.f[r] += lin[r];
+        }
+        let mut v_red = [0.0f64; NUM_NODES];
+        for n in 0..NUM_NODES {
+            let r = self.urow[n];
+            if r >= 0 {
+                v_red[r as usize] = self.v[n];
+            }
+        }
+        for r in 0..u {
+            let mut d = self.i0_const[r];
+            let base = r * u;
+            for c in 0..u {
+                d += self.j_dev[base + c] * v_red[c];
+            }
+            self.f[r] += d;
+        }
+        for r in 0..u {
+            self.delta[r] = -self.f[r];
+        }
+        Self::lu_solve(&self.lu_frozen, &self.piv_frozen, u, &mut self.delta);
+        for n in 0..NUM_NODES {
+            let r = self.urow[n];
+            if r >= 0 {
+                self.v[n] += self.delta[r as usize];
+            }
+        }
+    }
+
     /// Solve one sample. `v[N_A]`, `v[N_INPUT]` must be set before calling (`main.cpp:452-516`).
     pub fn process(&mut self) {
         use node::{N_A, N_PA, N_SA};
         let u = self.u;
+        // Sub-rate Newton (spike, audio pass only): full solve on phase 0 or when no frozen model is
+        // valid yet; otherwise a skipped sample reuses the frozen Jacobian. Inert at subrate <= 1.
+        let subrate_on = self.subrate > 1 && self.in_audio_pass;
+        let skipped = subrate_on && self.subrate_valid && self.subrate_phase != 0;
         // Newton predictor: seed the solve with a 1st-order linear extrapolation of the last two
         // converged internal samples (2*sol(n-1) - sol(n-2)) for UNKNOWN nodes only. Same fixed
         // point + tol => identical converged v, just fewer iters. Off during DC warmup/rail-ramp/
         // settle (in_audio_pass false), where transient swings would make it overshoot
         // (`main.cpp:621-633`). Modifies only `v` (the guess); `hist` below reads `v_prev`.
-        if self.predict && self.in_audio_pass {
+        // Skipped sub-rate samples solve an affine system (guess-independent) or hold, so no predict.
+        if self.predict && self.in_audio_pass && !skipped {
             if !self.predict_primed {
                 self.v_pred_prev = self.v; // remember sol(n-1); no extrapolation yet
                 self.predict_primed = true;
@@ -2666,26 +2853,54 @@ impl WdfModel {
             self.hist[rs as usize] += ind_hist_s;
         }
 
-        let mut sample_iters = self.newton_iterate(0.0);
-        let mut sample_max = sample_iters;
-        // Fixed-step (Med/Low precision) skips the per-sample convergence gate entirely: the
-        // `residual_norm` re-stamp + gmin-homotopy fallback are the dominant fixed per-sample cost,
-        // and the budget tolerates the occasional unconverged hard sample. HIGH/realtime keep it.
-        if !self.fixed_step {
-            let resid = self.residual_norm(0.0);
-            if resid > 1e-3 {
-                // hard sample: gmin-stepping homotopy
-                for g in [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 0.0] {
-                    let it = self.newton_iterate(g);
-                    sample_iters += it;
-                    sample_max = sample_max.max(it);
+        if skipped {
+            // Frozen sub-rate sample: reuse the captured Jacobian + LU. `solve_frozen` does one
+            // back-substitution; `subrate_hold` is the naive baseline that freezes v instead.
+            if !self.subrate_hold {
+                self.solve_frozen();
+            }
+            // Instrumentation: counts as a sample with 0 device-Newton iters (the cost proxy the
+            // harness reads — avgIters drops ~1/subrate when the freeze is doing real work).
+            self.iter_samples += 1;
+        } else {
+            // Full solve. Snapshot the converged J for the following skipped samples when sub-rate
+            // is engaged (`capture_j` gates the snapshot inside `newton_iterate`; off otherwise so
+            // the bit-exact golden path is untouched).
+            if subrate_on {
+                self.j_captured = false;
+                self.capture_j = true;
+            }
+            let mut sample_iters = self.newton_iterate(0.0);
+            let mut sample_max = sample_iters;
+            if subrate_on {
+                self.capture_j = false; // gmin homotopy below must not overwrite the gmin=0 J
+            }
+            // Fixed-step (Med/Low precision) skips the per-sample convergence gate entirely: the
+            // `residual_norm` re-stamp + gmin-homotopy fallback are the dominant fixed per-sample
+            // cost, and the budget tolerates the occasional unconverged hard sample. HIGH/realtime
+            // keep it.
+            if !self.fixed_step {
+                let resid = self.residual_norm(0.0);
+                if resid > 1e-3 {
+                    // hard sample: gmin-stepping homotopy
+                    for g in [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 0.0] {
+                        let it = self.newton_iterate(g);
+                        sample_iters += it;
+                        sample_max = sample_max.max(it);
+                    }
                 }
             }
+            if subrate_on {
+                self.capture_frozen();
+            }
+            // Instrumentation only (see field comment): never read back during the solve.
+            self.iter_samples += 1;
+            self.iter_total += sample_iters as u64;
+            self.iter_max = self.iter_max.max(sample_max);
         }
-        // Instrumentation only (see field comment): never read back during the solve.
-        self.iter_samples += 1;
-        self.iter_total += sample_iters as u64;
-        self.iter_max = self.iter_max.max(sample_max);
+        if subrate_on {
+            self.subrate_phase = (self.subrate_phase + 1) % self.subrate;
+        }
 
         // Fixed-step (Med/Low) drops the gmin-homotopy fallback, so a hard transient that fails to
         // converge in `max_iters` can leave `v` non-finite. WDF state feeds forward (`v_prev`, `hist`,
@@ -2694,7 +2909,9 @@ impl WdfModel {
         // the last converged iterate: restore `v` from `v_prev` so this sample freezes at the previous
         // output and forward state stays clean. HIGH/realtime never reach this (the gmin gate above
         // keeps `v` finite), and the finite path is a no-op, so the bit-exact contract is untouched.
-        if self.fixed_step && !self.v.iter().all(|x| x.is_finite()) {
+        // Sub-rate skipped samples share the risk (a singular frozen solve could go non-finite and
+        // poison forward state), so guard them the same way.
+        if (self.fixed_step || skipped) && !self.v.iter().all(|x| x.is_finite()) {
             self.v.copy_from_slice(&self.v_prev);
         }
 

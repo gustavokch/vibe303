@@ -38,6 +38,8 @@
 //!   --cap-tier <full|depletion|off> WDF BJT charge-cap detail (A/B), --backend wdf only
 //!   --os <usize>                    WDF internal oversampling (2 normal, 1 ultra-fast), --backend wdf only
 //!   --solver <dense|schur>          WDF linear-solve path (A/B), --backend wdf only
+//!   --subrate <usize>               WDF sub-rate Newton spike: full solve every K-th sample (1=off)
+//!   --subrate-hold     (flag)       WDF sub-rate naive-hold baseline (no frozen linear solve)
 //!   --raw              (flag) run the pure model (round-trip path)
 
 use ba283::dsp::ChannelDsp;
@@ -187,6 +189,14 @@ fn main() {
             }
             "--decimate" => wdf_cfg.decimate = true,
             "--no-decimate" => wdf_cfg.decimate = false,
+            "--subrate" => {
+                let v = args.next().unwrap_or_else(|| die("--subrate needs a value"));
+                wdf_cfg.subrate = v.parse().unwrap_or_else(|_| die("--subrate must be a positive integer"));
+                if wdf_cfg.subrate == 0 {
+                    die("--subrate must be >= 1");
+                }
+            }
+            "--subrate-hold" => wdf_cfg.subrate_hold = true,
             "--tol" => {
                 let v = args.next().unwrap_or_else(|| die("--tol needs a value"));
                 wdf_cfg.newton_tol = v.parse().unwrap_or_else(|_| die("--tol must be a float"));

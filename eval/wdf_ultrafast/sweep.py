@@ -50,6 +50,12 @@ LEVERS: list[tuple[str, str, list[str]]] = [
     ("os_1", "fast", ["--os", "1"]),
     ("os_1_nodec", "fast", ["--os", "1", "--no-decimate"]),
     ("ultra_fast", "ultra-fast", []),  # == fast + os1 + no-decimate
+    # Sub-rate Newton spike (GO/NO-GO): full solve every K-th sample, frozen-Jacobian linear
+    # update on the rest. subrate_2_hold is the naive-hold baseline (what the linear update buys).
+    ("subrate_2", "fast", ["--subrate", "2"]),
+    ("subrate_3", "fast", ["--subrate", "3"]),
+    ("subrate_4", "fast", ["--subrate", "4"]),
+    ("subrate_2_hold", "fast", ["--subrate", "2", "--subrate-hold"]),
 ]
 # Levers that get a SPICE fidelity check (kept small — SPICE is slow / RAM-bound).
 # NOTE: for the OS levers the `added_esr vs realtime` column is MISLEADING (it counts the
