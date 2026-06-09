@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +55,10 @@ ESR_FAITHFUL_DB = -8.0
 LEVEL_TOL_DB = 3.0
 # levelNorm steady-state must match input within this (dB) on continuous material.
 LEVELNORM_TOL_DB = 1.0
+# Generation fan-out: ACME + 2 plugin renders per point are independent subprocess
+# calls (each its own temp dir), so run them 4-wide. The metric/plot pass stays
+# serial after, so console output order is unchanged.
+GEN_WORKERS = 4
 
 
 def _rms(x: np.ndarray) -> float:
@@ -108,33 +113,61 @@ def main() -> None:
         print("  " + placeholder_warn)
     print("=" * 70)
 
-    rows: list[dict] = []
+    # Load the dry corpus serially (cheap), then fan the per-point generations
+    # (ACME + 2 plugin renders) out 4-wide; the metric/plot pass below stays serial.
+    dry_by_stem: dict[str, np.ndarray] = {}
     for stem in stims:
         dry_path = DRY_DIR / f"{stem}_dry.wav"
         if not dry_path.exists():
             print(f"[plugin] MISSING {dry_path}")
             continue
         dry = np.asarray(sf.read(dry_path, always_2d=False)[0], dtype=np.float64)
-        in_dbfs = dry / INPUT_FS_VOLTS  # the dBFS-domain input the levelNorm should match
+        dry_by_stem[stem] = dry
         print(f"[plugin] {stem}  ({len(dry)/SR:.1f}s, dry peak {np.max(np.abs(dry)):.3f} V)")
+
+    # Backend-specific knobs: nn conditions the model on gain_norm; wdf feeds the
+    # physical R_KJ ohms + RV1 bias (identical parameterisation to ACME).
+    def _gen_plug(dry: np.ndarray, gn: float, rkj: float, level_norm: bool) -> np.ndarray:
+        if backend == "wdf":
+            return run_plugin(dry, SR, backend="wdf", bias=FIXED_BIAS,
+                              circuit_gain=rkj, level_norm=level_norm)
+        return run_plugin(dry, SR, backend="nn", bias=gn, weights=weights,
+                          level_norm=level_norm)
+
+    futures: dict[tuple, object] = {}
+    with ThreadPoolExecutor(max_workers=GEN_WORKERS) as ex:
+        for stem in stims:
+            dry = dry_by_stem.get(stem)
+            if dry is None:
+                continue
+            for gn in gains:
+                rkj = gain_norm_to_rkj(gn)
+                futures[(stem, gn, "acme")] = ex.submit(
+                    run_acme, dry, SR, rgain=rkj, bias=FIXED_BIAS)
+                futures[(stem, gn, "plug")] = ex.submit(_gen_plug, dry, gn, rkj, False)
+                futures[(stem, gn, "plug_ln")] = ex.submit(_gen_plug, dry, gn, rkj, True)
+        # ThreadPoolExecutor context exit blocks until all generations complete.
+
+    rows: list[dict] = []
+    for stem in stims:
+        dry = dry_by_stem.get(stem)
+        if dry is None:
+            continue
+        in_dbfs = dry / INPUT_FS_VOLTS  # the dBFS-domain input the levelNorm should match
 
         for gn in gains:
             rkj = gain_norm_to_rkj(gn)
             try:
-                acme = run_acme(dry, SR, rgain=rkj, bias=FIXED_BIAS)
+                acme = futures[(stem, gn, "acme")].result()
             except Exception as exc:  # noqa: BLE001
                 print(f"    gain={gn:.2f}: ACME FAIL {exc}")
                 continue
-            # Backend-specific knobs: nn conditions the model on gain_norm; wdf feeds the
-            # physical R_KJ ohms + RV1 bias (identical parameterisation to ACME).
-            if backend == "wdf":
-                plug_v = run_plugin(dry, SR, backend="wdf", bias=FIXED_BIAS, circuit_gain=rkj)
-                plug_ln = run_plugin(dry, SR, backend="wdf", bias=FIXED_BIAS,
-                                     circuit_gain=rkj, level_norm=True)
-            else:
-                plug_v = run_plugin(dry, SR, backend="nn", bias=gn, weights=weights)
-                plug_ln = run_plugin(dry, SR, backend="nn", bias=gn, weights=weights,
-                                     level_norm=True)
+            try:
+                plug_v = futures[(stem, gn, "plug")].result()
+                plug_ln = futures[(stem, gn, "plug_ln")].result()
+            except Exception as exc:  # noqa: BLE001
+                print(f"    gain={gn:.2f}: plugin FAIL {exc}")
+                continue
 
             n = min(len(acme), len(plug_v))
             mt = metrics(acme[skip:n], plug_v[skip:n])              # plugin vs ACME (volts)
