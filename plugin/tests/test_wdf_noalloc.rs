@@ -42,3 +42,21 @@ fn fast_tier_process_host_sample_is_alloc_free() {
     // which must be fixed-size (no heap on the per-sample path).
     assert_stream_alloc_free(WdfModel::new_with(QualityConfig::fast(), 48_000.0, 220.0, 0.5));
 }
+
+#[test]
+fn set_age_is_alloc_free() {
+    // Aging is applied block-rate from the audio callback (process), so set_age / set_age_seed must
+    // not heap-allocate. Both re-derive conductances + rebuild G0/Schur in fixed-size scratch.
+    let mut m = WdfModel::new(48_000.0, 220.0, 0.5);
+    for i in 0..16 {
+        let _ = m.process_host_sample((i as f32 * 0.01).sin());
+    }
+    reset_violation_count();
+    assert_no_alloc(|| {
+        m.set_age_seed(0x1357);
+        for k in 0..8 {
+            m.set_age(k as f64 / 8.0);
+        }
+    });
+    assert_eq!(violation_count(), 0, "set_age/set_age_seed allocated on the heap");
+}

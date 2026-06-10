@@ -1,5 +1,6 @@
 use nih_plug::prelude::*;
 use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub mod delay;
@@ -20,6 +21,10 @@ use wdf::{QualityConfig, WdfModel};
 const WDF_PARAM_TAU_S: f32 = 0.02;
 const WDF_RGAIN_EPS: f32 = 1.0e-3;
 const WDF_BIAS_EPS: f32 = 1.0e-5;
+const WDF_AGE_EPS: f32 = 1.0e-5;
+
+/// Default aging "unit" seed (a fixed nonzero constant so a fresh instance is deterministic).
+const DEFAULT_AGE_SEED: u64 = 0xBA283_0000_0001;
 
 /// Convert decibels to a linear gain factor.
 #[inline]
@@ -53,6 +58,12 @@ pub struct Ba283Plugin {
     /// rebuild). Distinct from the NeuralNet per-sample bias smoother.
     wdf_rgain_smooth: f32,
     wdf_bias_smooth: f32,
+    wdf_age_smooth: f32,
+    /// Last WDF aging value / seed applied to the channels (block-rate). `NAN`/`MAX` force a
+    /// first-block apply. `last_reroll` edge-detects the momentary re-roll trigger.
+    last_age: f32,
+    last_seed: u64,
+    last_reroll: bool,
 }
 
 /// Which emulation runs per sample. `NeuralNet` is the default (preserves current behaviour); `Wdf`
@@ -148,6 +159,19 @@ pub struct Ba283Params {
     /// coarse automation steps.
     #[id = "circuit_gain"]
     pub circuit_gain: FloatParam,
+    /// Component aging: random per-component drift (caps + resistors) emulating vintage units.
+    /// 0 = pristine (bit-exact today); 1 = fully aged. WDF-only; inert for the NeuralNet backend.
+    /// Block-rate via a `G0` rebuild, glided per block like bias/gain.
+    #[id = "age"]
+    pub age: FloatParam,
+    /// Momentary "re-roll unit" trigger: a rising edge picks a new random drift pattern (a different
+    /// vintage unit). WDF-only.
+    #[id = "age_reroll"]
+    pub age_reroll: BoolParam,
+    /// Persisted aging seed — the "unit identity". Not an automatable param; serialized with the
+    /// plugin state so a saved project recalls the exact same unit. Re-roll mutates it.
+    #[persist = "age_seed"]
+    pub age_seed: Arc<AtomicU64>,
 }
 
 impl Default for Ba283Params {
@@ -199,6 +223,10 @@ impl Default for Ba283Params {
                 },
             )
             .with_unit(" Ohm"),
+            age: FloatParam::new("Age", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(50.0)),
+            age_reroll: BoolParam::new("Re-roll Unit", false),
+            age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
         }
     }
 }
@@ -216,6 +244,10 @@ impl Default for Ba283Plugin {
             level_norm: LevelNorm::new(),
             wdf_rgain_smooth: 220.0,
             wdf_bias_smooth: 0.5,
+            wdf_age_smooth: 0.0,
+            last_age: f32::NAN,
+            last_seed: u64::MAX,
+            last_reroll: false,
         }
     }
 }
@@ -286,16 +318,28 @@ impl Plugin for Ba283Plugin {
         let mut warm = WdfModel::new(self.sample_rate as f64, rgain as f64, bias as f64);
         warm.warmup();
         let snap = warm.snapshot();
+        let age = self.params.age.value();
+        let seed = self.params.age_seed.load(Ordering::Relaxed);
         for ch in self.channels.iter_mut() {
             ch.wdf_rebuild_with(cfg, self.sample_rate, rgain, bias);
             ch.wdf_restore(&snap);
+            // Re-apply aging after the fresh build (build resets to pristine), then refresh the
+            // bias/rgain legs so their aged factor is current.
+            ch.wdf_set_age_seed(seed);
+            ch.wdf_set_age(age);
+            ch.wdf_set_rgain(rgain);
+            ch.wdf_set_bias(bias);
         }
         self.last_rgain = rgain;
         self.last_bias = bias;
         self.last_tier = tier;
         self.last_precision = precision;
+        self.last_age = age;
+        self.last_seed = seed;
+        self.last_reroll = self.params.age_reroll.value();
         self.wdf_rgain_smooth = rgain;
         self.wdf_bias_smooth = bias;
+        self.wdf_age_smooth = age;
 
         // levelNorm envelope coefficient depends on the host sample rate.
         self.level_norm.prepare(self.sample_rate);
@@ -337,16 +381,22 @@ impl Plugin for Ba283Plugin {
             let a = 1.0 - (-(n / self.sample_rate) / WDF_PARAM_TAU_S).exp();
             let rgain_t = self.params.circuit_gain.value();
             let bias_t = self.params.bias.value();
+            let age_t = self.params.age.value();
             self.wdf_rgain_smooth += a * (rgain_t - self.wdf_rgain_smooth);
             self.wdf_bias_smooth += a * (bias_t - self.wdf_bias_smooth);
+            self.wdf_age_smooth += a * (age_t - self.wdf_age_smooth);
             if (rgain_t - self.wdf_rgain_smooth).abs() < WDF_RGAIN_EPS {
                 self.wdf_rgain_smooth = rgain_t;
             }
             if (bias_t - self.wdf_bias_smooth).abs() < WDF_BIAS_EPS {
                 self.wdf_bias_smooth = bias_t;
             }
+            if (age_t - self.wdf_age_smooth).abs() < WDF_AGE_EPS {
+                self.wdf_age_smooth = age_t;
+            }
             let rgain = self.wdf_rgain_smooth;
             let bias = self.wdf_bias_smooth;
+            let age = self.wdf_age_smooth;
             // Tier change: rebuild each channel at the new tier and re-install the settled snapshot
             // (no fresh warmup). Block-rate, on actual change only. Reset rgain/bias trackers so the
             // post-rebuild model picks up the current values via the cheap G0 path below.
@@ -359,8 +409,37 @@ impl Plugin for Ba283Plugin {
                 }
                 self.last_tier = tier;
                 self.last_precision = precision;
-                self.last_rgain = rgain;
-                self.last_bias = bias;
+                // The rebuild reset aging + the bias/rgain legs to pristine — force all to re-apply.
+                self.last_age = f32::NAN;
+                self.last_seed = u64::MAX;
+                self.last_rgain = f32::NAN;
+                self.last_bias = f32::NAN;
+            }
+            // Aging (ordered after tier, before bias/rgain): re-roll edge -> seed -> age. Any change
+            // forces the live bias/rgain legs to re-apply with the current aged factor.
+            let reroll = self.params.age_reroll.value();
+            let mut seed = self.params.age_seed.load(Ordering::Relaxed);
+            if reroll && !self.last_reroll {
+                seed = wdf::reroll_seed(seed);
+                self.params.age_seed.store(seed, Ordering::Relaxed);
+            }
+            self.last_reroll = reroll;
+            if seed != self.last_seed {
+                for ch in self.channels.iter_mut() {
+                    ch.wdf_set_age_seed(seed);
+                }
+                self.last_seed = seed;
+                self.last_age = f32::NAN;
+                self.last_rgain = f32::NAN;
+                self.last_bias = f32::NAN;
+            }
+            if age != self.last_age {
+                for ch in self.channels.iter_mut() {
+                    ch.wdf_set_age(age);
+                }
+                self.last_age = age;
+                self.last_rgain = f32::NAN;
+                self.last_bias = f32::NAN;
             }
             if rgain != self.last_rgain {
                 for ch in self.channels.iter_mut() {

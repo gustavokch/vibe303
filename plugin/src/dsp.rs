@@ -147,6 +147,16 @@ impl ChannelDsp {
         self.wdf.set_rgain(rgain as f64);
     }
 
+    /// Live aging change: drift all caps + resistors from base, rebuild G0 (preserves state).
+    pub fn wdf_set_age(&mut self, age: f32) {
+        self.wdf.set_age(age as f64);
+    }
+
+    /// Re-roll the aged "unit": regenerate the drift pattern from `seed`, re-apply at current age.
+    pub fn wdf_set_age_seed(&mut self, seed: u64) {
+        self.wdf.set_age_seed(seed);
+    }
+
     /// Zero the WDF Newton-iteration counters (offline A/B: call after warmup, before the audio pass).
     pub fn wdf_reset_iter_stats(&mut self) {
         self.wdf.reset_iter_stats();
