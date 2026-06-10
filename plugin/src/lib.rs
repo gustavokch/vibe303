@@ -22,6 +22,8 @@ const WDF_PARAM_TAU_S: f32 = 0.02;
 const WDF_RGAIN_EPS: f32 = 1.0e-3;
 const WDF_BIAS_EPS: f32 = 1.0e-5;
 const WDF_AGE_EPS: f32 = 1.0e-5;
+#[cfg(feature = "trafo-core")]
+const WDF_TRAFO_EPS: f32 = 1.0e-5;
 
 /// Default aging "unit" seed (a fixed nonzero constant so a fresh instance is deterministic).
 const DEFAULT_AGE_SEED: u64 = 0xBA283_0000_0001;
@@ -64,6 +66,10 @@ pub struct Ba283Plugin {
     last_age: f32,
     last_seed: u64,
     last_reroll: bool,
+    #[cfg(feature = "trafo-core")]
+    wdf_trafo_smooth: f32,
+    #[cfg(feature = "trafo-core")]
+    last_trafo: f32,
 }
 
 /// Which emulation runs per sample. `NeuralNet` is the default (preserves current behaviour); `Wdf`
@@ -172,6 +178,11 @@ pub struct Ba283Params {
     /// plugin state so a saved project recalls the exact same unit. Re-roll mutates it.
     #[persist = "age_seed"]
     pub age_seed: Arc<AtomicU64>,
+    /// Transformer magnetic-core saturation/hysteresis amount (Jiles-Atherton). 0 = linear (today's
+    /// sound), 0.5 = realistic LO1166, 1 = heavy. SPIKE behind `--features trafo-core`. WDF-only.
+    #[cfg(feature = "trafo-core")]
+    #[id = "trafo"]
+    pub trafo: FloatParam,
 }
 
 impl Default for Ba283Params {
@@ -227,6 +238,9 @@ impl Default for Ba283Params {
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             age_reroll: BoolParam::new("Re-roll Unit", false),
             age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
+            #[cfg(feature = "trafo-core")]
+            trafo: FloatParam::new("Trafo", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(50.0)),
         }
     }
 }
@@ -248,6 +262,10 @@ impl Default for Ba283Plugin {
             last_age: f32::NAN,
             last_seed: u64::MAX,
             last_reroll: false,
+            #[cfg(feature = "trafo-core")]
+            wdf_trafo_smooth: 0.5,
+            #[cfg(feature = "trafo-core")]
+            last_trafo: f32::NAN,
         }
     }
 }
@@ -340,6 +358,15 @@ impl Plugin for Ba283Plugin {
         self.wdf_rgain_smooth = rgain;
         self.wdf_bias_smooth = bias;
         self.wdf_age_smooth = age;
+        #[cfg(feature = "trafo-core")]
+        {
+            let trafo = self.params.trafo.value();
+            for ch in self.channels.iter_mut() {
+                ch.wdf_set_trafo(trafo);
+            }
+            self.last_trafo = trafo;
+            self.wdf_trafo_smooth = trafo;
+        }
 
         // levelNorm envelope coefficient depends on the host sample rate.
         self.level_norm.prepare(self.sample_rate);
@@ -397,6 +424,17 @@ impl Plugin for Ba283Plugin {
             let rgain = self.wdf_rgain_smooth;
             let bias = self.wdf_bias_smooth;
             let age = self.wdf_age_smooth;
+            #[cfg(feature = "trafo-core")]
+            let trafo = {
+                let trafo_t = self.params.trafo.value();
+                self.wdf_trafo_smooth += a * (trafo_t - self.wdf_trafo_smooth);
+                // Snap to the target within an epsilon so the glide settles and, crucially, lands
+                // exactly on 0 (the linear/active boundary) instead of thrashing the partition flip.
+                if (trafo_t - self.wdf_trafo_smooth).abs() < WDF_TRAFO_EPS {
+                    self.wdf_trafo_smooth = trafo_t;
+                }
+                self.wdf_trafo_smooth
+            };
             // Tier change: rebuild each channel at the new tier and re-install the settled snapshot
             // (no fresh warmup). Block-rate, on actual change only. Reset rgain/bias trackers so the
             // post-rebuild model picks up the current values via the cheap G0 path below.
@@ -414,6 +452,11 @@ impl Plugin for Ba283Plugin {
                 self.last_seed = u64::MAX;
                 self.last_rgain = f32::NAN;
                 self.last_bias = f32::NAN;
+                // The rebuild also reset the JA core to linear — force trafo to re-apply.
+                #[cfg(feature = "trafo-core")]
+                {
+                    self.last_trafo = f32::NAN;
+                }
             }
             // Aging (ordered after tier, before bias/rgain): re-roll edge -> seed -> age. Any change
             // forces the live bias/rgain legs to re-apply with the current aged factor.
@@ -440,6 +483,13 @@ impl Plugin for Ba283Plugin {
                 self.last_age = age;
                 self.last_rgain = f32::NAN;
                 self.last_bias = f32::NAN;
+            }
+            #[cfg(feature = "trafo-core")]
+            if trafo != self.last_trafo {
+                for ch in self.channels.iter_mut() {
+                    ch.wdf_set_trafo(trafo);
+                }
+                self.last_trafo = trafo;
             }
             if rgain != self.last_rgain {
                 for ch in self.channels.iter_mut() {

@@ -25,6 +25,11 @@ assert_no_alloc = { version = "1.1", default-features = false, features = ["warn
 # Off by default — zero subrate fields, branches, or memory in the release build.
 # Enable with: cargo build/test --features subrate-spike
 subrate-spike = []
+# Compile-in the nonlinear Jiles-Atherton transformer-core model (the `trafo` knob). SPIKE: behind
+# this flag while validating convergence/cost/B-H plausibility (no SPICE ground truth). Off by
+# default — zero JA fields/branches in the release build; the transformer stays purely linear.
+# Enable with: cargo build/test --features trafo-core
+trafo-core = []
 
 [[bin]]
 name = "ba283_standalone"
