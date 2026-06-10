@@ -64,3 +64,13 @@ fn age_seed_round_trips_through_state() {
     p2.deserialize_fields(&fields);
     assert_eq!(p2.age_seed.load(Ordering::Relaxed), 0xC0FFEE_1234);
 }
+
+#[cfg(feature = "trafo-core")]
+#[test]
+fn trafo_default_and_range() {
+    let p = Ba283Params::default();
+    // Default 0.5 = realistic LO1166 core saturation (the chosen baseline amount).
+    assert!((p.trafo.value() - 0.5).abs() < 1e-6);
+    assert!(p.trafo.preview_normalized(0.0) >= 0.0);
+    assert!(p.trafo.preview_normalized(1.0) <= 1.0);
+}

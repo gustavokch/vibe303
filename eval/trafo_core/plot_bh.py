@@ -84,14 +84,16 @@ def main() -> int:
         return 1
 
     fig, ax = plt.subplots(figsize=(7, 5))
-    areas = {}
+    areas, bpk = {}, {}
     for trafo in sorted(loops):
         hb = loops[trafo]
         areas[trafo] = loop_area(hb)
-        ax.plot(hb[:, 0], hb[:, 1], label=f"trafo={trafo} (area={areas[trafo]:.3g})")
+        bpk[trafo] = float(np.max(np.abs(hb[:, 1])))
+        ax.plot(hb[:, 0], hb[:, 1],
+                label=f"trafo={trafo} (|B|max={bpk[trafo]:.3f}, area={areas[trafo]:.3g})")
     ax.set_xlabel("H (A/m)")
     ax.set_ylabel("B (T)")
-    ax.set_title("LO1166 core B-H loops (Jiles-Atherton)")
+    ax.set_title("LO1166 core B-H loops (Jiles-Atherton, separable RK4)")
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
@@ -99,12 +101,16 @@ def main() -> int:
     fig.savefig(png, dpi=120)
     print(f"wrote {png}")
 
-    # Plausibility gate: loop area should grow monotonically with trafo.
-    ts = sorted(areas)
-    ok = all(areas[ts[i]] <= areas[ts[i + 1]] + 1e-12 for i in range(len(ts) - 1))
+    # Plausibility gate: in the decoupled deviation-feedback core, more `trafo` loads the primary
+    # with saturation current and COMPRESSES the peak flux — so |B|max is non-increasing in trafo
+    # (soft saturation), the opposite sign of the old "area grows" heuristic (wrong for this model).
+    ts = sorted(bpk)
+    mono = all(bpk[ts[i]] >= bpk[ts[i + 1]] - 1e-6 for i in range(len(ts) - 1))
+    changes = len(ts) >= 2 and abs(bpk[ts[0]] - bpk[ts[-1]]) > 1e-4
     print("areas:", {t: round(areas[t], 6) for t in ts})
-    print("area-monotonic-in-trafo:", ok)
-    return 0 if ok else 2
+    print("|B|max:", {t: round(bpk[t], 6) for t in ts})
+    print("monotonic-compression-in-trafo:", mono, " changes:", changes)
+    return 0 if (mono and changes) else 2
 
 
 if __name__ == "__main__":

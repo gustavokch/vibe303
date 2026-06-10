@@ -49,22 +49,23 @@ fn trafo_zero_is_bit_identical_and_partition_unchanged() {
 }
 
 #[test]
-fn trafo_active_grows_partition() {
+fn trafo_active_keeps_partition() {
+    // Separable RK4 re-architecture: the J-A core is a post-solve lagged current source, NOT a
+    // Jacobian contribution, so activating it must NOT touch the Schur N-set (stays 6 always).
+    // This is the structural invariant that makes the old +13-iter blow-up impossible by design.
     let mut m =
         wdf::WdfModel::new_with(QualityConfig::realtime(), wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
     m.set_trafo(0.5);
-    assert_eq!(m.n_sz(), 7, "active JA core must add N_PA → N-set 7");
+    assert_eq!(m.n_sz(), 6, "active JA core (decoupled) must keep N-set 6");
     m.set_trafo(0.0);
-    assert_eq!(m.n_sz(), 6, "deactivating must restore N-set 6");
+    assert_eq!(m.n_sz(), 6, "deactivating must keep N-set 6");
 }
 
-// GO-CRITERIA (currently NO-GO): the placeholder JA voicing is too stiff in-circuit — the active
-// core fails to converge (avg ~16 Newton iters vs ~3 linear) and diverges on hot transients. These
-// two tests encode the GO bar; they stay #[ignore] until the JaCore constants + companion damping
-// are voiced (the documented GO step — needs the B-H/THD plots + listening). The structural gates
-// below (bit-exact-at-0, partition, determinism) pass and guard the scaffolding.
+// GO-CRITERIA (now GO under the separable-RK4 re-architecture): the J-A core is a decoupled
+// post-solve filter injecting a lagged current source, NOT a Jacobian contribution, so it cannot
+// perturb Newton convergence (gate below) and the gapped-core voicing keeps the magnetizing
+// deviation bounded (no divergence). These two tests encode the GO bar and now pass.
 #[test]
-#[ignore = "NO-GO: JA core needs voicing — diverges at placeholder constants"]
 fn trafo_changes_output_and_stays_finite() {
     let base = run_stream_trafo(0.0);
     for &t in &[0.5_f64, 1.0] {
@@ -87,10 +88,11 @@ fn trafo_determinism() {
 }
 
 #[test]
-#[ignore = "NO-GO: JA core needs voicing — avg iters ~16 vs ~3 linear at placeholder constants"]
 fn trafo_convergence_within_budget() {
-    // avg Newton iters at trafo=0.5 must stay close to the linear baseline (a mis-stamped Jacobian
-    // would blow this up). Drive a hot sine to push the core toward saturation.
+    // THE DECISIVE GO SIGNAL. avg Newton iters at trafo=0.5 must stay ≈ the linear baseline. With
+    // the J-A decoupled from the global solve (lagged current source, not a Jacobian block) this is
+    // guaranteed by construction — the old in-loop stamp blew this to ~16 iters vs ~3 (NO-GO).
+    // Drive a hot sine to push the core toward saturation.
     let drive: Vec<f32> = (0..2048).map(|i| (i as f32 * 0.06).sin() * 0.5).collect();
 
     let avg = |trafo: f64| -> f64 {
@@ -115,6 +117,62 @@ fn trafo_convergence_within_budget() {
     assert!(
         hot <= base + 1.5,
         "trafo=0.5 avg iters {hot} exceeds linear {base} + 1.5 budget"
+    );
+}
+
+/// THD of the steady-state output for a pure sine at frequency bin `cycles/n`, via fundamental
+/// projection (no FFT crate): THD = sqrt(total_ac_rms^2 − fund_rms^2) / fund_rms.
+fn thd(trafo: f64, level: f32) -> f64 {
+    let sr = wdf_golden::HOST_SR;
+    let n = 8192usize;
+    let cycles = (100.0 * n as f64 / sr).round(); // ≈100 Hz, exact DFT bin
+    let f0 = sr * cycles / n as f64;
+    let mut m =
+        wdf::WdfModel::new_with(QualityConfig::realtime(), sr, 220.0, wdf_golden::BIAS);
+    m.set_trafo(trafo);
+    m.warmup();
+    let omega = 2.0 * std::f64::consts::PI * f0 / sr;
+    // settle transient
+    for i in 0..4096 {
+        m.process_host_sample((level as f64 * (omega * i as f64).sin()) as f32);
+    }
+    let mut y = vec![0.0f64; n];
+    for (i, yi) in y.iter_mut().enumerate() {
+        let x = (level as f64 * (omega * (i + 4096) as f64).sin()) as f32;
+        *yi = m.process_host_sample(x) as f64;
+    }
+    let mean = y.iter().sum::<f64>() / n as f64;
+    for yi in &mut y {
+        *yi -= mean;
+    }
+    let k = cycles;
+    let (mut ar, mut ai) = (0.0f64, 0.0f64);
+    for (i, &yi) in y.iter().enumerate() {
+        let ph = 2.0 * std::f64::consts::PI * k * i as f64 / n as f64;
+        ar += yi * ph.cos();
+        ai += yi * ph.sin();
+    }
+    let fund_amp = 2.0 / n as f64 * (ar * ar + ai * ai).sqrt();
+    let fund_rms = fund_amp / std::f64::consts::SQRT_2;
+    let total_rms = (y.iter().map(|v| v * v).sum::<f64>() / n as f64).sqrt();
+    let resid = (total_rms * total_rms - fund_rms * fund_rms).max(0.0).sqrt();
+    resid / fund_rms.max(1e-12)
+}
+
+#[test]
+fn trafo_thd_rises_with_level_and_knob() {
+    // Plausibility (no nonlinear ground truth): core saturation must (a) increase THD with drive
+    // level and (b) at a hot level, increase THD as `trafo` opens. Compared with a margin so circuit
+    // (BJT) distortion alone doesn't carry the assertion.
+    let thd_lo = thd(0.6, 0.05);
+    let thd_hi = thd(0.6, 0.5);
+    assert!(thd_hi > thd_lo * 1.05, "THD must rise with level: lo={thd_lo:.5} hi={thd_hi:.5}");
+
+    let thd_off = thd(0.0, 0.5);
+    let thd_on = thd(0.8, 0.5);
+    assert!(
+        thd_on > thd_off * 1.02,
+        "THD must rise as trafo opens at hot level: off={thd_off:.5} on={thd_on:.5}"
     );
 }
 
