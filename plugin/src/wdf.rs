@@ -1315,6 +1315,109 @@ impl AgePattern {
     }
 }
 
+// =====================================================================================
+// Nonlinear LO1166 transformer core — Jiles-Atherton magnetizing model (the `trafo` knob).
+// SPIKE, behind `--features trafo-core`. Default builds compile NONE of this; the transformer
+// stays a pure linear coupled inductor (bit-exact). See docs/plans/...-design.md.
+// =====================================================================================
+
+/// Langevin function `L(x) = coth(x) - 1/x` and its derivative `L'(x) = 1/x^2 - csch^2(x)`,
+/// returned together. Small-`x` series (Taylor) avoids the 0/0 at the origin.
+#[cfg(feature = "trafo-core")]
+#[inline]
+fn langevin(x: f64) -> (f64, f64) {
+    if x.abs() < 1.0e-3 {
+        // L ≈ x/3 - x^3/45;  L' ≈ 1/3 - x^2/15
+        (x / 3.0 - x * x * x / 45.0, 1.0 / 3.0 - x * x / 15.0)
+    } else {
+        let cth = 1.0 / x.tanh();
+        let l = cth - 1.0 / x;
+        let sh = x.sinh();
+        let lp = 1.0 / (x * x) - 1.0 / (sh * sh);
+        (l, lp)
+    }
+}
+
+/// Jiles-Atherton constitutive constants + lumped magnetic geometry for one core. Voiced (no
+/// datasheet); the geometry lumps are chosen so the small-signal magnetizing inductance is
+/// self-consistent and the deviation form (below) cancels exactly at low drive.
+#[cfg(feature = "trafo-core")]
+#[derive(Clone, Copy, Debug)]
+pub struct JaCore {
+    m_s: f64,    // saturation magnetization (A/m)
+    a: f64,      // domain-wall density / anhysteretic shape (A/m)
+    alpha: f64,  // inter-domain mean-field coupling
+    k: f64,      // pinning (hysteresis loss; A/m)
+    c: f64,      // reversibility 0..1
+    mu0: f64,    // vacuum permeability
+    k_phi: f64,  // volts→flux lump: phi = k_phi * B  (= N_p * A_e)
+    k_hi: f64,   // current→field lump: H = k_hi * i_m (= N_p / l_e)
+    lp_eff: f64, // small-signal magnetizing inductance implied by the constants (for the deviation)
+}
+
+#[cfg(feature = "trafo-core")]
+impl JaCore {
+    /// Voiced LO1166-ish core. `lp_eff` is derived from the small-signal susceptibility so the
+    /// JA magnetizing current equals `phi/lp_eff` at low drive — making the deviation branch
+    /// (i_JA − phi/lp_eff) vanish near zero (continuity with the linear model).
+    pub fn lo1166() -> Self {
+        let m_s = 5.0e5;
+        let a = 50.0;
+        let alpha = 1.0e-4;
+        let k = 50.0;
+        let c = 0.5;
+        let mu0 = std::f64::consts::PI * 4.0e-7;
+        let n_p = 100.0;
+        let a_e = 5.0e-4;
+        let l_e = 0.1;
+        let k_phi = n_p * a_e;
+        let k_hi = n_p / l_e;
+        // initial susceptibility chi0 = (m_s/(3a)) / (1 - alpha*m_s/(3a))
+        let chi_raw = m_s / (3.0 * a);
+        let chi0 = chi_raw / (1.0 - alpha * chi_raw);
+        let lp_eff = k_phi * k_hi * mu0 * (1.0 + chi0);
+        JaCore { m_s, a, alpha, k, c, mu0, k_phi, k_hi, lp_eff }
+    }
+
+    /// JA differential susceptibility `dM/dH` at field `h`, magnetization `m`, direction `delta`
+    /// (sign of dH/dt, frozen per sample). Standard mean-field closed form.
+    #[inline]
+    fn slope(&self, h: f64, m: f64, delta: f64) -> f64 {
+        let he = h + self.alpha * m;
+        let (la, dla) = langevin(he / self.a);
+        let m_an = self.m_s * la;
+        let dman_dhe = (self.m_s / self.a) * dla;
+        let denom = {
+            let d = self.k * delta - self.alpha * (m_an - m);
+            if d.abs() < 1.0e-12 { if d < 0.0 { -1.0e-12 } else { 1.0e-12 } } else { d }
+        };
+        let dm_irr = (m_an - m) / denom;
+        let num = (1.0 - self.c) * dm_irr + self.c * dman_dhe;
+        let den = 1.0 - self.alpha * self.c * dman_dhe - self.alpha * (1.0 - self.c) * dm_irr;
+        let s = if den.abs() < 1.0e-9 { num / 1.0e-9 } else { num / den };
+        s.max(0.0) // physical differential susceptibility is non-negative
+    }
+
+    /// Given flux density `b`, solve `mu0*(H + M(H)) = b` for `H` by a short scalar Newton, where
+    /// `M(H) = m_prev + (H - h_prev)*slope(H, m_prev, delta)` (semi-implicit). Returns
+    /// `(H, M, dB/dH)`. `delta` is frozen from the previous sample.
+    #[inline]
+    fn solve_h(&self, b: f64, m_prev: f64, h_prev: f64, delta: f64) -> (f64, f64, f64) {
+        let mut h = b / self.mu0 - m_prev; // first guess from B = mu0(H+M_prev)
+        let mut slope = self.slope(h, m_prev, delta);
+        let mut m = m_prev + (h - h_prev) * slope;
+        for _ in 0..3 {
+            slope = self.slope(h, m_prev, delta);
+            m = m_prev + (h - h_prev) * slope;
+            let g = self.mu0 * (h + m) - b;
+            let gp = self.mu0 * (1.0 + slope);
+            h -= g / gp;
+        }
+        let db_dh = self.mu0 * (1.0 + slope);
+        (h, m, db_dh)
+    }
+}
+
 /// Settled-state snapshot for restore-on-reset (`main.cpp` warmup is bounded → snapshot once,
 /// restore cheaply). Decimation biquad state is NOT snapshotted (cleared on restore — the
 /// transient is sub-millisecond).
@@ -1362,6 +1465,26 @@ pub struct WdfModel {
     i_hist_s: f64, // secondary winding current i[n-1]
     v_pprev: f64,  // winding voltages at n-1
     v_sprev: f64,
+
+    // --- nonlinear JA transformer core (`trafo` knob; feature `trafo-core`) ---
+    #[cfg(feature = "trafo-core")]
+    trafo: f64, // knob 0..1; 0 => ja_active false (linear, bit-exact)
+    #[cfg(feature = "trafo-core")]
+    ja_active: bool,
+    #[cfg(feature = "trafo-core")]
+    ja: JaCore,
+    #[cfg(feature = "trafo-core")]
+    ja_m: f64, // magnetization M[n-1]
+    #[cfg(feature = "trafo-core")]
+    ja_h_prev: f64, // H[n-1]
+    #[cfg(feature = "trafo-core")]
+    ja_phi_prev: f64, // flux phi[n-1]
+    #[cfg(feature = "trafo-core")]
+    ja_vm_prev: f64, // magnetizing branch voltage v_m[n-1]
+    #[cfg(feature = "trafo-core")]
+    ja_delta: f64, // frozen field-rate direction sign (+1/-1)
+    #[cfg(feature = "trafo-core")]
+    ja_phi_hist: f64, // per-sample constant: phi_prev + (dt/2)*vm_prev
 
     dt: f64,
     newton_tol: f64,
@@ -1497,6 +1620,11 @@ impl WdfModel {
 
     pub fn u(&self) -> usize {
         self.u
+    }
+    /// Size of the Schur nonlinear-coupled (N) partition. 6 for the linear circuit; the JA core
+    /// (when active) adds N_PA → 7.
+    pub fn n_sz(&self) -> usize {
+        self.n_sz
     }
     pub fn n_res(&self) -> usize {
         self.n_res
@@ -1659,6 +1787,24 @@ impl WdfModel {
             i_hist_s: 0.0,
             v_pprev: 0.0,
             v_sprev: 0.0,
+            #[cfg(feature = "trafo-core")]
+            trafo: 0.0,
+            #[cfg(feature = "trafo-core")]
+            ja_active: false,
+            #[cfg(feature = "trafo-core")]
+            ja: JaCore::lo1166(),
+            #[cfg(feature = "trafo-core")]
+            ja_m: 0.0,
+            #[cfg(feature = "trafo-core")]
+            ja_h_prev: 0.0,
+            #[cfg(feature = "trafo-core")]
+            ja_phi_prev: 0.0,
+            #[cfg(feature = "trafo-core")]
+            ja_vm_prev: 0.0,
+            #[cfg(feature = "trafo-core")]
+            ja_delta: 1.0,
+            #[cfg(feature = "trafo-core")]
+            ja_phi_hist: 0.0,
             dt,
             newton_tol: cfg.newton_tol,
             max_iters: cfg.max_iters,
@@ -1865,6 +2011,75 @@ impl WdfModel {
         self.set_age(self.age);
     }
 
+    /// Nonlinear JA magnetizing branch evaluated at the current node voltages. Returns
+    /// `(i_branch, g_m)` — the EXCESS magnetizing current beyond the linear model (`i_JA − phi/lp`)
+    /// scaled by `trafo`, and its companion conductance `d i_branch / d v_m`. The deviation form
+    /// makes the branch vanish at low drive (continuity with the linear inductor) and grow only as
+    /// the core saturates. Stamped on row `N_PA` (the magnetizing branch returns to the rail `N_A`).
+    #[cfg(feature = "trafo-core")]
+    #[inline]
+    fn ja_branch(&self) -> (f64, f64) {
+        use node::{N_A, N_PA};
+        let vm = self.node_v(N_PA) - self.node_v(N_A);
+        let phi = self.ja_phi_hist + 0.5 * self.dt * vm;
+        let b = phi / self.ja.k_phi;
+        let (h, _m, db_dh) = self.ja.solve_h(b, self.ja_m, self.ja_h_prev, self.ja_delta);
+        let i_ja = h / self.ja.k_hi;
+        let i_lin = phi / self.ja.lp_eff;
+        let i_branch = self.trafo * (i_ja - i_lin);
+        // d/dvm: dphi/dvm = dt/2; dB/dvm = (dt/2)/k_phi; dH/dvm = dB/dvm / dB/dH
+        let dphi = 0.5 * self.dt;
+        let di_ja = (dphi / self.ja.k_phi) / db_dh / self.ja.k_hi;
+        let di_lin = dphi / self.ja.lp_eff;
+        let g_m = self.trafo * (di_ja - di_lin);
+        (i_branch, g_m)
+    }
+
+    /// Commit the JA core state for the next sample (call once per sample, after the solve, when
+    /// `ja_active`). Recomputes flux at the converged `v_m`, advances `M`, and freezes the new
+    /// field-rate direction.
+    #[cfg(feature = "trafo-core")]
+    #[inline]
+    fn ja_commit(&mut self) {
+        use node::{N_A, N_PA};
+        let vm = self.node_v(N_PA) - self.node_v(N_A);
+        let phi = self.ja_phi_prev + 0.5 * self.dt * (vm + self.ja_vm_prev);
+        let b = phi / self.ja.k_phi;
+        let (h, m, _) = self.ja.solve_h(b, self.ja_m, self.ja_h_prev, self.ja_delta);
+        let dh = h - self.ja_h_prev;
+        if dh != 0.0 {
+            self.ja_delta = dh.signum();
+        }
+        self.ja_m = m;
+        self.ja_h_prev = h;
+        self.ja_phi_prev = phi;
+        self.ja_vm_prev = vm;
+    }
+
+    /// Set the `trafo` knob (0..1). 0 => linear core (bit-exact). Toggling activity re-partitions
+    /// the Schur N-set (the magnetizing branch makes `N_PA`'s Jacobian row nonlinear). The branch
+    /// contributes nothing to G0, so no `build_g0` is needed.
+    #[cfg(feature = "trafo-core")]
+    pub fn set_trafo(&mut self, trafo: f64) {
+        let was = self.ja_active;
+        self.trafo = trafo.clamp(0.0, 1.0);
+        self.ja_active = self.trafo > 0.0;
+        if self.ja_active != was {
+            self.build_schur_partition();
+        }
+    }
+
+    /// Current core operating point `(H, B)` in SI units — for offline B-H loop logging. Inert
+    /// (returns 0,0) when the core is linear/inactive.
+    #[cfg(feature = "trafo-core")]
+    pub fn ja_hb(&self) -> (f64, f64) {
+        if !self.ja_active {
+            return (0.0, 0.0);
+        }
+        let b = self.ja_phi_prev / self.ja.k_phi;
+        (self.ja_h_prev, b)
+    }
+
     /// TR3 quiescent collector current (mA) at the current operating point (`main.cpp:441-445`).
     pub fn tr3_idle_current_ma(&self) -> f64 {
         let t = &self.bjts[2];
@@ -1916,6 +2131,15 @@ impl WdfModel {
             }
             if rs >= 0 {
                 self.rn[rs as usize] += self.gl[1][0] * vp + self.gl[1][1] * vs;
+            }
+        }
+        // JA magnetizing branch (must match newton_iterate's F for line-search consistency)
+        #[cfg(feature = "trafo-core")]
+        if self.ja_active && self.in_audio_pass {
+            let rp = self.ur(N_PA);
+            if rp >= 0 {
+                let (i_branch, _g_m) = self.ja_branch();
+                self.rn[rp as usize] += i_branch;
             }
         }
         // BJTs (transport + charge caps — must match newton_iterate's F)
@@ -2282,6 +2506,15 @@ impl WdfModel {
                 }
             }
         }
+        // JA core (active): the nonlinear magnetizing branch makes N_PA's Jacobian row vary per
+        // iteration, so N_PA must join the nonlinear set. (N_A is a known rail → excluded.)
+        #[cfg(feature = "trafo-core")]
+        if self.ja_active {
+            let nd = node::N_PA;
+            if nd >= 0 && self.urow[nd as usize] >= 0 {
+                in_n[nd as usize] = true;
+            }
+        }
         self.n_sz = 0;
         for nd in 0..NUM_NODES {
             if !in_n[nd] {
@@ -2519,6 +2752,20 @@ impl WdfModel {
                 }
                 if rs >= 0 {
                     self.f[rs as usize] += self.gl[1][0] * vp + self.gl[1][1] * vs;
+                }
+            }
+
+            // Nonlinear JA magnetizing branch (feature trafo-core, when active): adds the saturation
+            // excess current to F[N_PA] and its companion conductance to J[N_PA][N_PA]. Off during
+            // warmup/rail-ramp (in_audio_pass false) so the operating point settles linearly.
+            #[cfg(feature = "trafo-core")]
+            if self.ja_active && self.in_audio_pass {
+                let rp = self.ur(N_PA);
+                if rp >= 0 {
+                    let rp = rp as usize;
+                    let (i_branch, g_m) = self.ja_branch();
+                    self.f[rp] += i_branch;
+                    self.j[rp * u + rp] += g_m;
                 }
             }
 
@@ -3091,6 +3338,11 @@ impl WdfModel {
         if rs >= 0 {
             self.hist[rs as usize] += ind_hist_s;
         }
+        // JA core: per-sample constant flux history (independent of v[n]).
+        #[cfg(feature = "trafo-core")]
+        if self.ja_active && self.in_audio_pass {
+            self.ja_phi_hist = self.ja_phi_prev + 0.5 * self.dt * self.ja_vm_prev;
+        }
 
         // Sub-rate spike solve path. With the feature, may skip Newton and reuse the frozen model.
         // Without the feature, this block is absent; the non-feature block below is the only path.
@@ -3238,6 +3490,12 @@ impl WdfModel {
         self.v_pprev = vp;
         self.v_sprev = vs;
 
+        // JA core: commit magnetization + flux state for the next sample.
+        #[cfg(feature = "trafo-core")]
+        if self.ja_active && self.in_audio_pass {
+            self.ja_commit();
+        }
+
         for i in 0..NUM_NODES {
             self.v_prev[i] = self.v[i];
         }
@@ -3307,6 +3565,17 @@ impl WdfModel {
     #[inline]
     pub fn process_host_sample(&mut self, x: f32) -> f32 {
         // Audio pass: enable the Newton predictor (idempotent; warmup runs with it off).
+        // JA core: on the warmup→audio transition, reset the flux/magnetization to a clean start
+        // from the just-settled operating point (where v_m ≈ 0), so the rail-ramp transient never
+        // saturates the core and poisons forward state.
+        #[cfg(feature = "trafo-core")]
+        if self.ja_active && !self.in_audio_pass {
+            self.ja_m = 0.0;
+            self.ja_h_prev = 0.0;
+            self.ja_phi_prev = 0.0;
+            self.ja_vm_prev = 0.0;
+            self.ja_delta = 1.0;
+        }
         self.in_audio_pass = true;
         let cur_in = x as f64;
         let mut decimated = 0.0;

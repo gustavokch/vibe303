@@ -157,6 +157,12 @@ impl ChannelDsp {
         self.wdf.set_age_seed(seed);
     }
 
+    /// Live transformer-core saturation change (`trafo` knob; feature `trafo-core`).
+    #[cfg(feature = "trafo-core")]
+    pub fn wdf_set_trafo(&mut self, trafo: f32) {
+        self.wdf.set_trafo(trafo as f64);
+    }
+
     /// Zero the WDF Newton-iteration counters (offline A/B: call after warmup, before the audio pass).
     pub fn wdf_reset_iter_stats(&mut self) {
         self.wdf.reset_iter_stats();
