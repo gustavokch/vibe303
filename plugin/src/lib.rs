@@ -1,10 +1,12 @@
 use nih_plug::prelude::*;
+use nih_plug_egui::EguiState;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub mod delay;
 pub mod dsp;
+mod editor;
 pub mod levelnorm;
 pub mod model;
 pub mod oversample;
@@ -172,6 +174,10 @@ pub struct Ba283Params {
     /// plugin state so a saved project recalls the exact same unit. Re-roll mutates it.
     #[persist = "age_seed"]
     pub age_seed: Arc<AtomicU64>,
+    /// Persisted egui editor state (window size). Not a param; serialized so the window geometry
+    /// round-trips with the project. Fixed-size today, but `create_egui_editor` requires it.
+    #[persist = "editor_state"]
+    pub editor_state: Arc<EguiState>,
 }
 
 impl Default for Ba283Params {
@@ -227,6 +233,7 @@ impl Default for Ba283Params {
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             age_reroll: BoolParam::new("Re-roll Unit", false),
             age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
+            editor_state: EguiState::from_size(660, 460),
         }
     }
 }
@@ -294,6 +301,10 @@ impl Plugin for Ba283Plugin {
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create(self.params.clone(), self.params.editor_state.clone())
     }
 
     fn initialize(
