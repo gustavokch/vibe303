@@ -1,6 +1,7 @@
 // plugin/tests/test_params.rs
 use ba283::{Ba283Params, InferenceBackend};
 use nih_plug::prelude::*;
+use std::sync::atomic::Ordering;
 
 #[test]
 fn default_params_have_expected_values() {
@@ -35,4 +36,31 @@ fn drive_db_range_bounded() {
     let p = Ba283Params::default();
     assert!(p.drive_db.preview_normalized(-12.0) >= 0.0);
     assert!(p.drive_db.preview_normalized(24.0) <= 1.0);
+}
+
+#[test]
+fn age_default_and_range() {
+    let p = Ba283Params::default();
+    // Aging off by default (bit-exact, pristine unit).
+    assert!((p.age.value() - 0.0).abs() < 1e-6);
+    assert!(!p.age_reroll.value());
+    assert!(p.age.preview_normalized(0.0) >= 0.0);
+    assert!(p.age.preview_normalized(1.0) <= 1.0);
+    // Default unit seed is a fixed nonzero constant (deterministic fresh instance).
+    assert_ne!(p.age_seed.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn age_seed_round_trips_through_state() {
+    // The seed persists with plugin state (via #[persist]) so a saved project recalls the same
+    // "unit". Exercise the Params trait's field (de)serialization directly.
+    let p = Ba283Params::default();
+    p.age_seed.store(0xC0FFEE_1234, Ordering::Relaxed);
+    let fields = p.serialize_fields();
+    assert!(fields.contains_key("age_seed"), "age_seed must be persisted");
+
+    let p2 = Ba283Params::default();
+    assert_ne!(p2.age_seed.load(Ordering::Relaxed), 0xC0FFEE_1234);
+    p2.deserialize_fields(&fields);
+    assert_eq!(p2.age_seed.load(Ordering::Relaxed), 0xC0FFEE_1234);
 }

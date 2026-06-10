@@ -1234,6 +1234,87 @@ pub const OS: usize = 2;
 const MAX_RES: usize = 24;
 const MAX_CAPS: usize = 8;
 
+// --- component aging drift bands (max signed deviation at age=1.0) ---
+// Resistors drift up/down a few percent (carbon/metal-film aging + tolerance spread).
+const R_DRIFT_MAX: f64 = 0.05; // ±5%
+// Film caps are stable; small symmetric spread.
+const C_FILM_DRIFT: f64 = 0.05; // ±5%
+// Electrolytics lose capacitance with age (dry-out): directional, mostly downward.
+const C_ELEC_DROP_MAX: f64 = 0.20; // up to -20%
+const C_ELEC_DROP_MIN: f64 = 0.02; // up to +2%
+// Farad threshold separating electrolytic (drift directional) from film (drift symmetric).
+const C_ELEC_THRESH_F: f64 = 1.0e-6;
+
+/// Deterministic, alloc-free PRNG (SplitMix64) for component-aging drift. Block-rate use only;
+/// never touched on the per-sample audio path.
+#[inline]
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Uniform in [0, 1).
+#[inline]
+fn next_unit(state: &mut u64) -> f64 {
+    (splitmix64(state) >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
+}
+
+/// Uniform in [-1, 1).
+#[inline]
+fn next_signed(state: &mut u64) -> f64 {
+    2.0 * next_unit(state) - 1.0
+}
+
+/// Derive a fresh aging seed from the current one (one re-roll step). Deterministic.
+pub fn reroll_seed(seed: u64) -> u64 {
+    let mut s = seed;
+    splitmix64(&mut s)
+}
+
+/// Per-"unit" component drift deviations, derived once from a seed and independent of the `age`
+/// knob (which only scales them at apply time). `res_dev`/`cap_dev` are signed fractional
+/// deviations; unused array slots stay 0.0.
+#[derive(Clone, Copy, Debug)]
+pub struct AgePattern {
+    res_dev: [f64; MAX_RES],
+    cap_dev: [f64; MAX_CAPS],
+}
+
+impl AgePattern {
+    /// Identity pattern: zero drift everywhere (age has no effect).
+    pub fn identity() -> Self {
+        AgePattern { res_dev: [0.0; MAX_RES], cap_dev: [0.0; MAX_CAPS] }
+    }
+
+    /// Generate per-unit deviations from `seed`. Caps split by `cap_base_far[i]` into electrolytic
+    /// (directional drop) vs film (symmetric) bands.
+    pub fn from_seed(
+        seed: u64,
+        n_res: usize,
+        n_caps: usize,
+        cap_base_far: &[f64; MAX_CAPS],
+    ) -> Self {
+        let mut s = seed ^ 0xA283_A283_A283_A283; // domain-separate
+        let mut p = AgePattern::identity();
+        for i in 0..n_res {
+            p.res_dev[i] = next_signed(&mut s) * R_DRIFT_MAX;
+        }
+        for i in 0..n_caps {
+            let u = next_unit(&mut s);
+            p.cap_dev[i] = if cap_base_far[i] >= C_ELEC_THRESH_F {
+                // electrolytic: map [0,1) onto [-DROP_MAX, +DROP_MIN]
+                -C_ELEC_DROP_MAX + u * (C_ELEC_DROP_MAX + C_ELEC_DROP_MIN)
+            } else {
+                (2.0 * u - 1.0) * C_FILM_DRIFT
+            };
+        }
+        p
+    }
+}
+
 /// Settled-state snapshot for restore-on-reset (`main.cpp` warmup is bounded → snapshot once,
 /// restore cheaply). Decimation biquad state is NOT snapshotted (cleared on restore — the
 /// transient is sub-millisecond).
@@ -1267,6 +1348,13 @@ pub struct WdfModel {
     r_kj_idx: usize,    // R_KJ resistor index (gain knob), for set_rgain
     r_upper_idx: usize, // RV1 upper-leg index, for set_bias
     r_lower_idx: usize, // RV1 lower-leg index
+
+    // --- component aging (deterministic per-unit drift) ---
+    res_base_g: [f64; MAX_RES],   // pristine 1/ohms captured at build (incl. the live bias/rgain legs)
+    cap_base_far: [f64; MAX_CAPS], // pristine farads captured at build
+    age_pattern: AgePattern,      // per-unit signed deviations (seed-derived, age-independent)
+    age: f64,                     // current knob value [0,1]; 0 => no drift
+    age_seed: u64,                // current unit seed
 
     // coupled inductor companion (transformer, trapezoidal): g = (dt/2) * inv([Lp M; M Ls])
     gl: [[f64; 2]; 2],
@@ -1497,6 +1585,12 @@ impl WdfModel {
         let n_res = rv.len();
         res[..n_res].copy_from_slice(&rv);
 
+        // Capture pristine resistor conductances for aging (re-derived per age apply).
+        let mut res_base_g = [0.0f64; MAX_RES];
+        for i in 0..n_res {
+            res_base_g[i] = res[i].g;
+        }
+
         // --- caps ---
         let mut cv: Vec<Cap> = Vec::new();
         let push_c = |cv: &mut Vec<Cap>, a: i32, b: i32, farads: f64| {
@@ -1513,6 +1607,12 @@ impl WdfModel {
         let mut caps = [Cap::default(); MAX_CAPS];
         let n_caps = cv.len();
         caps[..n_caps].copy_from_slice(&cv);
+
+        // Capture pristine cap farads for aging (geq re-derived per age apply).
+        let mut cap_base_far = [0.0f64; MAX_CAPS];
+        for i in 0..n_caps {
+            cap_base_far[i] = caps[i].c;
+        }
 
         // --- BJTs (RB off: external base directly) ---
         let mut bc = bc184c();
@@ -1549,6 +1649,11 @@ impl WdfModel {
             r_kj_idx,
             r_upper_idx,
             r_lower_idx,
+            res_base_g,
+            cap_base_far,
+            age_pattern: AgePattern::identity(),
+            age: 0.0,
+            age_seed: 0,
             gl,
             i_hist_p: 0.0,
             i_hist_s: 0.0,
@@ -1706,19 +1811,58 @@ impl WdfModel {
     }
 
     /// Update the RV1 split (bias pot) + rebuild G0, preserving all integrator state
-    /// (`main.cpp:432-438`).
+    /// (`main.cpp:432-438`). Composes the aged drift factor on each leg (see `set_age`).
     pub fn set_bias(&mut self, bias: f64) {
         let (r_upper, r_lower) = rv1_split(bias);
-        self.res[self.r_upper_idx].g = 1.0 / r_upper;
-        self.res[self.r_lower_idx].g = 1.0 / r_lower;
+        self.res[self.r_upper_idx].g = 1.0 / (r_upper * self.age_factor_res(self.r_upper_idx));
+        self.res[self.r_lower_idx].g = 1.0 / (r_lower * self.age_factor_res(self.r_lower_idx));
         self.build_g0();
     }
 
     /// Update R_KJ (circuit gain) + rebuild G0, preserving integrator state. New vs the C++
-    /// reference (which only sets gain at build time); mirrors `set_bias`.
+    /// reference (which only sets gain at build time); mirrors `set_bias`. Composes aged drift.
     pub fn set_rgain(&mut self, rgain: f64) {
-        self.res[self.r_kj_idx].g = 1.0 / rgain;
+        self.res[self.r_kj_idx].g = 1.0 / (rgain * self.age_factor_res(self.r_kj_idx));
         self.build_g0();
+    }
+
+    /// Aged resistance multiplier for resistor `idx`: `1 + age*dev`. Clamped away from 0.
+    #[inline]
+    fn age_factor_res(&self, idx: usize) -> f64 {
+        (1.0 + self.age * self.age_pattern.res_dev[idx]).max(1e-6)
+    }
+
+    /// Apply the aging knob: re-derive every resistor `g` and cap `geq` from its pristine base
+    /// times the per-unit drift factor `(1 + age*dev)`, then rebuild G0 (+ Schur). Block-rate;
+    /// preserves integrator state (dynamic re-settle, exactly like `set_bias`). The three
+    /// parameter-derived legs (`r_kj`/`r_upper`/`r_lower`) are skipped here — their drift is folded
+    /// in by `set_bias`/`set_rgain` via `age_factor_res`, which the plugin re-applies after a
+    /// change.
+    pub fn set_age(&mut self, age: f64) {
+        self.age = age.clamp(0.0, 1.0);
+        for i in 0..self.n_res {
+            if i == self.r_kj_idx || i == self.r_upper_idx || i == self.r_lower_idx {
+                continue;
+            }
+            let f = (1.0 + self.age * self.age_pattern.res_dev[i]).max(1e-6);
+            self.res[i].g = self.res_base_g[i] / f;
+        }
+        for i in 0..self.n_caps {
+            let f = (1.0 + self.age * self.age_pattern.cap_dev[i]).max(1e-9);
+            let c = self.cap_base_far[i] * f;
+            self.caps[i].c = c;
+            self.caps[i].geq = 2.0 * c / self.dt;
+        }
+        self.build_g0();
+    }
+
+    /// Re-roll the "unit": regenerate the per-component drift pattern from `seed`, then re-apply at
+    /// the current `age`. The live bias/rgain legs are refreshed by the plugin afterward.
+    pub fn set_age_seed(&mut self, seed: u64) {
+        self.age_seed = seed;
+        self.age_pattern =
+            AgePattern::from_seed(seed, self.n_res, self.n_caps, &self.cap_base_far);
+        self.set_age(self.age);
     }
 
     /// TR3 quiescent collector current (mA) at the current operating point (`main.cpp:441-445`).

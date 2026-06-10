@@ -109,6 +109,34 @@ fn wdf_backend_produces_finite_output() {
 }
 
 #[test]
+fn wdf_aged_output_finite_and_coherent() {
+    // Two channels at the same aged unit (same seed + age) must stay finite AND bit-identical
+    // sample-for-sample (stereo coherence — the design applies one seed/age to both channels).
+    let mut l = ChannelDsp::new();
+    let mut r = ChannelDsp::new();
+    for ch in [&mut l, &mut r] {
+        ch.wdf_warmup();
+        ch.wdf_set_age_seed(0x7777);
+        ch.wdf_set_age(1.0);
+    }
+    let mut base = ChannelDsp::new();
+    base.wdf_warmup(); // age=0 reference
+    let mut moved = false;
+    for i in 0..256 {
+        let x = (i as f32 * 0.05).sin() * 0.3;
+        let yl = l.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf);
+        let yr = r.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf);
+        let yb = base.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf);
+        assert!(yl.is_finite() && yl.abs() < 100.0, "aged L blew up at {i}: {yl}");
+        assert_eq!(yl.to_bits(), yr.to_bits(), "stereo not coherent at {i}: {yl} != {yr}");
+        if (yl as f64 - yb as f64).abs() > 1e-4 {
+            moved = true;
+        }
+    }
+    assert!(moved, "age=1 should differ from the un-aged reference");
+}
+
+#[test]
 fn wdf_backend_latency_aligned_sub96k() {
     // Sub-96k, mix=0 (fully dry): the WDF blended output is delayed by exactly OS_LATENCY_SAMPLES
     // (32) so the single host latency report stays valid for both backends. With drive=out=1 and

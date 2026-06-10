@@ -274,6 +274,96 @@ fn snapshot_restore_round_trips() {
     }
 }
 
+/// Render INPUT_256 through a warmed model after applying a (seed, age) "unit". Mirrors
+/// `run_stream` but exercises the aging path.
+fn run_stream_aged(seed: u64, age: f64) -> Vec<f32> {
+    let mut m =
+        wdf::WdfModel::new_with(QualityConfig::realtime(), wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
+    m.set_age_seed(seed);
+    m.set_age(age);
+    m.warmup();
+    wdf_golden::INPUT_256
+        .iter()
+        .map(|&x| m.process_host_sample(x as f32))
+        .collect()
+}
+
+/// Max abs deviation between two streams.
+fn max_dev(a: &[f32], b: &[f32]) -> f64 {
+    a.iter().zip(b.iter()).map(|(&x, &y)| (x as f64 - y as f64).abs()).fold(0.0, f64::max)
+}
+
+#[test]
+fn age_zero_is_bit_identical() {
+    // age=0 must be bit-for-bit identical to the un-aged realtime stream, even with a nonzero seed
+    // (the drift factor is exactly 1.0, so every conductance equals its pristine base).
+    let base = run_stream(QualityConfig::realtime());
+    let aged0 = run_stream_aged(0xDEAD_BEEF, 0.0);
+    assert_eq!(base.len(), aged0.len());
+    for (i, (a, b)) in base.iter().zip(aged0.iter()).enumerate() {
+        assert_eq!(a.to_bits(), b.to_bits(), "age=0 sample {i} not bit-identical");
+    }
+}
+
+#[test]
+fn age_is_deterministic_for_seed() {
+    let a = run_stream_aged(0x1234, 1.0);
+    let b = run_stream_aged(0x1234, 1.0);
+    for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+        assert_eq!(x.to_bits(), y.to_bits(), "same seed+age must be deterministic, sample {i}");
+    }
+}
+
+#[test]
+fn age_one_changes_output() {
+    let base = run_stream(QualityConfig::realtime());
+    let aged = run_stream_aged(0x1234, 1.0);
+    let d = max_dev(&base, &aged);
+    assert!(d > 1e-4, "age=1 should audibly change output, max_dev={d}");
+}
+
+#[test]
+fn reroll_changes_pattern() {
+    // Different seeds = different "units" = different output.
+    let a = run_stream_aged(0x1111, 1.0);
+    let b = run_stream_aged(0x2222, 1.0);
+    let d = max_dev(&a, &b);
+    assert!(d > 1e-5, "different seeds should differ, max_dev={d}");
+    // The reroll helper must actually move the seed.
+    assert_ne!(wdf::reroll_seed(0x1111), 0x1111);
+}
+
+#[test]
+fn age_round_trips_to_base() {
+    // set_age(1) then set_age(0) restores G0 to bit-exact pristine.
+    let mut m = wdf::WdfModel::new(wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
+    let g0_before = m.g0_snapshot();
+    m.set_age_seed(0x9999);
+    m.set_age(1.0);
+    m.set_age(0.0);
+    let g0_after = m.g0_snapshot();
+    assert_eq!(g0_before.len(), g0_after.len());
+    for (i, (a, b)) in g0_before.iter().zip(g0_after.iter()).enumerate() {
+        assert_eq!(a.to_bits(), b.to_bits(), "g0[{i}] not restored after age round-trip");
+    }
+}
+
+#[test]
+fn age_composes_with_bias_and_gain() {
+    // Live legs (RV1 + R_KJ) must fold the aged factor in, not clobber it. set_age then set_bias /
+    // set_rgain must remain finite and re-settle.
+    let mut m = wdf::WdfModel::new(wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
+    m.set_age_seed(0x5555);
+    m.set_age(1.0);
+    m.set_bias(0.7);
+    m.set_rgain(330.0);
+    m.warmup();
+    for &x in wdf_golden::INPUT_256.iter().take(64) {
+        let y = m.process_host_sample(x as f32);
+        assert!(y.is_finite(), "aged+bias+gain output must be finite");
+    }
+}
+
 #[test]
 #[ignore = "diagnostic: run with --ignored --nocapture to print the sparsity census"]
 fn sparsity_census() {
