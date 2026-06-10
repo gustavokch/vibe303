@@ -74,3 +74,13 @@ fn trafo_default_and_range() {
     assert!(p.trafo.preview_normalized(0.0) >= 0.0);
     assert!(p.trafo.preview_normalized(1.0) <= 1.0);
 }
+
+#[cfg(feature = "trafo-core")]
+#[test]
+fn trafo_is_registered_in_param_map() {
+    // Guards host visibility: the #[cfg]-gated #[id="trafo"] field must actually appear in the
+    // derived Params param map (not merely exist as a struct field).
+    let p = Ba283Params::default();
+    let ids: Vec<String> = p.param_map().into_iter().map(|(id, _, _)| id).collect();
+    assert!(ids.iter().any(|i| i == "trafo"), "trafo not in param_map: {ids:?}");
+}
