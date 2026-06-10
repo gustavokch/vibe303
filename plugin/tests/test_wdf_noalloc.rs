@@ -43,6 +43,28 @@ fn fast_tier_process_host_sample_is_alloc_free() {
     assert_stream_alloc_free(WdfModel::new_with(QualityConfig::fast(), 48_000.0, 220.0, 0.5));
 }
 
+#[cfg(feature = "trafo-core")]
+#[test]
+fn set_trafo_and_core_is_alloc_free() {
+    // The separable RK4 J-A core runs on the per-sample path (ja_commit) and set_trafo flips a gate
+    // block-rate. Both must be heap-free: fixed-size scalar state, no partition rebuild.
+    let mut m = WdfModel::new(48_000.0, 220.0, 0.5);
+    m.set_trafo(0.5);
+    for i in 0..32 {
+        let _ = m.process_host_sample((i as f32 * 0.01).sin());
+    }
+    reset_violation_count();
+    assert_no_alloc(|| {
+        for k in 0..8 {
+            m.set_trafo(k as f64 / 8.0);
+        }
+        for i in 0..1024 {
+            let _ = m.process_host_sample((i as f32 * 0.001).sin());
+        }
+    });
+    assert_eq!(violation_count(), 0, "set_trafo / JA RK4 core allocated on the heap");
+}
+
 #[test]
 fn set_age_is_alloc_free() {
     // Aging is applied block-rate from the audio callback (process), so set_age / set_age_seed must

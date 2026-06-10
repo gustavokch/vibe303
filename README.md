@@ -33,7 +33,7 @@ matches the PyTorch reference to `< 1e-5`.
 ### Circuit (WDF)
 
 A nodal MNA + Newton-Raphson solver with Gummel-Poon BJT models and coupled
-inductors, ported from [`gustavokch/ba283_wdf`](https://github.com/gustavokch/ba283_wdf).
+inductors, ported from [`gustavokch/ba283_wdf`](https://github.com/gustavokch/ba283-wdf).
 Circuit-faithful: tracks SPICE at ESR ≈ −30 dB, coherence 1.0. Offers two
 quality tiers — `Realtime` (bit-exact reference, all speed levers off) and
 `Fast` (near-transparent, faster).
