@@ -1435,20 +1435,9 @@ pub struct WdfSnapshot {
     v_pprev: f64,
     v_sprev: f64,
     sec_in_dc: f64,
-    // JA core state (feature trafo-core): magnetization, field/flux/voltage history, frozen
-    // direction, and the lagged deviation current. Snapshotted so reset() restores a settled core.
-    #[cfg(feature = "trafo-core")]
-    ja_m: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_h_prev: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_phi_prev: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_vm_prev: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_delta: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_i_dev: f64,
+    // JA core state is intentionally NOT snapshotted: the warmup→audio transition (and a knob
+    // re-enable) always reseed the core to a clean origin, so any restored value would be
+    // immediately clobbered. Keeping it out of the snapshot avoids carrying dead state.
 }
 
 /// Coupled-circuit MNA + Newton solver. All scratch is fixed-size (no `Vec` on the process path)
@@ -3622,18 +3611,6 @@ impl WdfModel {
             v_pprev: self.v_pprev,
             v_sprev: self.v_sprev,
             sec_in_dc: self.sec_in_dc,
-            #[cfg(feature = "trafo-core")]
-            ja_m: self.ja_m,
-            #[cfg(feature = "trafo-core")]
-            ja_h_prev: self.ja_h_prev,
-            #[cfg(feature = "trafo-core")]
-            ja_phi_prev: self.ja_phi_prev,
-            #[cfg(feature = "trafo-core")]
-            ja_vm_prev: self.ja_vm_prev,
-            #[cfg(feature = "trafo-core")]
-            ja_delta: self.ja_delta,
-            #[cfg(feature = "trafo-core")]
-            ja_i_dev: self.ja_i_dev,
         }
     }
 
@@ -3656,15 +3633,6 @@ impl WdfModel {
         self.v_pprev = s.v_pprev;
         self.v_sprev = s.v_sprev;
         self.sec_in_dc = s.sec_in_dc;
-        #[cfg(feature = "trafo-core")]
-        {
-            self.ja_m = s.ja_m;
-            self.ja_h_prev = s.ja_h_prev;
-            self.ja_phi_prev = s.ja_phi_prev;
-            self.ja_vm_prev = s.ja_vm_prev;
-            self.ja_delta = s.ja_delta;
-            self.ja_i_dev = s.ja_i_dev;
-        }
         // Re-prime the predictor on the first audio sample after a restore (the warmup snapshot
         // carries no extrapolation history; a stale seed would overshoot sample 0).
         self.predict_primed = false;
