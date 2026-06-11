@@ -2073,6 +2073,21 @@ impl WdfModel {
     /// `ja_i_dev` is forced to 0 => bit-exact linear core. The J-A is a separable RK4 post-solve
     /// filter injecting a lagged current source, so it touches neither G0 nor the Schur partition
     /// (N-set stays 6 always); `set_trafo` only flips the gate.
+    /// Reset the JA core to a clean origin: `M=0`, no flux/field/voltage history, `+δ` field-rate
+    /// direction, no lagged deviation current. Single source of truth for "what a settled core looks
+    /// like" — called on both edges that must not integrate the next trapezoidal step against a stale
+    /// operating point: warmup→audio (`process_host_sample`) and inactive→active (`set_trafo`).
+    #[cfg(feature = "trafo-core")]
+    #[inline]
+    fn ja_reseed(&mut self) {
+        self.ja_m = 0.0;
+        self.ja_h_prev = 0.0;
+        self.ja_phi_prev = 0.0;
+        self.ja_vm_prev = 0.0;
+        self.ja_delta = 1.0;
+        self.ja_i_dev = 0.0;
+    }
+
     #[cfg(feature = "trafo-core")]
     pub fn set_trafo(&mut self, trafo: f64) {
         self.trafo = trafo.clamp(0.0, 1.0);
@@ -2084,12 +2099,7 @@ impl WdfModel {
         // transition does). No-op on a fresh model (state already zero) and on level changes while
         // already active.
         if active && !self.ja_active {
-            self.ja_m = 0.0;
-            self.ja_h_prev = 0.0;
-            self.ja_phi_prev = 0.0;
-            self.ja_vm_prev = 0.0;
-            self.ja_delta = 1.0;
-            self.ja_i_dev = 0.0;
+            self.ja_reseed();
         }
         self.ja_active = active;
     }
@@ -2103,6 +2113,13 @@ impl WdfModel {
         }
         let b = self.ja_phi_prev / self.ja.k_phi;
         (self.ja_h_prev, b)
+    }
+
+    /// Lagged magnetizing-deviation current `i_dev` queued for the next sample's RHS injection — the
+    /// actual click source on a knob re-enable (a stale value steps the network current). For tests.
+    #[cfg(feature = "trafo-core")]
+    pub fn ja_i_dev(&self) -> f64 {
+        self.ja_i_dev
     }
 
     /// TR3 quiescent collector current (mA) at the current operating point (`main.cpp:441-445`).
@@ -3575,12 +3592,7 @@ impl WdfModel {
         // saturates the core and poisons forward state.
         #[cfg(feature = "trafo-core")]
         if self.ja_active && !self.in_audio_pass {
-            self.ja_m = 0.0;
-            self.ja_h_prev = 0.0;
-            self.ja_phi_prev = 0.0;
-            self.ja_vm_prev = 0.0;
-            self.ja_delta = 1.0;
-            self.ja_i_dev = 0.0;
+            self.ja_reseed();
         }
         self.in_audio_pass = true;
         let cur_in = x as f64;
