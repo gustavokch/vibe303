@@ -1402,7 +1402,10 @@ impl JaCore {
         let dm_irr = (m_an - m) / denom;
         let num = (1.0 - self.c) * dm_irr + self.c * dman_dhe;
         let den = 1.0 - self.alpha * self.c * dman_dhe - self.alpha * (1.0 - self.c) * dm_irr;
-        let s = if den.abs() < 1.0e-9 { num / 1.0e-9 } else { num / den };
+        // Sign-preserving small-denominator clamp (mirror the `denom` clamp above): a small
+        // *negative* `den` must not flip the slope sign before the `max(0.0)` floor.
+        let den = if den.abs() < 1.0e-9 { if den < 0.0 { -1.0e-9 } else { 1.0e-9 } } else { den };
+        let s = num / den;
         s.max(0.0) // physical differential susceptibility is non-negative
     }
 
@@ -2074,7 +2077,22 @@ impl WdfModel {
     #[cfg(feature = "trafo-core")]
     pub fn set_trafo(&mut self, trafo: f64) {
         self.trafo = trafo.clamp(0.0, 1.0);
-        self.ja_active = self.trafo > 0.0;
+        let active = self.trafo > 0.0;
+        // Re-enable from a linear/inactive state: the core stopped committing when it went inactive,
+        // so `ja_vm_prev`/`ja_phi_prev`/`ja_m` are frozen at a stale operating point. Integrating the
+        // next trapezoidal flux step against that stale `ja_vm_prev` would jump the flux (audible
+        // click). Re-seed to a clean start on the inactive→active edge (same reset the warmup→audio
+        // transition does). No-op on a fresh model (state already zero) and on level changes while
+        // already active.
+        if active && !self.ja_active {
+            self.ja_m = 0.0;
+            self.ja_h_prev = 0.0;
+            self.ja_phi_prev = 0.0;
+            self.ja_vm_prev = 0.0;
+            self.ja_delta = 1.0;
+            self.ja_i_dev = 0.0;
+        }
+        self.ja_active = active;
     }
 
     /// Current core operating point `(H, B)` in SI units — for offline B-H loop logging. Inert

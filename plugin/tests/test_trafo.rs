@@ -79,6 +79,43 @@ fn trafo_changes_output_and_stays_finite() {
 }
 
 #[test]
+fn trafo_reenable_reseeds_core_no_flux_jump() {
+    // Re-enabling the knob mid-stream must NOT integrate flux against a stale `ja_vm_prev` frozen
+    // from before it was switched off (would jump the flux → audible click). `set_trafo` re-seeds
+    // the core on the inactive→active edge, so the operating point is clean (H,B)=(0,0) right after.
+    let mut m = wdf::WdfModel::new_with(
+        QualityConfig::realtime(),
+        wdf_golden::HOST_SR,
+        220.0,
+        wdf_golden::BIAS,
+    );
+    m.set_trafo(0.5);
+    m.warmup();
+    // Drive a hot tone to push the core off the origin (builds up ja_vm_prev / flux / M).
+    for i in 0..512 {
+        m.process_host_sample((i as f32 * 0.06).sin() * 0.5);
+    }
+    let (h_hot, b_hot) = m.ja_hb();
+    assert!(h_hot != 0.0 || b_hot != 0.0, "core should be off-origin after hot drive");
+
+    // Switch off (freezes the stale state), run linear, then re-enable.
+    m.set_trafo(0.0);
+    for _ in 0..64 {
+        m.process_host_sample(0.0);
+    }
+    m.set_trafo(0.5);
+    // Immediately after the re-enable edge, before any further commit, the core must be re-seeded.
+    let (h0, b0) = m.ja_hb();
+    assert_eq!((h0, b0), (0.0, 0.0), "re-enable must reseed core to origin, got ({h0},{b0})");
+
+    // And the first samples after re-enable stay finite/bounded (no flux-jump blow-up).
+    for i in 0..256 {
+        let y = m.process_host_sample((i as f32 * 0.06).sin() * 0.5);
+        assert!(y.is_finite() && y.abs() < 100.0, "post-reenable sample {i} blew up: {y}");
+    }
+}
+
+#[test]
 fn trafo_determinism() {
     let a = run_stream_trafo(0.7);
     let b = run_stream_trafo(0.7);
