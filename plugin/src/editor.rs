@@ -28,7 +28,7 @@ const OXBLOOD: Color32 = Color32::from_rgb(0x9E, 0x3B, 0x2E);
 fn display_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("display".into()))
 }
-/// Tabular numeric family (knob value readouts).
+/// Numeric readout family (Archivo; proportional — readout width is not fixed-pitch).
 fn value_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("value".into()))
 }
@@ -39,7 +39,6 @@ pub(crate) fn create(
     params: Arc<Ba283Params>,
     editor_state: Arc<EguiState>,
 ) -> Option<Box<dyn Editor>> {
-    let draw_params = params.clone();
     create_egui_editor(
         editor_state,
         (),
@@ -47,7 +46,7 @@ pub(crate) fn create(
         |ctx, _state| apply_theme(ctx),
         // update — runs each frame.
         move |ctx, setter, _state| {
-            draw_ui(ctx, setter, &draw_params);
+            draw_ui(ctx, setter, &params);
         },
     )
 }
@@ -69,12 +68,16 @@ fn apply_theme(ctx: &egui::Context) {
             "../assets/fonts/Archivo-Variable.ttf"
         ))),
     );
-    fonts
-        .families
-        .insert(FontFamily::Name("display".into()), vec!["barlow".to_owned()]);
-    fonts
-        .families
-        .insert(FontFamily::Name("value".into()), vec!["archivo".to_owned()]);
+    // Each named family carries a second face as a glyph fallback so a character missing from the
+    // primary (e.g. a future unit like Ω/±/µ) renders from the other bundled face instead of tofu.
+    fonts.families.insert(
+        FontFamily::Name("display".into()),
+        vec!["barlow".to_owned(), "archivo".to_owned()],
+    );
+    fonts.families.insert(
+        FontFamily::Name("value".into()),
+        vec!["archivo".to_owned(), "barlow".to_owned()],
+    );
     // Use Archivo as the default proportional face too (host tooltips, fallbacks).
     fonts
         .families
@@ -436,7 +439,8 @@ fn toggle_pill(ui: &mut egui::Ui, setter: &ParamSetter, param: &BoolParam, label
 
 /// Momentary "re-roll unit" button. Drives `age_reroll` from the button's held state so the
 /// audio thread's rising-edge detector (`last_reroll` in `process`) sees a clean low→high→low
-/// pulse spanning ≥1 block — no DSP change needed.
+/// pulse spanning ≥1 block — no DSP change needed. The edge is only consumed while `process`
+/// runs, so a re-roll pressed with the transport stopped takes effect once audio resumes.
 fn reroll_button(ui: &mut egui::Ui, setter: &ParamSetter, p: &Arc<Ba283Params>) {
     let resp = ui.add(
         egui::Button::new(RichText::new("RE-ROLL").font(display_font(12.0)).color(TEXT))
