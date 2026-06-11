@@ -1362,9 +1362,18 @@ impl JaCore {
     /// saturation knee — the opposite of an ungapped high-µ core (whose `chi0`~thousands gives a
     /// catastrophic post-knee current rise and flux runaway, the original NO-GO). `lp_eff` is pinned
     /// to the linear coupled-inductor magnetizing inductance (1.9 H) and `k_hi` is back-solved from
-    /// the true small-signal susceptibility so the JA magnetizing current equals `phi/lp_eff` at low
-    /// drive — the deviation branch `(i_JA − phi/lp_eff)` then vanishes near zero (exact continuity
-    /// with the linear model at trafo=0⁺). No datasheet exists; tuned against the B-H + THD harness.
+    /// the *static* anhysteretic susceptibility `chi0` so the JA magnetizing current is close to
+    /// `phi/lp_eff` at low drive and the deviation branch `(i_JA − phi/lp_eff)` is small near zero.
+    ///
+    /// NOTE — the cancellation is approximate, not exact. `k_hi` uses the static `chi0 =
+    /// chi_raw/(1−α·chi_raw)` (≈20), but the RK4 integrand's near-origin slope is the *dynamic*
+    /// `s0 = c·chi_raw/(1−α·c·chi_raw)` (≈14 with `c = 0.7`), because reversibility scales the
+    /// differential susceptibility. So at low drive `i_dev` is a small nonzero value → the knob
+    /// adds a slight low-drive gain trim on top of the saturation, not pure saturation. Exact
+    /// continuity at trafo=0 is unaffected (the `trafo` gate forces `i_dev = 0`). To make the
+    /// deviation truly vanish at low drive, pin `k_hi` to `s0` instead of `chi0` (uses `1.0 + s0`
+    /// below) and re-run the `eval/trafo_core` B-H + THD harness — that change weakens `i_dev` ~40%
+    /// at all levels, so it is a deliberate re-voice, left for a harness pass. No datasheet exists.
     pub fn lo1166() -> Self {
         let mu0 = std::f64::consts::PI * 4.0e-7;
         let b_sat = 0.3; // saturation flux density (T) — knee sits at the top of the line-level swing
@@ -1379,7 +1388,8 @@ impl JaCore {
         let a_e = 5.0e-4;
         let k_phi = n_p * a_e; // volts→flux lump (= N_p·A_e)
         // Pin lp_eff to the linear magnetizing L (companion: Lp = 1.9 H) and back-solve k_hi from the
-        // true initial susceptibility so the deviation cancels exactly at low drive.
+        // static initial susceptibility so the deviation is small at low drive. (Approximate — the
+        // dynamic RK4 slope includes the reversibility factor `c`; see the doc-comment above.)
         let lp_eff = 1.9;
         let chi_raw = m_s / (3.0 * a);
         let chi0 = chi_raw / (1.0 - alpha * chi_raw);
@@ -3481,6 +3491,11 @@ impl WdfModel {
         self.v_sprev = vs;
 
         // JA core: commit magnetization + flux state for the next sample.
+        // NOTE — `trafo-core` × `subrate-spike` is an UNTESTED combination. On a sub-rate-skipped
+        // sample Newton did not run, so `node_v(N_PA)` is the frozen/held solve; `ja_commit` would
+        // then integrate flux from that held voltage. Both are experimental spikes not meant to be
+        // enabled together; if they ever are, validate this path (or gate `ja_commit` off when the
+        // sample was skipped). See the PR #40 review plan, P3 #6.
         #[cfg(feature = "trafo-core")]
         if self.ja_active && self.in_audio_pass {
             self.ja_commit();
