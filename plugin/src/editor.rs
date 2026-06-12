@@ -62,6 +62,8 @@ fn apply_theme(ctx: &egui::Context) {
             "../assets/fonts/BarlowSemiCondensed-SemiBold.ttf"
         ))),
     );
+    // Archivo is a variable font; its fvar default is wght=600 (SemiBold), wdth=100 (normal), so
+    // ab_glyph instances the readouts at SemiBold — the intended weight, no axis selection needed.
     fonts.font_data.insert(
         "archivo".to_owned(),
         Arc::new(egui::FontData::from_static(include_bytes!(
@@ -263,6 +265,14 @@ fn labelled_rule(ui: &mut egui::Ui, label: &str) {
 
 // ── Custom arc-knob widget ──────────────────────────────────────────────────────────────
 
+/// Per-knob scroll-gesture state held in egui temp memory: whether a host parameter gesture is
+/// currently open and the time of the last scroll tick (for idle-close).
+#[derive(Clone, Copy, Default)]
+struct ScrollGesture {
+    active: bool,
+    last: f64,
+}
+
 /// A 270° arc knob driven by any `Param`. Honors the param's own normalized↔plain mapping
 /// (so the dB ranges and `circuit_gain`'s skew come through for free) and formats the
 /// readout with the param's own formatter. Drag (vertical) / scroll to adjust, Shift = fine,
@@ -306,14 +316,36 @@ fn knob<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &st
                 if response.drag_stopped() {
                     setter.end_set_parameter(param);
                 }
-                if response.hovered() {
-                    let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-                    if scroll != 0.0 {
-                        let dn = scroll / 600.0 * scale;
-                        norm = (norm + dn).clamp(0.0, 1.0);
-                        set_norm(setter, param, norm);
+                // Scroll-to-adjust, bundled into ONE host gesture per burst. A naive
+                // begin/set/end per scroll tick logs a separate one-shot automation
+                // gesture for every notch; instead open the gesture on the first tick
+                // and close it after a short idle (a trailing repaint delivers the
+                // closing frame). State lives in egui temp memory keyed by the knob.
+                let scroll = if response.hovered() {
+                    ui.input(|i| i.smooth_scroll_delta.y)
+                } else {
+                    0.0
+                };
+                let now = ui.input(|i| i.time);
+                let gid = ui.make_persistent_id(("ba283_knob_scroll", label));
+                let mut g: ScrollGesture =
+                    ui.memory(|m| m.data.get_temp(gid)).unwrap_or_default();
+                if scroll != 0.0 {
+                    if !g.active {
+                        setter.begin_set_parameter(param);
+                        g.active = true;
                     }
+                    g.last = now;
+                    let dn = scroll / 600.0 * scale;
+                    norm = (norm + dn).clamp(0.0, 1.0);
+                    setter.set_parameter_normalized(param, norm);
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(180));
+                } else if g.active && now - g.last > 0.15 {
+                    setter.end_set_parameter(param);
+                    g.active = false;
                 }
+                ui.memory_mut(|m| m.data.insert_temp(gid, g));
             }
         }
 
