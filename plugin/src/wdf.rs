@@ -1362,9 +1362,18 @@ impl JaCore {
     /// saturation knee — the opposite of an ungapped high-µ core (whose `chi0`~thousands gives a
     /// catastrophic post-knee current rise and flux runaway, the original NO-GO). `lp_eff` is pinned
     /// to the linear coupled-inductor magnetizing inductance (1.9 H) and `k_hi` is back-solved from
-    /// the true small-signal susceptibility so the JA magnetizing current equals `phi/lp_eff` at low
-    /// drive — the deviation branch `(i_JA − phi/lp_eff)` then vanishes near zero (exact continuity
-    /// with the linear model at trafo=0⁺). No datasheet exists; tuned against the B-H + THD harness.
+    /// the *static* anhysteretic susceptibility `chi0` so the JA magnetizing current is close to
+    /// `phi/lp_eff` at low drive and the deviation branch `(i_JA − phi/lp_eff)` is small near zero.
+    ///
+    /// NOTE — the cancellation is approximate, not exact. `k_hi` uses the static `chi0 =
+    /// chi_raw/(1−α·chi_raw)` (≈20), but the RK4 integrand's near-origin slope is the *dynamic*
+    /// `s0 = c·chi_raw/(1−α·c·chi_raw)` (≈14 with `c = 0.7`), because reversibility scales the
+    /// differential susceptibility. So at low drive `i_dev` is a small nonzero value → the knob
+    /// adds a slight low-drive gain trim on top of the saturation, not pure saturation. Exact
+    /// continuity at trafo=0 is unaffected (the `trafo` gate forces `i_dev = 0`). To make the
+    /// deviation truly vanish at low drive, pin `k_hi` to `s0` instead of `chi0` (uses `1.0 + s0`
+    /// below) and re-run the `eval/trafo_core` B-H + THD harness — that change weakens `i_dev` ~40%
+    /// at all levels, so it is a deliberate re-voice, left for a harness pass. No datasheet exists.
     pub fn lo1166() -> Self {
         let mu0 = std::f64::consts::PI * 4.0e-7;
         let b_sat = 0.3; // saturation flux density (T) — knee sits at the top of the line-level swing
@@ -1379,7 +1388,8 @@ impl JaCore {
         let a_e = 5.0e-4;
         let k_phi = n_p * a_e; // volts→flux lump (= N_p·A_e)
         // Pin lp_eff to the linear magnetizing L (companion: Lp = 1.9 H) and back-solve k_hi from the
-        // true initial susceptibility so the deviation cancels exactly at low drive.
+        // static initial susceptibility so the deviation is small at low drive. (Approximate — the
+        // dynamic RK4 slope includes the reversibility factor `c`; see the doc-comment above.)
         let lp_eff = 1.9;
         let chi_raw = m_s / (3.0 * a);
         let chi0 = chi_raw / (1.0 - alpha * chi_raw);
@@ -1402,7 +1412,10 @@ impl JaCore {
         let dm_irr = (m_an - m) / denom;
         let num = (1.0 - self.c) * dm_irr + self.c * dman_dhe;
         let den = 1.0 - self.alpha * self.c * dman_dhe - self.alpha * (1.0 - self.c) * dm_irr;
-        let s = if den.abs() < 1.0e-9 { num / 1.0e-9 } else { num / den };
+        // Sign-preserving small-denominator clamp (mirror the `denom` clamp above): a small
+        // *negative* `den` must not flip the slope sign before the `max(0.0)` floor.
+        let den = if den.abs() < 1.0e-9 { if den < 0.0 { -1.0e-9 } else { 1.0e-9 } } else { den };
+        let s = num / den;
         s.max(0.0) // physical differential susceptibility is non-negative
     }
 
@@ -1432,20 +1445,9 @@ pub struct WdfSnapshot {
     v_pprev: f64,
     v_sprev: f64,
     sec_in_dc: f64,
-    // JA core state (feature trafo-core): magnetization, field/flux/voltage history, frozen
-    // direction, and the lagged deviation current. Snapshotted so reset() restores a settled core.
-    #[cfg(feature = "trafo-core")]
-    ja_m: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_h_prev: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_phi_prev: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_vm_prev: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_delta: f64,
-    #[cfg(feature = "trafo-core")]
-    ja_i_dev: f64,
+    // JA core state is intentionally NOT snapshotted: the warmup→audio transition (and a knob
+    // re-enable) always reseed the core to a clean origin, so any restored value would be
+    // immediately clobbered. Keeping it out of the snapshot avoids carrying dead state.
 }
 
 /// Coupled-circuit MNA + Newton solver. All scratch is fixed-size (no `Vec` on the process path)
@@ -2071,10 +2073,35 @@ impl WdfModel {
     /// `ja_i_dev` is forced to 0 => bit-exact linear core. The J-A is a separable RK4 post-solve
     /// filter injecting a lagged current source, so it touches neither G0 nor the Schur partition
     /// (N-set stays 6 always); `set_trafo` only flips the gate.
+    /// Reset the JA core to a clean origin: `M=0`, no flux/field/voltage history, `+δ` field-rate
+    /// direction, no lagged deviation current. Single source of truth for "what a settled core looks
+    /// like" — called on both edges that must not integrate the next trapezoidal step against a stale
+    /// operating point: warmup→audio (`process_host_sample`) and inactive→active (`set_trafo`).
+    #[cfg(feature = "trafo-core")]
+    #[inline]
+    fn ja_reseed(&mut self) {
+        self.ja_m = 0.0;
+        self.ja_h_prev = 0.0;
+        self.ja_phi_prev = 0.0;
+        self.ja_vm_prev = 0.0;
+        self.ja_delta = 1.0;
+        self.ja_i_dev = 0.0;
+    }
+
     #[cfg(feature = "trafo-core")]
     pub fn set_trafo(&mut self, trafo: f64) {
         self.trafo = trafo.clamp(0.0, 1.0);
-        self.ja_active = self.trafo > 0.0;
+        let active = self.trafo > 0.0;
+        // Re-enable from a linear/inactive state: the core stopped committing when it went inactive,
+        // so `ja_vm_prev`/`ja_phi_prev`/`ja_m` are frozen at a stale operating point. Integrating the
+        // next trapezoidal flux step against that stale `ja_vm_prev` would jump the flux (audible
+        // click). Re-seed to a clean start on the inactive→active edge (same reset the warmup→audio
+        // transition does). No-op on a fresh model (state already zero) and on level changes while
+        // already active.
+        if active && !self.ja_active {
+            self.ja_reseed();
+        }
+        self.ja_active = active;
     }
 
     /// Current core operating point `(H, B)` in SI units — for offline B-H loop logging. Inert
@@ -2086,6 +2113,13 @@ impl WdfModel {
         }
         let b = self.ja_phi_prev / self.ja.k_phi;
         (self.ja_h_prev, b)
+    }
+
+    /// Lagged magnetizing-deviation current `i_dev` queued for the next sample's RHS injection — the
+    /// actual click source on a knob re-enable (a stale value steps the network current). For tests.
+    #[cfg(feature = "trafo-core")]
+    pub fn ja_i_dev(&self) -> f64 {
+        self.ja_i_dev
     }
 
     /// TR3 quiescent collector current (mA) at the current operating point (`main.cpp:441-445`).
@@ -3474,6 +3508,11 @@ impl WdfModel {
         self.v_sprev = vs;
 
         // JA core: commit magnetization + flux state for the next sample.
+        // NOTE — `trafo-core` × `subrate-spike` is an UNTESTED combination. On a sub-rate-skipped
+        // sample Newton did not run, so `node_v(N_PA)` is the frozen/held solve; `ja_commit` would
+        // then integrate flux from that held voltage. Both are experimental spikes not meant to be
+        // enabled together; if they ever are, validate this path (or gate `ja_commit` off when the
+        // sample was skipped). See the PR #40 review plan, P3 #6.
         #[cfg(feature = "trafo-core")]
         if self.ja_active && self.in_audio_pass {
             self.ja_commit();
@@ -3553,12 +3592,7 @@ impl WdfModel {
         // saturates the core and poisons forward state.
         #[cfg(feature = "trafo-core")]
         if self.ja_active && !self.in_audio_pass {
-            self.ja_m = 0.0;
-            self.ja_h_prev = 0.0;
-            self.ja_phi_prev = 0.0;
-            self.ja_vm_prev = 0.0;
-            self.ja_delta = 1.0;
-            self.ja_i_dev = 0.0;
+            self.ja_reseed();
         }
         self.in_audio_pass = true;
         let cur_in = x as f64;
@@ -3604,18 +3638,6 @@ impl WdfModel {
             v_pprev: self.v_pprev,
             v_sprev: self.v_sprev,
             sec_in_dc: self.sec_in_dc,
-            #[cfg(feature = "trafo-core")]
-            ja_m: self.ja_m,
-            #[cfg(feature = "trafo-core")]
-            ja_h_prev: self.ja_h_prev,
-            #[cfg(feature = "trafo-core")]
-            ja_phi_prev: self.ja_phi_prev,
-            #[cfg(feature = "trafo-core")]
-            ja_vm_prev: self.ja_vm_prev,
-            #[cfg(feature = "trafo-core")]
-            ja_delta: self.ja_delta,
-            #[cfg(feature = "trafo-core")]
-            ja_i_dev: self.ja_i_dev,
         }
     }
 
@@ -3638,15 +3660,6 @@ impl WdfModel {
         self.v_pprev = s.v_pprev;
         self.v_sprev = s.v_sprev;
         self.sec_in_dc = s.sec_in_dc;
-        #[cfg(feature = "trafo-core")]
-        {
-            self.ja_m = s.ja_m;
-            self.ja_h_prev = s.ja_h_prev;
-            self.ja_phi_prev = s.ja_phi_prev;
-            self.ja_vm_prev = s.ja_vm_prev;
-            self.ja_delta = s.ja_delta;
-            self.ja_i_dev = s.ja_i_dev;
-        }
         // Re-prime the predictor on the first audio sample after a restore (the warmup snapshot
         // carries no extrapolation history; a stale seed would overshoot sample 0).
         self.predict_primed = false;

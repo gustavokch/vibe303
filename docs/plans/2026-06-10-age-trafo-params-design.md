@@ -81,3 +81,34 @@ coupling / DCRs stay linear in `G0`; only the magnetizing path saturates (Holter
 - `plugin/tests/` — `test_wdf.rs`/`test_params.rs`/`test_process.rs`/`test_wdf_noalloc.rs` (age),
   `test_trafo.rs` (trafo, feature-gated).
 - `eval/trafo_core/plot_bh.py` — B-H plausibility harness.
+
+## Re-architecture (shipped in PR #40) — separable RK4 post-solve
+
+The "magnetizing shunt inside the Newton solve" above was the original spike and was **NO-GO**
+(the in-loop J-A stamp blew avg Newton iters from ~3 to ~16). The shipped design is a **decoupled
+separable-RK4 post-solve filter** instead:
+
+- After the linear network solve, `ja_commit` advances `M` by integrating `dM/dB` with fixed-step
+  **RK4** over the flux increment `[B[n-1], B[n]]` (H algebraic at each stage → no inner Newton),
+  then computes a **lagged** deviation current `i_dev = trafo·(i_JA − i_lin)` injected into the
+  *next* sample's RHS on row `N_PA`.
+- Because it is a lagged current source (not a Jacobian contribution), **the Schur N-set stays 6
+  always** — the `n==6` fast path is preserved, and Newton convergence is untouched by construction.
+  This supersedes the "6→7 partition" bullet above.
+
+## PR #40 review notes (P3 — documented, not changed)
+
+- **#4 low-drive cancellation is approximate.** `k_hi` is back-solved from the *static* `chi0` (≈20)
+  but the RK4 near-origin slope is the *dynamic* `s0 = c·chi_raw/(1−α·c·chi_raw)` (≈14 with c=0.7).
+  So `i_dev` is small-but-nonzero at low drive → `trafo>0` adds a slight gain trim on top of
+  saturation. Bit-exactness at trafo=0 is unaffected (gate forces `i_dev=0`). Decided **document
+  only**; pinning `k_hi` to `s0` (true vanish at low drive) weakens `i_dev` ~40% at all levels and
+  needs an `eval/trafo_core` harness re-voice — deferred.
+- **#5 feature-on default is 0.5 (ACTIVE).** A `--features trafo-core` build is not bit-exact with
+  the linear core by default and pays the JA cost when knob>0. Intended; documented on the param.
+- **#6 `trafo-core` × `subrate-spike` untested.** On a sub-rate-skipped sample `ja_commit` integrates
+  flux from the held solve. Both are experimental spikes not meant to run together; documented at the
+  `ja_commit` call site, to be validated/gated if ever combined.
+
+P1/P2 fixes that *were* applied: reseed JA core on knob re-enable (no flux click), sign-preserving
+small-denominator clamp in `slope()`, and dropping the dead `ja_*` fields from `WdfSnapshot`.

@@ -186,6 +186,10 @@ pub struct Ba283Params {
     pub editor_state: Arc<EguiState>,
     /// Transformer magnetic-core saturation/hysteresis amount (Jiles-Atherton). 0 = linear (today's
     /// sound), 0.5 = realistic LO1166, 1 = heavy. SPIKE behind `--features trafo-core`. WDF-only.
+    /// NOTE: the default is 0.5 (ACTIVE), not 0 — a `--features trafo-core` build is therefore NOT
+    /// bit-exact with the linear core out of the box and pays the JA RK4 cost whenever the knob > 0.
+    /// A/B against the linear transformer requires zeroing this knob. (Default release builds omit
+    /// the feature entirely, so they are unaffected.)
     #[cfg(feature = "trafo-core")]
     #[id = "trafo"]
     pub trafo: FloatParam,
