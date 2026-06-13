@@ -1,0 +1,56 @@
+name: build-mac
+
+# Builds the BA283 VST3 for Apple Silicon (and an optional universal binary) on
+# GitHub's arm64 macOS runner. No code lives on a Mac — `cargo xtask bundle`
+# detects aarch64-apple-darwin as the host and packages the .vst3.
+#
+# Artifacts are unsigned/unnotarized: on first load macOS gatekeeper will block
+# them. Clear the quarantine flag after download with:
+#   xattr -dr com.apple.quarantine BA283.vst3
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      universal:
+        description: "Also build a universal (arm64 + x86_64) binary"
+        type: boolean
+        default: false
+
+jobs:
+  arm64:
+    name: arm64
+    runs-on: macos-14 # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Bundle (arm64)
+        run: cargo xtask bundle ba283 --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BA283-macos-arm64
+          path: target/bundled/BA283.vst3
+          if-no-files-found: error
+
+  universal:
+    name: universal
+    # Only when manually triggered with the universal box ticked.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.universal }}
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Bundle (universal)
+        # Dedicated subcommand: builds both targets and lipo's them. It is
+        # incompatible with explicit --target flags (xtask errors on those).
+        run: cargo xtask bundle-universal ba283 --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BA283-macos-universal
+          path: target/bundled/BA283.vst3
+          if-no-files-found: error
