@@ -301,25 +301,31 @@ struct ScrollGesture {
     last: f64,
 }
 
-/// A 270° arc knob driven by any `Param`. Honors the param's own normalized↔plain mapping
-/// (so the dB ranges and `circuit_gain`'s skew come through for free) and formats the
-/// readout with the param's own formatter. Drag (vertical) / scroll to adjust, Shift = fine,
-/// double-click resets to default. Greys out + ignores input when `ui.is_enabled()` is false.
+/// The bounding-box a knob (arc + label) occupies, derived from its arc diameter. Shared by
+/// `knob` (the region it allocates) and `knob_cell` (the cell it pins to) so the two cannot drift.
+fn knob_cell_size(diameter: f32) -> egui::Vec2 {
+    egui::vec2(diameter + 20.0, diameter + 36.0)
+}
+
 /// `knob` wrapped in a fixed-width cell so it is safe inside a free `ui.horizontal` row. `knob`
 /// itself centers via `vertical_centered`, which grabs the full available width — fine inside a
 /// fixed-width `ui.columns` column, but it spreads/overflows in an unbounded horizontal layout.
 /// Bounding the region to the knob's own cell width keeps the centered look and advances the
 /// cursor by exactly one cell.
 fn knob_cell<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &str, diameter: f32) {
-    let cell = egui::vec2(diameter + 20.0, diameter + 36.0);
+    let cell = knob_cell_size(diameter);
     ui.allocate_ui_with_layout(cell, egui::Layout::top_down(egui::Align::Center), |ui| {
         knob(ui, setter, param, label, diameter);
     });
 }
 
+/// A 270° arc knob driven by any `Param`. Honors the param's own normalized↔plain mapping
+/// (so the dB ranges and `circuit_gain`'s skew come through for free) and formats the
+/// readout with the param's own formatter. Drag (vertical) / scroll to adjust, Shift = fine,
+/// double-click resets to default. Greys out + ignores input when `ui.is_enabled()` is false.
 fn knob<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &str, diameter: f32) {
     let enabled = ui.is_enabled();
-    let cell = egui::vec2(diameter + 20.0, diameter + 36.0);
+    let cell = knob_cell_size(diameter);
 
     ui.vertical_centered(|ui| {
         let (rect, mut response) = ui.allocate_exact_size(
