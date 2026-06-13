@@ -179,9 +179,14 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
 
         ui.add_space(10.0);
 
-        // Level-norm pill, right-aligned under the knob row.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            toggle_pill(ui, setter, &p.level_norm, "LEVEL NORM");
+        // Level-norm pill, right-aligned under the knob row. The `right_to_left` layout MUST be
+        // nested in a `ui.horizontal` (as the header is): placed directly in the top-down panel
+        // it claims the full remaining height to vertically-center, pushing the CIRCUIT panel off
+        // the bottom of the viewport. The horizontal wrapper bounds the row to its content height.
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                toggle_pill(ui, setter, &p.level_norm, "LEVEL NORM");
+            });
         });
 
         ui.add_space(16.0);
@@ -203,13 +208,18 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                 ui.set_opacity(opacity);
                 ui.add_enabled_ui(wdf_on, |ui| {
                     ui.horizontal(|ui| {
-                        knob(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
+                        // Use `knob_cell` (NOT bare `knob`) here: `knob` centers via
+                        // `vertical_centered`, which claims the full available width. That is
+                        // bounded inside the core row's `ui.columns`, but in this free
+                        // `ui.horizontal` the first knob would eat all the width and shove the
+                        // rest off the right edge. `knob_cell` pins each to its own cell width.
+                        knob_cell(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
                         ui.add_space(8.0);
-                        knob(ui, setter, &p.age, "AGE", 64.0);
+                        knob_cell(ui, setter, &p.age, "AGE", 64.0);
                         #[cfg(feature = "trafo-core")]
                         {
                             ui.add_space(8.0);
-                            knob(ui, setter, &p.trafo, "TRAFO", 64.0);
+                            knob_cell(ui, setter, &p.trafo, "TRAFO", 64.0);
                         }
                         ui.add_space(10.0);
                         ui.vertical(|ui| {
@@ -291,13 +301,31 @@ struct ScrollGesture {
     last: f64,
 }
 
+/// The bounding-box a knob (arc + label) occupies, derived from its arc diameter. Shared by
+/// `knob` (the region it allocates) and `knob_cell` (the cell it pins to) so the two cannot drift.
+fn knob_cell_size(diameter: f32) -> egui::Vec2 {
+    egui::vec2(diameter + 20.0, diameter + 36.0)
+}
+
+/// `knob` wrapped in a fixed-width cell so it is safe inside a free `ui.horizontal` row. `knob`
+/// itself centers via `vertical_centered`, which grabs the full available width — fine inside a
+/// fixed-width `ui.columns` column, but it spreads/overflows in an unbounded horizontal layout.
+/// Bounding the region to the knob's own cell width keeps the centered look and advances the
+/// cursor by exactly one cell.
+fn knob_cell<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &str, diameter: f32) {
+    let cell = knob_cell_size(diameter);
+    ui.allocate_ui_with_layout(cell, egui::Layout::top_down(egui::Align::Center), |ui| {
+        knob(ui, setter, param, label, diameter);
+    });
+}
+
 /// A 270° arc knob driven by any `Param`. Honors the param's own normalized↔plain mapping
 /// (so the dB ranges and `circuit_gain`'s skew come through for free) and formats the
 /// readout with the param's own formatter. Drag (vertical) / scroll to adjust, Shift = fine,
 /// double-click resets to default. Greys out + ignores input when `ui.is_enabled()` is false.
 fn knob<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &str, diameter: f32) {
     let enabled = ui.is_enabled();
-    let cell = egui::vec2(diameter + 20.0, diameter + 36.0);
+    let cell = knob_cell_size(diameter);
 
     ui.vertical_centered(|ui| {
         let (rect, mut response) = ui.allocate_exact_size(
