@@ -74,8 +74,9 @@ pub struct Ba283Plugin {
     last_trafo: f32,
 }
 
-/// Which emulation runs per sample. `NeuralNet` is the default (preserves current behaviour); `Wdf`
-/// is the circuit-faithful MNA solver. Selectable live in the plugin.
+/// Which emulation runs per sample. `Wdf` (the circuit-faithful MNA solver) is the default;
+/// `NeuralNet` is the learned model. Selectable live in the plugin. NOTE: variant order is
+/// load-bearing — nih_plug serializes enum params by variant index, so reordering breaks presets.
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum InferenceBackend {
     #[name = "Neural Net"]
@@ -184,12 +185,11 @@ pub struct Ba283Params {
     /// round-trips with the project. Fixed-size today, but `create_egui_editor` requires it.
     #[persist = "editor_state"]
     pub editor_state: Arc<EguiState>,
-    /// Transformer magnetic-core saturation/hysteresis amount (Jiles-Atherton). 0 = linear (today's
-    /// sound), 0.5 = realistic LO1166, 1 = heavy. SPIKE behind `--features trafo-core`. WDF-only.
-    /// NOTE: the default is 0.5 (ACTIVE), not 0 — a `--features trafo-core` build is therefore NOT
-    /// bit-exact with the linear core out of the box and pays the JA RK4 cost whenever the knob > 0.
-    /// A/B against the linear transformer requires zeroing this knob. (Default release builds omit
-    /// the feature entirely, so they are unaffected.)
+    /// Transformer magnetic-core saturation/hysteresis amount (Jiles-Atherton). 0 = linear
+    /// (legacy sound), 0.5 = realistic LO1166 (the default), 1 = heavy. WDF-only. Ships in all
+    /// default builds (`trafo-core` is a default feature since the GO verdict); opt out with
+    /// `--no-default-features` for a bit-exact linear-transformer A/B build. NOTE: default 0.5 is
+    /// ACTIVE — the JA RK4 cost applies whenever the knob > 0; zero the knob to A/B the linear core.
     #[cfg(feature = "trafo-core")]
     #[id = "trafo"]
     pub trafo: FloatParam,
@@ -198,7 +198,7 @@ pub struct Ba283Params {
 impl Default for Ba283Params {
     fn default() -> Self {
         Self {
-            backend: EnumParam::new("Backend", InferenceBackend::NeuralNet),
+            backend: EnumParam::new("Backend", InferenceBackend::Wdf),
             wdf_tier: EnumParam::new("WDF Tier", WdfTier::Realtime),
             precision: EnumParam::new("Precision", Precision::High),
             drive_db: FloatParam::new(

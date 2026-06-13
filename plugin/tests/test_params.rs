@@ -15,10 +15,10 @@ fn default_params_have_expected_values() {
 }
 
 #[test]
-fn default_backend_is_neural_net() {
-    // Preserves current behaviour: the plugin defaults to the existing GRU backend.
+fn default_backend_is_wdf() {
+    // The circuit-faithful WDF solver is the default mode; NeuralNet remains selectable.
     let p = Ba283Params::default();
-    assert_eq!(p.backend.value(), InferenceBackend::NeuralNet);
+    assert_eq!(p.backend.value(), InferenceBackend::Wdf);
 }
 
 #[test]

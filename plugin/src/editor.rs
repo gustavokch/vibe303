@@ -39,7 +39,7 @@ pub(crate) fn create(
     params: Arc<Ba283Params>,
     editor_state: Arc<EguiState>,
 ) -> Option<Box<dyn Editor>> {
-    create_egui_editor(
+    let editor = create_egui_editor(
         editor_state,
         (),
         // build — runs once: install fonts + theme.
@@ -48,7 +48,20 @@ pub(crate) fn create(
         move |ctx, setter, _state| {
             draw_ui(ctx, setter, &params);
         },
-    )
+    );
+    // nih_plug_egui defaults to baseview's `SystemScaleFactor`, which on Linux/X11 reads
+    // Xft.dpi and makes the child window `dpi/96`× LARGER than the 660x460 nih-plug reports
+    // to the host — the host's hole stays 660x460, so the bottom/right of the UI (the whole
+    // CIRCUIT panel) gets clipped on HiDPI setups. Pin the scale to 1.0 so window size and
+    // reported size always agree; hosts that support IPlugViewContentScaleSupport overwrite
+    // this via `set_scale_factor` before the window opens (nih-plug scales the reported size
+    // to match in that path). macOS is excluded: there an explicit factor breaks mouse
+    // coordinates (see the NOTE in nih_plug_egui::editor) and the OS handles DPI itself.
+    #[cfg(not(target_os = "macos"))]
+    if let Some(editor) = &editor {
+        editor.set_scale_factor(1.0);
+    }
+    editor
 }
 
 // ── Theme ───────────────────────────────────────────────────────────────────────────────
@@ -193,6 +206,11 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                         knob(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
                         ui.add_space(8.0);
                         knob(ui, setter, &p.age, "AGE", 64.0);
+                        #[cfg(feature = "trafo-core")]
+                        {
+                            ui.add_space(8.0);
+                            knob(ui, setter, &p.trafo, "TRAFO", 64.0);
+                        }
                         ui.add_space(10.0);
                         ui.vertical(|ui| {
                             ui.add_space(22.0);
