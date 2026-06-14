@@ -1153,27 +1153,19 @@ impl QualityConfig {
             ..Self::realtime()
         }
     }
-    /// Ultra-fast tier: `fast()` + internal oversampling dropped 2→1 (the dominant speed lever, ≈2×
-    /// over fast) with the output decimation bypassed. The `eval/wdf_ultrafast` measure-first sweep
-    /// showed the per-iteration / iteration-count levers (looser tol, capped iters, depletion-only
-    /// caps, no-ls-trim, cheap exp) buy almost no speed — so the OS drop is the only lever that
-    /// reaches the 1.5–2× target. Measured avgIters on a 20 Hz–18 kHz −6 dBFS log sweep
-    /// (`ba283_standalone --backend wdf`, 2026-06-09): realtime 2.835 (predict off, cold start),
-    /// fast 2.546 (predict on), ultra-fast 2.939 (predict on but os=1 → larger cross-sample
-    /// jumps). Capping fast to exactly 2 iters (avgIters 2.546→2.003, −21 % iterations) buys only
-    /// ~1.7 % wall for −53.7 dB ESR — the iteration tail is the cheap near-solution part; the fixed
-    /// per-sample device cost (`residual_norm` runs 4×/sample regardless of iter count + the always-
-    /// run first Jacobian) dominates, so iteration count is not the bottleneck. Naively os=1
-    /// costs ~3 dB ESR vs SPICE; but the os=2 decimation biquads (43 kHz Butterworth) themselves
-    /// deviate from the circuit's true HF response, so at os=1 — where there is nothing to decimate
-    /// — bypassing them (`decimate=false`) makes it *better* than realtime: ESR −30 to −36 dB vs
-    /// SPICE (realtime −25 to −26) across pink/sweep at gains 0.5/1.0, coherence 1.0. The cheap
-    /// low-order exp is left OFF (it only perturbs the operating point for ~3 % speed). Newton
-    /// tol/iters stay at the `fast` values.
+    /// Ultra-fast tier: `fast()` + the cheap low-order transport exp (`cheap_exp`), retaining the
+    /// os=2 internal oversampling.
+    ///
+    /// NOTE: this tier originally dropped internal oversampling to os=1 (with the decimation biquads
+    /// bypassed) as its dominant speed lever. That was REVERTED — os=1 leaves the per-sample solve
+    /// under-resolved, and combined with the Med/Low fixed-step solver (2 iters, no convergence gate)
+    /// it produced erratic limit-cycle output peaks (raw ~60–86 vs ~56 at High) that a constant
+    /// levelNorm trim cannot tame — i.e. "VERY loud peaks on every non-realtime tier at Med/Low".
+    /// **os is now floored at 2 for ALL tiers** (enforced in `build_with`); ultra-fast keeps its
+    /// remaining levers (predict/schur/freeze-caps/ls-trim/fma + cheap_exp) for a speed gain over
+    /// fast without the os=1 instability.
     pub fn ultra_fast() -> Self {
         Self {
-            os: 1,
-            decimate: false,
             cheap_exp: true, // T3: low-order transport exp (~2%); ultra-fast tier accepts the op-point bias
             ..Self::fast()
         }
@@ -1183,7 +1175,7 @@ impl QualityConfig {
     /// diffusion charge batch and its trapezoidal trailing update (~19 % of the per-sample cost) are
     /// removed entirely, leaving transport-only devices. Measured 2026-06-09 (`ba283_standalone
     /// --backend wdf`, sweep_m6): 1.30× over ultra-fast (≈4.2× over realtime). The caps shape only
-    /// the very top octave, which os=1 already alters, so dropping them perturbs the output by just
+    /// the very top octave, so dropping them perturbs the output by just
     /// −55 dB vs ultra-fast — far below the −23 dB WDF-vs-ACME model floor — i.e. vs SPICE it stays
     /// within a hair of ultra-fast's −30 to −36 dB. Distinct from `with_precision(Low)`, which also
     /// sets `cap_tier = Off` but additionally forces the fixed-step solver (max_iters = 2); this tier
@@ -1202,17 +1194,28 @@ impl QualityConfig {
     /// alone buy ~nothing because the per-sample `residual_norm` keeps running). Gated by the harness
     /// at ESR loss ≤ −50 dB vs Realtime+High. (f32 device kernels and sub-rate solving land in later
     /// phases; this is the in-house, low-risk first cut.)
+    ///
+    /// `predict` is forced OFF under fixed-step. The Newton predictor extrapolates the operating
+    /// point across samples (`2·sol(n-1) − sol(n-2)`); with only 2 fixed iters and no `residual_norm`
+    /// gate or `ls_trim` line search to reject a bad warm-start, that extrapolation drifts, the solve
+    /// can't pull it back, and the next sample's predict amplifies it — a runaway to ~1e8 ("loud
+    /// garbage then dead channel") on every non-realtime tier at Med/Low. Realtime+Med/Low never hit
+    /// this only because the realtime base already has `predict=false`. Confirmed by lever isolation
+    /// (`tests/test_precision_tiers.rs::isolate_lever_fast_medium`): predict=false bounds the output
+    /// to ~1.5e2 (≈ the full-convergence level), while Dense/freeze_caps=false/fma=false do not.
     pub fn with_precision(self, p: Precision) -> Self {
         match p {
             Precision::High => self,
             Precision::Medium => Self {
                 fixed_step: true,
+                predict: false,
                 max_iters: 2,
                 cap_tier: CapTier::Depletion,
                 ..self
             },
             Precision::Low => Self {
                 fixed_step: true,
+                predict: false,
                 max_iters: 2,
                 cap_tier: CapTier::Off,
                 ..self
@@ -1452,6 +1455,10 @@ pub struct WdfSnapshot {
 
 /// Coupled-circuit MNA + Newton solver. All scratch is fixed-size (no `Vec` on the process path)
 /// to satisfy the zero-alloc audio-thread contract.
+///
+/// `Clone` is a cheap fixed-size memcpy (no heap), used by the static levelNorm gain probe to run a
+/// calibration signal through a scratch copy of the settled model without disturbing the live one.
+#[derive(Clone)]
 pub struct WdfModel {
     pub v: [f64; NUM_NODES],      // current node voltages
     pub v_prev: [f64; NUM_NODES], // previous-sample node voltages (cap history)
@@ -1837,7 +1844,10 @@ impl WdfModel {
             ls_trim: cfg.ls_trim,
             fma: cfg.fma,
             fixed_step: cfg.fixed_step,
-            os: cfg.os.max(1),
+            // os is floored at 2 for ALL tiers: os=1 leaves the per-sample Newton solve
+            // under-resolved and, with the Med/Low fixed-step solver, produces erratic loud output
+            // peaks. Hard floor here so no config (incl. a hand-assembled one) can solve at os=1.
+            os: cfg.os.max(2),
             decimate: cfg.decimate,
             v_pred_prev: [0.0; NUM_NODES],
             predict_primed: false,
@@ -1904,12 +1914,13 @@ impl WdfModel {
 
     /// Like [`new`], but with an explicit [`QualityConfig`] (tier/lever selection).
     pub fn new_with(cfg: QualityConfig, host_sr: f64, rgain: f64, bias: f64) -> Self {
-        let internal_sr = host_sr * cfg.os.max(1) as f64;
+        // os is floored at 2 (see build_with) — keep internal_sr consistent with the floored os so dt
+        // (= 1/internal_sr) matches the per-host-sample subsample count.
+        let internal_sr = host_sr * cfg.os.max(2) as f64;
         let mut m = Self::build_with(cfg, internal_sr, rgain, bias);
-        // Decimation biquads are always configured, but only used when `cfg.decimate` (see
-        // `process_host_sample`). At the ultra-fast tier (os=1, decimate=false) they are dead state:
-        // internal_sr == host_sr so fc=0.45*host_sr stays below Nyquist (no blowup), and the tap is
-        // returned un-filtered. Configuring them unconditionally keeps this path branch-free.
+        // Decimation biquads are always configured, used when `cfg.decimate` (see
+        // `process_host_sample`). At os=2 they are the antialiasing decimator and stay on; configuring
+        // them unconditionally keeps the path branch-free.
         let fc = 0.45 * host_sr;
         m.dec1.set_lowpass(fc, internal_sr, 0.54119610);
         m.dec2.set_lowpass(fc, internal_sr, 1.30656296);
@@ -3310,7 +3321,11 @@ impl WdfModel {
         // settle (in_audio_pass false), where transient swings would make it overshoot
         // (`main.cpp:621-633`). Modifies only `v` (the guess); `hist` below reads `v_prev`.
         // Skipped sub-rate samples solve an affine system (guess-independent) or hold, so no predict.
-        if self.predict && self.in_audio_pass && !skipped {
+        // Defensive: never extrapolate under fixed-step. The 2-iter fixed-step solve has no
+        // `residual_norm` gate / `ls_trim` to correct a bad warm-start, so a predicted guess drifts
+        // and diverges (see `with_precision`). `with_precision` already clears `predict` for Med/Low;
+        // this guard makes any fixed_step config safe regardless of how it was assembled.
+        if self.predict && !self.fixed_step && self.in_audio_pass && !skipped {
             if !self.predict_primed {
                 self.v_pred_prev = self.v; // remember sol(n-1); no extrapolation yet
                 self.predict_primed = true;
@@ -3580,6 +3595,9 @@ impl WdfModel {
         self.v[node::N_A as usize] = 24.0;
         self.idle_settle(4.0);
         self.sec_in_dc = self.v[node::N_SEC_IN as usize];
+        // Leave the settled state as the restore target so reset()/measure_gain() have a clean
+        // operating point to fall back to even if the caller never calls save_snapshot() itself.
+        self.save_snapshot();
     }
 
     /// Process one host-rate sample: linear-upsample to `OS` subsamples, Newton-solve each, decimate
@@ -3602,8 +3620,8 @@ impl WdfModel {
             self.v[node::N_INPUT as usize] = self.prev_in + (cur_in - self.prev_in) * frac;
             self.process();
             let tap = self.v[node::N_SEC_IN as usize] - self.sec_in_dc;
-            // At os>1 the biquads are the antialiasing decimator; at os==1 they only add phase, so
-            // `decimate=false` bypasses them (the `--no-decimate` ultra-fast lever).
+            // At os>1 (always, since os is floored at 2) the biquads are the antialiasing decimator.
+            // The `decimate=false` bypass remains for A/B testing only.
             decimated = if self.decimate {
                 self.dec2.process(self.dec1.process(tap))
             } else {
@@ -3612,6 +3630,72 @@ impl WdfModel {
         }
         self.prev_in = cur_in;
         decimated as f32
+    }
+
+    /// Measure the settled circuit's small-signal voltage gain (output/input RMS) at a 1 kHz
+    /// reference, on a SCRATCH CLONE so the live model is untouched. This is the one-shot static
+    /// levelNorm probe: the plugin caches `1 / measure_gain()` and applies it as a constant trim,
+    /// replacing the old continuous RMS estimator (no per-sample pumping). Block-rate only.
+    ///
+    /// In the dsp chain `wet/x == G_v` (the circuit voltage gain) for an undriven signal, so this
+    /// ratio is exactly what the trim must invert. Driven nonlinearity is intentionally NOT probed —
+    /// the trim is the clean operating-point gain, recomputed only when the operating point changes.
+    pub fn measure_gain(&self) -> f32 {
+        let mut m = self.clone();
+        // Drain the live audio/saturation state before probing. The plugin re-probes this on every
+        // glide block, and under Drive the live model is wound deep into saturation — a small-signal
+        // probe on that state reads a gain wildly off the operating point (measured 22x -> 250x at
+        // +18 dB) and jumps block-to-block, which makes the levelNorm trim jitter into loud peaks
+        // during a Circuit-Gain sweep. Restoring the settled snapshot (clean DC operating point, the
+        // model's G0 is still current) gives a deterministic probe regardless of program/Drive.
+        m.reset();
+        // Cheapen the probe's solver: this runs ON THE AUDIO THREAD on every operating-point change
+        // (an automation lane steps the param every block), so the full-fidelity solver — measured at
+        // ~30 ms/probe at realtime+High, ~23x a 64-sample block budget — is far too slow. The 0.05 V
+        // stimulus keeps the circuit near-linear, where a 2-iter fixed-step solve converges to the
+        // SAME small-signal gain as the full Newton solve. `os`/`dt`/`cap_tier` are left untouched —
+        // they set the solve timestep + the AC frequency shaping that actually defines G_v.
+        m.fixed_step = true;
+        m.predict = false;
+        m.max_iters = m.max_iters.min(2);
+        let host_sr = self.internal_sr() / self.os as f64;
+        let f = 1000.0_f64;
+        let amp = 0.05_f64; // small-signal probe level (volts); stays in the near-linear region
+        let cycle = (host_sr / f).max(1.0);
+        // Settle: the restored snapshot is the settled DC operating point and G0 is current, so the
+        // 1 kHz AC steady-state (well above the coupling-cap corner) re-establishes within a few
+        // cycles. Kept short to bound the audio-thread cost; `probe_is_deterministic_and_pure` and
+        // `probe_jitter_under_drive` pin that this stays stable and the sweep tests pin accuracy.
+        let n_settle = (cycle * 4.0) as usize; // let the AC steady-state re-establish
+        let n_meas = (cycle * 4.0) as usize; // integrate several cycles for a clean RMS
+        let w = 2.0 * std::f64::consts::PI * f / host_sr;
+        let (mut in_sq, mut out_sq) = (0.0f64, 0.0f64);
+        for i in 0..(n_settle + n_meas) {
+            let x = amp * (w * i as f64).sin();
+            let y = m.process_host_sample(x as f32) as f64;
+            if i >= n_settle {
+                in_sq += x * x;
+                out_sq += y * y;
+            }
+        }
+        if in_sq <= 0.0 || !out_sq.is_finite() {
+            return 1.0;
+        }
+        (out_sq / in_sq).sqrt() as f32
+    }
+
+    /// Re-converge the DC operating point in place after a cheap G0 re-stamp (rgain/bias/age/trafo
+    /// changed but the integrator state was kept), re-snapshot it as the probe's clean restore
+    /// target, then return [`measure_gain`]. This is the per-request op of the OFF-THREAD levelNorm
+    /// probe worker (see `Ba283Plugin::task_executor`): the worker holds one persistent warmed model
+    /// and re-stamps it each request instead of paying the ~1 s cold `warmup`, so a single probe
+    /// settles in the handful of `idle_settle` chunks a small operating-point step needs. Off the
+    /// audio thread — never call this in `process`.
+    pub fn resettle_and_measure_gain(&mut self) -> f32 {
+        self.idle_settle(2.0); // early-exits once the tap stops moving (≈ a few chunks for a small step)
+        self.sec_in_dc = self.v[node::N_SEC_IN as usize];
+        self.save_snapshot();
+        self.measure_gain()
     }
 
     pub fn sec_in_dc(&self) -> f64 {
@@ -3860,21 +3944,24 @@ mod tests {
     }
 
     #[test]
-    fn ultra_fast_preset_drops_os_and_decimation() {
+    fn ultra_fast_keeps_os2_floor() {
+        // os=1 was reverted (it under-resolved the per-sample solve and, with Med/Low fixed-step,
+        // produced erratic loud peaks). os is floored at 2 for ALL tiers; decimation stays on.
         let cfg = QualityConfig::ultra_fast();
-        assert_eq!(cfg.os, 1, "ultra-fast must solve at os=1");
-        assert!(!cfg.decimate, "ultra-fast must bypass the needless decimation");
+        assert_eq!(cfg.os, 2, "ultra-fast must keep os=2 (os=1 reverted)");
+        assert!(cfg.decimate, "ultra-fast must keep the os=2 antialiasing decimator");
+        assert!(cfg.cheap_exp, "ultra-fast keeps the cheap transport exp lever");
         assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
                 "ultra-fast inherits the fast-tier levers");
-        // The model picks the levers up: os=1 halves the internal solve rate vs realtime.
+        // Even a hand-assembled os=1 config is floored to 2 by build_with.
         let host = 48_000.0;
-        let rt = WdfModel::new_with(QualityConfig::realtime(), host, 220.0, 0.5);
-        let uf = WdfModel::new_with(cfg, host, 220.0, 0.5);
-        assert_eq!(rt.os, 2);
-        assert_eq!(uf.os, 1);
-        assert!(!uf.decimate);
+        let mut forced = cfg;
+        forced.os = 1;
+        let m = WdfModel::new_with(forced, host, 220.0, 0.5);
+        assert_eq!(m.os, 2, "build_with must floor os at 2");
         // ultra-fast still produces finite output (no NaN/instability) on a quick ramp.
-        let mut m = uf;
+        let mut m = WdfModel::new_with(cfg, host, 220.0, 0.5);
+        assert_eq!(m.os, 2);
         for i in 0..256 {
             let y = m.process_host_sample((i as f32 / 256.0) * 0.4 - 0.2);
             assert!(y.is_finite(), "ultra-fast output non-finite at sample {i}");
@@ -3886,8 +3973,8 @@ mod tests {
         let cfg = QualityConfig::warp();
         // It is ultra-fast with cap_tier=Off and nothing else changed.
         assert_eq!(cfg.cap_tier, CapTier::Off, "must drop the BJT charge model");
-        assert_eq!(cfg.os, 1, "inherits ultra-fast os=1");
-        assert!(!cfg.decimate, "inherits ultra-fast decimation bypass");
+        assert_eq!(cfg.os, 2, "inherits ultra-fast os=2 floor");
+        assert!(cfg.decimate, "inherits ultra-fast decimation (os=2)");
         assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
                 "inherits the fast-tier levers");
         // Distinct from Precision::Low: this keeps the full convergence gate (no fixed-step cap).
@@ -3903,21 +3990,28 @@ mod tests {
 
     #[test]
     fn decimate_flag_changes_output() {
-        // Guards against the `decimate` lever silently no-op'ing: at os=1 the only difference between
-        // the two configs is whether the decimation biquads filter the tap, so the outputs MUST diverge.
-        // (Same input, same circuit, same seed — only `decimate` toggled.)
+        // Guards against the `decimate` lever silently no-op'ing: at os=2 the decimation biquads are
+        // the antialiasing decimator, so toggling them MUST change the output. (Same input, same
+        // circuit, same seed — only `decimate` toggled.)
         let host = 48_000.0;
-        let mut base = QualityConfig::ultra_fast(); // os=1, decimate=false
+        let mut base = QualityConfig::ultra_fast(); // os=2 (floored), decimate on
         base.decimate = false;
-        let mut filt = base; // os=1, decimate=true
+        let mut filt = base; // os=2, decimate=true
         filt.decimate = true;
 
         let mut m_off = WdfModel::new_with(base, host, 220.0, 0.5);
         let mut m_on = WdfModel::new_with(filt, host, 220.0, 0.5);
+        // Warm both so the decimator acts on the real operating point, not the cold ramp.
+        for _ in 0..256 {
+            let _ = m_off.process_host_sample(0.0);
+            let _ = m_on.process_host_sample(0.0);
+        }
         let mut max_abs_diff = 0.0f32;
-        for i in 0..512 {
-            // Bright tone so the biquad lowpass has audible HF content to act on.
-            let x = (i as f32 * 0.3).sin() * 0.3;
+        for i in 0..1024 {
+            // HOT, bright tone so the circuit nonlinearity generates HF harmonics above Nyquist for
+            // the os=2 decimator to antialias (vs the naive every-other-subsample drop with decimate
+            // off). A small near-linear tone produces too little HF for the biquads to matter.
+            let x = (i as f32 * 0.7).sin() * 4.0;
             let d = (m_off.process_host_sample(x) - m_on.process_host_sample(x)).abs();
             max_abs_diff = max_abs_diff.max(d);
         }

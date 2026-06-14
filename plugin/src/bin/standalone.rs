@@ -43,7 +43,6 @@
 //!   --raw              (flag) run the pure model (round-trip path)
 
 use ba283::dsp::ChannelDsp;
-use ba283::levelnorm::LevelNorm;
 use ba283::model::Ba283Model;
 use ba283::wdf::{CapTier, Precision, QualityConfig, Solver};
 use ba283::InferenceBackend;
@@ -318,26 +317,26 @@ fn main() {
         }
     }
 
-    // Stereo-linked levelNorm, mirroring the plugin (gain read per frame, estimator updated after).
-    let mut lvl = LevelNorm::new();
-    lvl.prepare(spec.sample_rate as f32);
+    // levelNorm mirrors the plugin (lib.rs::process): the WDF backend uses the static
+    // operating-point trim — probe the settled circuit's voltage gain once and apply `1/G_v` with the
+    // known Drive scalar cancelled. The operating point is fixed for the whole offline render, so the
+    // trim is constant (no per-sample re-probe needed here). The NeuralNet backend is left at unity
+    // (its model is not gain-probed), exactly as the plugin does.
+    let norm_gain = if level_norm && backend == InferenceBackend::Wdf {
+        ba283::norm_apply_gain(1.0 / chans[0].wdf_measure_gain(), drive)
+    } else {
+        1.0
+    };
 
     let mut n_frames = 0usize;
     for frame in samples.chunks(channels) {
-        let norm_gain = if level_norm { lvl.gain() } else { 1.0 };
-        let mut in_sq = 0.0f32;
-        let mut wet_sq = 0.0f32;
         for (ch, &s) in frame.iter().enumerate() {
-            in_sq += s * s;
             let y = chans[ch]
                 .process_sample(s, drive, bias, out_gain, norm_gain, mix, host_ge_96k, backend);
-            let w = chans[ch].last_wet();
-            wet_sq += w * w;
             writer
                 .write_sample(y)
                 .unwrap_or_else(|e| die(&format!("error writing sample: {e}")));
         }
-        lvl.update(in_sq, wet_sq);
         n_frames += 1;
     }
 
