@@ -4,6 +4,7 @@ use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+pub mod dcblock;
 pub mod delay;
 pub mod dsp;
 mod editor;
