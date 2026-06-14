@@ -1202,17 +1202,28 @@ impl QualityConfig {
     /// alone buy ~nothing because the per-sample `residual_norm` keeps running). Gated by the harness
     /// at ESR loss ≤ −50 dB vs Realtime+High. (f32 device kernels and sub-rate solving land in later
     /// phases; this is the in-house, low-risk first cut.)
+    ///
+    /// `predict` is forced OFF under fixed-step. The Newton predictor extrapolates the operating
+    /// point across samples (`2·sol(n-1) − sol(n-2)`); with only 2 fixed iters and no `residual_norm`
+    /// gate or `ls_trim` line search to reject a bad warm-start, that extrapolation drifts, the solve
+    /// can't pull it back, and the next sample's predict amplifies it — a runaway to ~1e8 ("loud
+    /// garbage then dead channel") on every non-realtime tier at Med/Low. Realtime+Med/Low never hit
+    /// this only because the realtime base already has `predict=false`. Confirmed by lever isolation
+    /// (`tests/test_precision_tiers.rs::isolate_lever_fast_medium`): predict=false bounds the output
+    /// to ~1.5e2 (≈ the full-convergence level), while Dense/freeze_caps=false/fma=false do not.
     pub fn with_precision(self, p: Precision) -> Self {
         match p {
             Precision::High => self,
             Precision::Medium => Self {
                 fixed_step: true,
+                predict: false,
                 max_iters: 2,
                 cap_tier: CapTier::Depletion,
                 ..self
             },
             Precision::Low => Self {
                 fixed_step: true,
+                predict: false,
                 max_iters: 2,
                 cap_tier: CapTier::Off,
                 ..self
@@ -3310,7 +3321,11 @@ impl WdfModel {
         // settle (in_audio_pass false), where transient swings would make it overshoot
         // (`main.cpp:621-633`). Modifies only `v` (the guess); `hist` below reads `v_prev`.
         // Skipped sub-rate samples solve an affine system (guess-independent) or hold, so no predict.
-        if self.predict && self.in_audio_pass && !skipped {
+        // Defensive: never extrapolate under fixed-step. The 2-iter fixed-step solve has no
+        // `residual_norm` gate / `ls_trim` to correct a bad warm-start, so a predicted guess drifts
+        // and diverges (see `with_precision`). `with_precision` already clears `predict` for Med/Low;
+        // this guard makes any fixed_step config safe regardless of how it was assembled.
+        if self.predict && !self.fixed_step && self.in_audio_pass && !skipped {
             if !self.predict_primed {
                 self.v_pred_prev = self.v; // remember sol(n-1); no extrapolation yet
                 self.predict_primed = true;
