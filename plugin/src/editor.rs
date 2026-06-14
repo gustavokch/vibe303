@@ -42,12 +42,17 @@ type HostScale = Arc<AtomicU32>;
 /// Resolve the egui zoom factor from the host-reported scale and the user's `UI Scale` override.
 /// `Auto` follows the host (the common, correct path); the explicit factors are an escape hatch
 /// for hosts that never report a scale, or that report the wrong one.
+///
+/// Linux/X11 only — see the call site for why this is gated to one platform.
+#[cfg(any(target_os = "linux", test))]
 fn effective_zoom(host_scale: f32, manual: UiScale) -> f32 {
     match manual {
-        // Guard against a host reporting 0 / garbage before the first real callback.
+        // Follow the host, but clamp: a garbage value (0, NaN, huge) before the first real
+        // callback would otherwise zoom the UI to an unusable size the user can't click out of
+        // to reach this override. 0.5..4.0 spans every real HiDPI ratio.
         UiScale::Auto => {
-            if host_scale.is_finite() && host_scale >= 0.25 {
-                host_scale
+            if host_scale.is_finite() && host_scale > 0.0 {
+                host_scale.clamp(0.5, 4.0)
             } else {
                 1.0
             }
@@ -68,6 +73,8 @@ pub(crate) fn create(
 ) -> Option<Box<dyn Editor>> {
     // Captured from the host in `ScaleAwareEditor::set_scale_factor`, read each frame below.
     let host_scale: HostScale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    // Only the Linux path reads this in-closure; cloning it elsewhere is dead weight.
+    #[cfg(target_os = "linux")]
     let frame_scale = host_scale.clone();
     let frame_params = params.clone();
 
@@ -78,18 +85,26 @@ pub(crate) fn create(
         |ctx, _state| apply_theme(ctx),
         // update — runs each frame.
         move |ctx, setter, _state| {
-            // Apply HiDPI scaling through egui's own zoom. On Linux/X11 (XWayland under HiDPI
-            // Wayland compositors in particular) baseview ignores both `SystemScaleFactor` and an
-            // explicit `WindowScalePolicy::ScaleFactor`, so egui always renders at ppp=1 into a
-            // physically larger compositor surface — the UI ends up tiny in the top-left corner.
-            // egui's `zoom_factor` is the one lever that *does* take effect: it drives ppp, which
-            // baseview honors for the framebuffer/window size, so the UI fills the host's hole.
-            // Set before any UI is laid out this frame (avoids a mid-pipeline ppp change), and
-            // only when it actually changes (avoids needless relayout).
-            let host = f32::from_bits(frame_scale.load(Ordering::Relaxed));
-            let zoom = effective_zoom(host, frame_params.ui_scale.value());
-            if (ctx.zoom_factor() - zoom).abs() > 1e-3 {
-                ctx.set_zoom_factor(zoom);
+            // Apply HiDPI scaling through egui's own zoom — Linux/X11 ONLY. There baseview ignores
+            // both `SystemScaleFactor` and an explicit `WindowScalePolicy::ScaleFactor`, so egui
+            // always renders at ppp=1 into a physically larger compositor surface — the UI ends up
+            // tiny in the top-left corner. egui's `zoom_factor` is the one lever that *does* take
+            // effect: it drives ppp, which baseview honors for the framebuffer/window size, so the
+            // UI fills the host's hole. Set before any UI is laid out this frame (avoids a
+            // mid-pipeline ppp change), and only when it actually changes (avoids needless relayout).
+            //
+            // macOS/Windows are deliberately excluded: there baseview/the OS already render at the
+            // backing scale, and the host's `set_scale_factor` is forwarded to the inner editor
+            // (see `ScaleAwareEditor::set_scale_factor`) which handles DPI natively. Adding egui
+            // zoom on top of that would double-scale. This mirrors the macOS exclusion the previous
+            // `set_scale_factor(1.0)` pin carried, now widened to Windows for the same reason.
+            #[cfg(target_os = "linux")]
+            {
+                let host = f32::from_bits(frame_scale.load(Ordering::Relaxed));
+                let zoom = effective_zoom(host, frame_params.ui_scale.value());
+                if (ctx.zoom_factor() - zoom).abs() > 1e-3 {
+                    ctx.set_zoom_factor(zoom);
+                }
             }
             draw_ui(ctx, setter, &frame_params);
         },
@@ -611,5 +626,43 @@ fn reroll_button(ui: &mut egui::Ui, setter: &ParamSetter, p: &Arc<Ba283Params>) 
         setter.begin_set_parameter(&p.age_reroll);
         setter.set_parameter(&p.age_reroll, held);
         setter.end_set_parameter(&p.age_reroll);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_follows_finite_host_scale() {
+        assert_eq!(effective_zoom(1.0, UiScale::Auto), 1.0);
+        assert_eq!(effective_zoom(2.0, UiScale::Auto), 2.0);
+        assert_eq!(effective_zoom(1.25, UiScale::Auto), 1.25);
+    }
+
+    #[test]
+    fn auto_guards_garbage_host_scale() {
+        // Before the first real callback, or a misreporting host.
+        assert_eq!(effective_zoom(0.0, UiScale::Auto), 1.0);
+        assert_eq!(effective_zoom(-1.0, UiScale::Auto), 1.0);
+        assert_eq!(effective_zoom(f32::NAN, UiScale::Auto), 1.0);
+        assert_eq!(effective_zoom(f32::INFINITY, UiScale::Auto), 1.0);
+    }
+
+    #[test]
+    fn auto_clamps_to_usable_range() {
+        // Too small / too large get pulled into 0.5..4.0 so the UI stays reachable.
+        assert_eq!(effective_zoom(0.1, UiScale::Auto), 0.5);
+        assert_eq!(effective_zoom(99.0, UiScale::Auto), 4.0);
+    }
+
+    #[test]
+    fn explicit_overrides_ignore_host_scale() {
+        // A garbage host scale must not leak through a manual override.
+        assert_eq!(effective_zoom(99.0, UiScale::X100), 1.0);
+        assert_eq!(effective_zoom(99.0, UiScale::X125), 1.25);
+        assert_eq!(effective_zoom(99.0, UiScale::X150), 1.5);
+        assert_eq!(effective_zoom(99.0, UiScale::X175), 1.75);
+        assert_eq!(effective_zoom(99.0, UiScale::X200), 2.0);
     }
 }

@@ -145,6 +145,11 @@ impl Precision {
 /// are a manual override for hosts that never report a scale, or report the wrong one — common on
 /// Linux/X11 where baseview cannot read the compositor's HiDPI scale itself. UI-only: it changes
 /// nothing in the DSP and is not host-automatable.
+///
+/// It IS persisted in plugin state (it is a `Params` field), so an explicit factor follows the
+/// project to another machine: a value picked on a HiDPI display will over-scale on a 1× one.
+/// That is intentional — it is a manual escape hatch — and `Auto` (the default) sidesteps it by
+/// always tracking the current host.
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum UiScale {
     #[name = "Auto"]
