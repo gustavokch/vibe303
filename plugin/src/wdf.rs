@@ -1463,6 +1463,10 @@ pub struct WdfSnapshot {
 
 /// Coupled-circuit MNA + Newton solver. All scratch is fixed-size (no `Vec` on the process path)
 /// to satisfy the zero-alloc audio-thread contract.
+///
+/// `Clone` is a cheap fixed-size memcpy (no heap), used by the static levelNorm gain probe to run a
+/// calibration signal through a scratch copy of the settled model without disturbing the live one.
+#[derive(Clone)]
 pub struct WdfModel {
     pub v: [f64; NUM_NODES],      // current node voltages
     pub v_prev: [f64; NUM_NODES], // previous-sample node voltages (cap history)
@@ -3595,6 +3599,9 @@ impl WdfModel {
         self.v[node::N_A as usize] = 24.0;
         self.idle_settle(4.0);
         self.sec_in_dc = self.v[node::N_SEC_IN as usize];
+        // Leave the settled state as the restore target so reset()/measure_gain() have a clean
+        // operating point to fall back to even if the caller never calls save_snapshot() itself.
+        self.save_snapshot();
     }
 
     /// Process one host-rate sample: linear-upsample to `OS` subsamples, Newton-solve each, decimate
@@ -3627,6 +3634,47 @@ impl WdfModel {
         }
         self.prev_in = cur_in;
         decimated as f32
+    }
+
+    /// Measure the settled circuit's small-signal voltage gain (output/input RMS) at a 1 kHz
+    /// reference, on a SCRATCH CLONE so the live model is untouched. This is the one-shot static
+    /// levelNorm probe: the plugin caches `1 / measure_gain()` and applies it as a constant trim,
+    /// replacing the old continuous RMS estimator (no per-sample pumping). Block-rate only.
+    ///
+    /// In the dsp chain `wet/x == G_v` (the circuit voltage gain) for an undriven signal, so this
+    /// ratio is exactly what the trim must invert. Driven nonlinearity is intentionally NOT probed —
+    /// the trim is the clean operating-point gain, recomputed only when the operating point changes.
+    pub fn measure_gain(&self) -> f32 {
+        let mut m = self.clone();
+        // Drain the live audio/saturation state before probing. The plugin re-probes this on every
+        // glide block, and under Drive the live model is wound deep into saturation — a small-signal
+        // probe on that state reads a gain wildly off the operating point (measured 22x -> 250x at
+        // +18 dB) and jumps block-to-block, which makes the levelNorm trim jitter into loud peaks
+        // during a Circuit-Gain sweep. Restoring the settled snapshot (clean DC operating point, the
+        // model's G0 is still current) gives a deterministic probe regardless of program/Drive.
+        m.reset();
+        let host_sr = self.internal_sr() / self.os as f64;
+        let f = 1000.0_f64;
+        let amp = 0.05_f64; // small-signal probe level (volts); stays in the near-linear region
+        let cycle = (host_sr / f).max(1.0);
+        // Generous settle: the restored snapshot may sit at a slightly stale operating point (cheap
+        // G0 re-stamps for rgain/bias/age don't re-save it), so let the probe re-converge fully.
+        let n_settle = (cycle * 24.0) as usize; // let the AC steady-state re-establish
+        let n_meas = (cycle * 8.0) as usize; // integrate several cycles for a clean RMS
+        let w = 2.0 * std::f64::consts::PI * f / host_sr;
+        let (mut in_sq, mut out_sq) = (0.0f64, 0.0f64);
+        for i in 0..(n_settle + n_meas) {
+            let x = amp * (w * i as f64).sin();
+            let y = m.process_host_sample(x as f32) as f64;
+            if i >= n_settle {
+                in_sq += x * x;
+                out_sq += y * y;
+            }
+        }
+        if in_sq <= 0.0 || !out_sq.is_finite() {
+            return 1.0;
+        }
+        (out_sq / in_sq).sqrt() as f32
     }
 
     pub fn sec_in_dc(&self) -> f64 {

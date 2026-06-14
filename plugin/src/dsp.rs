@@ -170,6 +170,12 @@ impl ChannelDsp {
         self.wdf_snap = Some(*snap);
     }
 
+    /// Measure the settled circuit's static voltage gain (for the one-shot levelNorm trim). Probes a
+    /// scratch clone of the WDF model — does not disturb the live state. Block-rate only.
+    pub fn wdf_measure_gain(&self) -> f32 {
+        self.wdf.measure_gain()
+    }
+
     /// Warm the WDF model in place and make the settled state the reset target. Off the audio thread.
     pub fn wdf_warmup(&mut self) {
         self.wdf.warmup();

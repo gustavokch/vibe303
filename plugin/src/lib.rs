@@ -14,7 +14,11 @@ pub mod oversample;
 pub mod wdf;
 
 use dsp::ChannelDsp;
-use levelnorm::LevelNorm;
+
+/// Static levelNorm trim clamp (linear): −80 dB .. +48 dB. The lower bound must be low enough to
+/// tame the faithful de-normed output, which carries the preamp's full (~+50 dB) voltage gain.
+const NORM_TRIM_MIN: f32 = 1.0e-4;
+const NORM_TRIM_MAX: f32 = 256.0;
 use wdf::{QualityConfig, WdfModel};
 
 /// Time constant (seconds) for the per-block glide of the WDF block-rate params (circuit_gain,
@@ -56,9 +60,18 @@ pub struct Ba283Plugin {
     /// Last WDF precision applied (block-rate). A change triggers the same rebuild path as a tier
     /// change (the precision is folded into the `QualityConfig` via `with_precision`).
     last_precision: Precision,
-    /// Stereo-linked levelNorm gain tracker (shared across channels so the stereo image is
-    /// preserved). Always updated; its gain is applied only when the `level_norm` param is on.
-    level_norm: LevelNorm,
+    /// The levelNorm gain actually applied at the end of the last block (the per-sample ramp's start
+    /// for the next block). Carries the ramp state across blocks so a Circuit-Gain sweep — or a
+    /// level-norm on/off toggle — fades click-free instead of stepping. NOT a program-dependent RMS
+    /// estimator (so no pumping). Applied only when the `level_norm` param is on (WDF backend only).
+    norm_trim: f32,
+    /// The latest probed trim target (`1 / G_v`). Re-measured by [`ChannelDsp::wdf_measure_gain`]
+    /// whenever the WDF operating point changes (a knob-drag glide block); the applied `norm_trim`
+    /// ramps toward it per-sample. At a settled operating point this equals `norm_trim`.
+    norm_trim_target: f32,
+    /// Forces a one-shot probe of [`Self::norm_trim_target`] that also snaps `norm_trim` straight to
+    /// it (set on init / reset / first WDF block) — leveled from the first sample, no startup ramp.
+    norm_reprobe: bool,
     /// Per-block-glided WDF R_KJ gain / bias (smooth the coarse block-rate steps into the G0
     /// rebuild). Distinct from the NeuralNet per-sample bias smoother.
     wdf_rgain_smooth: f32,
@@ -267,7 +280,9 @@ impl Default for Ba283Plugin {
             last_bias: f32::NAN,
             last_tier: WdfTier::Realtime,
             last_precision: Precision::High,
-            level_norm: LevelNorm::new(),
+            norm_trim: 1.0,
+            norm_trim_target: 1.0,
+            norm_reprobe: true,
             wdf_rgain_smooth: 220.0,
             wdf_bias_smooth: 0.5,
             wdf_age_smooth: 0.0,
@@ -384,8 +399,8 @@ impl Plugin for Ba283Plugin {
             self.wdf_trafo_smooth = trafo;
         }
 
-        // levelNorm envelope coefficient depends on the host sample rate.
-        self.level_norm.prepare(self.sample_rate);
+        // Re-probe the static levelNorm trim on the first audio block (operating point is now set).
+        self.norm_reprobe = true;
 
         // Report the oversampler latency to the host (this nih_plug rev exposes
         // latency via InitContext::set_latency_samples; there is no
@@ -398,7 +413,8 @@ impl Plugin for Ba283Plugin {
         for ch in self.channels.iter_mut() {
             ch.reset();
         }
-        self.level_norm.reset();
+        // Re-probe the trim after a reset (the model is re-settled to its snapshot).
+        self.norm_reprobe = true;
     }
 
     fn process(
@@ -417,6 +433,9 @@ impl Plugin for Ba283Plugin {
         // to both channels only when changed; integrator state is preserved so the model re-settles
         // dynamically. NeuralNet blocks skip this entirely.
         if backend == InferenceBackend::Wdf {
+            // Tracks whether the WDF operating point changed this block — drives the levelNorm trim
+            // re-probe below (re-measured on every changed block so the trim tracks a live sweep).
+            let mut changed = false;
             // Glide the block-rate WDF params toward their targets so a fast knob drag turns into
             // small per-block G0 rebuilds (smooth re-settle) instead of coarse steps. Snap within an
             // epsilon so the one-pole fully settles (no endless near-equal rebuilds).
@@ -428,7 +447,11 @@ impl Plugin for Ba283Plugin {
             self.wdf_rgain_smooth += a * (rgain_t - self.wdf_rgain_smooth);
             self.wdf_bias_smooth += a * (bias_t - self.wdf_bias_smooth);
             self.wdf_age_smooth += a * (age_t - self.wdf_age_smooth);
-            if (rgain_t - self.wdf_rgain_smooth).abs() < WDF_RGAIN_EPS {
+            // Relative snap: WDF_RGAIN_EPS is a fraction of the target (Circuit Gain spans 47..10000 Ω,
+            // so a fixed absolute epsilon would never be hit near the top and the one-pole tail would
+            // creep for ~50 blocks, holding `changed` true and starving the trim re-probe). Relative
+            // lands the glide within a few blocks at any setting.
+            if (rgain_t - self.wdf_rgain_smooth).abs() < WDF_RGAIN_EPS * rgain_t.abs().max(1.0) {
                 self.wdf_rgain_smooth = rgain_t;
             }
             if (bias_t - self.wdf_bias_smooth).abs() < WDF_BIAS_EPS {
@@ -463,6 +486,7 @@ impl Plugin for Ba283Plugin {
                 }
                 self.last_tier = tier;
                 self.last_precision = precision;
+                changed = true;
                 // The rebuild reset aging + the bias/rgain legs to pristine — force all to re-apply.
                 self.last_age = f32::NAN;
                 self.last_seed = u64::MAX;
@@ -491,6 +515,7 @@ impl Plugin for Ba283Plugin {
                 self.last_age = f32::NAN;
                 self.last_rgain = f32::NAN;
                 self.last_bias = f32::NAN;
+                changed = true;
             }
             if age != self.last_age {
                 for ch in self.channels.iter_mut() {
@@ -499,6 +524,7 @@ impl Plugin for Ba283Plugin {
                 self.last_age = age;
                 self.last_rgain = f32::NAN;
                 self.last_bias = f32::NAN;
+                changed = true;
             }
             #[cfg(feature = "trafo-core")]
             if trafo != self.last_trafo {
@@ -506,47 +532,88 @@ impl Plugin for Ba283Plugin {
                     ch.wdf_set_trafo(trafo);
                 }
                 self.last_trafo = trafo;
+                changed = true;
             }
             if rgain != self.last_rgain {
                 for ch in self.channels.iter_mut() {
                     ch.wdf_set_rgain(rgain);
                 }
                 self.last_rgain = rgain;
+                changed = true;
             }
             if bias != self.last_bias {
                 for ch in self.channels.iter_mut() {
                     ch.wdf_set_bias(bias);
                 }
                 self.last_bias = bias;
+                changed = true;
+            }
+
+            // levelNorm trim TARGET: re-probe the circuit's small-signal voltage gain whenever the
+            // operating point moves (each glide block of a knob drag) or a forced probe is pending.
+            // The probe is a fixed internal sine on a scratch clone — a pure function of the operating
+            // point, NOT the program — so tracking it introduces no pumping. Probing only runs while
+            // something is changing (knob drags are transient); at a settled point `changed` is false.
+            if changed || self.norm_reprobe {
+                let g = self.channels[0].wdf_measure_gain();
+                self.norm_trim_target = (1.0 / g).clamp(NORM_TRIM_MIN, NORM_TRIM_MAX);
+                if self.norm_reprobe {
+                    // Forced probe (init / reset / first WDF block): land the trim immediately so the
+                    // output is leveled from the first sample — no unity->correct startup ramp.
+                    self.norm_trim = self.norm_trim_target;
+                    self.norm_reprobe = false;
+                }
             }
         }
 
+        // levelNorm: the operating-point-tracking trim (the probed circuit-gain reciprocal), applied
+        // only when the param is on AND the WDF backend is active. The NeuralNet backend is ignored
+        // (its model is broken / not gain-probed), so its norm gain stays unity.
+        //
+        // Ramp the APPLIED gain per-sample from this block's start value (`norm_trim`) to the freshly
+        // probed target across the block. Per-sample (not block-rate) so there is NO cross-block lag:
+        // the target is `1/G_v(rgain_smooth)` and the block's audio runs at that same `rgain_smooth`,
+        // so the cancellation is exact even mid-sweep (no frozen-trim peak) while the ramp keeps the
+        // gain change click-free. On a level-norm on/off toggle the target jumps unity<->trim and the
+        // same one-block ramp fades it instead of stepping.
+        // Drive must also be cancelled: the probed `norm_trim_target` (= 1/G_v) only inverts the
+        // circuit's intrinsic small-signal gain, but the signal is fed `x * drive` into the circuit,
+        // so without this the output runs hot by the full Drive amount (e.g. +12 dB at Drive +12 dB).
+        // Drive is a known scalar, so divide it out analytically: target = 1/(G_v * drive). In the
+        // linear region this levels exactly; once Drive pushes the circuit into saturation the
+        // effective gain drops below G_v so the output sits slightly *under* unity — safe (no peak),
+        // and it preserves the drive-induced colour. Output gain is intentionally NOT cancelled (it is
+        // the user's final post-normalization trim, matching the old levelNorm's pre-output position).
         let level_norm_on = self.params.level_norm.value();
+        let drive_block = db_to_gain(self.params.drive_db.value()).max(1.0e-6);
+        let target_gain = if level_norm_on && backend == InferenceBackend::Wdf {
+            (self.norm_trim_target / drive_block).clamp(NORM_TRIM_MIN, NORM_TRIM_MAX)
+        } else {
+            1.0
+        };
+        let nframes = buffer.samples().max(1) as f32;
+        let g_start = self.norm_trim;
+        let g_step = (target_gain - g_start) / nframes;
+        let mut frame_i = 0.0f32;
         for mut frame in buffer.iter_samples() {
             let drive = db_to_gain(self.params.drive_db.smoothed.next());
             let bias = self.params.bias.smoothed.next();
             let out_g = db_to_gain(self.params.output_db.smoothed.next());
             let mix = self.params.mix.smoothed.next() * 0.01;
-            // Stereo-linked: one gain for the whole frame (read before processing; the estimator is
-            // updated after, so it lags by one frame — negligible for a ~75 ms envelope). Applied
-            // only when on; the estimator is updated unconditionally so toggling on is seamless.
-            let norm_gain = if level_norm_on { self.level_norm.gain() } else { 1.0 };
-            let mut in_sq = 0.0f32;
-            let mut wet_sq = 0.0f32;
+            frame_i += 1.0;
+            let norm_gain = g_start + g_step * frame_i;
             for (ch, sample) in frame.iter_mut().enumerate() {
                 // AUDIO_IO_LAYOUTS only declare mono/stereo, but guard anyway.
                 if ch >= self.channels.len() {
                     break;
                 }
                 let x = *sample;
-                in_sq += x * x;
                 *sample = self.channels[ch]
                     .process_sample(x, drive, bias, out_g, norm_gain, mix, host_ge_96k, backend);
-                let w = self.channels[ch].last_wet();
-                wet_sq += w * w;
             }
-            self.level_norm.update(in_sq, wet_sq);
         }
+        // The applied gain reached the target by the last frame; carry it as the next block's start.
+        self.norm_trim = target_gain;
         ProcessStatus::Normal
     }
 }
