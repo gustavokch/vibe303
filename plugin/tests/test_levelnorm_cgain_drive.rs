@@ -5,7 +5,7 @@
 //! knob problem) or a small static offset.
 use ba283::dsp::ChannelDsp;
 use ba283::wdf::QualityConfig;
-use ba283::InferenceBackend;
+use ba283::{norm_apply_gain, InferenceBackend};
 
 const SR: f32 = 48_000.0;
 const PARAM_TAU: f32 = 0.02;
@@ -23,7 +23,7 @@ fn sweep(base: QualityConfig, from: f32, to: f32, label: &str) -> f32 {
 
     let mut rgain_smooth = from;
     let mut last_rgain = from;
-    let mut target = (1.0f32 / ch.wdf_measure_gain() / DRIVE).clamp(1.0e-4, 256.0);
+    let mut target = norm_apply_gain(1.0 / ch.wdf_measure_gain(), DRIVE);
     let mut norm_trim = target;
 
     let f = 220.0f32;
@@ -52,7 +52,7 @@ fn sweep(base: QualityConfig, from: f32, to: f32, label: &str) -> f32 {
             changed = true;
         }
         if changed {
-            target = (1.0f32 / ch.wdf_measure_gain() / DRIVE).clamp(1.0e-4, 256.0);
+            target = norm_apply_gain(1.0 / ch.wdf_measure_gain(), DRIVE);
         }
 
         let g_start = norm_trim;

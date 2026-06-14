@@ -3653,14 +3653,25 @@ impl WdfModel {
         // during a Circuit-Gain sweep. Restoring the settled snapshot (clean DC operating point, the
         // model's G0 is still current) gives a deterministic probe regardless of program/Drive.
         m.reset();
+        // Cheapen the probe's solver: this runs ON THE AUDIO THREAD on every operating-point change
+        // (an automation lane steps the param every block), so the full-fidelity solver — measured at
+        // ~30 ms/probe at realtime+High, ~23x a 64-sample block budget — is far too slow. The 0.05 V
+        // stimulus keeps the circuit near-linear, where a 2-iter fixed-step solve converges to the
+        // SAME small-signal gain as the full Newton solve. `os`/`dt`/`cap_tier` are left untouched —
+        // they set the solve timestep + the AC frequency shaping that actually defines G_v.
+        m.fixed_step = true;
+        m.predict = false;
+        m.max_iters = m.max_iters.min(2);
         let host_sr = self.internal_sr() / self.os as f64;
         let f = 1000.0_f64;
         let amp = 0.05_f64; // small-signal probe level (volts); stays in the near-linear region
         let cycle = (host_sr / f).max(1.0);
-        // Generous settle: the restored snapshot may sit at a slightly stale operating point (cheap
-        // G0 re-stamps for rgain/bias/age don't re-save it), so let the probe re-converge fully.
-        let n_settle = (cycle * 24.0) as usize; // let the AC steady-state re-establish
-        let n_meas = (cycle * 8.0) as usize; // integrate several cycles for a clean RMS
+        // Settle: the restored snapshot is the settled DC operating point and G0 is current, so the
+        // 1 kHz AC steady-state (well above the coupling-cap corner) re-establishes within a few
+        // cycles. Kept short to bound the audio-thread cost; `probe_is_deterministic_and_pure` and
+        // `probe_jitter_under_drive` pin that this stays stable and the sweep tests pin accuracy.
+        let n_settle = (cycle * 4.0) as usize; // let the AC steady-state re-establish
+        let n_meas = (cycle * 4.0) as usize; // integrate several cycles for a clean RMS
         let w = 2.0 * std::f64::consts::PI * f / host_sr;
         let (mut in_sq, mut out_sq) = (0.0f64, 0.0f64);
         for i in 0..(n_settle + n_meas) {
@@ -3675,6 +3686,20 @@ impl WdfModel {
             return 1.0;
         }
         (out_sq / in_sq).sqrt() as f32
+    }
+
+    /// Re-converge the DC operating point in place after a cheap G0 re-stamp (rgain/bias/age/trafo
+    /// changed but the integrator state was kept), re-snapshot it as the probe's clean restore
+    /// target, then return [`measure_gain`]. This is the per-request op of the OFF-THREAD levelNorm
+    /// probe worker (see `Ba283Plugin::task_executor`): the worker holds one persistent warmed model
+    /// and re-stamps it each request instead of paying the ~1 s cold `warmup`, so a single probe
+    /// settles in the handful of `idle_settle` chunks a small operating-point step needs. Off the
+    /// audio thread — never call this in `process`.
+    pub fn resettle_and_measure_gain(&mut self) -> f32 {
+        self.idle_settle(2.0); // early-exits once the tap stops moving (≈ a few chunks for a small step)
+        self.sec_in_dc = self.v[node::N_SEC_IN as usize];
+        self.save_snapshot();
+        self.measure_gain()
     }
 
     pub fn sec_in_dc(&self) -> f64 {

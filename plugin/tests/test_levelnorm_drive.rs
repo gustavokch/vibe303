@@ -5,7 +5,7 @@
 //! precision-change path: wdf_set_tier (rebuild + arm crossfade) -> reprobe target -> per-sample ramp.
 use ba283::dsp::ChannelDsp;
 use ba283::wdf::{Precision, QualityConfig};
-use ba283::InferenceBackend;
+use ba283::{norm_apply_gain, InferenceBackend};
 
 const SR: f32 = 48_000.0;
 const BLOCK: usize = 256;
@@ -41,7 +41,7 @@ fn sweep_one_tier(base: QualityConfig) -> f32 {
     ch.wdf_warmup();
 
     // Mirror lib.rs: target cancels the circuit gain AND the known Drive scalar (= 1/(G_v*drive)).
-    let mut norm_trim_target = (1.0f32 / ch.wdf_measure_gain() / DRIVE).clamp(1.0e-4, 256.0);
+    let mut norm_trim_target = norm_apply_gain(1.0 / ch.wdf_measure_gain(), DRIVE);
     let mut norm_trim = norm_trim_target;
 
     let f = 220.0f32;
@@ -72,7 +72,7 @@ fn sweep_one_tier(base: QualityConfig) -> f32 {
         }
         if changed {
             let g = ch.wdf_measure_gain();
-            norm_trim_target = (1.0f32 / g / DRIVE).clamp(1.0e-4, 256.0);
+            norm_trim_target = norm_apply_gain(1.0 / g, DRIVE);
         }
 
         let g_start = norm_trim;

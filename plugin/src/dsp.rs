@@ -58,8 +58,10 @@ pub struct ChannelDsp {
     /// rebuild so switching tiers does not require a fresh (expensive) warmup.
     wdf_snap: Option<WdfSnapshot>,
     /// The pre-switch WDF model, kept alive during a crossfade so the old output can be blended out
-    /// equal-power against the new model's startup transient. `None` when not crossfading.
-    wdf_prev: Option<Box<WdfModel>>,
+    /// (equal-gain smoothstep) against the new model's startup transient. Pre-allocated once at
+    /// construction and reused — a tier switch moves the old model into this existing box (no
+    /// audio-thread `Box` alloc). Only read while `xfade_remain > 0`; otherwise it holds a stale model.
+    wdf_prev: Box<WdfModel>,
     /// Samples remaining in the active crossfade (counts down to 0). 0 = not crossfading.
     xfade_remain: u32,
     /// Total crossfade length in samples (set from the host SR at each tier switch).
@@ -86,7 +88,9 @@ impl ChannelDsp {
             wdf: WdfModel::new(48_000.0, 220.0, 0.5),
             wdf_out_delay: ShortDelay::new(),
             wdf_snap: None,
-            wdf_prev: None,
+            // Pre-allocate the crossfade scratch model once (off the audio thread, at construction)
+            // so a live tier switch reuses it instead of `Box::new`-ing on the audio thread.
+            wdf_prev: Box::new(WdfModel::new(48_000.0, 220.0, 0.5)),
             xfade_remain: 0,
             xfade_len: 0,
             resume_remain: 0,
@@ -114,10 +118,10 @@ impl ChannelDsp {
         self.dry_delay.reset();
         self.wdf.reset(); // restore the settled snapshot installed in initialize
         self.wdf_out_delay.reset();
-        self.wdf_prev = None;
-        self.xfade_remain = 0;
+        self.xfade_remain = 0; // cancels any in-flight crossfade (wdf_prev goes unread)
         // Arm the resume fade-in so re-enabling the plugin ramps the wet up instead of snapping the
-        // full-gain circuit output on (a loud click). Falls back to silent if no SR known yet.
+        // full-gain circuit output on (a loud click). Falls back to NO fade if no SR is known yet
+        // (xfade_len == 0 -> resume_remain == 0), which is harmless: there is nothing to ramp.
         self.resume_remain = self.xfade_len;
         self.dcblock.reset();
         self.last_wet = 0.0;
@@ -131,8 +135,7 @@ impl ChannelDsp {
     pub fn wdf_rebuild(&mut self, host_sr: f32, rgain: f32, bias: f32) {
         self.wdf_rebuild_with(QualityConfig::realtime(), host_sr, rgain, bias);
         self.dcblock.prepare(host_sr);
-        self.wdf_prev = None;
-        self.xfade_remain = 0;
+        self.xfade_remain = 0; // no crossfade in progress after a full rebuild
     }
 
     /// Rebuild the WDF model with an explicit [`QualityConfig`] (tier/lever selection).
@@ -145,21 +148,26 @@ impl ChannelDsp {
     /// the carried settled snapshot so no fresh warmup is needed. The DC operating point is
     /// tier-independent (freeze-caps only changes the per-iter companion), so the restored state
     /// re-settles cleanly. The rebuild also zeroes the decimation biquads and jumps the operating
-    /// point, so the pre-switch model is kept alive and the output is equal-power crossfaded from old
-    /// to new over `xfade_len` samples — masking the click the raw switch would otherwise produce.
-    /// NOTE: constructs a fresh model + boxes the old one (allocates) — call at block rate on an
-    /// actual tier change only, never per sample.
+    /// point, so the pre-switch model is kept alive and the output is equal-gain (smoothstep)
+    /// crossfaded from old to new over `xfade_len` samples — masking the click the raw switch would
+    /// otherwise produce.
+    ///
+    /// NOTE: `WdfModel::new_with` rebuilds the circuit and still allocates its `Vec` build scratch, so
+    /// this is NOT alloc-free — call only on an ACTUAL tier/precision change (a user dropdown gesture,
+    /// block-rate), never per sample. The old model is moved into the pre-allocated `wdf_prev` box, so
+    /// no `Box` is allocated here; making the rebuild itself alloc-free would need an off-thread model
+    /// handoff (a follow-up, mirroring the off-thread levelNorm probe).
     pub fn wdf_set_tier(&mut self, cfg: QualityConfig, host_sr: f32, rgain: f32, bias: f32) {
-        // Build the new model and swap it in, keeping the old (settled) model alive to fade out
-        // against the new one's startup transient (zeroed biquads + operating-point jump).
+        // Build the new model and swap it in, moving the old (settled) model into the pre-allocated
+        // crossfade box so it can fade out against the new one's startup transient (zeroed biquads +
+        // operating-point jump) — no audio-thread `Box` alloc for the carry-over.
         let new = WdfModel::new_with(cfg, host_sr as f64, rgain as f64, bias as f64);
         self.xfade_len = (host_sr * WDF_XFADE_S).max(1.0) as u32;
-        let old = std::mem::replace(&mut self.wdf, new);
+        *self.wdf_prev = std::mem::replace(&mut self.wdf, new);
         if let Some(snap) = self.wdf_snap {
             self.wdf.restore(&snap);
             self.wdf.save_snapshot();
         }
-        self.wdf_prev = Some(Box::new(old));
         self.xfade_remain = self.xfade_len;
     }
 
@@ -270,27 +278,22 @@ impl ChannelDsp {
                 // volts->dBFS out (`/ INPUT_FS_VOLTS`), matching the SPICE 0.5 V stimulus.
                 let in_v = driven * INPUT_FS_VOLTS;
                 let wet = if self.xfade_remain > 0 {
-                    // Tier/precision switch in progress: equal-power crossfade the pre-switch model
-                    // out against the new model so the rebuild/biquad-reset step is inaudible.
+                    // Tier/precision switch in progress: equal-gain smoothstep crossfade the
+                    // pre-switch model out against the new model so the rebuild/biquad-reset step is
+                    // inaudible. `wdf_prev` holds the old model for the duration of the fade.
                     let y_new = self.wdf.process_host_sample(in_v);
-                    let y_old = match self.wdf_prev.as_mut() {
-                        Some(prev) => prev.process_host_sample(in_v),
-                        None => y_new,
-                    };
+                    let y_old = self.wdf_prev.process_host_sample(in_v);
                     self.xfade_remain -= 1;
                     let t = 1.0 - self.xfade_remain as f32 / self.xfade_len.max(1) as f32; // 0 -> 1
-                    // SMOOTHSTEP crossfade with gains summing to 1. The two models render almost the
-                    // same signal (same circuit, near-identical solver), so they are highly
-                    // correlated — an equal-power fade would add a +3 dB bump. Smoothstep
-                    // (s = t²(3−2t)) has ZERO slope at both ends, so there is no gain-derivative
-                    // corner at the fade boundaries — a linear fade's corners click audibly in
-                    // silence (no signal to mask them), which is what surfaced when switching to
-                    // Medium with the transport stopped.
+                    // SMOOTHSTEP crossfade with gains summing to 1 (equal-gain, NOT equal-power). The
+                    // two models render almost the same signal (same circuit, near-identical solver),
+                    // so they are highly correlated — an equal-power fade would add a +3 dB bump.
+                    // Smoothstep (s = t²(3−2t)) has ZERO slope at both ends, so there is no
+                    // gain-derivative corner at the fade boundaries — a linear fade's corners click
+                    // audibly in silence (no signal to mask them), which is what surfaced when
+                    // switching to Medium with the transport stopped.
                     let s = t * t * (3.0 - 2.0 * t);
                     let (g_old, g_new) = (1.0 - s, s);
-                    if self.xfade_remain == 0 {
-                        self.wdf_prev = None;
-                    }
                     (y_old * g_old + y_new * g_new) / INPUT_FS_VOLTS
                 } else {
                     self.wdf.process_host_sample(in_v) / INPUT_FS_VOLTS

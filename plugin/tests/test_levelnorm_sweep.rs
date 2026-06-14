@@ -5,7 +5,7 @@
 //! the trim target on every changed block, slew the applied trim toward it) and asserts no peak.
 use ba283::dsp::ChannelDsp;
 use ba283::wdf::QualityConfig;
-use ba283::InferenceBackend;
+use ba283::{norm_apply_gain, InferenceBackend};
 
 const SR: f32 = 48_000.0;
 const PARAM_TAU: f32 = 0.02; // WDF_PARAM_TAU_S
@@ -21,7 +21,7 @@ fn sweep_worst_db(from: f32, to: f32) -> f32 {
 
     let mut rgain_smooth = from;
     let mut last_rgain = from;
-    let mut norm_trim_target = (1.0f32 / ch.wdf_measure_gain()).clamp(1.0e-4, 256.0);
+    let mut norm_trim_target = norm_apply_gain(1.0 / ch.wdf_measure_gain(), 1.0);
     let mut norm_trim = norm_trim_target; // applied gain at block start (forced-probe snap on init)
 
     let f = 220.0f32;
@@ -55,7 +55,7 @@ fn sweep_worst_db(from: f32, to: f32) -> f32 {
         }
         // re-probe the target on a changed block (mirror lib.rs)
         if changed {
-            norm_trim_target = (1.0f32 / ch.wdf_measure_gain()).clamp(1.0e-4, 256.0);
+            norm_trim_target = norm_apply_gain(1.0 / ch.wdf_measure_gain(), 1.0);
         }
 
         // audio: ramp the applied gain per-sample from block-start `norm_trim` to `norm_trim_target`
