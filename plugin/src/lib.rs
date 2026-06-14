@@ -140,10 +140,39 @@ impl Precision {
     }
 }
 
+/// Editor DPI scaling. `Auto` follows the scale the host reports via
+/// `IPlugViewContentScaleSupport` (the correct path in virtually every DAW). The explicit factors
+/// are a manual override for hosts that never report a scale, or report the wrong one — common on
+/// Linux/X11 where baseview cannot read the compositor's HiDPI scale itself. UI-only: it changes
+/// nothing in the DSP and is not host-automatable.
+///
+/// It IS persisted in plugin state (it is a `Params` field), so an explicit factor follows the
+/// project to another machine: a value picked on a HiDPI display will over-scale on a 1× one.
+/// That is intentional — it is a manual escape hatch — and `Auto` (the default) sidesteps it by
+/// always tracking the current host.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum UiScale {
+    #[name = "Auto"]
+    Auto,
+    #[name = "100%"]
+    X100,
+    #[name = "125%"]
+    X125,
+    #[name = "150%"]
+    X150,
+    #[name = "175%"]
+    X175,
+    #[name = "200%"]
+    X200,
+}
+
 #[derive(Params)]
 pub struct Ba283Params {
     #[id = "backend"]
     pub backend: EnumParam<InferenceBackend>,
+    /// Editor HiDPI scale (UI-only, not automatable). See [`UiScale`].
+    #[id = "ui_scale"]
+    pub ui_scale: EnumParam<UiScale>,
     /// WDF solver tier (Realtime vs Fast). WDF-only; inert for the NeuralNet backend.
     #[id = "wdf_tier"]
     pub wdf_tier: EnumParam<WdfTier>,
@@ -199,6 +228,7 @@ impl Default for Ba283Params {
     fn default() -> Self {
         Self {
             backend: EnumParam::new("Backend", InferenceBackend::Wdf),
+            ui_scale: EnumParam::new("UI Scale", UiScale::Auto).non_automatable(),
             wdf_tier: EnumParam::new("WDF Tier", WdfTier::Realtime),
             precision: EnumParam::new("Precision", Precision::High),
             drive_db: FloatParam::new(
@@ -210,8 +240,10 @@ impl Default for Ba283Params {
                 },
             )
             .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1))
             .with_smoother(SmoothingStyle::Linear(20.0)),
             bias: FloatParam::new("Bias", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(formatters::v2s_f32_rounded(2))
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             output_db: FloatParam::new(
                 "Output",
@@ -222,6 +254,7 @@ impl Default for Ba283Params {
                 },
             )
             .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1))
             .with_smoother(SmoothingStyle::Linear(20.0)),
             mix: FloatParam::new(
                 "Mix",
@@ -232,6 +265,7 @@ impl Default for Ba283Params {
                 },
             )
             .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_rounded(0))
             .with_smoother(SmoothingStyle::Linear(20.0)),
             level_norm: BoolParam::new("Level Norm", false),
             circuit_gain: FloatParam::new(
@@ -243,14 +277,17 @@ impl Default for Ba283Params {
                     factor: FloatRange::skew_factor(-2.0),
                 },
             )
-            .with_unit(" Ohm"),
+            .with_unit(" Ohm")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
             age: FloatParam::new("Age", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(formatters::v2s_f32_rounded(2))
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             age_reroll: BoolParam::new("Re-roll Unit", false),
             age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
-            editor_state: EguiState::from_size(660, 460),
+            editor_state: EguiState::from_size(660, 480),
             #[cfg(feature = "trafo-core")]
             trafo: FloatParam::new("Trafo", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(formatters::v2s_f32_rounded(2))
                 .with_smoother(SmoothingStyle::Linear(50.0)),
         }
     }
