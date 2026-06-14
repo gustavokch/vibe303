@@ -5,14 +5,14 @@
 //! when the Neural Net backend is active, since `wdf_tier`/`precision`/`circuit_gain`/`age`
 //! are inert there.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use nih_plug::prelude::*;
 use nih_plug_egui::egui::{self, Align2, Color32, FontFamily, FontId, RichText, Sense, Stroke};
 use nih_plug_egui::{create_egui_editor, EguiState};
 
-use crate::Ba283Params;
+use crate::{Ba283Params, UiScale};
 
 // ── Palette ─────────────────────────────────────────────────────────────────────────────
 // Warm-tinted neutrals (no pure black/white). amber = value/focus; oxblood = active/pressed.
@@ -33,12 +33,44 @@ fn value_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("value".into()))
 }
 
+/// The DPI scale the host reported via `IPlugViewContentScaleSupport::set_scale_factor`, stored
+/// as raw `f32` bits (1.0 = unset / no host scaling). Shared between [`ScaleAwareEditor`] (which
+/// captures it) and the per-frame update closure (which applies it as the egui zoom). See
+/// [`ScaleAwareEditor`] for why we apply it through egui's zoom instead of letting baseview do it.
+type HostScale = Arc<AtomicU32>;
+
+/// Resolve the egui zoom factor from the host-reported scale and the user's `UI Scale` override.
+/// `Auto` follows the host (the common, correct path); the explicit factors are an escape hatch
+/// for hosts that never report a scale, or that report the wrong one.
+fn effective_zoom(host_scale: f32, manual: UiScale) -> f32 {
+    match manual {
+        // Guard against a host reporting 0 / garbage before the first real callback.
+        UiScale::Auto => {
+            if host_scale.is_finite() && host_scale >= 0.25 {
+                host_scale
+            } else {
+                1.0
+            }
+        }
+        UiScale::X100 => 1.0,
+        UiScale::X125 => 1.25,
+        UiScale::X150 => 1.5,
+        UiScale::X175 => 1.75,
+        UiScale::X200 => 2.0,
+    }
+}
+
 /// Build the editor. `params` is read/written through the passed `ParamSetter` each frame;
 /// `editor_state` carries the persisted window size.
 pub(crate) fn create(
     params: Arc<Ba283Params>,
     editor_state: Arc<EguiState>,
 ) -> Option<Box<dyn Editor>> {
+    // Captured from the host in `ScaleAwareEditor::set_scale_factor`, read each frame below.
+    let host_scale: HostScale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let frame_scale = host_scale.clone();
+    let frame_params = params.clone();
+
     let editor = create_egui_editor(
         editor_state,
         (),
@@ -46,22 +78,70 @@ pub(crate) fn create(
         |ctx, _state| apply_theme(ctx),
         // update — runs each frame.
         move |ctx, setter, _state| {
-            draw_ui(ctx, setter, &params);
+            // Apply HiDPI scaling through egui's own zoom. On Linux/X11 (XWayland under HiDPI
+            // Wayland compositors in particular) baseview ignores both `SystemScaleFactor` and an
+            // explicit `WindowScalePolicy::ScaleFactor`, so egui always renders at ppp=1 into a
+            // physically larger compositor surface — the UI ends up tiny in the top-left corner.
+            // egui's `zoom_factor` is the one lever that *does* take effect: it drives ppp, which
+            // baseview honors for the framebuffer/window size, so the UI fills the host's hole.
+            // Set before any UI is laid out this frame (avoids a mid-pipeline ppp change), and
+            // only when it actually changes (avoids needless relayout).
+            let host = f32::from_bits(frame_scale.load(Ordering::Relaxed));
+            let zoom = effective_zoom(host, frame_params.ui_scale.value());
+            if (ctx.zoom_factor() - zoom).abs() > 1e-3 {
+                ctx.set_zoom_factor(zoom);
+            }
+            draw_ui(ctx, setter, &frame_params);
         },
-    );
-    // nih_plug_egui defaults to baseview's `SystemScaleFactor`, which on Linux/X11 reads
-    // Xft.dpi and makes the child window `dpi/96`× LARGER than the 660x460 nih-plug reports
-    // to the host — the host's hole stays 660x460, so the bottom/right of the UI (the whole
-    // CIRCUIT panel) gets clipped on HiDPI setups. Pin the scale to 1.0 so window size and
-    // reported size always agree; hosts that support IPlugViewContentScaleSupport overwrite
-    // this via `set_scale_factor` before the window opens (nih-plug scales the reported size
-    // to match in that path). macOS is excluded: there an explicit factor breaks mouse
-    // coordinates (see the NOTE in nih_plug_egui::editor) and the OS handles DPI itself.
-    #[cfg(not(target_os = "macos"))]
-    if let Some(editor) = &editor {
-        editor.set_scale_factor(1.0);
+    )?;
+
+    Some(Box::new(ScaleAwareEditor { inner: editor, host_scale }))
+}
+
+/// Wraps the `nih_plug_egui` editor to capture the host's DPI scale.
+///
+/// The host calls `set_scale_factor` (via VST3 `IPlugViewContentScaleSupport`) before the window
+/// opens, and the VST3 wrapper multiplies the *reported* editor size by it to size the host's
+/// window "hole". But baseview does not actually render at that scale on Linux/X11, so without
+/// intervention the egui content (ppp=1) is far smaller than the hole. We capture the value here
+/// and re-apply it as egui's `zoom_factor` in the update closure, so the rendered framebuffer
+/// matches the hole exactly. All other `Editor` methods delegate unchanged.
+struct ScaleAwareEditor {
+    inner: Box<dyn Editor>,
+    host_scale: HostScale,
+}
+
+impl Editor for ScaleAwareEditor {
+    fn spawn(
+        &self,
+        parent: ParentWindowHandle,
+        context: Arc<dyn GuiContext>,
+    ) -> Box<dyn std::any::Any + Send> {
+        self.inner.spawn(parent, context)
     }
-    editor
+
+    fn size(&self) -> (u32, u32) {
+        self.inner.size()
+    }
+
+    fn set_scale_factor(&self, factor: f32) -> bool {
+        // Capture for the egui zoom regardless of whether the inner editor accepts it (it rejects
+        // changes while open); the wrapper still uses our reported size × factor for the hole.
+        self.host_scale.store(factor.to_bits(), Ordering::Relaxed);
+        self.inner.set_scale_factor(factor)
+    }
+
+    fn param_value_changed(&self, id: &str, normalized_value: f32) {
+        self.inner.param_value_changed(id, normalized_value);
+    }
+
+    fn param_modulation_changed(&self, id: &str, modulation_offset: f32) {
+        self.inner.param_modulation_changed(id, modulation_offset);
+    }
+
+    fn param_values_changed(&self) {
+        self.inner.param_values_changed();
+    }
 }
 
 // ── Theme ───────────────────────────────────────────────────────────────────────────────
