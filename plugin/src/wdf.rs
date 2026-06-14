@@ -1153,27 +1153,19 @@ impl QualityConfig {
             ..Self::realtime()
         }
     }
-    /// Ultra-fast tier: `fast()` + internal oversampling dropped 2→1 (the dominant speed lever, ≈2×
-    /// over fast) with the output decimation bypassed. The `eval/wdf_ultrafast` measure-first sweep
-    /// showed the per-iteration / iteration-count levers (looser tol, capped iters, depletion-only
-    /// caps, no-ls-trim, cheap exp) buy almost no speed — so the OS drop is the only lever that
-    /// reaches the 1.5–2× target. Measured avgIters on a 20 Hz–18 kHz −6 dBFS log sweep
-    /// (`ba283_standalone --backend wdf`, 2026-06-09): realtime 2.835 (predict off, cold start),
-    /// fast 2.546 (predict on), ultra-fast 2.939 (predict on but os=1 → larger cross-sample
-    /// jumps). Capping fast to exactly 2 iters (avgIters 2.546→2.003, −21 % iterations) buys only
-    /// ~1.7 % wall for −53.7 dB ESR — the iteration tail is the cheap near-solution part; the fixed
-    /// per-sample device cost (`residual_norm` runs 4×/sample regardless of iter count + the always-
-    /// run first Jacobian) dominates, so iteration count is not the bottleneck. Naively os=1
-    /// costs ~3 dB ESR vs SPICE; but the os=2 decimation biquads (43 kHz Butterworth) themselves
-    /// deviate from the circuit's true HF response, so at os=1 — where there is nothing to decimate
-    /// — bypassing them (`decimate=false`) makes it *better* than realtime: ESR −30 to −36 dB vs
-    /// SPICE (realtime −25 to −26) across pink/sweep at gains 0.5/1.0, coherence 1.0. The cheap
-    /// low-order exp is left OFF (it only perturbs the operating point for ~3 % speed). Newton
-    /// tol/iters stay at the `fast` values.
+    /// Ultra-fast tier: `fast()` + the cheap low-order transport exp (`cheap_exp`), retaining the
+    /// os=2 internal oversampling.
+    ///
+    /// NOTE: this tier originally dropped internal oversampling to os=1 (with the decimation biquads
+    /// bypassed) as its dominant speed lever. That was REVERTED — os=1 leaves the per-sample solve
+    /// under-resolved, and combined with the Med/Low fixed-step solver (2 iters, no convergence gate)
+    /// it produced erratic limit-cycle output peaks (raw ~60–86 vs ~56 at High) that a constant
+    /// levelNorm trim cannot tame — i.e. "VERY loud peaks on every non-realtime tier at Med/Low".
+    /// **os is now floored at 2 for ALL tiers** (enforced in `build_with`); ultra-fast keeps its
+    /// remaining levers (predict/schur/freeze-caps/ls-trim/fma + cheap_exp) for a speed gain over
+    /// fast without the os=1 instability.
     pub fn ultra_fast() -> Self {
         Self {
-            os: 1,
-            decimate: false,
             cheap_exp: true, // T3: low-order transport exp (~2%); ultra-fast tier accepts the op-point bias
             ..Self::fast()
         }
@@ -1183,7 +1175,7 @@ impl QualityConfig {
     /// diffusion charge batch and its trapezoidal trailing update (~19 % of the per-sample cost) are
     /// removed entirely, leaving transport-only devices. Measured 2026-06-09 (`ba283_standalone
     /// --backend wdf`, sweep_m6): 1.30× over ultra-fast (≈4.2× over realtime). The caps shape only
-    /// the very top octave, which os=1 already alters, so dropping them perturbs the output by just
+    /// the very top octave, so dropping them perturbs the output by just
     /// −55 dB vs ultra-fast — far below the −23 dB WDF-vs-ACME model floor — i.e. vs SPICE it stays
     /// within a hair of ultra-fast's −30 to −36 dB. Distinct from `with_precision(Low)`, which also
     /// sets `cap_tier = Off` but additionally forces the fixed-step solver (max_iters = 2); this tier
@@ -1852,7 +1844,10 @@ impl WdfModel {
             ls_trim: cfg.ls_trim,
             fma: cfg.fma,
             fixed_step: cfg.fixed_step,
-            os: cfg.os.max(1),
+            // os is floored at 2 for ALL tiers: os=1 leaves the per-sample Newton solve
+            // under-resolved and, with the Med/Low fixed-step solver, produces erratic loud output
+            // peaks. Hard floor here so no config (incl. a hand-assembled one) can solve at os=1.
+            os: cfg.os.max(2),
             decimate: cfg.decimate,
             v_pred_prev: [0.0; NUM_NODES],
             predict_primed: false,
@@ -1919,12 +1914,13 @@ impl WdfModel {
 
     /// Like [`new`], but with an explicit [`QualityConfig`] (tier/lever selection).
     pub fn new_with(cfg: QualityConfig, host_sr: f64, rgain: f64, bias: f64) -> Self {
-        let internal_sr = host_sr * cfg.os.max(1) as f64;
+        // os is floored at 2 (see build_with) — keep internal_sr consistent with the floored os so dt
+        // (= 1/internal_sr) matches the per-host-sample subsample count.
+        let internal_sr = host_sr * cfg.os.max(2) as f64;
         let mut m = Self::build_with(cfg, internal_sr, rgain, bias);
-        // Decimation biquads are always configured, but only used when `cfg.decimate` (see
-        // `process_host_sample`). At the ultra-fast tier (os=1, decimate=false) they are dead state:
-        // internal_sr == host_sr so fc=0.45*host_sr stays below Nyquist (no blowup), and the tap is
-        // returned un-filtered. Configuring them unconditionally keeps this path branch-free.
+        // Decimation biquads are always configured, used when `cfg.decimate` (see
+        // `process_host_sample`). At os=2 they are the antialiasing decimator and stay on; configuring
+        // them unconditionally keeps the path branch-free.
         let fc = 0.45 * host_sr;
         m.dec1.set_lowpass(fc, internal_sr, 0.54119610);
         m.dec2.set_lowpass(fc, internal_sr, 1.30656296);
@@ -3624,8 +3620,8 @@ impl WdfModel {
             self.v[node::N_INPUT as usize] = self.prev_in + (cur_in - self.prev_in) * frac;
             self.process();
             let tap = self.v[node::N_SEC_IN as usize] - self.sec_in_dc;
-            // At os>1 the biquads are the antialiasing decimator; at os==1 they only add phase, so
-            // `decimate=false` bypasses them (the `--no-decimate` ultra-fast lever).
+            // At os>1 (always, since os is floored at 2) the biquads are the antialiasing decimator.
+            // The `decimate=false` bypass remains for A/B testing only.
             decimated = if self.decimate {
                 self.dec2.process(self.dec1.process(tap))
             } else {
@@ -3948,21 +3944,24 @@ mod tests {
     }
 
     #[test]
-    fn ultra_fast_preset_drops_os_and_decimation() {
+    fn ultra_fast_keeps_os2_floor() {
+        // os=1 was reverted (it under-resolved the per-sample solve and, with Med/Low fixed-step,
+        // produced erratic loud peaks). os is floored at 2 for ALL tiers; decimation stays on.
         let cfg = QualityConfig::ultra_fast();
-        assert_eq!(cfg.os, 1, "ultra-fast must solve at os=1");
-        assert!(!cfg.decimate, "ultra-fast must bypass the needless decimation");
+        assert_eq!(cfg.os, 2, "ultra-fast must keep os=2 (os=1 reverted)");
+        assert!(cfg.decimate, "ultra-fast must keep the os=2 antialiasing decimator");
+        assert!(cfg.cheap_exp, "ultra-fast keeps the cheap transport exp lever");
         assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
                 "ultra-fast inherits the fast-tier levers");
-        // The model picks the levers up: os=1 halves the internal solve rate vs realtime.
+        // Even a hand-assembled os=1 config is floored to 2 by build_with.
         let host = 48_000.0;
-        let rt = WdfModel::new_with(QualityConfig::realtime(), host, 220.0, 0.5);
-        let uf = WdfModel::new_with(cfg, host, 220.0, 0.5);
-        assert_eq!(rt.os, 2);
-        assert_eq!(uf.os, 1);
-        assert!(!uf.decimate);
+        let mut forced = cfg;
+        forced.os = 1;
+        let m = WdfModel::new_with(forced, host, 220.0, 0.5);
+        assert_eq!(m.os, 2, "build_with must floor os at 2");
         // ultra-fast still produces finite output (no NaN/instability) on a quick ramp.
-        let mut m = uf;
+        let mut m = WdfModel::new_with(cfg, host, 220.0, 0.5);
+        assert_eq!(m.os, 2);
         for i in 0..256 {
             let y = m.process_host_sample((i as f32 / 256.0) * 0.4 - 0.2);
             assert!(y.is_finite(), "ultra-fast output non-finite at sample {i}");
@@ -3974,8 +3973,8 @@ mod tests {
         let cfg = QualityConfig::warp();
         // It is ultra-fast with cap_tier=Off and nothing else changed.
         assert_eq!(cfg.cap_tier, CapTier::Off, "must drop the BJT charge model");
-        assert_eq!(cfg.os, 1, "inherits ultra-fast os=1");
-        assert!(!cfg.decimate, "inherits ultra-fast decimation bypass");
+        assert_eq!(cfg.os, 2, "inherits ultra-fast os=2 floor");
+        assert!(cfg.decimate, "inherits ultra-fast decimation (os=2)");
         assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
                 "inherits the fast-tier levers");
         // Distinct from Precision::Low: this keeps the full convergence gate (no fixed-step cap).
@@ -3991,21 +3990,28 @@ mod tests {
 
     #[test]
     fn decimate_flag_changes_output() {
-        // Guards against the `decimate` lever silently no-op'ing: at os=1 the only difference between
-        // the two configs is whether the decimation biquads filter the tap, so the outputs MUST diverge.
-        // (Same input, same circuit, same seed — only `decimate` toggled.)
+        // Guards against the `decimate` lever silently no-op'ing: at os=2 the decimation biquads are
+        // the antialiasing decimator, so toggling them MUST change the output. (Same input, same
+        // circuit, same seed — only `decimate` toggled.)
         let host = 48_000.0;
-        let mut base = QualityConfig::ultra_fast(); // os=1, decimate=false
+        let mut base = QualityConfig::ultra_fast(); // os=2 (floored), decimate on
         base.decimate = false;
-        let mut filt = base; // os=1, decimate=true
+        let mut filt = base; // os=2, decimate=true
         filt.decimate = true;
 
         let mut m_off = WdfModel::new_with(base, host, 220.0, 0.5);
         let mut m_on = WdfModel::new_with(filt, host, 220.0, 0.5);
+        // Warm both so the decimator acts on the real operating point, not the cold ramp.
+        for _ in 0..256 {
+            let _ = m_off.process_host_sample(0.0);
+            let _ = m_on.process_host_sample(0.0);
+        }
         let mut max_abs_diff = 0.0f32;
-        for i in 0..512 {
-            // Bright tone so the biquad lowpass has audible HF content to act on.
-            let x = (i as f32 * 0.3).sin() * 0.3;
+        for i in 0..1024 {
+            // HOT, bright tone so the circuit nonlinearity generates HF harmonics above Nyquist for
+            // the os=2 decimator to antialias (vs the naive every-other-subsample drop with decimate
+            // off). A small near-linear tone produces too little HF for the biquads to matter.
+            let x = (i as f32 * 0.7).sin() * 4.0;
             let d = (m_off.process_host_sample(x) - m_on.process_host_sample(x)).abs();
             max_abs_diff = max_abs_diff.max(d);
         }

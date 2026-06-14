@@ -67,5 +67,8 @@ fn probe_latency_is_documented() {
     p.force_probe(QualityConfig::realtime(), SR, 221.0, 0.5, 0.0, SEED, 0.5);
     let warm = t1.elapsed().as_secs_f64() * 1e3;
     eprintln!("off-thread probe latency: cold build {cold:.1} ms, warm re-stamp {warm:.1} ms");
-    assert!(cold < 5_000.0 && warm < 5_000.0, "probe pathologically slow: cold {cold}, warm {warm}");
+    // Generous ceilings (timing is noisy + machine-dependent): the cold build does a full ~1 s
+    // internal-rate warmup at os=2, the warm path only re-settles. Both run on the background worker,
+    // off the audio thread — this only catches a pathological hang, not a perf regression.
+    assert!(cold < 15_000.0 && warm < 5_000.0, "probe pathologically slow: cold {cold}, warm {warm}");
 }

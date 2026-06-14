@@ -192,13 +192,13 @@ pub enum InferenceBackend {
 }
 
 /// WDF solver tier. `Realtime` is the bit-exact reference (all speed levers off); `Fast` bakes in
-/// predict + schur + freeze-caps + ls-trim (~5x faster, near-transparent); `UltraFast` additionally
-/// drops internal oversampling 2→1 and bypasses the (now-needless) output decimation — ≈2x over
-/// fast, and actually *better* than realtime vs SPICE (the os=2 decimation Butterworth deviates
-/// from the circuit's true HF response). `Warp` additionally drops the BJT junction charge model
-/// (~19 % more per-sample cost gone, ~1.3× over ultra-fast, ~2.6× over fast) — the caps shape only
-/// the top octave, so vs SPICE it is equal-or-better than ultra-fast (−31/−37 dB). WDF-only;
-/// the NeuralNet backend ignores it. Mirrors the C++ `qualityPreset("realtime"|"fast"|"ultra-fast")`.
+/// predict + schur + freeze-caps + ls-trim (~5x faster, near-transparent); `UltraFast` adds the
+/// cheap low-order transport exp on top of Fast; `Warp` additionally drops the BJT junction charge
+/// model (~19 % more per-sample cost gone) — the caps shape only the top octave. NOTE: UltraFast/Warp
+/// originally also dropped internal oversampling 2→1; that was REVERTED — os=1 left the per-sample
+/// solve under-resolved and produced erratic loud output peaks at Med/Low precision. **os is now
+/// floored at 2 for all tiers**, so UltraFast/Warp are slower than before but stable. WDF-only; the
+/// NeuralNet backend ignores it.
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum WdfTier {
     #[name = "Realtime"]
