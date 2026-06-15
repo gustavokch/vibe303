@@ -223,6 +223,44 @@ impl WdfTier {
     }
 }
 
+/// One position of the BA283 stepped gain switch. `r_kj_ohm` is the value actually stamped into the
+/// WDF R_KJ leg; the open position uses a large sentinel (resistor removed → leg conductance ≈ 0).
+/// `knob_ohm` is the same value clamped into the `circuit_gain` param domain (47–10k Ω) — it drives
+/// the knob detent position / DAW automation only, never the model. `label` is the (balanced) dB
+/// reading shown in stepped mode.
+struct GainStep {
+    label: &'static str,
+    r_kj_ohm: f32,
+    knob_ohm: f32,
+}
+
+/// Real BA283 gain-switch wafer resistances (5 positions). Lower R ⇒ more gain. Position 0 is the
+/// open contact (no R_KJ): faithful min gain, modelled by a large sentinel resistance. The default
+/// `circuit_gain = 220 Ω` lands exactly on position 3 (30 dB) so toggling stepped on causes no jump.
+static GAIN_STEPS: &[GainStep] = &[
+    GainStep { label: "15 dB", r_kj_ohm: 1.0e9, knob_ohm: 10_000.0 },
+    GainStep { label: "20 dB", r_kj_ohm: 1_200.0, knob_ohm: 1_200.0 },
+    GainStep { label: "25 dB", r_kj_ohm: 470.0, knob_ohm: 470.0 },
+    GainStep { label: "30 dB", r_kj_ohm: 220.0, knob_ohm: 220.0 },
+    GainStep { label: "35 dB", r_kj_ohm: 110.0, knob_ohm: 110.0 },
+];
+
+/// Index of the gain step whose `knob_ohm` is nearest `rgain_ohm` in LOG-ohm space (matches the
+/// `circuit_gain` skew_factor(-2.0), so the snap midpoints sit where the knob spacing is uniform).
+fn nearest_gain_step(rgain_ohm: f32) -> usize {
+    let target = rgain_ohm.max(1.0).ln();
+    let mut best = 0usize;
+    let mut best_d = f32::INFINITY;
+    for (i, s) in GAIN_STEPS.iter().enumerate() {
+        let d = (s.knob_ohm.ln() - target).abs();
+        if d < best_d {
+            best_d = d;
+            best = i;
+        }
+    }
+    best
+}
+
 /// Lossy precision dial, orthogonal to [`WdfTier`]. `High` is the identity (Realtime+High stays
 /// bit-exact / golden); `Medium`/`Low` layer the fixed-step solver + reduced charge model onto the
 /// selected tier, trading fidelity for speed within the harness budget (ESR loss ≤ −50 dB vs
@@ -299,6 +337,11 @@ pub struct Ba283Params {
     /// `output_db`/`mix`). Off = faithful preamp gain (the default).
     #[id = "level_norm"]
     pub level_norm: BoolParam,
+    /// Hardware-stepped gain: when on, the `circuit_gain` knob hard-switches between the 5 real
+    /// BA283 wafer positions (`GAIN_STEPS`) instead of gliding continuously — a rotary detent that
+    /// re-settles the circuit instantly. Authenticity feature; no CPU effect. WDF-only.
+    #[id = "gain_stepped"]
+    pub gain_stepped: BoolParam,
     /// R_KJ gain shunt (ohms), WDF-only. Inert for the NeuralNet backend. Block-rate via a `G0`
     /// rebuild (matches the C++ `setBias`/`setRgain`); the plugin glides it per block to smooth
     /// coarse automation steps.
@@ -375,6 +418,7 @@ impl Default for Ba283Params {
             .with_value_to_string(formatters::v2s_f32_rounded(0))
             .with_smoother(SmoothingStyle::Linear(20.0)),
             level_norm: BoolParam::new("Level Norm", false),
+            gain_stepped: BoolParam::new("Stepped Gain", false),
             circuit_gain: FloatParam::new(
                 "Circuit Gain",
                 220.0,
@@ -620,9 +664,17 @@ impl Plugin for Ba283Plugin {
             // epsilon so the one-pole fully settles (no endless near-equal rebuilds).
             let n = buffer.samples().max(1) as f32;
             let a = 1.0 - (-(n / self.sample_rate) / WDF_PARAM_TAU_S).exp();
-            let rgain_t = self.params.circuit_gain.value();
+            let mut rgain_t = self.params.circuit_gain.value();
             let bias_t = self.params.bias.value();
             let age_t = self.params.age.value();
+            // Stepped gain: hard-switch to the nearest hardware position and BYPASS the glide (a
+            // rotary detent jumps instantly). Snapping `wdf_rgain_smooth` here makes the one-pole
+            // below a no-op (delta 0) so `rgain` lands exactly on the step; the apply gate then
+            // re-stamps R_KJ once per detent crossing and the circuit re-settles like `set_bias`.
+            if self.params.gain_stepped.value() {
+                rgain_t = GAIN_STEPS[nearest_gain_step(rgain_t)].r_kj_ohm;
+                self.wdf_rgain_smooth = rgain_t;
+            }
             self.wdf_rgain_smooth += a * (rgain_t - self.wdf_rgain_smooth);
             self.wdf_bias_smooth += a * (bias_t - self.wdf_bias_smooth);
             self.wdf_age_smooth += a * (age_t - self.wdf_age_smooth);
@@ -843,3 +895,53 @@ impl ClapPlugin for Ba283Plugin {
 
 nih_export_clap!(Ba283Plugin);
 nih_export_vst3!(Ba283Plugin);
+
+#[cfg(test)]
+mod gain_step_tests {
+    use super::{nearest_gain_step, GAIN_STEPS};
+
+    #[test]
+    fn snaps_each_step_to_itself() {
+        for (i, s) in GAIN_STEPS.iter().enumerate() {
+            assert_eq!(
+                nearest_gain_step(s.knob_ohm),
+                i,
+                "step {} ({}) must snap to itself",
+                i,
+                s.label
+            );
+        }
+    }
+
+    #[test]
+    fn snaps_to_nearest_in_log_space() {
+        // 220 Ω is the default (idx 3). Values between 220 and 470 snap to whichever is nearer in
+        // log-Ω: the geometric mean sqrt(220*470) ≈ 321.5 is the boundary.
+        let mid = (220.0_f32 * 470.0).sqrt();
+        assert_eq!(nearest_gain_step(mid * 0.99), 3, "just below the 220↔470 midpoint → 220 (idx 3)");
+        assert_eq!(nearest_gain_step(mid * 1.01), 2, "just above the 220↔470 midpoint → 470 (idx 2)");
+    }
+
+    #[test]
+    fn clamps_outside_param_range() {
+        // Far below the smallest knob_ohm (110) → highest-gain step (idx 4). Far above the largest
+        // (10k, the open proxy) → idx 0. nearest_gain_step never panics or indexes out of range.
+        assert_eq!(nearest_gain_step(1.0), GAIN_STEPS.len() - 1);
+        assert_eq!(nearest_gain_step(1.0e6), 0);
+    }
+
+    #[test]
+    fn r_kj_is_monotonic_descending() {
+        // More gain ⇒ smaller R. Guards the table ordering the editor/process logic relies on.
+        for pair in GAIN_STEPS.windows(2) {
+            assert!(
+                pair[0].r_kj_ohm > pair[1].r_kj_ohm,
+                "{} ({} Ω) must have larger R than {} ({} Ω)",
+                pair[0].label,
+                pair[0].r_kj_ohm,
+                pair[1].label,
+                pair[1].r_kj_ohm
+            );
+        }
+    }
+}
