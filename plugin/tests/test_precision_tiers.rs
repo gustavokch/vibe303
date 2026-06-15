@@ -218,15 +218,16 @@ fn peak_after_switch(cfg: QualityConfig, sr: f64) -> f32 {
     peak
 }
 
-/// Root cause + fix regression. The Newton predictor under the fixed-step solver (Med/Low) was the
-/// divergence driver (lever isolation: predict=false bounded the output while Dense/freeze_caps/fma
-/// did not). The fix has two layers, both asserted here:
-///   1. `with_precision(Med/Low)` clears `predict` on every tier (self-consistent config).
-///   2. A runtime guard skips prediction whenever `fixed_step` — so even a hand-assembled
-///      predict+fixed_step config stays bounded.
+/// Precision is now device-model-only, so no tier/precision config enables `fixed_step` — but the
+/// field still exists (the `measure_gain` probe uses it) and the `process` runtime guard that skips
+/// the Newton predictor under `fixed_step` is still live. Two properties asserted here:
+///   1. `with_precision(Med/Low)` never sets `fixed_step` and never clears the tier's `predict`.
+///   2. A hand-assembled `predict + fixed_step` config still stays bounded — the runtime guard
+///      (`if self.predict && !self.fixed_step` in `process`) skips prediction under fixed-step, so
+///      even a mis-assembled probe-like config can't run away (the pre-fix shape hit ~1e8).
 #[test]
-fn fixed_step_never_predicts_and_stays_bounded() {
-    // Layer 1: the config-level fix — predict is off for Med/Low on every tier.
+fn precision_keeps_iteration_axis_and_runtime_guard_holds() {
+    // Property 1: precision leaves the iteration axis (fixed_step + predict) untouched.
     for cfg in [
         QualityConfig::fast(),
         QualityConfig::ultra_fast(),
@@ -235,13 +236,13 @@ fn fixed_step_never_predicts_and_stays_bounded() {
     ] {
         for p in [Precision::Medium, Precision::Low] {
             let c = cfg.with_precision(p);
-            assert!(c.fixed_step, "Med/Low must be fixed-step");
-            assert!(!c.predict, "Med/Low must not carry the Newton predictor (divergence driver)");
+            assert!(!c.fixed_step, "precision must not enable fixed_step");
+            assert_eq!(c.predict, cfg.predict, "precision must not change the Newton predictor");
         }
     }
 
-    // Layer 2: the runtime guard — a deliberately mis-assembled config that still has predict=true
-    // alongside fixed_step must NOT diverge, because the solver skips prediction under fixed-step.
+    // Property 2: the runtime guard — a deliberately mis-assembled config that has predict=true
+    // alongside fixed_step must NOT diverge, because `process` skips prediction under fixed-step.
     let mut broken = QualityConfig::fast();
     broken.fixed_step = true;
     broken.max_iters = 2;
@@ -253,7 +254,7 @@ fn fixed_step_never_predicts_and_stays_bounded() {
         "runtime guard failed: predict+fixed_step diverged (peak {peak:.3e})"
     );
 
-    // And the shipped path (fast+Medium) is comfortably bounded.
+    // And the shipped path (fast+Medium, full convergence + reduced device model) is bounded.
     let shipped = peak_after_switch(QualityConfig::fast().with_precision(Precision::Medium), 48_000.0);
     assert!(shipped < 1.0e3, "fast+Medium still diverges (peak {shipped:.3e})");
 }

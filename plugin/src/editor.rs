@@ -360,6 +360,10 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                         ui.label(RichText::new("PRECISION").font(display_font(12.0)).color(DIM));
                         ui.add_space(6.0);
                         segmented(ui, setter, &p.precision);
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("OVERSAMPLING").font(display_font(12.0)).color(DIM));
+                        ui.add_space(6.0);
+                        segmented(ui, setter, &p.oversampling);
                     });
                 });
             });
