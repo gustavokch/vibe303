@@ -37,9 +37,15 @@ def resolve_device(name: str) -> str:
 
     ``"auto"`` picks the fastest available backend: CUDA (Colab/dGPU) -> MPS
     (Apple Silicon) -> CPU. Any explicit name (``"cuda"``/``"mps"``/``"cpu"``)
-    is returned unchanged so Colab and CI keep pinning the device directly.
+    is returned unchanged so Colab and CI keep pinning the device directly. An
+    unrecognized name is rejected here so a typo (e.g. ``"mpz"``) fails fast
+    instead of surfacing as an opaque error deep in a later ``.to(device)``.
     """
     if name != "auto":
+        if name not in ("cuda", "mps", "cpu"):
+            raise ValueError(
+                f"--device must be 'auto'/'cuda'/'mps'/'cpu', got {name!r}"
+            )
         return name
     if torch.cuda.is_available():
         return "cuda"
