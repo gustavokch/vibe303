@@ -308,7 +308,23 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                         // bounded inside the core row's `ui.columns`, but in this free
                         // `ui.horizontal` the first knob would eat all the width and shove the
                         // rest off the right edge. `knob_cell` pins each to its own cell width.
-                        knob_cell(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
+                        if p.gain_stepped.value() {
+                            // Map each hardware position to a knob detent (normalized pos + label).
+                            let detents: Vec<(f32, &'static str)> = crate::GAIN_STEPS
+                                .iter()
+                                .map(|s| (p.circuit_gain.preview_normalized(s.knob_ohm), s.label))
+                                .collect();
+                            knob_cell_stepped(
+                                ui,
+                                setter,
+                                &p.circuit_gain,
+                                "CIRCUIT GAIN",
+                                64.0,
+                                &detents,
+                            );
+                        } else {
+                            knob_cell(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
+                        }
                         ui.add_space(8.0);
                         knob_cell(ui, setter, &p.age, "AGE", 64.0);
                         #[cfg(feature = "trafo-core")]
@@ -327,6 +343,8 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                                     .font(value_font(12.0))
                                     .color(DIM),
                             );
+                            ui.add_space(8.0);
+                            toggle_pill(ui, setter, &p.gain_stepped, "STEPPED");
                         });
                     });
 
@@ -419,8 +437,56 @@ fn knob_cell<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label
 /// readout with the param's own formatter. Drag (vertical) / scroll to adjust, Shift = fine,
 /// double-click resets to default. Greys out + ignores input when `ui.is_enabled()` is false.
 fn knob<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &str, diameter: f32) {
+    knob_impl(ui, setter, param, label, diameter, None);
+}
+
+/// `knob_cell` for a hardware-stepped knob: snaps drag/scroll to the supplied detent positions
+/// (normalized value + label) and shows the step label instead of the param formatter. Used by
+/// the stepped `circuit_gain` knob; every other knob uses the plain `knob`/`knob_cell` path.
+fn knob_cell_stepped<P: Param>(
+    ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    param: &P,
+    label: &str,
+    diameter: f32,
+    detents: &[(f32, &'static str)],
+) {
+    let cell = knob_cell_size(diameter);
+    ui.allocate_ui_with_layout(cell, egui::Layout::top_down(egui::Align::Center), |ui| {
+        knob_impl(ui, setter, param, label, diameter, Some(detents));
+    });
+}
+
+/// Backing implementation for [`knob`]. `detents`, when `Some`, makes the knob hard-step: input is
+/// snapped to the nearest detent's normalized position and the readout shows the detent label.
+fn knob_impl<P: Param>(
+    ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    param: &P,
+    label: &str,
+    diameter: f32,
+    detents: Option<&[(f32, &'static str)]>,
+) {
     let enabled = ui.is_enabled();
     let cell = knob_cell_size(diameter);
+    // Snap a normalized value to the nearest detent position (identity when continuous).
+    let snap = |n: f32| -> f32 {
+        match detents {
+            Some(ds) if !ds.is_empty() => {
+                let mut best = n;
+                let mut best_d = f32::INFINITY;
+                for &(dn, _) in ds {
+                    let d = (dn - n).abs();
+                    if d < best_d {
+                        best_d = d;
+                        best = dn;
+                    }
+                }
+                best
+            }
+            _ => n,
+        }
+    };
 
     ui.vertical_centered(|ui| {
         let (rect, mut response) = ui.allocate_exact_size(
@@ -439,7 +505,7 @@ fn knob<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &st
             let scale = if fine { 0.25 } else { 1.0 };
 
             if response.double_clicked() {
-                let d = param.default_normalized_value();
+                let d = snap(param.default_normalized_value());
                 set_norm(setter, param, d);
                 norm = d;
                 response.mark_changed();
@@ -450,7 +516,7 @@ fn knob<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &st
                 if response.dragged() {
                     let dn = -response.drag_delta().y / 200.0 * scale;
                     if dn != 0.0 {
-                        norm = (norm + dn).clamp(0.0, 1.0);
+                        norm = snap((norm + dn).clamp(0.0, 1.0));
                         setter.set_parameter_normalized(param, norm);
                     }
                 }
@@ -478,7 +544,7 @@ fn knob<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &st
                     }
                     g.last = now;
                     let dn = scroll / 600.0 * scale;
-                    norm = (norm + dn).clamp(0.0, 1.0);
+                    norm = snap((norm + dn).clamp(0.0, 1.0));
                     setter.set_parameter_normalized(param, norm);
                     ui.ctx()
                         .request_repaint_after(std::time::Duration::from_millis(180));
@@ -520,11 +586,27 @@ fn knob<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label: &st
             Stroke::new(2.5, TEXT.gamma_multiply(dim)),
         );
 
-        // Centered value readout.
+        // Centered value readout. Stepped knobs show the detent label; continuous knobs use the
+        // param's own formatter.
+        let readout = match detents {
+            Some(ds) if !ds.is_empty() => {
+                let mut best = ds[0].1;
+                let mut best_d = f32::INFINITY;
+                for &(dn, lbl) in ds {
+                    let d = (dn - norm).abs();
+                    if d < best_d {
+                        best_d = d;
+                        best = lbl;
+                    }
+                }
+                best.to_string()
+            }
+            _ => param.normalized_value_to_string(norm, true),
+        };
         painter.text(
             center,
             Align2::CENTER_CENTER,
-            param.normalized_value_to_string(norm, true),
+            readout,
             value_font(13.0),
             TEXT.gamma_multiply(dim),
         );
