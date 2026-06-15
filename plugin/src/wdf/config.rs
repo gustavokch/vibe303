@@ -64,8 +64,13 @@ pub struct QualityConfig {
     /// Fixed-step Newton: run exactly `max_iters` iterations and drop the convergence machinery —
     /// no `ls_trim` line search and no per-sample `residual_norm` gate / gmin-homotopy (`process`).
     /// Removes the dominant fixed per-sample cost (one full device re-stamp every sample) that
-    /// iteration-capping leaves running. Lossy (no convergence guarantee on transients); set by the
-    /// Med/Low Precision settings only — realtime/HIGH keep `false` and stay bit-identical.
+    /// iteration-capping leaves running. Lossy (no convergence guarantee on transients).
+    ///
+    /// No tier preset and no `Precision` setting enables this (precision is device-model-only). The
+    /// sole user is [`WdfModel::measure_gain`], which sets it on a *cloned, already-built* model for a
+    /// cheap deterministic 0.05 V small-signal gain probe on the audio thread — it bypasses
+    /// [`solve_os`](Self::solve_os), runs near-linear, and never enters the program-drive regime that
+    /// motivated the old os floor. Realtime/HIGH keep `false` and stay bit-identical.
     pub fixed_step: bool,
     /// Sub-rate Newton spike lever — **NO-GO, behind `subrate-spike` feature only**.
     /// See the full verdict in the `#[cfg(feature = "subrate-spike")]`-gated field below.
@@ -109,6 +114,17 @@ pub enum Precision {
     Low,
 }
 
+/// Internal-oversampling override, orthogonal to [`WdfTier`](crate) and [`Precision`]. The new
+/// antialiasing-rate axis. `Auto` defers to the tier's own `os` (so UltraFast/Warp keep their os=1
+/// speed lever and Realtime/Fast keep os=2); `X1`/`X2` force the rate. Only 1×/2× ship now — the
+/// decimator is a 2×-tuned Butterworth (aliases at 4:1); `X4` lands once a 4:1 decimator exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Oversampling {
+    Auto,
+    X1,
+    X2,
+}
+
 impl QualityConfig {
     pub fn realtime() -> Self {
         Self {
@@ -143,19 +159,15 @@ impl QualityConfig {
     /// Ultra-fast tier: `fast()` + the cheap low-order transport exp (`cheap_exp`) + its dominant
     /// speed lever, internal oversampling dropped to os=1 (decimation biquads bypassed).
     ///
-    /// os=1 is the ~1.8× speed win, but it limit-cycles into loud output peaks ONLY when combined with
-    /// the Med/Low fixed-step solver (2 iters, no convergence gate) — raw peak ~114 vs ~62 at High. At
-    /// High (full convergence) os=1 is peak-safe (raw ≈ os=2) and validated −30 dB vs SPICE. So the os
-    /// floor is CONDITIONAL: [`QualityConfig::solve_os`] forces os≥2 (re-enabling the antialiasing
-    /// decimator via [`solve_decimate`](Self::solve_decimate)) ONLY under `fixed_step`. This tier
-    /// therefore runs os=1 at High precision (fast) and is automatically floored to os=2 at Med/Low
-    /// (safe). Previously os was floored at 2 unconditionally, which also removed the speed lever from
-    /// the safe High path.
+    /// os=1 is the ~1.8× speed win and is peak-safe under the full-convergence solver this tier runs
+    /// (raw peak ≈ os=2, validated −30 dB vs SPICE). Precision is now device-model-only and never
+    /// enables `fixed_step`, so there is no os floor and Med/Low no longer slow this tier down — they
+    /// only step the BJT model on top of os=1.
     pub fn ultra_fast() -> Self {
         Self {
             cheap_exp: true, // T3: low-order transport exp (~2%); ultra-fast tier accepts the op-point bias
-            os: 1,           // dominant speed lever; floored to 2 under fixed_step (see solve_os)
-            decimate: false, // nothing to decimate at os=1; re-enabled if solve_os floors os up to 2
+            os: 1,           // dominant speed lever (halves the solve rate)
+            decimate: false, // nothing to decimate at os=1
             ..Self::fast()
         }
     }
@@ -166,9 +178,9 @@ impl QualityConfig {
     /// --backend wdf`, sweep_m6): 1.30× over ultra-fast (≈4.2× over realtime). The caps shape only
     /// the very top octave, so dropping them perturbs the output by just
     /// −55 dB vs ultra-fast — far below the −23 dB WDF-vs-ACME model floor — i.e. vs SPICE it stays
-    /// within a hair of ultra-fast's −30 to −36 dB. Distinct from `with_precision(Low)`, which also
-    /// sets `cap_tier = Off` but additionally forces the fixed-step solver (max_iters = 2); this tier
-    /// keeps the full convergence gate, so the only change vs ultra-fast is the charge model.
+    /// within a hair of ultra-fast's −30 to −36 dB. Same `cap_tier = Off` as `with_precision(Low)`,
+    /// but reached via the tier rather than the precision axis: warp keeps full convergence (no
+    /// `fixed_step`), so the only change vs ultra-fast is the charge model.
     pub fn warp() -> Self {
         Self {
             cap_tier: CapTier::Off,
@@ -176,61 +188,73 @@ impl QualityConfig {
         }
     }
 
-    /// Layer a lossy [`Precision`] setting onto this tier config. `High` is the identity (preserves
-    /// the bit-exact realtime/golden contract); `Medium`/`Low` enable the fixed-step solver (exactly 2
-    /// Newton iters, no `residual_norm` gate / line search) and drop the BJT charge model — these are
-    /// the structural levers the `eval/wdf_ultrafast` sweep never tested (looser tol / capped iters
-    /// alone buy ~nothing because the per-sample `residual_norm` keeps running). Gated by the harness
-    /// at ESR loss ≤ −50 dB vs Realtime+High. (f32 device kernels and sub-rate solving land in later
-    /// phases; this is the in-house, low-risk first cut.)
+    /// Layer a lossy [`Precision`] setting onto this tier config. Precision is the **device-model
+    /// fidelity** axis (orthogonal to the tier's iteration strategy and the oversampling rate): it
+    /// steps `cap_tier` and `cheap_exp` *monotonically downward* from the tier baseline and touches
+    /// nothing else. `High` is the identity (preserves the bit-exact realtime/golden contract);
+    /// `Medium`/`Low` trade BJT-model fidelity for speed within the harness budget (ESR loss vs
+    /// Realtime+High ≤ −50 dB; ACME absolute floor ~−23 dB, model-bound).
     ///
-    /// `predict` is forced OFF under fixed-step. The Newton predictor extrapolates the operating
-    /// point across samples (`2·sol(n-1) − sol(n-2)`); with only 2 fixed iters and no `residual_norm`
-    /// gate or `ls_trim` line search to reject a bad warm-start, that extrapolation drifts, the solve
-    /// can't pull it back, and the next sample's predict amplifies it — a runaway to ~1e8 ("loud
-    /// garbage then dead channel") on every non-realtime tier at Med/Low. Realtime+Med/Low never hit
-    /// this only because the realtime base already has `predict=false`. Confirmed by lever isolation
-    /// (`tests/test_precision_tiers.rs::isolate_lever_fast_medium`): predict=false bounds the output
-    /// to ~1.5e2 (≈ the full-convergence level), while Dense/freeze_caps=false/fma=false do not.
+    /// - **Medium** → drop the junction charge model to depletion-only (`cap_tier = Depletion`,
+    ///   never *up*grading a tier already at `Off`) **and** the cheap low-order transport exp
+    ///   (`cheap_exp = true`). Depletion-vs-Full is ~0 CPU (fidelity-only, measured 6.23→6.21 s on
+    ///   Fast), so `cheap_exp` (~−3%) is what makes Medium a real monotone step rather than a placebo.
+    /// - **Low** → drop the charge model entirely (`cap_tier = Off`, the dominant lever, −26% on Fast)
+    ///   plus `cheap_exp = true`.
+    ///
+    /// Precision no longer touches `fixed_step` / `predict` / `max_iters` / `os` — those are the
+    /// tier's iteration strategy and the oversampling axis. (Previously Med/Low forced the fixed-step
+    /// solver, which on os=1 tiers floored os 1→2 via [`solve_os`], making "lower precision" *slower*;
+    /// that perverse coupling is gone.) Gated by the harness (`eval/`).
     pub fn with_precision(self, p: Precision) -> Self {
         match p {
             Precision::High => self,
+            // Monotone downgrade: never upgrade a tier already at a lower fidelity (e.g. warp is
+            // already cap_tier=Off, so Medium leaves it Off rather than raising it to Depletion).
             Precision::Medium => Self {
-                fixed_step: true,
-                predict: false,
-                max_iters: 2,
-                cap_tier: CapTier::Depletion,
+                cap_tier: if self.cap_tier == CapTier::Off {
+                    CapTier::Off
+                } else {
+                    CapTier::Depletion
+                },
+                cheap_exp: true,
                 ..self
             },
             Precision::Low => Self {
-                fixed_step: true,
-                predict: false,
-                max_iters: 2,
                 cap_tier: CapTier::Off,
+                cheap_exp: true,
                 ..self
             },
+        }
+    }
+
+    /// Layer an [`Oversampling`] override onto this tier config — the antialiasing-rate axis. `Auto`
+    /// is the identity (defers to the tier's `os`/`decimate`, preserving current behaviour bit-for-
+    /// bit); `X1` forces os=1 with the decimator bypassed (nothing to decimate); `X2` forces os=2
+    /// with the antialiasing decimator on. Applied after [`with_precision`](Self::with_precision) in
+    /// the config chain so it is the final word on the rate.
+    pub fn with_oversampling(self, os: Oversampling) -> Self {
+        match os {
+            Oversampling::Auto => self,
+            Oversampling::X1 => Self { os: 1, decimate: false, ..self },
+            Oversampling::X2 => Self { os: 2, decimate: true, ..self },
         }
     }
 
     /// Effective internal oversampling, the single source of truth used by both `build_with` and
-    /// `new_with`. os=1 is allowed for the full-convergence solver (the ultra-fast/warp speed lever,
-    /// peak-safe at High), but the fixed-step solver (Med/Low precision) limit-cycles into loud peaks
-    /// at os=1, so it is floored to 2. No *built or rebuilt* model — including one from a
-    /// hand-assembled `fixed_step` config — can solve at os=1. (The lone exception is the near-linear
-    /// `measure_gain` probe, which mutates an already-built model directly; see its NOTE.)
+    /// `new_with`. The oversampling rate is now a pure config value: os=1 is the ultra-fast/warp
+    /// speed lever (peak-safe at full convergence), os=2 the realtime/fast antialiasing rate. No
+    /// config built through `build_with` sets `fixed_step` (precision is device-model-only), so there
+    /// is no longer an os floor — the lone `fixed_step` user, the near-linear `measure_gain` probe,
+    /// mutates an already-built model directly and bypasses this (see its NOTE).
     pub fn solve_os(&self) -> usize {
-        if self.fixed_step {
-            self.os.max(2)
-        } else {
-            self.os.max(1)
-        }
+        self.os
     }
 
-    /// Effective decimation. When [`solve_os`](Self::solve_os) floors os up to 2 under `fixed_step`
-    /// (the tier had set os=1 / decimate=false), the antialiasing decimator MUST run on the now-
-    /// oversampled stream, even though the tier requested no decimation. Otherwise honour the tier.
+    /// Effective decimation — honour the tier. (Historically this re-enabled the decimator when an
+    /// os floor kicked in under `fixed_step`; with the floor gone it is just the tier's setting.)
     pub fn solve_decimate(&self) -> bool {
-        self.decimate || (self.fixed_step && self.os < 2)
+        self.decimate
     }
 }
 

@@ -146,6 +146,9 @@ pub struct Ba283Plugin {
     /// Last WDF precision applied (block-rate). A change triggers the same rebuild path as a tier
     /// change (the precision is folded into the `QualityConfig` via `with_precision`).
     last_precision: Precision,
+    /// Last WDF oversampling override applied (block-rate). A change triggers the same rebuild path
+    /// as a tier change (folded into the `QualityConfig` via `with_oversampling`).
+    last_oversampling: Oversampling,
     /// The levelNorm gain actually applied at the end of the last block (the per-sample ramp's start
     /// for the next block). Carries the ramp state across blocks so a Circuit-Gain sweep — or a
     /// level-norm on/off toggle — fades click-free instead of stepping. NOT a program-dependent RMS
@@ -195,11 +198,10 @@ pub enum InferenceBackend {
 /// predict + schur + freeze-caps + ls-trim (~5x faster, near-transparent); `UltraFast` adds the
 /// cheap low-order transport exp on top of Fast; `Warp` additionally drops the BJT junction charge
 /// model (~19 % more per-sample cost gone) — the caps shape only the top octave. UltraFast/Warp also
-/// drop internal oversampling 2→1 (their dominant ~1.8x speed lever) at High precision, where os=1 is
-/// peak-safe. The os floor is CONDITIONAL: under the Med/Low fixed-step solver (which limit-cycles
-/// into loud peaks at os=1) `QualityConfig::solve_os` forces os back to 2. So selecting UltraFast/Warp
-/// noticeably drops CPU at High; at Med/Low they fall back to the os=2 cost. WDF-only; the NeuralNet
-/// backend ignores it.
+/// drop internal oversampling 2→1 (their dominant ~1.8x speed lever), which is peak-safe under the
+/// full-convergence solver they run. Precision is now device-model-only and the [`Oversampling`] dial
+/// is a separate axis, so selecting UltraFast/Warp drops CPU at every precision — Med/Low no longer
+/// fall back to the os=2 cost. WDF-only; the NeuralNet backend ignores it.
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum WdfTier {
     #[name = "Realtime"]
@@ -261,10 +263,12 @@ fn nearest_gain_step(rgain_ohm: f32) -> usize {
     best
 }
 
-/// Lossy precision dial, orthogonal to [`WdfTier`]. `High` is the identity (Realtime+High stays
-/// bit-exact / golden); `Medium`/`Low` layer the fixed-step solver + reduced charge model onto the
-/// selected tier, trading fidelity for speed within the harness budget (ESR loss ≤ −50 dB vs
-/// Realtime+High). WDF-only; the NeuralNet backend ignores it. Maps 1:1 to [`wdf::Precision`].
+/// Lossy precision dial — the device-model fidelity axis, orthogonal to [`WdfTier`] and
+/// [`Oversampling`]. `High` is the identity (Realtime+High stays bit-exact / golden); `Medium`/`Low`
+/// step the BJT charge model + transport exp down from the tier baseline (`cap_tier` + `cheap_exp`),
+/// trading fidelity for speed within the harness budget (ESR loss ≤ −50 dB vs Realtime+High). It no
+/// longer touches the iteration strategy or oversampling rate, so it never slows a tier. WDF-only;
+/// the NeuralNet backend ignores it. Maps 1:1 to [`wdf::Precision`].
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Precision {
     #[name = "High"]
@@ -281,6 +285,32 @@ impl Precision {
             Precision::High => wdf::Precision::High,
             Precision::Medium => wdf::Precision::Medium,
             Precision::Low => wdf::Precision::Low,
+        }
+    }
+}
+
+/// Internal-oversampling dial — the antialiasing-rate axis, orthogonal to [`WdfTier`] and
+/// [`Precision`]. `Auto` defers to the tier's own rate (UltraFast/Warp keep os=1, Realtime/Fast keep
+/// os=2), so the default reproduces current behaviour bit-for-bit; `X1`/`X2` force the WDF internal
+/// rate. The WDF os is IIR-decimated (phase-only, ~0 integer latency), so this never changes reported
+/// latency / PDC. Only 1×/2× ship now (the decimator is 2×-tuned); 4× lands behind a 4:1 decimator.
+/// WDF-only; the NeuralNet backend ignores it. Maps 1:1 to [`wdf::Oversampling`].
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum Oversampling {
+    #[name = "Auto"]
+    Auto,
+    #[name = "1x"]
+    X1,
+    #[name = "2x"]
+    X2,
+}
+
+impl Oversampling {
+    fn to_wdf(self) -> wdf::Oversampling {
+        match self {
+            Oversampling::Auto => wdf::Oversampling::Auto,
+            Oversampling::X1 => wdf::Oversampling::X1,
+            Oversampling::X2 => wdf::Oversampling::X2,
         }
     }
 }
@@ -325,6 +355,10 @@ pub struct Ba283Params {
     /// (bit-exact at Realtime). WDF-only; inert for the NeuralNet backend.
     #[id = "precision"]
     pub precision: EnumParam<Precision>,
+    /// Internal-oversampling dial (Auto/1x/2x), orthogonal to tier + precision. Auto defers to the
+    /// tier (bit-exact default). WDF-only; inert for the NeuralNet backend.
+    #[id = "oversampling"]
+    pub oversampling: EnumParam<Oversampling>,
     #[id = "drive_db"]
     pub drive_db: FloatParam,
     #[id = "bias"]
@@ -381,6 +415,7 @@ impl Default for Ba283Params {
             ui_scale: EnumParam::new("UI Scale", UiScale::Auto).non_automatable(),
             wdf_tier: EnumParam::new("WDF Tier", WdfTier::Realtime),
             precision: EnumParam::new("Precision", Precision::High),
+            oversampling: EnumParam::new("Oversampling", Oversampling::Auto),
             drive_db: FloatParam::new(
                 "Drive",
                 0.0,
@@ -454,6 +489,7 @@ impl Default for Ba283Plugin {
             last_bias: f32::NAN,
             last_tier: WdfTier::Realtime,
             last_precision: Precision::High,
+            last_oversampling: Oversampling::Auto,
             norm_trim: 1.0,
             norm_trim_target: 1.0,
             norm_reprobe: true,
@@ -577,7 +613,11 @@ impl Plugin for Ba283Plugin {
         let bias = self.params.bias.value();
         let tier = self.params.wdf_tier.value();
         let precision = self.params.precision.value();
-        let cfg = tier.config().with_precision(precision.to_wdf());
+        let oversampling = self.params.oversampling.value();
+        let cfg = tier
+            .config()
+            .with_precision(precision.to_wdf())
+            .with_oversampling(oversampling.to_wdf());
         // Warm at the realtime tier (the DC operating point is tier-independent — freeze-caps only
         // changes the per-iter companion), then install the settled snapshot into each channel's
         // tier-configured model.
@@ -600,6 +640,7 @@ impl Plugin for Ba283Plugin {
         self.last_bias = bias;
         self.last_tier = tier;
         self.last_precision = precision;
+        self.last_oversampling = oversampling;
         self.last_age = age;
         self.last_seed = seed;
         self.last_reroll = self.params.age_reroll.value();
@@ -710,13 +751,21 @@ impl Plugin for Ba283Plugin {
             // post-rebuild model picks up the current values via the cheap G0 path below.
             let tier = self.params.wdf_tier.value();
             let precision = self.params.precision.value();
-            if tier != self.last_tier || precision != self.last_precision {
-                let cfg = tier.config().with_precision(precision.to_wdf());
+            let oversampling = self.params.oversampling.value();
+            if tier != self.last_tier
+                || precision != self.last_precision
+                || oversampling != self.last_oversampling
+            {
+                let cfg = tier
+                    .config()
+                    .with_precision(precision.to_wdf())
+                    .with_oversampling(oversampling.to_wdf());
                 for ch in self.channels.iter_mut() {
                     ch.wdf_set_tier(cfg, self.sample_rate, rgain, bias);
                 }
                 self.last_tier = tier;
                 self.last_precision = precision;
+                self.last_oversampling = oversampling;
                 changed = true;
                 // The rebuild reset aging + the bias/rgain legs to pristine — force all to re-apply.
                 self.last_age = f32::NAN;
@@ -796,7 +845,10 @@ impl Plugin for Ba283Plugin {
                     .is_ok()
             {
                 let req = ProbeReq {
-                    cfg: tier.config().with_precision(precision.to_wdf()),
+                    cfg: tier
+                        .config()
+                        .with_precision(precision.to_wdf())
+                        .with_oversampling(oversampling.to_wdf()),
                     sr: self.sample_rate,
                     rgain,
                     bias,
