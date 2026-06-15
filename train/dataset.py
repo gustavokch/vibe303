@@ -241,6 +241,7 @@ def make_loader(
     shuffle: bool = True,
     drop_last: bool = True,
     balance_by_kind: bool = False,
+    pin_memory: bool = True,
 ) -> DataLoader:
     """Build a ``DataLoader`` wrapping a :class:`BA283Dataset`.
 
@@ -267,7 +268,8 @@ def make_loader(
         shuffle=shuffle if sampler is None else False,
         sampler=sampler,
         num_workers=num_workers,
-        pin_memory=True,
+        # pin_memory only helps host->CUDA copies; it warns/wastes work on MPS/CPU.
+        pin_memory=pin_memory,
         persistent_workers=num_workers > 0,
         drop_last=drop_last,
     )
