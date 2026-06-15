@@ -1,12 +1,16 @@
 # train/train.py
-"""TBPTT training loop for the BA283 GRU emulator.
+"""TBPTT training loop for the BA283 stacked-LSTM emulator.
 
-A warmup region primes the GRU hidden state under ``no_grad``, then
-backpropagation runs only over the train region using the carried (detached)
-hidden state. The objective is the composite ESR + MSE pre-emphasis loss.
+Each window is run in-graph from the model's learned initial hidden/cell state
+(``h0``/``c0``); the first ``burn_in`` samples are excluded from the loss (a short
+lead-in past the first transient) but stay in the gradient graph, so the learned
+initial state receives gradient (an unbroken t=0 -> loss path is required, which a
+no_grad burn-in would sever). The objective is the composite ESR + MSE
+pre-emphasis loss. BPTT spans the whole window, so the window is kept to the
+proven-stable ~4096 length.
 
 The loop is hardened for unattended multi-hour runs: gradient clipping bounds
-GRU divergence and any batch with a non-finite loss OR non-finite gradient is
+BPTT divergence and any batch with a non-finite loss OR non-finite gradient is
 dropped before the optimizer step (so an inf gradient can never be turned into a
 NaN parameter that poisons the whole run), checkpoints are written atomically,
 and ``last.pth`` carries a full resume bundle so a crash does not discard hours
@@ -108,6 +112,14 @@ def train_main(
 ) -> None:
     torch.manual_seed(seed)
 
+    # The burn-in region is sliced off the front of each window; the train region
+    # (window - burn_in) must be non-empty or backprop has nothing to learn from.
+    if window <= warmup_samples:
+        raise ValueError(
+            f"window ({window}) must exceed burn-in ({warmup_samples}); the "
+            f"train region (window - burn_in) would be empty"
+        )
+
     # pin_memory only accelerates host->CUDA transfers; on MPS/CPU it warns and
     # wastes work. ``device`` here is already resolved (see ``resolve_device``).
     pin_memory = str(device).startswith("cuda")
@@ -201,17 +213,20 @@ def train_main(
                 x = x.to(device)
                 y = y.to(device)
 
-                warmup_x = x[:, :warmup_samples]
-                train_x = x[:, warmup_samples:]
-                train_y = y[:, warmup_samples:]
-
-                with torch.no_grad():
-                    _, state = model(warmup_x)
-                # LSTM state is a (h, c) tuple; detach both to truncate BPTT.
-                state = tuple(s.detach() for s in state)
-
-                pred, _ = model(train_x, state)
-                loss = composite_loss(pred, train_y, stft_weight=stft_weight)
+                # Run the FULL window in-graph from the model's learned initial
+                # state (state=None -> the trainable h0/c0). The loss skips the
+                # first `warmup_samples` (a short lead-in to settle past the very
+                # first transient), but the burn-in stays IN the gradient graph so
+                # the learned initial state receives gradient: an unbroken path
+                # from t=0 to the loss region is REQUIRED, or h0/c0 never train
+                # (the old no_grad burn-in detached them). BPTT therefore spans
+                # the whole window, so the window is kept to the proven-stable
+                # ~4096 length and gradient clipping bounds divergence.
+                pred_full, _ = model(x)
+                pred = pred_full[:, warmup_samples:]
+                loss = composite_loss(
+                    pred, y[:, warmup_samples:], stft_weight=stft_weight
+                )
 
                 if not torch.isfinite(loss):
                     warnings.warn(
@@ -261,15 +276,11 @@ def train_main(
                     x = x.to(device)
                     y = y.to(device)
 
-                    warmup_x = x[:, :warmup_samples]
-                    train_x = x[:, warmup_samples:]
-                    train_y = y[:, warmup_samples:]
-
-                    _, h = model(warmup_x)
-                    pred, _ = model(train_x, h)
-
-                    preds.append(pred)
-                    targets.append(train_y)
+                    # Same window handling as training: run from the learned
+                    # initial state over the whole window, score the loss region.
+                    pred_full, _ = model(x)
+                    preds.append(pred_full[:, warmup_samples:])
+                    targets.append(y[:, warmup_samples:])
                     if smoke and batch_idx >= 1:
                         break
 
@@ -342,8 +353,16 @@ def main() -> None:
     # The LSTM's gating is steadier and the non-finite loss/grad guards +
     # clip_norm drop any blown batch, but watch early epochs for the same burst.
     parser.add_argument("--lr", type=float, default=5e-3)
-    parser.add_argument("--hidden", type=int, default=32)
-    parser.add_argument("--warmup", type=int, default=1024)
+    parser.add_argument("--hidden", type=int, default=18)
+    # In-graph loss lead-in: the first `--burn-in` samples are excluded from the
+    # loss (settle past the first transient) but stay in the gradient graph so
+    # the learned initial state (h0/c0) trains. Because the whole window is then
+    # back-propagated, the window is kept to the proven-stable ~4096 length, so
+    # the lead-in is short (1024). ``--warmup`` kept as a backward-compatible alias.
+    parser.add_argument(
+        "--burn-in", "--warmup", dest="warmup", type=int, default=1024,
+        help="in-graph loss lead-in skipped from the loss (lets h0/c0 train)",
+    )
     parser.add_argument("--window", type=int, default=4096)
     parser.add_argument("--stride", type=int, default=2048)
     parser.add_argument("--workers", type=int, default=6)
@@ -366,8 +385,8 @@ def main() -> None:
         default="film",
         help="bias conditioning: 'film' (affine modulation) or 'concat' (input channel)",
     )
-    # --- Redesign knobs (all default to the shipped v1 behaviour) ---
-    parser.add_argument("--layers", type=int, default=1, help="LSTM stack depth")
+    # --- Redesign knobs (structural defaults are NAM-style 3x18) ---
+    parser.add_argument("--layers", type=int, default=3, help="LSTM stack depth")
     parser.add_argument(
         "--dropout", type=float, default=0.0, help="inter-layer LSTM dropout (needs --layers > 1)"
     )

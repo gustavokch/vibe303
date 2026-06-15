@@ -17,11 +17,13 @@ from train.model import BA283LSTM
 
 
 def test_load_model_roundtrips_state(tmp_path):
-    src = BA283LSTM(hidden=8)
+    # Pin num_layers on both sides so the round-trip is independent of the model
+    # default (now the NAM-style 3 layers); this exercises the load mechanism.
+    src = BA283LSTM(hidden=8, num_layers=3)
     ckpt = tmp_path / "best.pth"
     torch.save(src.state_dict(), ckpt)
 
-    loaded = load_model(ckpt, hidden=8)
+    loaded = load_model(ckpt, hidden=8, num_layers=3)
 
     assert loaded.hidden == 8
     assert loaded.conditioning == "film"

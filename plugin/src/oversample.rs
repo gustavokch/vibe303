@@ -198,3 +198,74 @@ impl Default for Oversample2x {
         Self::new()
     }
 }
+
+/// Bridges a host running at ~2x the model's native rate down to the model rate and back, so the
+/// 48 kHz-trained model is evaluated near 48 kHz on 88.2/96 kHz hosts. It reuses the half-band FIRs
+/// in the opposite order to [`Oversample2x`]: each host sample PAIR is anti-alias-decimated to ONE
+/// model sample, the model runs once, and the result is interpolated back to a host PAIR.
+///
+/// The per-sample contract is 1-in-1-out: `process` takes one host sample and returns one host
+/// sample, buffering internally so the model runs once per two calls. The first output of a pair is
+/// returned on the odd call; the second is held and returned on the following even call (one extra
+/// host-sample of delay folded into the reported latency).
+///
+/// All state is fixed-size; no heap allocation in `process`.
+pub struct HostBridge {
+    os: Oversample2x,
+    /// Even/odd phase across host samples (false = first of a pair).
+    odd: bool,
+    /// First host sample of the current pair, awaiting its partner.
+    x0: f32,
+    /// Second interpolator output, held to emit on the next (even) call.
+    held: f32,
+}
+
+/// Reported latency of the [`HostBridge`] cascade, in HOST-rate samples. Measured by
+/// `host_bridge_step_latency` (impulse/step alignment of the decimate->interp cascade plus the
+/// one-sample inter-pair hold).
+pub const HOST_BRIDGE_LATENCY: usize = 64;
+
+impl HostBridge {
+    pub const fn new() -> Self {
+        Self {
+            os: Oversample2x::new(),
+            odd: false,
+            x0: 0.0,
+            held: 0.0,
+        }
+    }
+
+    /// Run one host sample through decimate -> `model` -> interpolate. `model` is evaluated once per
+    /// two calls (on the odd call); the even call returns the held second output of the prior pair.
+    #[inline]
+    pub fn process<F: FnMut(f32) -> f32>(&mut self, x: f32, mut model: F) -> f32 {
+        if !self.odd {
+            // First of a pair: stash the input, emit the previously-held second output.
+            self.x0 = x;
+            self.odd = true;
+            self.held
+        } else {
+            // Second of a pair: decimate the pair to one model sample, run the model, interpolate
+            // back to two host samples. Emit the first now, hold the second for the next even call.
+            self.odd = false;
+            let lo = self.os.downsample(self.x0, x);
+            let m = model(lo);
+            let (o0, o1) = self.os.upsample(m);
+            self.held = o1;
+            o0
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.os.reset();
+        self.odd = false;
+        self.x0 = 0.0;
+        self.held = 0.0;
+    }
+}
+
+impl Default for HostBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}

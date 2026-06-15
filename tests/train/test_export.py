@@ -19,12 +19,30 @@ def test_exported_film_layer_present_with_shapes(tmp_path):
     out = tmp_path / "ba283.json"
     export_rtneural_json(model, out, meta={"sample_rate": 96000})
     doc = json.loads(out.read_text())
-    assert doc["format"] == "ba283-lstm-v1"
+    assert doc["format"] == "ba283-lstm-v2"
     assert doc["input_size"] == 2 and doc["lstm_input_size"] == 1
     film = next(layer for layer in doc["layers"] if layer["type"] == "film")
     assert film["shapes"] == {"weight": [64, 1], "bias": [64]}
     assert len(film["weight"]) == 64 and len(film["weight"][0]) == 1
     assert len(film["bias"]) == 64
+
+
+def test_exported_v2_has_per_layer_cells_and_init_state(tmp_path):
+    model = BA283LSTM(hidden=18, num_layers=3)
+    out = tmp_path / "ba283.json"
+    export_rtneural_json(model, out, meta={}, sample_rate=48000)
+    doc = json.loads(out.read_text())
+    assert doc["format"] == "ba283-lstm-v2"
+    assert doc["num_layers"] == 3 and doc["hidden_size"] == 18
+    assert doc["sample_rate"] == 48000
+    lstm = [layer for layer in doc["layers"] if layer["type"] == "lstm"]
+    assert [layer["layer"] for layer in lstm] == [0, 1, 2]
+    # Layer 0 takes the 1-col audio input; layers >= 1 take the previous hidden.
+    assert lstm[0]["shapes"]["weight_ih"] == [72, 1]
+    assert lstm[1]["shapes"]["weight_ih"] == [72, 18]
+    for layer in lstm:
+        assert len(layer["init_hidden"]) == 18
+        assert len(layer["init_cell"]) == 18
 
 
 def test_exported_concat_has_no_film_and_lstm_input_2(tmp_path):

@@ -52,7 +52,7 @@ def load_model(
     conditioning: str = "film",
     head: str = "linear",
     film_kind: str = "linear",
-    num_layers: int = 1,
+    num_layers: int = 3,  # match BA283LSTM default (NAM-style 3-layer)
     model_type: str = "lstm",
     d_state: int = 64,
     d_conv: int = 4,
@@ -181,7 +181,7 @@ def run_cell(
     conditioning: str = "film",
     head: str = "linear",
     film_kind: str = "linear",
-    num_layers: int = 1,
+    num_layers: int = 3,  # match BA283LSTM default (NAM-style 3-layer)
     model_type: str = "lstm",
     d_state: int = 64,
     d_conv: int = 4,

@@ -18,25 +18,42 @@ from train.model import BA283LSTM
 
 def load_model_from_json(json_path: Path) -> BA283LSTM:
     doc = json.loads(json_path.read_text())
-    assert doc["hidden_size"] == 32 and doc["input_size"] == 2
-    assert doc["format"] == "ba283-lstm-v1"
+    assert doc["format"] == "ba283-lstm-v2", doc.get("format")
+    assert doc["input_size"] == 2
     assert doc["gate_order"] == "ifgo"
+    hidden = int(doc["hidden_size"])
+    num_layers = int(doc["num_layers"])
     conditioning = doc.get("conditioning", "concat")
-    lstm = next(layer for layer in doc["layers"] if layer["type"] == "lstm")
     dense = next(layer for layer in doc["layers"] if layer["type"] == "dense")
-    m = BA283LSTM(hidden=32, conditioning=conditioning)
+
+    m = BA283LSTM(hidden=hidden, num_layers=num_layers, conditioning=conditioning)
+
+    def t(x):
+        return torch.tensor(x, dtype=torch.float32)
+
+    # Per-layer LSTM cells + learned initial state (stacked into h0/c0).
+    lstm_layers = sorted(
+        (layer for layer in doc["layers"] if layer["type"] == "lstm"),
+        key=lambda layer: layer["layer"],
+    )
+    assert len(lstm_layers) == num_layers
     sd = {
-        "lstm.weight_ih_l0": torch.tensor(lstm["weight_ih"], dtype=torch.float32),
-        "lstm.weight_hh_l0": torch.tensor(lstm["weight_hh"], dtype=torch.float32),
-        "lstm.bias_ih_l0": torch.tensor(lstm["bias_ih"], dtype=torch.float32),
-        "lstm.bias_hh_l0": torch.tensor(lstm["bias_hh"], dtype=torch.float32),
-        "dense.weight": torch.tensor(dense["weight"], dtype=torch.float32),
-        "dense.bias": torch.tensor(dense["bias"], dtype=torch.float32),
+        "dense.weight": t(dense["weight"]),
+        "dense.bias": t(dense["bias"]),
+        # (num_layers, 1, hidden): each layer's init row inserted below.
+        "h0": torch.stack([t(layer["init_hidden"]) for layer in lstm_layers]).unsqueeze(1),
+        "c0": torch.stack([t(layer["init_cell"]) for layer in lstm_layers]).unsqueeze(1),
     }
+    for layer in lstm_layers:
+        i = layer["layer"]
+        sd[f"lstm.weight_ih_l{i}"] = t(layer["weight_ih"])
+        sd[f"lstm.weight_hh_l{i}"] = t(layer["weight_hh"])
+        sd[f"lstm.bias_ih_l{i}"] = t(layer["bias_ih"])
+        sd[f"lstm.bias_hh_l{i}"] = t(layer["bias_hh"])
     if conditioning == "film":
         film = next(layer for layer in doc["layers"] if layer["type"] == "film")
-        sd["film.weight"] = torch.tensor(film["weight"], dtype=torch.float32)
-        sd["film.bias"] = torch.tensor(film["bias"], dtype=torch.float32)
+        sd["film.weight"] = t(film["weight"])
+        sd["film.bias"] = t(film["bias"])
     m.load_state_dict(sd)
     m.train(False)
     return m
@@ -47,7 +64,7 @@ def main() -> int:
     ap.add_argument(
         "--weights-json",
         type=Path,
-        default=Path("plugin/weights/ba283_lstm32.json"),
+        default=Path("plugin/weights/ba283_lstm_3x18.json"),
     )
     ap.add_argument(
         "--standalone",
@@ -69,7 +86,7 @@ def main() -> int:
 
     in_wav = Path("/tmp/rt_in.wav")
     out_wav = Path("/tmp/rt_out.wav")
-    sf.write(in_wav, x0, 96_000, subtype="FLOAT")
+    sf.write(in_wav, x0, 48_000, subtype="FLOAT")
     subprocess.check_call(
         [
             str(args.standalone),

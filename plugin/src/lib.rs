@@ -134,7 +134,7 @@ pub struct Ba283Plugin {
     /// standalone, so the Phase-4 null target matches the plugin exactly.
     channels: [ChannelDsp; 2],
     /// Host sample rate cached in `initialize`. Default to the model's native
-    /// 96 kHz so the no-oversampling path is taken until told otherwise.
+    /// 48 kHz so the direct (no-bridge) path is taken until told otherwise.
     sample_rate: f32,
     /// Last WDF R_KJ gain / bias applied to the channels (block-rate). `NAN` forces a first-block
     /// apply. WDF-only; the NeuralNet path ignores these.
@@ -449,7 +449,7 @@ impl Default for Ba283Plugin {
         Self {
             params: Arc::new(Ba283Params::default()),
             channels: [ChannelDsp::new(), ChannelDsp::new()],
-            sample_rate: 96_000.0,
+            sample_rate: 48_000.0,
             last_rgain: f32::NAN,
             last_bias: f32::NAN,
             last_tier: WdfTier::Realtime,
@@ -473,15 +473,14 @@ impl Default for Ba283Plugin {
 }
 
 impl Ba283Plugin {
-    /// Base-rate latency introduced by the 2x oversampler. When the host runs
-    /// at >= 96 kHz no oversampling is done, so latency is zero. Below 96 kHz
-    /// the upsample -> model -> downsample cascade (63-tap half-band FIR per
-    /// direction) has a group delay of 32 base-rate samples (measured by the
-    /// `upsample_then_downsample_is_unity` test, which aligns `output[i]` with
-    /// `input[i - 32]` at base rate). This is the single source of truth for
-    /// the host report and Task 3.4's dry-path delay.
+    /// Host-rate latency introduced by the [`HostBridge`]. When the host runs near the model's
+    /// native 48 kHz (below `HOST_BRIDGE_THRESHOLD_HZ`) the model runs directly, so latency is zero.
+    /// At/above the threshold (88.2/96/176.4/192 kHz) the decimate -> model -> interpolate cascade
+    /// has a group delay of `HOST_BRIDGE_LATENCY` host-rate samples (measured by the
+    /// `host_bridge_identity_after_latency` test). This is the single source of truth for the host
+    /// report and the dry-path delay.
     fn latency_samples(&self) -> u32 {
-        if self.sample_rate < 96_000.0 {
+        if self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ {
             dsp::OS_LATENCY_SAMPLES as u32
         } else {
             0
@@ -647,9 +646,9 @@ impl Plugin for Ba283Plugin {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         // Full chain via the shared per-channel `ChannelDsp` core: Drive ->
-        // model (direct at >= 96 kHz, else via 2x oversampler) -> Output, blended
+        // model (direct near 48 kHz, else via the 2x HostBridge) -> Output, blended
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
-        let host_ge_96k = self.sample_rate >= 96_000.0;
+        let use_bridge = self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ;
         let backend = self.params.backend.value();
 
         // WDF gain/bias are consumed at block rate (a cheap G0 rebuild, not per-sample-smoothed). Apply
@@ -870,7 +869,7 @@ impl Plugin for Ba283Plugin {
                 }
                 let x = *sample;
                 *sample = self.channels[ch]
-                    .process_sample(x, drive, bias, out_g, norm_gain, mix, host_ge_96k, backend);
+                    .process_sample(x, drive, bias, out_g, norm_gain, mix, use_bridge, backend);
             }
         }
         // The applied gain reached the target by the last frame; carry it as the next block's start.

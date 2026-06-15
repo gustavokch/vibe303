@@ -265,9 +265,10 @@ fn main() {
     let mut writer = hound::WavWriter::create(&output, out_spec)
         .unwrap_or_else(|e| die(&format!("cannot create output WAV {output}: {e}")));
 
-    // The offline "host SR" is the input WAV's sample rate: a 48k input exercises
-    // the oversampling path, a 96k input runs the model directly.
-    let host_ge_96k = spec.sample_rate >= 96_000;
+    // The offline "host SR" is the input WAV's sample rate: a 48k input runs the model directly, a
+    // 96k input exercises the 2x HostBridge (decimate to ~48k, interpolate back). Mirrors the
+    // plugin's HOST_BRIDGE_THRESHOLD_HZ (72 kHz).
+    let use_bridge = spec.sample_rate >= 72_000;
 
     if raw {
         // Pure model per channel — the round-trip path (no Drive/Output/Mix/OS).
@@ -332,7 +333,7 @@ fn main() {
     for frame in samples.chunks(channels) {
         for (ch, &s) in frame.iter().enumerate() {
             let y = chans[ch]
-                .process_sample(s, drive, bias, out_gain, norm_gain, mix, host_ge_96k, backend);
+                .process_sample(s, drive, bias, out_gain, norm_gain, mix, use_bridge, backend);
             writer
                 .write_sample(y)
                 .unwrap_or_else(|e| die(&format!("error writing sample: {e}")));
