@@ -1153,20 +1153,22 @@ impl QualityConfig {
             ..Self::realtime()
         }
     }
-    /// Ultra-fast tier: `fast()` + the cheap low-order transport exp (`cheap_exp`), retaining the
-    /// os=2 internal oversampling.
+    /// Ultra-fast tier: `fast()` + the cheap low-order transport exp (`cheap_exp`) + its dominant
+    /// speed lever, internal oversampling dropped to os=1 (decimation biquads bypassed).
     ///
-    /// NOTE: this tier originally dropped internal oversampling to os=1 (with the decimation biquads
-    /// bypassed) as its dominant speed lever. That was REVERTED — os=1 leaves the per-sample solve
-    /// under-resolved, and combined with the Med/Low fixed-step solver (2 iters, no convergence gate)
-    /// it produced erratic limit-cycle output peaks (raw ~60–86 vs ~56 at High) that a constant
-    /// levelNorm trim cannot tame — i.e. "VERY loud peaks on every non-realtime tier at Med/Low".
-    /// **os is now floored at 2 for ALL tiers** (enforced in `build_with`); ultra-fast keeps its
-    /// remaining levers (predict/schur/freeze-caps/ls-trim/fma + cheap_exp) for a speed gain over
-    /// fast without the os=1 instability.
+    /// os=1 is the ~1.8× speed win, but it limit-cycles into loud output peaks ONLY when combined with
+    /// the Med/Low fixed-step solver (2 iters, no convergence gate) — raw peak ~114 vs ~62 at High. At
+    /// High (full convergence) os=1 is peak-safe (raw ≈ os=2) and validated −30 dB vs SPICE. So the os
+    /// floor is CONDITIONAL: [`QualityConfig::solve_os`] forces os≥2 (re-enabling the antialiasing
+    /// decimator via [`solve_decimate`](Self::solve_decimate)) ONLY under `fixed_step`. This tier
+    /// therefore runs os=1 at High precision (fast) and is automatically floored to os=2 at Med/Low
+    /// (safe). Previously os was floored at 2 unconditionally, which also removed the speed lever from
+    /// the safe High path.
     pub fn ultra_fast() -> Self {
         Self {
             cheap_exp: true, // T3: low-order transport exp (~2%); ultra-fast tier accepts the op-point bias
+            os: 1,           // dominant speed lever; floored to 2 under fixed_step (see solve_os)
+            decimate: false, // nothing to decimate at os=1; re-enabled if solve_os floors os up to 2
             ..Self::fast()
         }
     }
@@ -1221,6 +1223,26 @@ impl QualityConfig {
                 ..self
             },
         }
+    }
+
+    /// Effective internal oversampling, the single source of truth used by both `build_with` and
+    /// `new_with`. os=1 is allowed for the full-convergence solver (the ultra-fast/warp speed lever,
+    /// peak-safe at High), but the fixed-step solver (Med/Low precision) limit-cycles into loud peaks
+    /// at os=1, so it is floored to 2. No config — including a hand-assembled `fixed_step` one — can
+    /// solve at os=1.
+    pub fn solve_os(&self) -> usize {
+        if self.fixed_step {
+            self.os.max(2)
+        } else {
+            self.os.max(1)
+        }
+    }
+
+    /// Effective decimation. When [`solve_os`](Self::solve_os) floors os up to 2 under `fixed_step`
+    /// (the tier had set os=1 / decimate=false), the antialiasing decimator MUST run on the now-
+    /// oversampled stream, even though the tier requested no decimation. Otherwise honour the tier.
+    pub fn solve_decimate(&self) -> bool {
+        self.decimate || (self.fixed_step && self.os < 2)
     }
 }
 
@@ -1844,11 +1866,12 @@ impl WdfModel {
             ls_trim: cfg.ls_trim,
             fma: cfg.fma,
             fixed_step: cfg.fixed_step,
-            // os is floored at 2 for ALL tiers: os=1 leaves the per-sample Newton solve
-            // under-resolved and, with the Med/Low fixed-step solver, produces erratic loud output
-            // peaks. Hard floor here so no config (incl. a hand-assembled one) can solve at os=1.
-            os: cfg.os.max(2),
-            decimate: cfg.decimate,
+            // os=1 is permitted for the full-convergence solver (ultra-fast/warp speed lever) but
+            // floored to 2 under the fixed-step solver, where os=1 limit-cycles into loud peaks.
+            // `solve_os`/`solve_decimate` are the single source of truth (also used by `new_with`),
+            // so no config — including a hand-assembled `fixed_step` one — can solve at os=1.
+            os: cfg.solve_os(),
+            decimate: cfg.solve_decimate(),
             v_pred_prev: [0.0; NUM_NODES],
             predict_primed: false,
             in_audio_pass: false,
@@ -1914,9 +1937,9 @@ impl WdfModel {
 
     /// Like [`new`], but with an explicit [`QualityConfig`] (tier/lever selection).
     pub fn new_with(cfg: QualityConfig, host_sr: f64, rgain: f64, bias: f64) -> Self {
-        // os is floored at 2 (see build_with) — keep internal_sr consistent with the floored os so dt
+        // Use the same effective os as build_with (conditional floor under fixed_step) so dt
         // (= 1/internal_sr) matches the per-host-sample subsample count.
-        let internal_sr = host_sr * cfg.os.max(2) as f64;
+        let internal_sr = host_sr * cfg.solve_os() as f64;
         let mut m = Self::build_with(cfg, internal_sr, rgain, bias);
         // Decimation biquads are always configured, used when `cfg.decimate` (see
         // `process_host_sample`). At os=2 they are the antialiasing decimator and stay on; configuring
@@ -3944,24 +3967,38 @@ mod tests {
     }
 
     #[test]
-    fn ultra_fast_keeps_os2_floor() {
-        // os=1 was reverted (it under-resolved the per-sample solve and, with Med/Low fixed-step,
-        // produced erratic loud peaks). os is floored at 2 for ALL tiers; decimation stays on.
+    fn ultra_fast_os_conditional_floor() {
+        // ultra-fast runs os=1 (its speed lever) at High precision — peak-safe there — but the os
+        // floor kicks in to os=2 under the Med/Low fixed-step solver, where os=1 limit-cycles.
         let cfg = QualityConfig::ultra_fast();
-        assert_eq!(cfg.os, 2, "ultra-fast must keep os=2 (os=1 reverted)");
-        assert!(cfg.decimate, "ultra-fast must keep the os=2 antialiasing decimator");
+        assert_eq!(cfg.os, 1, "ultra-fast High runs os=1 (the speed lever)");
+        assert!(!cfg.decimate, "ultra-fast High bypasses decimation (nothing to decimate at os=1)");
         assert!(cfg.cheap_exp, "ultra-fast keeps the cheap transport exp lever");
         assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
                 "ultra-fast inherits the fast-tier levers");
-        // Even a hand-assembled os=1 config is floored to 2 by build_with.
-        let host = 48_000.0;
+        // solve_os/solve_decimate resolve the effective values.
+        assert_eq!(cfg.solve_os(), 1, "High: no fixed_step -> os=1 stands");
+        assert!(!cfg.solve_decimate(), "High: os=1 -> no decimation");
+
+        // Med/Low layer on fixed_step -> os floored to 2, decimator re-enabled.
+        for p in [Precision::Medium, Precision::Low] {
+            let c = cfg.with_precision(p);
+            assert_eq!(c.solve_os(), 2, "{p:?}: fixed_step floors os to 2");
+            assert!(c.solve_decimate(), "{p:?}: floored os=2 must re-enable the decimator");
+            let m = WdfModel::new_with(c, 48_000.0, 220.0, 0.5);
+            assert_eq!(m.os, 2, "{p:?}: built model must solve at os=2");
+            assert!(m.decimate, "{p:?}: built model must decimate");
+        }
+        // Even a hand-assembled fixed_step + os=1 config is floored to 2 (single source of truth).
         let mut forced = cfg;
+        forced.fixed_step = true;
         forced.os = 1;
-        let m = WdfModel::new_with(forced, host, 220.0, 0.5);
-        assert_eq!(m.os, 2, "build_with must floor os at 2");
-        // ultra-fast still produces finite output (no NaN/instability) on a quick ramp.
-        let mut m = WdfModel::new_with(cfg, host, 220.0, 0.5);
-        assert_eq!(m.os, 2);
+        let m = WdfModel::new_with(forced, 48_000.0, 220.0, 0.5);
+        assert_eq!(m.os, 2, "fixed_step must floor os at 2 even when hand-assembled");
+        assert!(m.decimate, "and re-enable the decimator");
+        // ultra-fast High produces finite output (no NaN/instability) on a quick ramp.
+        let mut m = WdfModel::new_with(cfg, 48_000.0, 220.0, 0.5);
+        assert_eq!(m.os, 1);
         for i in 0..256 {
             let y = m.process_host_sample((i as f32 / 256.0) * 0.4 - 0.2);
             assert!(y.is_finite(), "ultra-fast output non-finite at sample {i}");
@@ -3973,8 +4010,8 @@ mod tests {
         let cfg = QualityConfig::warp();
         // It is ultra-fast with cap_tier=Off and nothing else changed.
         assert_eq!(cfg.cap_tier, CapTier::Off, "must drop the BJT charge model");
-        assert_eq!(cfg.os, 2, "inherits ultra-fast os=2 floor");
-        assert!(cfg.decimate, "inherits ultra-fast decimation (os=2)");
+        assert_eq!(cfg.os, 1, "inherits ultra-fast os=1 (High speed lever)");
+        assert!(!cfg.decimate, "inherits ultra-fast os=1 decimation bypass");
         assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
                 "inherits the fast-tier levers");
         // Distinct from Precision::Low: this keeps the full convergence gate (no fixed-step cap).
@@ -3994,7 +4031,7 @@ mod tests {
         // the antialiasing decimator, so toggling them MUST change the output. (Same input, same
         // circuit, same seed — only `decimate` toggled.)
         let host = 48_000.0;
-        let mut base = QualityConfig::ultra_fast(); // os=2 (floored), decimate on
+        let mut base = QualityConfig::fast(); // os=2 tier; toggle the decimator only
         base.decimate = false;
         let mut filt = base; // os=2, decimate=true
         filt.decimate = true;

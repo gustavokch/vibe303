@@ -194,11 +194,12 @@ pub enum InferenceBackend {
 /// WDF solver tier. `Realtime` is the bit-exact reference (all speed levers off); `Fast` bakes in
 /// predict + schur + freeze-caps + ls-trim (~5x faster, near-transparent); `UltraFast` adds the
 /// cheap low-order transport exp on top of Fast; `Warp` additionally drops the BJT junction charge
-/// model (~19 % more per-sample cost gone) — the caps shape only the top octave. NOTE: UltraFast/Warp
-/// originally also dropped internal oversampling 2→1; that was REVERTED — os=1 left the per-sample
-/// solve under-resolved and produced erratic loud output peaks at Med/Low precision. **os is now
-/// floored at 2 for all tiers**, so UltraFast/Warp are slower than before but stable. WDF-only; the
-/// NeuralNet backend ignores it.
+/// model (~19 % more per-sample cost gone) — the caps shape only the top octave. UltraFast/Warp also
+/// drop internal oversampling 2→1 (their dominant ~1.8x speed lever) at High precision, where os=1 is
+/// peak-safe. The os floor is CONDITIONAL: under the Med/Low fixed-step solver (which limit-cycles
+/// into loud peaks at os=1) `QualityConfig::solve_os` forces os back to 2. So selecting UltraFast/Warp
+/// noticeably drops CPU at High; at Med/Low they fall back to the os=2 cost. WDF-only; the NeuralNet
+/// backend ignores it.
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum WdfTier {
     #[name = "Realtime"]
