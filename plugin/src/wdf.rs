@@ -1228,8 +1228,9 @@ impl QualityConfig {
     /// Effective internal oversampling, the single source of truth used by both `build_with` and
     /// `new_with`. os=1 is allowed for the full-convergence solver (the ultra-fast/warp speed lever,
     /// peak-safe at High), but the fixed-step solver (Med/Low precision) limit-cycles into loud peaks
-    /// at os=1, so it is floored to 2. No config — including a hand-assembled `fixed_step` one — can
-    /// solve at os=1.
+    /// at os=1, so it is floored to 2. No *built or rebuilt* model — including one from a
+    /// hand-assembled `fixed_step` config — can solve at os=1. (The lone exception is the near-linear
+    /// `measure_gain` probe, which mutates an already-built model directly; see its NOTE.)
     pub fn solve_os(&self) -> usize {
         if self.fixed_step {
             self.os.max(2)
@@ -3643,8 +3644,9 @@ impl WdfModel {
             self.v[node::N_INPUT as usize] = self.prev_in + (cur_in - self.prev_in) * frac;
             self.process();
             let tap = self.v[node::N_SEC_IN as usize] - self.sec_in_dc;
-            // At os>1 (always, since os is floored at 2) the biquads are the antialiasing decimator.
-            // The `decimate=false` bypass remains for A/B testing only.
+            // At os>1 (Realtime, and UltraFast/Warp floored to os=2 under Med/Low fixed-step) the
+            // biquads are the antialiasing decimator. At os=1 (UltraFast/Warp at High) there is
+            // nothing to decimate and `decimate=false` is the live bypass, not just an A/B knob.
             decimated = if self.decimate {
                 self.dec2.process(self.dec1.process(tap))
             } else {
@@ -3678,6 +3680,12 @@ impl WdfModel {
         // stimulus keeps the circuit near-linear, where a 2-iter fixed-step solve converges to the
         // SAME small-signal gain as the full Newton solve. `os`/`dt`/`cap_tier` are left untouched —
         // they set the solve timestep + the AC frequency shaping that actually defines G_v.
+        //
+        // NOTE: this is the one place `fixed_step` runs at the tier's `os` (which is 1 for UltraFast/
+        // Warp at High) — it mutates an already-built model, bypassing `solve_os`. That is deliberate
+        // and safe: the os-floor exists because `fixed_step` + os=1 limit-cycles into loud peaks under
+        // program-level drive, but this probe is a 0.05 V near-linear, deterministic measurement that
+        // never enters that regime, and preserving `os`/`dt` is what keeps the measured gain correct.
         m.fixed_step = true;
         m.predict = false;
         m.max_iters = m.max_iters.min(2);
@@ -4022,6 +4030,23 @@ mod tests {
         for i in 0..256 {
             let y = m.process_host_sample((i as f32 / 256.0) * 0.4 - 0.2);
             assert!(y.is_finite(), "warp output non-finite at sample {i}");
+        }
+    }
+
+    #[test]
+    fn measure_gain_finite_on_os1_tiers() {
+        // measure_gain clones the model and sets fixed_step=true while keeping the tier's os — which
+        // is 1 for UltraFast/Warp at High. That is the one place fixed_step runs at os=1 (the probe
+        // bypasses solve_os deliberately; see its NOTE). Pin that this near-linear probe stays finite
+        // and returns a sane positive gain, so a future change to the probe or the floor can't break it.
+        for cfg in [QualityConfig::ultra_fast(), QualityConfig::warp()] {
+            assert_eq!(cfg.os, 1, "precondition: tier runs os=1 at High");
+            let mut m = WdfModel::new_with(cfg, 48_000.0, 220.0, 0.5);
+            assert_eq!(m.os, 1, "built High model must solve at os=1");
+            m.warmup();
+            let g = m.measure_gain();
+            assert!(g.is_finite() && g > 0.0, "os=1 probe gain must be finite and positive, got {g}");
+            assert!(g < 1.0e3, "os=1 probe gain must stay in a sane band (no limit cycle), got {g}");
         }
     }
 
