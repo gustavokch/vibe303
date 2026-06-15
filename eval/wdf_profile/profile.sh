@@ -35,7 +35,12 @@ done
 
 BIN="$REPO/target/profiling-thin/ba283_standalone"
 if [[ ! -x "$BIN" ]]; then
-  echo "Build first:  RUSTFLAGS='-C force-frame-pointers=yes' cargo build --profile profiling-thin -p ba283 --bin ba283_standalone"
+  # NOTE: RUSTFLAGS REPLACES .cargo/config.toml's rustflags (it does not merge), so we MUST
+  # re-add target-cpu=x86-64-v3 here — else `mul_add` falls back to the libm `fma()` software
+  # routine (shows up as a fake ~25% `fma_with_fma`/`fma` on the fma=true tiers) and `floor`
+  # becomes a libm call instead of `vroundsd`. The shipped plugin always has v3, so profiling
+  # without it mis-attributes the hot path.
+  echo "Build first:  RUSTFLAGS='-C target-cpu=x86-64-v3 -C force-frame-pointers=yes' cargo build --profile profiling-thin -p ba283 --bin ba283_standalone"
   exit 1
 fi
 
