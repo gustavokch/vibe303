@@ -66,11 +66,14 @@ def main() -> None:
                 a_rt = metrics(rt_high, mod)["esr_db"]
                 at = f"{a_tier:+.1f}" if a_tier is not None else "   base"
                 print(f"  {tier:<11}{prec:<8}{at:>18}{a_rt:>+16.1f}")
-                # gate: precision added-error on os=2 tiers (where it's a pure device-model delta)
-                if a_tier is not None and tier in ("realtime", "fast"):
+                # gate: precision added-error vs the SAME tier's High. This is a pure device-model
+                # delta on EVERY tier (same iteration strategy, same os, only cap_tier/cheap_exp
+                # differ), so it is well-posed on the os=1 tiers too — a fidelity regression in
+                # UltraFast/Warp Med/Low must fail here, not slip through.
+                if a_tier is not None:
                     worst_gate = max(worst_gate, a_tier)
 
-    print(f"\nGATE (worst Med/Low added-error vs same-tier High, os=2 tiers): "
+    print(f"\nGATE (worst Med/Low added-error vs same-tier High, all tiers): "
           f"{worst_gate:+.1f} dB  budget <= {GATE_DB:.0f} dB  -> "
           f"{'PASS' if worst_gate <= GATE_DB else 'FAIL'}")
 

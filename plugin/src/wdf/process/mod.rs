@@ -357,10 +357,14 @@ impl WdfModel {
         // they set the solve timestep + the AC frequency shaping that actually defines G_v.
         //
         // NOTE: this is the one place `fixed_step` runs at the tier's `os` (which is 1 for UltraFast/
-        // Warp at High) — it mutates an already-built model, bypassing `solve_os`. That is deliberate
-        // and safe: the os-floor exists because `fixed_step` + os=1 limit-cycles into loud peaks under
-        // program-level drive, but this probe is a 0.05 V near-linear, deterministic measurement that
-        // never enters that regime, and preserving `os`/`dt` is what keeps the measured gain correct.
+        // Warp — at EVERY precision now, not only High: precision is device-model-only and no longer
+        // floors the rate, so Med/Low also build at os=1 and the probe clones that). It mutates an
+        // already-built model, bypassing `solve_os`. That is deliberate and safe: the old os-floor
+        // existed because `fixed_step` + os=1 limit-cycles into loud peaks under program-level drive,
+        // but this probe is a 0.05 V near-linear, deterministic measurement that never enters that
+        // regime, and preserving `os`/`dt` is what keeps the measured gain correct. (Trapezoidal
+        // frequency warp at the 1 kHz probe differs negligibly between os=1/os=2; the
+        // `gain_probe_os1_tiers_track_high` test pins that Med/Low track High on the os=1 tiers.)
         m.fixed_step = true;
         m.predict = false;
         m.max_iters = m.max_iters.min(2);

@@ -96,8 +96,9 @@ fn precision_med_low_finite_and_within_budget() {
     // (2) Tracking guardrail: re-install the clean snapshot, then score an 80 Hz→2.5 kHz chirp
     // (integrated phase) at a musical level against Realtime+High, lag-aligned (the reduced device
     // model shifts the op-point slightly, adding a small group-delay — same reason the offline
-    // harness carries a `lag` field). The authoritative −50 dB budget is the `eval/plugin_vs_acme` sweep on the real
-    // `sweep_m3` corpus + full metric, which a unit test can't reproduce (a broadband synthetic
+    // harness carries a `lag` field). The authoritative −50 dB budget is the `eval/plugin_vs_acme`
+    // sweep on the real `sweep_m3` corpus + full metric, which a unit test can't reproduce (a
+    // broadband synthetic
     // chirp excites the reduced charge model harder, ≈−35 dB here). So this asserts the robust
     // property — Medium/Low TRACK Realtime+High (aligned ESR ≤ −25 dB), not collapsed/diverged —
     // with ~10 dB margin; a real regression (NaN, silence, instability) blows far past it.
@@ -253,6 +254,33 @@ fn measure_gain_finite_on_os1_tiers() {
         let g = m.measure_gain();
         assert!(g.is_finite() && g > 0.0, "os=1 probe gain must be finite and positive, got {g}");
         assert!(g < 1.0e3, "os=1 probe gain must stay in a sane band (no limit cycle), got {g}");
+    }
+}
+
+#[test]
+fn gain_probe_os1_tiers_track_high() {
+    // After the 3-axis refactor, Med/Low build at the tier os (1 for UltraFast/Warp) instead of the
+    // old floored os=2, so their levelNorm probe now runs at os=1 too. The probe is a 0.05 V
+    // near-linear small-signal measurement, so the os=1/os=2 trapezoidal-warp difference at 1 kHz
+    // must be negligible: Med/Low measured gain must track High closely. (Guards the documented
+    // probe-rate behavior change in `measure_gain`'s NOTE — a regression here means the levelNorm
+    // trim would jump audibly when only the precision dial moved.)
+    for cfg in [QualityConfig::ultra_fast(), QualityConfig::warp()] {
+        let mut hi = WdfModel::new_with(cfg.with_precision(Precision::High), 48_000.0, 220.0, 0.5);
+        hi.warmup();
+        let g_hi = hi.measure_gain();
+        assert!(g_hi.is_finite() && g_hi > 0.0, "High probe gain must be sane, got {g_hi}");
+        for p in [Precision::Medium, Precision::Low] {
+            let mut m = WdfModel::new_with(cfg.with_precision(p), 48_000.0, 220.0, 0.5);
+            assert_eq!(m.os, 1, "{p:?}: os=1 tier must stay os=1 (no floor)");
+            m.warmup();
+            let g = m.measure_gain();
+            assert!(g.is_finite() && g > 0.0, "{p:?} probe gain must be sane, got {g}");
+            // Device-model step at a near-linear probe level moves the gain only slightly; 5% is a
+            // generous band that still catches an os-mismatch or limit-cycle (which would be >>1).
+            let rel = (g - g_hi).abs() / g_hi;
+            assert!(rel < 0.05, "{p:?} probe gain {g} must track High {g_hi} (rel {rel:.3} >= 0.05)");
+        }
     }
 }
 
