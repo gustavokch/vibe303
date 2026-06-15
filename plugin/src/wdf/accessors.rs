@@ -10,7 +10,7 @@ impl WdfModel {
         }
     }
     #[inline]
-    pub(crate) fn node_v_prev(&self, id: i32) -> f64 {
+    pub(in crate::wdf) fn node_v_prev(&self, id: i32) -> f64 {
         if id < 0 {
             0.0
         } else {
@@ -19,7 +19,7 @@ impl WdfModel {
     }
     /// GND-safe row lookup (`main.cpp:449`).
     #[inline]
-    pub(crate) fn ur(&self, id: i32) -> i32 {
+    pub(in crate::wdf) fn ur(&self, id: i32) -> i32 {
         if id < 0 {
             -1
         } else {

@@ -5,7 +5,7 @@ impl WdfModel {
     /// Residual 2-norm at current `v` (for line search / convergence), reusing per-sample `hist`.
     /// Must stamp the SAME branches as `newton_iterate`'s F for line-search consistency
     /// (`main.cpp:717-761`).
-    pub(crate) fn residual_norm(&mut self, gmin: f64) -> f64 {
+    pub(in crate::wdf) fn residual_norm(&mut self, gmin: f64) -> f64 {
         use node::{N_A, N_PA, N_SA};
         let u = self.u;
         for i in 0..u {
@@ -109,7 +109,7 @@ impl WdfModel {
     /// Dense Gaussian elimination with index-swap partial pivoting. Solves `A x = b` in place
     /// (`x` in `b`). `A` is accessed through the `row[]` permutation; `b` is swapped physically —
     /// the asymmetry is bit-identical to row-swap (`main.cpp:764-794`, commit 42b51ef).
-    pub(crate) fn gauss_solve(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
+    pub(in crate::wdf) fn gauss_solve(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
         let mut row = [0usize; NUM_NODES];
         for (i, slot) in row.iter_mut().enumerate().take(n) {
             *slot = i;
@@ -159,7 +159,7 @@ impl WdfModel {
     /// same pivot selection (max-abs, `>` tie-break, scan `col+1..16`), same `f`, same operand
     /// order, same loop bounds (`col..16` / `r+1..16`), same `f == 0.0` short-circuit and
     /// `best < 1e-30` bail. Physical-swap vs index-swap differs only in memory address.
-    pub(crate) fn gauss_solve_16(a: &mut [f64], b: &mut [f64]) -> bool {
+    pub(in crate::wdf) fn gauss_solve_16(a: &mut [f64], b: &mut [f64]) -> bool {
         const N: usize = 16;
         for col in 0..N {
             // Pivot selection: max-abs in column `col`, scan col+1..N, strict `>` tie-break.
@@ -215,7 +215,7 @@ impl WdfModel {
     /// `>` tie-break, scan `col+1..6`), same `f`, same operand order, same loop bounds
     /// (`col..6` / `r+1..6`), same `f == 0.0` short-circuit and `best < 1e-30` bail. Physical-swap
     /// vs index-swap differs only in memory address. Used by `schur_solve` for the n=6 complement.
-    pub(crate) fn gauss_solve_6(a: &mut [f64], b: &mut [f64]) -> bool {
+    pub(in crate::wdf) fn gauss_solve_6(a: &mut [f64], b: &mut [f64]) -> bool {
         const N: usize = 6;
         for col in 0..N {
             // Pivot selection: max-abs in column `col`, scan col+1..N, strict `>` tie-break.
@@ -268,7 +268,7 @@ impl WdfModel {
     /// Reusable LU (partial pivot, index-swap) for the constant per-sample A_LL block: factor
     /// once, apply many times. Stores L/U in-place (row-permuted) + the pivot order so any RHS
     /// can be solved without refactoring (`main.cpp:1026-1047`).
-    pub(crate) fn lu_factor(a: &mut [f64], piv: &mut [usize], n: usize) -> bool {
+    pub(in crate::wdf) fn lu_factor(a: &mut [f64], piv: &mut [usize], n: usize) -> bool {
         for (i, slot) in piv.iter_mut().enumerate().take(n) {
             *slot = i;
         }
@@ -305,7 +305,7 @@ impl WdfModel {
 
     /// Solve `A x = b` in place (`x` in `b`) using LU factors + pivot order from [`lu_factor`]
     /// (`main.cpp:1049-1062`). `y` scratch is a stack array (no heap alloc).
-    pub(crate) fn lu_solve(a: &[f64], piv: &[usize], n: usize, b: &mut [f64]) {
+    pub(in crate::wdf) fn lu_solve(a: &[f64], piv: &[usize], n: usize, b: &mut [f64]) {
         let mut y = [0.0f64; NUM_NODES];
         for r in 0..n {
             let mut s = b[piv[r]];
@@ -331,7 +331,7 @@ impl WdfModel {
     /// strict `>` tie-break), same `f`, same operand order, same loop bounds (`col+1..10`), same
     /// unit-diagonal-L multiplier storage, same `f == 0.0` short-circuit, same `best < 1e-30` bail.
     /// Physical-swap vs index-swap differs only in memory address.
-    pub(crate) fn lu_factor_10(a: &mut [f64], perm: &mut [usize]) -> bool {
+    pub(in crate::wdf) fn lu_factor_10(a: &mut [f64], perm: &mut [usize]) -> bool {
         const N: usize = 10;
         for (i, slot) in perm.iter_mut().enumerate().take(N) {
             *slot = i;
@@ -378,7 +378,7 @@ impl WdfModel {
     /// `perm` row permutation from [`lu_factor_10`]. Bit-identical to `lu_solve(a, piv, 10, b)`:
     /// the RHS read `b[perm[r]]` matches `b[piv[r]]`, factor reads are the same values in natural
     /// row order, forward/back substitution are SCALAR reductions in the same summation order.
-    pub(crate) fn lu_solve_10(a: &[f64], perm: &[usize], b: &mut [f64]) {
+    pub(in crate::wdf) fn lu_solve_10(a: &[f64], perm: &[usize], b: &mut [f64]) {
         const N: usize = 10;
         let mut y = [0.0f64; NUM_NODES];
         for r in 0..N {

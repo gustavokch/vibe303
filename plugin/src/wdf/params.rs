@@ -67,7 +67,7 @@ impl WdfModel {
     /// four RK4 stages and updated from the net field change at the end.
     #[cfg(feature = "trafo-core")]
     #[inline]
-    pub(crate) fn ja_commit(&mut self) {
+    pub(in crate::wdf) fn ja_commit(&mut self) {
         use node::{N_A, N_PA};
         let vm = self.node_v(N_PA) - self.node_v(N_A);
         // trapezoidal flux at the converged magnetizing voltage
@@ -109,7 +109,7 @@ impl WdfModel {
     /// operating point: warmup→audio (`process_host_sample`) and inactive→active (`set_trafo`).
     #[cfg(feature = "trafo-core")]
     #[inline]
-    pub(crate) fn ja_reseed(&mut self) {
+    pub(in crate::wdf) fn ja_reseed(&mut self) {
         self.ja_m = 0.0;
         self.ja_h_prev = 0.0;
         self.ja_phi_prev = 0.0;

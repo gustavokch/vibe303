@@ -5,7 +5,7 @@ impl WdfModel {
     /// One Newton solve (up to `max_iters`) at the given `gmin` regularization. Returns iters used.
     /// Honors the active levers: `ls_trim` (deferred line search), `freeze_caps` (frozen iter-0
     /// cap companion), and `solver` (dense vs Schur) (`main.cpp:701-927`).
-    pub(crate) fn newton_iterate(&mut self, gmin: f64) -> usize {
+    pub(in crate::wdf) fn newton_iterate(&mut self, gmin: f64) -> usize {
         use node::{N_A, N_PA, N_SA};
         let u = self.u;
         let mut iters_used = 0;

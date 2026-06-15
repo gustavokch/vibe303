@@ -244,16 +244,16 @@ impl Default for QualityConfig {
 pub const OS: usize = 2;
 
 // Worst-case fixed-array bounds (RB off uses 17 resistors / 7 caps; sized for RB-on headroom).
-pub(crate) const MAX_RES: usize = 24;
-pub(crate) const MAX_CAPS: usize = 8;
+pub(in crate::wdf) const MAX_RES: usize = 24;
+pub(in crate::wdf) const MAX_CAPS: usize = 8;
 
 // --- component aging drift bands (max signed deviation at age=1.0) ---
 // Resistors drift up/down a few percent (carbon/metal-film aging + tolerance spread).
-pub(crate) const R_DRIFT_MAX: f64 = 0.05; // ±5%
+pub(in crate::wdf) const R_DRIFT_MAX: f64 = 0.05; // ±5%
 // Film caps are stable; small symmetric spread.
-pub(crate) const C_FILM_DRIFT: f64 = 0.05; // ±5%
+pub(in crate::wdf) const C_FILM_DRIFT: f64 = 0.05; // ±5%
 // Electrolytics lose capacitance with age (dry-out): directional, mostly downward.
-pub(crate) const C_ELEC_DROP_MAX: f64 = 0.20; // up to -20%
-pub(crate) const C_ELEC_DROP_MIN: f64 = 0.02; // up to +2%
+pub(in crate::wdf) const C_ELEC_DROP_MAX: f64 = 0.20; // up to -20%
+pub(in crate::wdf) const C_ELEC_DROP_MIN: f64 = 0.02; // up to +2%
 // Farad threshold separating electrolytic (drift directional) from film (drift symmetric).
-pub(crate) const C_ELEC_THRESH_F: f64 = 1.0e-6;
+pub(in crate::wdf) const C_ELEC_THRESH_F: f64 = 1.0e-6;

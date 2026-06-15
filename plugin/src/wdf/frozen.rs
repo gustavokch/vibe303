@@ -6,7 +6,7 @@ impl WdfModel {
     /// bit-exactness guard, so the two can't silently drift (cf. the duplication warning on the
     /// `depletion_charge_pre` golden test). Mirrors the per-BJT charge built in `newton_iterate`.
     #[inline]
-    pub(crate) fn junction_charges(&self, t: &Bjt) -> (f64, f64) {
+    pub(in crate::wdf) fn junction_charges(&self, t: &Bjt) -> (f64, f64) {
         let tf = if self.cap_tier == CapTier::Full { t.p.tf } else { 0.0 };
         let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
         let vbe = self.node_v(t.b) - self.node_v(t.e);

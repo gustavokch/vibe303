@@ -238,8 +238,20 @@ mod frozen;
 mod process;
 mod snapshot;
 
-pub use aging::*;
-pub use bjt::*;
-pub use components::*;
-pub use config::*;
-pub use math::*;
+// Internal re-imports: bring submodule `pub(in crate::wdf)` helpers (e.g. `exp_bl`,
+// `BjtOutSoA`, `MAX_RES`) into this module's scope so sibling submodules resolve them
+// via `use super::*`. Only the modules that export such helpers are needed here.
+use bjt::*;
+use config::*;
+use math::*;
+
+// Public API surface — explicit re-exports reproduce the pre-split `crate::wdf::*`
+// paths exactly (consumed by `dsp.rs` and the integration-test/bench/bin crates).
+pub use aging::{reroll_seed, AgePattern, JaCore};
+pub use bjt::{compute_bjt, BjtOut};
+pub use components::{bc184c, dep_sat_consts, q2n3055, Bjt, BjtParams, Biquad, Cap, Res};
+pub use config::{CapTier, Precision, QualityConfig, Solver, OS};
+pub use math::{
+    depletion_charge, depletion_charge_pre, diode_branch, exp_, fast_exp, fast_log,
+    fast_pow_pos, pow_, ultra_exp, EXACT,
+};

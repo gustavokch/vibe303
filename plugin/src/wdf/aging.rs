@@ -35,8 +35,8 @@ pub fn reroll_seed(seed: u64) -> u64 {
 /// deviations; unused array slots stay 0.0.
 #[derive(Clone, Copy, Debug)]
 pub struct AgePattern {
-    pub(crate) res_dev: [f64; MAX_RES],
-    pub(crate) cap_dev: [f64; MAX_CAPS],
+    pub(in crate::wdf) res_dev: [f64; MAX_RES],
+    pub(in crate::wdf) cap_dev: [f64; MAX_CAPS],
 }
 
 impl AgePattern {
@@ -105,10 +105,10 @@ pub struct JaCore {
     alpha: f64,  // inter-domain mean-field coupling
     k: f64,      // pinning (hysteresis loss; A/m)
     c: f64,      // reversibility 0..1
-    pub(crate) mu0: f64,    // vacuum permeability
-    pub(crate) k_phi: f64,  // volts→flux lump: phi = k_phi * B  (= N_p * A_e)
-    pub(crate) k_hi: f64,   // current→field lump: H = k_hi * i_m (= N_p / l_e)
-    pub(crate) lp_eff: f64, // small-signal magnetizing inductance implied by the constants (for the deviation)
+    pub(in crate::wdf) mu0: f64,    // vacuum permeability
+    pub(in crate::wdf) k_phi: f64,  // volts→flux lump: phi = k_phi * B  (= N_p * A_e)
+    pub(in crate::wdf) k_hi: f64,   // current→field lump: H = k_hi * i_m (= N_p / l_e)
+    pub(in crate::wdf) lp_eff: f64, // small-signal magnetizing inductance implied by the constants (for the deviation)
 }
 
 #[cfg(feature = "trafo-core")]
@@ -180,7 +180,7 @@ impl JaCore {
     /// susceptibility. No inner Newton — this is the integrand the RK4 core advances. `delta` is
     /// the frozen field-rate direction (per-sample), passed in by the caller.
     #[inline]
-    pub(crate) fn dmdb(&self, b: f64, m: f64, delta: f64) -> f64 {
+    pub(in crate::wdf) fn dmdb(&self, b: f64, m: f64, delta: f64) -> f64 {
         let h = b / self.mu0 - m;
         let s = self.slope(h, m, delta);
         s / (self.mu0 * (1.0 + s))

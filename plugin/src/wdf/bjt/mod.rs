@@ -167,7 +167,7 @@ fn compute_bjt_preexp<const FMA: bool>(vbe: f64, vbc: f64, p: &BjtParams, ef: f6
 /// AVX2 packed `vdivpd`/`vsqrtpd`/`vmulpd`. Bit-exact with `compute_bjt_preexp` at `FMA=false`
 /// (same per-lane op tree); guarded by `compute_bjt_preexp_batch_is_bit_exact`.
 #[inline]
-pub(crate) fn compute_bjt_preexp_batch<const FMA: bool>(
+pub(in crate::wdf) fn compute_bjt_preexp_batch<const FMA: bool>(
     vbe: &[f64; 4],
     vbc: &[f64; 4],
     bjts: &[Bjt; 3],
@@ -252,23 +252,23 @@ pub(crate) fn compute_bjt_preexp_batch<const FMA: bool>(
 /// Produced by `compute_bjt_preexp_batch` on the production path and by `compute_bjt_batch`
 /// under `#[cfg(test)]` for its contract guard.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct BjtOutSoA {
-    pub(crate) ib:    [f64; 4],
-    pub(crate) ic:    [f64; 4],
-    pub(crate) ie:    [f64; 4],
-    pub(crate) itf:   [f64; 4],
-    pub(crate) gtf:   [f64; 4],
-    pub(crate) itr:   [f64; 4],
-    pub(crate) gtr:   [f64; 4],
-    pub(crate) dib_b: [f64; 4],
-    pub(crate) dib_e: [f64; 4],
-    pub(crate) dib_c: [f64; 4],
-    pub(crate) dic_b: [f64; 4],
-    pub(crate) dic_e: [f64; 4],
-    pub(crate) dic_c: [f64; 4],
-    pub(crate) die_b: [f64; 4],
-    pub(crate) die_e: [f64; 4],
-    pub(crate) die_c: [f64; 4],
+pub(in crate::wdf) struct BjtOutSoA {
+    pub(in crate::wdf) ib:    [f64; 4],
+    pub(in crate::wdf) ic:    [f64; 4],
+    pub(in crate::wdf) ie:    [f64; 4],
+    pub(in crate::wdf) itf:   [f64; 4],
+    pub(in crate::wdf) gtf:   [f64; 4],
+    pub(in crate::wdf) itr:   [f64; 4],
+    pub(in crate::wdf) gtr:   [f64; 4],
+    pub(in crate::wdf) dib_b: [f64; 4],
+    pub(in crate::wdf) dib_e: [f64; 4],
+    pub(in crate::wdf) dib_c: [f64; 4],
+    pub(in crate::wdf) dic_b: [f64; 4],
+    pub(in crate::wdf) dic_e: [f64; 4],
+    pub(in crate::wdf) dic_c: [f64; 4],
+    pub(in crate::wdf) die_b: [f64; 4],
+    pub(in crate::wdf) die_e: [f64; 4],
+    pub(in crate::wdf) die_c: [f64; 4],
 }
 
 /// Evaluate 3 BJTs as a width-4 SoA batch (lane 3 = padding, never scattered).
@@ -450,7 +450,7 @@ fn dep_charge_lane_bl<const FMA: bool>(v: f64, cj0: f64, vj: f64, m: f64, c0: f6
 
 /// Width-4 SoA depletion charge. Call ×2 (BE then BC) with the appropriate junction params.
 /// Returns `(q[4], c[4])` bit-exact with 4 scalar [`depletion_charge_pre`] calls at `FMA=false`.
-pub(crate) fn depletion_charge_pre_batch<const FMA: bool>(
+pub(in crate::wdf) fn depletion_charge_pre_batch<const FMA: bool>(
     v: [f64; 4],
     cj0: [f64; 4], vj: [f64; 4], m: [f64; 4],
     c0: [f64; 4], q0: [f64; 4], dcdv: [f64; 4],

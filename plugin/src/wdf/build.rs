@@ -263,7 +263,7 @@ impl WdfModel {
 
     /// Precompute the constant linear conductance matrix G0 (resistors + cap Geq + coupled-inductor
     /// companion). Only BJT entries change per Newton iteration (`main.cpp:413-428`).
-    pub(crate) fn build_g0(&mut self) {
+    pub(in crate::wdf) fn build_g0(&mut self) {
         use node::{N_PA, N_SA};
         let u = self.u;
         for x in self.g0[..u * u].iter_mut() {

@@ -5,7 +5,7 @@ impl WdfModel {
     /// Build the Schur N/L partition once (at construction). N = every unknown row that a BJT
     /// terminal (and thus its charge cap) stamps; L = the remaining linear-only unknowns. Derived
     /// from the actual `bjts[]` terminal ids so it always matches the stamping (`main.cpp:483-527`).
-    pub(crate) fn build_schur_partition(&mut self) {
+    pub(in crate::wdf) fn build_schur_partition(&mut self) {
         let mut in_n = [false; NUM_NODES];
         for t in self.bjts.iter() {
             for nd in [t.b, t.e, t.c] {
@@ -51,7 +51,7 @@ impl WdfModel {
     /// blocks out of G0, LU-factors A_LL, and precomputes `W = A_LL^{-1} A_LN` and
     /// `S_const = A_NN_lin - A_NL W`. Sets `schur_ready`; returns false (→ dense fallback) if
     /// A_LL is singular (`main.cpp:533-568`).
-    pub(crate) fn prepare_schur(&mut self) -> bool {
+    pub(in crate::wdf) fn prepare_schur(&mut self) -> bool {
         self.schur_ready = false;
         let u = self.u;
         let n = self.n_sz;
@@ -121,7 +121,7 @@ impl WdfModel {
     /// is factored per iter (full partial pivot via [`gauss_solve`]). Caller guarantees
     /// `gmin == 0` and `schur_ready`. Returns false if the complement is singular (→ dense
     /// fallback; `self.delta` is left as `-F`, untouched) (`main.cpp:1069-1104`).
-    pub(crate) fn schur_solve(&mut self) -> bool {
+    pub(in crate::wdf) fn schur_solve(&mut self) -> bool {
         let u = self.u;
         let n = self.n_sz;
         let l = self.l_sz;

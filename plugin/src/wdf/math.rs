@@ -203,14 +203,14 @@ pub fn diode_branch(v: f64, is: f64, vt: f64, vcrit: f64, cheap_exp: bool) -> (f
 /// literal `a*b+c`; for `c - a*b` pass `(a, -b, c)` (negation is exact, so the
 /// `FMA=false` result is bit-identical to `c - a*b`).
 #[inline(always)]
-pub(crate) fn fma<const FMA: bool>(a: f64, b: f64, c: f64) -> f64 {
+pub(in crate::wdf) fn fma<const FMA: bool>(a: f64, b: f64, c: f64) -> f64 {
     if FMA { a.mul_add(b, c) } else { a * b + c }
 }
 
 /// Branchless 9th-order Taylor `exp`, bit-exact with [`fast_exp`] at `FMA=false`.
 /// Branches → if/else selects so SLP can fuse 4 lanes into AVX2 ymm ops.
 #[inline]
-pub(crate) fn exp_bl<const FMA: bool>(x: f64) -> f64 {
+pub(in crate::wdf) fn exp_bl<const FMA: bool>(x: f64) -> f64 {
     const LN2: f64 = 0.6931471805599453;
     const INV_LN2: f64 = 1.4426950408889634;
     let kf = fma::<FMA>(x, INV_LN2, 0.5).floor();
@@ -246,7 +246,7 @@ pub(crate) fn exp_bl<const FMA: bool>(x: f64) -> f64 {
 /// Branchless log via IEEE-754 exponent decomposition + atanh series, bit-exact with [`fast_log`]
 /// at `FMA=false`. The mantissa-adjustment branch becomes a select so SLP can vectorize 4 lanes.
 #[inline]
-pub(crate) fn log_bl<const FMA: bool>(x: f64) -> f64 {
+pub(in crate::wdf) fn log_bl<const FMA: bool>(x: f64) -> f64 {
     const SQRT1_2: f64 = 0.707_106_781_186_547_6;
     const LN2: f64 = 0.6931471805599453;
     let bits = x.to_bits();
@@ -275,14 +275,14 @@ pub(crate) fn log_bl<const FMA: bool>(x: f64) -> f64 {
 
 /// Branchless positive-base power, bit-exact with [`fast_pow_pos`] at `FMA=false`.
 #[inline]
-pub(crate) fn pow_bl<const FMA: bool>(base: f64, ex: f64) -> f64 {
+pub(in crate::wdf) fn pow_bl<const FMA: bool>(base: f64, ex: f64) -> f64 {
     exp_bl::<FMA>(ex * log_bl::<FMA>(base))
 }
 
 /// Width-4 `exp_bl(v[i]*inv_vt[i])`, generic over FMA — wraps the per-tier instantiation so
 /// `newton_iterate` can pick FMA on/off with one branch instead of four `::<F>` turbofish sites.
 #[inline(always)]
-pub(crate) fn exp4<const FMA: bool>(v: &[f64; 4], inv_vt: &[f64; 4]) -> [f64; 4] {
+pub(in crate::wdf) fn exp4<const FMA: bool>(v: &[f64; 4], inv_vt: &[f64; 4]) -> [f64; 4] {
     [
         exp_bl::<FMA>(v[0] * inv_vt[0]), exp_bl::<FMA>(v[1] * inv_vt[1]),
         exp_bl::<FMA>(v[2] * inv_vt[2]), exp_bl::<FMA>(v[3] * inv_vt[3]),
