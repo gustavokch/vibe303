@@ -481,9 +481,9 @@ impl Ba283Plugin {
 
 impl Plugin for Ba283Plugin {
     const NAME: &'static str = "BA283";
-    const VENDOR: &'static str = "gruber.dev.br";
+    const VENDOR: &'static str = "desmen";
     const URL: &'static str = "";
-    const EMAIL: &'static str = "contact@gruber.dev.br";
+    const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
@@ -834,11 +834,12 @@ impl Vst3Plugin for Ba283Plugin {
 }
 
 impl ClapPlugin for Ba283Plugin {
-    const CLAP_ID: &'static str = "br.dev.gruber.ba283";
+    const CLAP_ID: &'static str = "com.desmen.ba283";
     const CLAP_DESCRIPTION: Option<&'static str> = Some("Neve BA283 neural emulation");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect];
 }
 
+nih_export_clap!(Ba283Plugin);
 nih_export_vst3!(Ba283Plugin);

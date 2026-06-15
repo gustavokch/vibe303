@@ -3,7 +3,7 @@
 Neural **and** circuit emulation of the Neve BA283 mic-preamp output stage, shipped as a VST3 plugin.
 
 - **Version:** 0.1.0
-- **Vendor:** [Gustavo M](https://github.com/gustavokch) · ghlsem@gmail.com
+- **Vendor:** desmen
 - **License:** TBD
 
 ---
@@ -64,14 +64,37 @@ Run `ba283_standalone` with no args to see the full flag list (`--bias`,
 
 ## Install
 
-The release build emits a VST3 bundle in `target/bundled/`. On Linux, copy it
-into your plugin path:
+Grab the zip for your platform from the [Releases](../../releases) page. Each
+archive contains both the **VST3** and **CLAP** bundles. Verify the download
+against `SHA256SUMS`, then unzip and copy the bundles into your plugin path.
+
+**Linux x86_64:**
 
 ```bash
-cp -r target/bundled/BA283.vst3 ~/.vst3/
+unzip BA283-v0.1.0-linux-x86_64.zip
+cp -r BA283.vst3 ~/.vst3/
+cp -r BA283.clap ~/.clap/
 ```
 
-Linux (`x86_64-unknown-linux-gnu`) is the tested target.
+**macOS arm64:**
+
+```bash
+unzip BA283-v0.1.0-macos-arm64.zip
+cp -r BA283.vst3 ~/Library/Audio/Plug-Ins/VST3/
+cp -r BA283.clap ~/Library/Audio/Plug-Ins/CLAP/
+# Builds are unsigned/unnotarized — clear the gatekeeper quarantine flag:
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/BA283.vst3
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/CLAP/BA283.clap
+```
+
+### System requirements
+
+- **Linux:** x86_64 CPU with the **x86-64-v3** feature level (AVX2 + FMA —
+  Intel Haswell 2013+ / AMD Excavator 2015+ or newer). The release binary is
+  compiled for this floor; older CPUs will fault with an illegal instruction.
+- **macOS:** Apple Silicon (arm64). Intel Macs are not built for v0.1.
+
+To build from source instead, see [Build](#build) above.
 
 ## Usage in a DAW
 

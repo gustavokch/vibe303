@@ -1,0 +1,114 @@
+name: release
+
+# Manually-triggered v0.1-style release. Builds the BA283 VST3 + CLAP bundles
+# for Linux x86_64 and macOS arm64, zips them with checksums, and publishes a
+# GitHub Release tagged v<version>.
+#
+# Trigger from the Actions tab (Run workflow), supplying the version. It must
+# match `version` in plugin/Cargo.toml or the run fails fast.
+#
+# macOS artifacts are unsigned/unnotarized — users clear quarantine on install:
+#   xattr -dr com.apple.quarantine BA283.vst3
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 0.1.0 (tag becomes v<version>)"
+        type: string
+        required: true
+      prerelease:
+        description: "Mark the GitHub Release as a pre-release"
+        type: boolean
+        default: true
+
+jobs:
+  guard:
+    name: version-guard
+    runs-on: ubuntu-latest
+    env:
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert input version matches plugin/Cargo.toml
+        run: |
+          crate_version="$(grep -m1 '^version' plugin/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "Cargo.toml version: $crate_version, input: $INPUT_VERSION"
+          if [ "$crate_version" != "$INPUT_VERSION" ]; then
+            echo "::error::input version '$INPUT_VERSION' != plugin/Cargo.toml '$crate_version'"
+            exit 1
+          fi
+
+  linux:
+    name: linux-x86_64
+    needs: guard
+    runs-on: ubuntu-latest
+    env:
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Bundle (VST3 + CLAP)
+        run: cargo xtask bundle ba283 --release
+      - name: Zip bundles
+        run: |
+          cd target/bundled
+          zip -r "$GITHUB_WORKSPACE/BA283-v${INPUT_VERSION}-linux-x86_64.zip" BA283.vst3 BA283.clap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BA283-linux-x86_64
+          path: BA283-v${{ inputs.version }}-linux-x86_64.zip
+          if-no-files-found: error
+
+  macos-arm64:
+    name: macos-arm64
+    needs: guard
+    runs-on: macos-14
+    env:
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Bundle (VST3 + CLAP)
+        run: cargo xtask bundle ba283 --release
+      - name: Zip bundles
+        run: |
+          cd target/bundled
+          zip -r "$GITHUB_WORKSPACE/BA283-v${INPUT_VERSION}-macos-arm64.zip" BA283.vst3 BA283.clap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BA283-macos-arm64
+          path: BA283-v${{ inputs.version }}-macos-arm64.zip
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: [linux, macos-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.zip > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: BA283 v${{ inputs.version }}
+          prerelease: ${{ inputs.prerelease }}
+          body_path: CHANGELOG.md
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
