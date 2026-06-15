@@ -1,8 +1,12 @@
 name: build-mac
 
-# Builds the BA283 VST3 for Apple Silicon (and an optional universal binary) on
-# GitHub's arm64 macOS runner. No code lives on a Mac — `cargo xtask bundle`
-# detects aarch64-apple-darwin as the host and packages the .vst3.
+# Continuous smoke build only — verifies the BA283 bundle still compiles on
+# Apple Silicon for every push to main. Publishing releases is owned by
+# release.yml (manual dispatch); this workflow never creates a GitHub Release.
+#
+# Builds the BA283 VST3 + CLAP for Apple Silicon (and an optional universal
+# binary) on GitHub's arm64 macOS runner. No code lives on a Mac — `cargo xtask
+# bundle` detects aarch64-apple-darwin as the host and packages the bundles.
 #
 # Artifacts are unsigned/unnotarized: on first load macOS gatekeeper will block
 # them. Clear the quarantine flag after download with:
