@@ -32,6 +32,22 @@ from train.factory import ARCH_FILENAME, arch_spec, make_model, resolve_d_state
 from train.loss import composite_loss, esr
 
 
+def resolve_device(name: str) -> str:
+    """Resolve ``--device`` to a concrete backend string.
+
+    ``"auto"`` picks the fastest available backend: CUDA (Colab/dGPU) -> MPS
+    (Apple Silicon) -> CPU. Any explicit name (``"cuda"``/``"mps"``/``"cpu"``)
+    is returned unchanged so Colab and CI keep pinning the device directly.
+    """
+    if name != "auto":
+        return name
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def _atomic_save(state: object, path: Path) -> None:
     """Save ``state`` to ``path`` atomically (tmp file + ``os.replace``).
 
@@ -86,6 +102,10 @@ def train_main(
 ) -> None:
     torch.manual_seed(seed)
 
+    # pin_memory only accelerates host->CUDA transfers; on MPS/CPU it warns and
+    # wastes work. ``device`` here is already resolved (see ``resolve_device``).
+    pin_memory = str(device).startswith("cuda")
+
     train_loader = make_loader(
         train_manifest,
         batch_size=batch_size,
@@ -94,6 +114,7 @@ def train_main(
         num_workers=num_workers,
         shuffle=True,
         balance_by_kind=balance_by_kind,
+        pin_memory=pin_memory,
     )
     val_loader = make_loader(
         val_manifest,
@@ -103,6 +124,7 @@ def train_main(
         num_workers=num_workers,
         shuffle=False,
         drop_last=False,
+        pin_memory=pin_memory,
     )
 
     model = make_model(
@@ -321,7 +343,12 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--checkpoint-dir", type=Path, default=Path("checkpoints/"))
     parser.add_argument("--log-dir", type=Path, default=Path("runs/"))
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="'auto' (cuda->mps->cpu) or an explicit 'cuda'/'mps'/'cpu'",
+    )
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--clip-norm", type=float, default=5.0)
     parser.add_argument("--resume", action="store_true")
@@ -385,6 +412,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    device = resolve_device(args.device)
+    print(f"device={device}", flush=True)
+
     train_main(
         train_manifest=args.train_manifest,
         val_manifest=args.val_manifest,
@@ -398,7 +428,7 @@ def main() -> None:
         num_workers=args.workers,
         checkpoint_dir=args.checkpoint_dir,
         log_dir=args.log_dir,
-        device=args.device,
+        device=device,
         smoke=args.smoke,
         clip_norm=args.clip_norm,
         resume=args.resume,

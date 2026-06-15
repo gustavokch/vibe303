@@ -1,0 +1,60 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 10K of event 'task-clock:u'
+# Event count (approx.): 10163163153
+#
+# Overhead  Command          Shared Object     Symbol                                  
+# ........  ...............  ................  ........................................
+#
+    52.69%  ba283_standalon  ba283_standalone  [.] ba283::wdf::WdfModel::newton_iterate
+            |          
+            |--20.71%--newton_iterate (inlined)
+            |          |          
+            |           --20.49%--process (inlined)
+            |                     |          
+            |                     |--15.78%--process_host_sample (inlined)
+            |                     |          process_sample (inlined)
+            |                     |          main (inlined)
+            |                     |          
+            |                     |--3.91%--idle_settle (inlined)
+            |                     |          warmup (inlined)
+            |                     |          wdf_warmup (inlined)
+            |                     |          main (inlined)
+            |                     |          
+            |                      --0.80%--warmup (inlined)
+            |                                wdf_warmup (inlined)
+            |                                main (inlined)
+            |          
+            |--6.35%--schur_solve (inlined)
+            |          newton_iterate (inlined)
+            |          process (inlined)
+            |          |          
+            |          |--5.19%--process_host_sample (inlined)
+            |          |          process_sample (inlined)
+            |          |          main (inlined)
+            |          |          
+            |           --0.85%--idle_settle (inlined)
+            |                     warmup (inlined)
+            |                     wdf_warmup (inlined)
+            |                     main (inlined)
+            |          
+            |--5.95%--gauss_solve_6 (inlined)
+            |          schur_solve (inlined)
+            |          newton_iterate (inlined)
+            |          process (inlined)
+            |          |          
+            |          |--4.71%--process_host_sample (inlined)
+            |          |          process_sample (inlined)
+            |          |          main (inlined)
+            |          |          
+            |           --0.89%--idle_settle (inlined)
+            |                     warmup (inlined)
+            |                     wdf_warmup (inlined)
+            |                     main (inlined)
+            |          
+            |--4.41%--mul_add (inlined)
+            |          mul_add (inlined)
+            |          fma<true> (inlined)

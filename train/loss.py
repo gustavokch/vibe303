@@ -31,9 +31,17 @@ def _stft_mag(x: torch.Tensor, n_fft: int, eps: float = 1e-7) -> torch.Tensor:
     the 2048-pt scale only by a margin); a Hann window matches the analysis the
     plugin's spectral checks use.
     """
-    window = torch.hann_window(n_fft, device=x.device, dtype=x.dtype)
+    # torch.stft returns a complex tensor, which the MPS backend cannot allocate
+    # ("Trying to convert ComplexFloat to the MPS backend"). Run the transform on
+    # CPU when the input is on MPS and move the REAL magnitude back to the model
+    # device; autograd flows back across the device boundary. On CUDA/CPU
+    # ``stft_dev == dev`` so this path is unchanged (bit-identical).
+    dev = x.device
+    stft_dev = "cpu" if dev.type == "mps" else dev
+    xin = x.to(stft_dev)
+    window = torch.hann_window(n_fft, device=stft_dev, dtype=xin.dtype)
     spec = torch.stft(
-        x,
+        xin,
         n_fft=n_fft,
         hop_length=n_fft // 4,
         win_length=n_fft,
@@ -41,7 +49,7 @@ def _stft_mag(x: torch.Tensor, n_fft: int, eps: float = 1e-7) -> torch.Tensor:
         center=True,
         return_complex=True,
     )
-    return spec.abs().clamp_min(eps)
+    return spec.abs().clamp_min(eps).to(dev)
 
 
 def mrstft(
