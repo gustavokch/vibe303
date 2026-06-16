@@ -147,6 +147,8 @@ def train_main(
     stft_weight: float = 0.0,
     smoke: bool = False,
     smoke_steps: int = 200,
+    resume: bool = False,
+    patience: int = 20,
 ) -> None:
     torch.manual_seed(seed)
     model = build_cond_wavenet(seed=seed).to(device)
@@ -189,14 +191,35 @@ def train_main(
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     best_path = checkpoint_dir / "best.pth"
+    last_path = checkpoint_dir / "last.pth"
 
     best_esr = float("inf")
+    epochs_since_improvement = 0
+    start_epoch = 0
     global_step = 0
+
+    # --- Resume from last.pth if requested and available (mirrors train.train:
+    # 190-198): restore model/optimizer/scheduler + the epoch/best_esr/no-improve
+    # bookkeeping so a crash mid-run does not discard hours of compute. ---
+    if resume and last_path.exists():
+        ckpt = torch.load(last_path, map_location=device, weights_only=True)
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        best_esr = ckpt["best_esr"]
+        epochs_since_improvement = ckpt["epochs_since_improvement"]
+        start_epoch = ckpt["epoch"] + 1
+        print(
+            f"resumed from {last_path} at epoch {start_epoch} "
+            f"(best_esr={best_esr:.5f}, no_improve={epochs_since_improvement})",
+            flush=True,
+        )
+
     run_start = time.monotonic()
     print(f"device={device}  rf={rf}  window={window}  n_out={window - (rf - 1)}", flush=True)
 
     try:
-        for e in range(epochs):
+        for e in range(start_epoch, epochs):
             model.train()
             loss_sum = 0.0
             loss_count = 0
@@ -214,6 +237,9 @@ def train_main(
                         stacklevel=2,
                     )
                     optimizer.zero_grad(set_to_none=True)
+                    # `+1` is a conservative early-out: a skipped batch does NOT
+                    # increment global_step, so without it the smoke run could
+                    # spin one batch past smoke_steps on a non-finite tail.
                     if smoke and global_step + 1 >= smoke_steps:
                         break
                     continue
@@ -234,6 +260,9 @@ def train_main(
                         stacklevel=2,
                     )
                     optimizer.zero_grad(set_to_none=True)
+                    # `+1`: see the non-finite-loss skip above -- a skipped batch
+                    # does not increment global_step, so this is a conservative
+                    # early-out vs the `global_step >= smoke_steps` success branch.
                     if smoke and global_step + 1 >= smoke_steps:
                         break
                     continue
@@ -264,6 +293,10 @@ def train_main(
                     if smoke and batch_idx >= 1:
                         break
 
+            # The val metric is RAW esr -- intentionally NOT the pre-emphasised
+            # composite training objective. Raw ESR is the comparable/reportable
+            # number (matches train.train + the eval harness), so this difference
+            # from `composite_loss` above is deliberate, not a bug.
             val_esr = float("nan")
             if preds:
                 all_pred = torch.cat(preds, dim=0)
@@ -278,17 +311,40 @@ def train_main(
             improved = math.isfinite(val_esr) and val_esr < best_esr
             if improved:
                 best_esr = val_esr
+                epochs_since_improvement = 0
                 _atomic_save(model.state_dict(), best_path)
+            else:
+                epochs_since_improvement += 1
 
             elapsed = time.monotonic() - run_start
             print(
                 f"[{elapsed:6.1f}s] epoch {e:3d}  "
                 f"train_loss={mean_train_loss:.5f}  val_esr={val_esr:.5f}  "
-                f"best={best_esr:.5f}{'  *' if improved else ''}",
+                f"best={best_esr:.5f}{'  *' if improved else ''}  "
+                f"no_improve={epochs_since_improvement}",
                 flush=True,
             )
 
+            # Resume bundle: richer than best.pth, written every epoch (mirrors
+            # train.train:319-330) so a crash resumes from here, not from scratch.
+            _atomic_save(
+                {
+                    "epoch": e,
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(),
+                    "best_esr": best_esr,
+                    "epochs_since_improvement": epochs_since_improvement,
+                },
+                last_path,
+            )
+
             if smoke and global_step >= smoke_steps:
+                break
+
+            # Early stop once val ESR has stopped improving for `patience` epochs
+            # (mirrors train.train:332).
+            if not improved and epochs_since_improvement >= patience:
                 break
     finally:
         writer.close()
@@ -340,6 +396,14 @@ def main() -> None:
     )
     parser.add_argument("--smoke", action="store_true", help="short finite-loss smoke run")
     parser.add_argument("--smoke-steps", type=int, default=200)
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="resume model/optimizer/scheduler/epoch/best_esr from last.pth if present",
+    )
+    parser.add_argument(
+        "--patience", type=int, default=20,
+        help="early-stop after this many epochs with no val_esr improvement",
+    )
     args = parser.parse_args()
 
     # The WaveNet RF is a fixed property of the Task-1 config (6347); derive the
@@ -367,6 +431,8 @@ def main() -> None:
         stft_weight=args.stft_weight,
         smoke=args.smoke,
         smoke_steps=args.smoke_steps,
+        resume=args.resume,
+        patience=args.patience,
     )
 
 
