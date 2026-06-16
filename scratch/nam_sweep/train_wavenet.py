@@ -34,6 +34,7 @@ include the ba283-nam-lstm root so ``scratch.nam_sweep`` / ``train`` resolve):
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import time
@@ -43,9 +44,18 @@ from pathlib import Path
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from scratch.nam_sweep.wavenet_cond import build_cond_wavenet
+from scratch.nam_sweep.wavenet_cond import build_cond_wavenet, to_nam_dict
 from train.dataset import make_loader
 from train.loss import composite_loss, esr
+
+# Scaling provenance baked into the exported `.nam` metadata. Training feeds the
+# model `INPUT_SCALE * x` and supervises against `x_volts / OUTPUT_REF_V`, so the
+# plugin/eval recover volts by multiplying the model output by OUTPUT_REF_V.
+# Mirrors train/dataset.py (INPUT_SCALE=2.0, OUTPUT_SCALE=1/64).
+_INPUT_SCALE = 2.0
+_OUTPUT_REF_V = 64.0
+_EXPORT_SOURCE = "T3K 9-gain SPICE reamp, bias 0.77"
+_EXPORT_SAMPLE_RATE = 48000
 
 # Defaults for the freshly-rebuilt 9-gain ds48 manifests (relative to repo root).
 _DEFAULT_TRAIN = Path("scratch/nam_sweep/ds48/train.csv")
@@ -355,6 +365,72 @@ def train_main(
         )
 
 
+def export_main(
+    *,
+    ckpt_path: Path,
+    out_path: Path,
+    seed: int,
+    sample_rate: float = _EXPORT_SAMPLE_RATE,
+) -> Path:
+    """Export a trained checkpoint to a `.nam` file.
+
+    The Task-4 checkpoint contract is a PLAIN ``model.state_dict()`` (no
+    architecture metadata), so the architecture is reconstructed via
+    ``build_cond_wavenet`` (with the SAME seed used for training, though only
+    the loaded weights matter) and the checkpoint weights are loaded into it.
+    Serialisation reuses ``to_nam_dict``; this function only injects the
+    scaling-provenance metadata the eval/plugin need to de-normalise.
+
+    Returns the written path.
+    """
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"checkpoint not found: {ckpt_path}")
+
+    # Provenance log: which weights are we exporting? best.pth is the intended
+    # source (best-val). last.pth is a resume bundle (non-best, final epoch) --
+    # flag it loudly per the Task-4 review.
+    name = ckpt_path.name
+    if name == "best.pth":
+        print(f"export: loading BEST-val checkpoint {ckpt_path}", flush=True)
+    elif name == "last.pth":
+        print(
+            f"export: WARNING -- {ckpt_path} is the resume bundle (last/non-best "
+            f"weights, NOT the best-val checkpoint); export best.pth instead "
+            f"unless you intend the final-epoch weights",
+            flush=True,
+        )
+    else:
+        print(f"export: loading checkpoint {ckpt_path}", flush=True)
+
+    model = build_cond_wavenet(seed=seed)
+    state = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    # last.pth is a dict bundle ({epoch, model, optimizer, ...}); best.pth is a
+    # bare state_dict. Accept either by unwrapping the "model" key when present.
+    if isinstance(state, dict) and "model" in state and "optimizer" in state:
+        state = state["model"]
+    model.load_state_dict(state)
+    model.train(False)
+
+    d = to_nam_dict(model, sample_rate=sample_rate)
+    d["metadata"] = {
+        "input_scale": _INPUT_SCALE,
+        "output_ref_v": _OUTPUT_REF_V,
+        "source": _EXPORT_SOURCE,
+        "checkpoint": str(ckpt_path),
+    }
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(d))
+    print(
+        f"export: wrote {out_path} "
+        f"(architecture={d['architecture']}, input_size="
+        f"{d['config']['layers'][0]['input_size']}, "
+        f"sample_rate={d['sample_rate']}, weights={len(d['weights'])})",
+        flush=True,
+    )
+    return out_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Train the 2-channel FiLM-conditioned BA283 WaveNet."
@@ -404,7 +480,29 @@ def main() -> None:
         "--patience", type=int, default=20,
         help="early-stop after this many epochs with no val_esr improvement",
     )
+    parser.add_argument(
+        "--export", type=Path, default=None, metavar="PATH",
+        help="export the checkpoint to a `.nam` file at PATH (skips training); "
+        "reconstructs the architecture via build_cond_wavenet and loads the "
+        "checkpoint weights (default source: <checkpoint-dir>/best.pth)",
+    )
+    parser.add_argument(
+        "--export-ckpt", type=Path, default=None,
+        help="checkpoint to export (default: <checkpoint-dir>/best.pth)",
+    )
     args = parser.parse_args()
+
+    # --export PATH: serialise the trained checkpoint to a `.nam` and exit
+    # WITHOUT training. Reuses build_cond_wavenet + to_nam_dict.
+    if args.export is not None:
+        ckpt = args.export_ckpt or (args.checkpoint_dir / "best.pth")
+        export_main(
+            ckpt_path=ckpt,
+            out_path=args.export,
+            seed=args.seed,
+            sample_rate=_EXPORT_SAMPLE_RATE,
+        )
+        return
 
     # The WaveNet RF is a fixed property of the Task-1 config (6347); derive the
     # window from n_out so the supervised region is non-empty by construction.

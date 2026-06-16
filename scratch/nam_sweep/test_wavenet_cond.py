@@ -24,10 +24,14 @@ def test_2ch_film_wavenet_roundtrips():
     rf = m.net.receptive_field if hasattr(m, "net") else m.receptive_field
     assert rf > 1000, f"receptive field collapsed: {rf}"
 
-    x = torch.zeros(1, 2, rf + 256)  # (B, C=2, L)
-    y = m(x)
+    # Shape smoke check on a zeros input.
+    x_zeros = torch.zeros(1, 2, rf + 256)  # (B, C=2, L)
+    y_zeros = m(x_zeros)
     # The inner WaveNet forward is "valid" (no pad_start): it trims by rf-1.
-    assert y.shape[-1] == x.shape[-1] or y.shape[-1] == x.shape[-1] - (rf - 1)
+    assert (
+        y_zeros.shape[-1] == x_zeros.shape[-1]
+        or y_zeros.shape[-1] == x_zeros.shape[-1] - (rf - 1)
+    )
 
     d = to_nam_dict(m, sample_rate=48000)
     assert d["architecture"] == "WaveNet"
@@ -35,6 +39,11 @@ def test_2ch_film_wavenet_roundtrips():
     assert d["config"]["layers"][0]["condition_size"] == 2
     assert d["config"]["layers"][0]["conv_pre_film"]["active"] is True
 
+    # Fidelity gate uses a RANDOM input: a zeros input zeros the FiLM scale path
+    # and can mask un-round-tripped conditioning weights, so the bit-identical
+    # reload assertion must exercise non-zero feature maps.
+    x = torch.randn(1, 2, rf + 256)  # (B, C=2, L)
+    y = m(x)
     m2 = net_from_nam(d)  # init_from_nam(d), unwrapped to the inner WaveNet
     y2 = m2(x)
     assert torch.allclose(y, y2, atol=1e-6), "reload not bit-identical"
