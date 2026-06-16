@@ -338,8 +338,28 @@ def main() -> None:
     else:
         gains = [float(g) for g in args.gains.split(",") if g.strip()]
 
+    # Reject out-of-range gains BEFORE the sweep: ACME clamps R_KJ to [0,1] but
+    # the conditioned NAM feeds the raw gain to its conditioning channel, so an
+    # out-of-[0,1] gain is both out-of-distribution (model trained on [0,1]) and
+    # inconsistent between the two paths.
+    bad = [g for g in gains if not (0.0 <= g <= 1.0)]
+    if bad:
+        raise SystemExit(
+            f"gain_norm out of range [0,1]: {bad}; the conditioned NAM was "
+            f"trained on [0,1] and ACME clamps R_KJ — refusing to sweep."
+        )
+
     model = NamModel(args.nam)
     sr = model.sample_rate
+
+    # A legacy (non-conditioned) model has a SINGLE operating point: it renders
+    # the SAME output at every gain, which a multi-gain sweep would score
+    # against DIFFERENT SPICE targets — silently misleading "follows gain" data.
+    if not model._conditioned and len(gains) > 1:
+        print("[warn] model is NOT gain-conditioned (single operating point): "
+              "the NAM output is IDENTICAL at every gain and is being scored "
+              "against different SPICE targets — the per-gain trend is not a "
+              "'model follows gain' signal, only a render-vs-legacy diagnostic.")
 
     dry, sr_dry = sf.read(args.dry, always_2d=False)
     dry = np.asarray(dry, dtype=np.float64)
@@ -357,25 +377,38 @@ def main() -> None:
     print(f"  ACME    : {SR_ACME} Hz (dry upsampled), compared at {sr} Hz, bias={args.bias}")
     print("=" * 64)
 
+    # Per-gain sweep: one bad gain (missing target / ACME or Julia error) is a
+    # RECORDED FAILURE, not a sweep-killer — render the rest and still write a
+    # summary.  Successful rows carry the ESR keys; skipped rows carry `error`.
     per_gain: list[dict] = []
     rows: list[dict] = []
+    skipped: list[dict] = []
     for g in gains:
-        s, row = _score_one_gain(model, dry, sr, g, args.bias, args.out)
+        try:
+            s, row = _score_one_gain(model, dry, sr, g, args.bias, args.out)
+        except Exception as e:  # noqa: BLE001 — record any per-gain failure
+            print(f"[skip] gain_norm={g:.3f}: {e}")
+            skipped.append({"gain_norm": g, "error": str(e)})
+            continue
         per_gain.append(s)
         rows.append(row)
 
+    if not rows:
+        raise SystemExit("all gains failed; no summary written")
+
     # Worst-gain gate: the conditioned model must hold accuracy across the
     # whole sweep, so the verdict is driven by the WORST (highest) NAM-vs-SPICE
-    # ESR over all gains.
+    # ESR over all gains.  Computed ONLY over SUCCESSFUL rows (skipped rows have
+    # no ESR key, so filtering them avoids a KeyError in max/min).
     worst = max(rows, key=lambda r: r["nam_vs_spice_esr_db"])
     best = min(rows, key=lambda r: r["nam_vs_spice_esr_db"])
     worst_ns = worst["nam_vs_spice_esr_db"]
-    quality = ("STRONG" if worst_ns <= -25 else "FAIR" if worst_ns <= -18 else
-               "MODERATE" if worst_ns <= -12 else "WEAK")
+    quality = _quality_label(worst_ns)
     verdict = (f"{quality} — worst-gain NAM vs SPICE {worst_ns:+.1f} dB "
                f"@ gain_norm={worst['gain_norm']:.3f} "
                f"(best {best['nam_vs_spice_esr_db']:+.1f} dB @ "
-               f"gain_norm={best['gain_norm']:.3f}); gate = worst gain over the sweep.")
+               f"gain_norm={best['gain_norm']:.3f}); gate = worst gain over the sweep."
+               + (f" [{len(skipped)} gain(s) skipped]" if skipped else ""))
 
     summary = {
         "config": {"nam": str(args.nam), "arch": model.arch,
@@ -385,6 +418,7 @@ def main() -> None:
                    "max_lag_samples": SPAN, "onset_skip_s": ONSET_SKIP,
                    "metric": "level-matched ESR (optimal LS scalar), 20Hz HP, lag-aligned"},
         "per_gain_table": rows,
+        "skipped_gains": skipped,
         "worst_gain": worst,
         "best_gain": best,
         "verdict": verdict,
@@ -419,10 +453,16 @@ def main() -> None:
     print("=" * 64)
 
 
+def _quality_label(esr_db: float) -> str:
+    """Map a NAM-vs-SPICE matched ESR (dB) to a verdict label (single source of
+    truth for the -25/-18/-12 thresholds, shared by per-gain + worst-gain gates)."""
+    return ("STRONG" if esr_db <= -25 else "FAIR" if esr_db <= -18 else
+            "MODERATE" if esr_db <= -12 else "WEAK")
+
+
 def _verdict_one(m_na, m_ns, m_as, gain) -> str:
     na, ns, as_ = m_na["esr_matched_db"], m_ns["esr_matched_db"], m_as["esr_matched_db"]
-    quality = ("STRONG" if ns <= -25 else "FAIR" if ns <= -18 else
-               "MODERATE" if ns <= -12 else "WEAK")
+    quality = _quality_label(ns)
     return (f"{quality} — gain_norm={gain:.3f}: NAM vs SPICE {ns:+.1f} dB, "
             f"NAM vs ACME {na:+.1f} dB; ACME tracks SPICE at {as_:+.1f} dB.")
 

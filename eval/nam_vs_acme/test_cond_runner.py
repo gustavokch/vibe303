@@ -112,6 +112,19 @@ def test_conditioned_requires_gain(cond_nam):
         model.run(dry)  # gain=None must be rejected for the conditioned path
 
 
+@_requires_builder
+@pytest.mark.parametrize("bad_gain", [-0.1, -1.0, 1.1, 2.0, float("nan"),
+                                      float("inf"), None])
+def test_conditioned_rejects_out_of_range_gain(cond_nam, bad_gain):
+    """The conditioned path is trained on normalized gain in [0,1]; an out-of-
+    range, non-finite, or missing gain must raise ValueError (self-defensive
+    entry point — no Julia/ACME involved)."""
+    model = NamModel(cond_nam)
+    dry = np.zeros(model._receptive_field + 100, dtype=np.float64)
+    with pytest.raises(ValueError):
+        model.run(dry, gain=bad_gain)
+
+
 @pytest.mark.skipif(not DEFAULT_NAM.exists(),
                     reason="legacy SlimmableContainer model.nam not present")
 def test_legacy_slimmable_backcompat():

@@ -143,6 +143,13 @@ class NamModel:
             raise ValueError(
                 "conditioned model requires an explicit gain; call run(dry, gain=g)"
             )
+        # The model was trained on normalized gain in [0,1]; an out-of-range or
+        # non-finite condition is out-of-distribution.  Reject at the entry
+        # point (self-defensive: the caller in compare.py also pre-validates).
+        if not np.isfinite(gain) or not (0.0 <= gain <= 1.0):
+            raise ValueError(
+                f"conditioned gain must be finite and in [0,1]; got {gain!r}"
+            )
         x = np.ascontiguousarray(np.asarray(dry, dtype=np.float32).ravel())
         n = len(x)
         rf = self._receptive_field
