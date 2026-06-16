@@ -306,6 +306,13 @@ def main(argv: list[str] | None = None) -> int:
         default="data/dry",
         help="Directory of dry stimulus WAVs (<stem>.wav); used for dry_path.",
     )
+    parser.add_argument(
+        "--no-split",
+        action="store_true",
+        help="Skip the by-stimulus train/val/test split (split_manifest needs "
+        ">=3 unique dry stimuli). Use for single-stimulus gain-sweep datasets "
+        "that are split temporally by the caller instead (see temporal_split).",
+    )
     args = parser.parse_args(argv)
 
     raw_dir = Path(args.raw_dir)
@@ -362,7 +369,8 @@ def main(argv: list[str] | None = None) -> int:
 
     manifest = Path(args.manifest)
     write_manifest(rows, manifest)
-    split_manifest(manifest, manifest.parent)
+    if not args.no_split:
+        split_manifest(manifest, manifest.parent)
     print(f"wrote manifest: {manifest} ({len(rows)} rows)")
     return 0
 
