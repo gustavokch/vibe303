@@ -29,8 +29,18 @@ BA283 mic-preamp output stage.
   lookup table suppresses the harmonic foldover a naïve waveshaper would add. OFF
   by default (bit-exact today's sound); the amount knob has unity small-signal
   makeup so it sweeps clean → saturated.
+- **Neve 1073/1076-style EQ** (`EQ` ON/OFF + per-band controls): an optional
+  analog-matched biquad EQ placed ahead of the model (the EQ network sits upstream
+  of the BA283/AV card on the real strip, per schematic EH 10023). Switched HPF
+  (Off / 50 / 80 / 160 / 300 Hz, ~18 dB/oct), switched low shelf (35 / 60 / 110 /
+  220 Hz, ±16 dB), switched mid/presence bell (360 / 700 / 1.6k / 3.2k / 4.8k /
+  7.2k Hz, ±18 dB, proportional-Q) and a fixed 12 kHz high shelf (±16 dB). OFF +
+  flat defaults are a provable bit-exact no-op (the WDF golden-vector contract is
+  unaffected); gain knobs are per-block glided to avoid zipper on a sweep. The mid
+  proportional-Q table and shelf shapes are provisional pending a 1073-curve fit.
 - Parameters: Backend, WDF Tier, Drive, Bias, Output, Mix, Circuit Gain,
-  Saturation, Sat Amount.
+  Saturation, Sat Amount, EQ (+ HPF / Low / Mid frequency selectors and Low / Mid
+  / High gains).
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
 ### Platforms & formats

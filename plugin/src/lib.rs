@@ -30,6 +30,9 @@ const WDF_PARAM_TAU_S: f32 = 0.02;
 const WDF_RGAIN_EPS: f32 = 1.0e-3;
 const WDF_BIAS_EPS: f32 = 1.0e-5;
 const WDF_AGE_EPS: f32 = 1.0e-5;
+/// Settle-snap epsilon (dB) for the per-block EQ gain glide: once a band gain is within this of its
+/// target, snap so the one-pole fully lands (no endless near-equal coeff recomputes).
+const EQ_GAIN_EPS: f32 = 1.0e-3;
 #[cfg(feature = "trafo-core")]
 const WDF_TRAFO_EPS: f32 = 1.0e-5;
 
@@ -184,6 +187,12 @@ pub struct Ba283Plugin {
     wdf_rgain_smooth: f32,
     wdf_bias_smooth: f32,
     wdf_age_smooth: f32,
+    /// Per-block-glided EQ band gains (dB). The EQ recomputes biquad coeffs at block rate, so a fast
+    /// gain-knob drag would step coeffs coarsely (audible zipper over the ±16/18 dB span). Gliding the
+    /// gain targets turns each drag into small per-block coeff steps, matching `wdf_rgain_smooth`.
+    eq_low_g_smooth: f32,
+    eq_mid_g_smooth: f32,
+    eq_high_g_smooth: f32,
     /// Last WDF aging value / seed applied to the channels (block-rate). `NAN`/`MAX` force a
     /// first-block apply. `last_reroll` edge-detects the momentary re-roll trigger.
     last_age: f32,
@@ -664,6 +673,9 @@ impl Default for Ba283Plugin {
             wdf_rgain_smooth: 220.0,
             wdf_bias_smooth: 0.5,
             wdf_age_smooth: 0.0,
+            eq_low_g_smooth: 0.0,
+            eq_mid_g_smooth: 0.0,
+            eq_high_g_smooth: 0.0,
             last_age: f32::NAN,
             last_seed: u64::MAX,
             last_reroll: false,
@@ -889,10 +901,37 @@ impl Plugin for Ba283Plugin {
         let eq_on = self.params.eq_on.value();
         let eq_hpf_hz = self.params.eq_hpf_freq.value().hz();
         let eq_low_hz = self.params.eq_low_freq.value().hz();
-        let eq_low_g = self.params.eq_low_gain.value();
         let eq_mid_hz = self.params.eq_mid_freq.value().hz();
-        let eq_mid_g = self.params.eq_mid_gain.value();
-        let eq_high_g = self.params.eq_high_gain.value();
+        let eq_low_t = self.params.eq_low_gain.value();
+        let eq_mid_t = self.params.eq_mid_gain.value();
+        let eq_high_t = self.params.eq_high_gain.value();
+        // Glide the band gains while the EQ is engaged so a knob drag becomes small per-block coeff
+        // steps instead of coarse jumps (same one-pole + settle-snap as the WDF block-rate params).
+        // While off, snap to target: the stage is bypassed (no audio touched), and a re-enable then
+        // starts from the real gains. The bit-exact-off contract is unaffected — `Eq::set` ignores
+        // these values until `eq_on`.
+        let (eq_low_g, eq_mid_g, eq_high_g) = if eq_on {
+            let n = buffer.samples().max(1) as f32;
+            let a = 1.0 - (-(n / self.sample_rate) / WDF_PARAM_TAU_S).exp();
+            self.eq_low_g_smooth += a * (eq_low_t - self.eq_low_g_smooth);
+            self.eq_mid_g_smooth += a * (eq_mid_t - self.eq_mid_g_smooth);
+            self.eq_high_g_smooth += a * (eq_high_t - self.eq_high_g_smooth);
+            if (eq_low_t - self.eq_low_g_smooth).abs() < EQ_GAIN_EPS {
+                self.eq_low_g_smooth = eq_low_t;
+            }
+            if (eq_mid_t - self.eq_mid_g_smooth).abs() < EQ_GAIN_EPS {
+                self.eq_mid_g_smooth = eq_mid_t;
+            }
+            if (eq_high_t - self.eq_high_g_smooth).abs() < EQ_GAIN_EPS {
+                self.eq_high_g_smooth = eq_high_t;
+            }
+            (self.eq_low_g_smooth, self.eq_mid_g_smooth, self.eq_high_g_smooth)
+        } else {
+            self.eq_low_g_smooth = eq_low_t;
+            self.eq_mid_g_smooth = eq_mid_t;
+            self.eq_high_g_smooth = eq_high_t;
+            (eq_low_t, eq_mid_t, eq_high_t)
+        };
         for ch in self.channels.iter_mut() {
             ch.eq_set(eq_on, eq_hpf_hz, eq_low_hz, eq_low_g, eq_mid_hz, eq_mid_g, eq_high_g);
         }

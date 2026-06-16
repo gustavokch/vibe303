@@ -218,11 +218,20 @@ impl Eq {
         }
         self.cache = Some(s);
 
-        self.hpf_on = hpf_hz > 0.0;
-        if self.hpf_on {
+        let hpf_on = hpf_hz > 0.0;
+        if hpf_on {
+            // The HPF is SKIPPED in `process` while disabled, so its delay line freezes at a stale
+            // snapshot. Zero it on an Off→on re-engage so the filter starts from a known state
+            // instead of injecting that stale history (a re-engage transient). The shelf/bell bands
+            // need no such reset: they keep running as identity while flat, so their state stays warm.
+            if !self.hpf_on {
+                reset_state(&mut self.hpf[0]);
+                reset_state(&mut self.hpf[1]);
+            }
             set_highpass2(&mut self.hpf[0], hpf_hz as f64, self.fs, HPF_BUTTER_Q);
             set_highpass1(&mut self.hpf[1], hpf_hz as f64, self.fs);
         }
+        self.hpf_on = hpf_on;
         // Gain ≈ 0 dB → identity, so a flat band adds no rounding noise and the all-flat state is
         // provably transparent.
         if low_g.abs() < 1.0e-4 {
@@ -388,6 +397,37 @@ mod tests {
         for i in 0..64 {
             let x = if i == 0 { 1.0 } else { 0.0 };
             assert_eq!(eq.process(x).to_bits(), fresh.process(x).to_bits(), "state not cleared at {i}");
+        }
+    }
+
+    #[test]
+    fn hpf_reengage_zeroes_stale_state() {
+        // The HPF is skipped while Off, so its delay line freezes. Re-engaging must zero it (else a
+        // stale-history transient). Bands flat (identity) so only the HPF contributes here; an Off→on
+        // re-engage must then match a freshly-prepared HPF impulse response bit-for-bit.
+        let mut a = Eq::new();
+        a.prepare(48_000.0);
+        a.set(true, 80.0, 60.0, 0.0, 1600.0, 0.0, 0.0); // HPF on
+        for _ in 0..1000 {
+            a.process(0.7); // load the HPF delay line with non-zero state
+        }
+        a.set(true, 0.0, 60.0, 0.0, 1600.0, 0.0, 0.0); // HPF Off (state freezes)
+        for _ in 0..1000 {
+            a.process(0.3);
+        }
+        a.set(true, 80.0, 60.0, 0.0, 1600.0, 0.0, 0.0); // HPF re-engaged → state must be zeroed
+
+        let mut fresh = Eq::new();
+        fresh.prepare(48_000.0);
+        fresh.set(true, 80.0, 60.0, 0.0, 1600.0, 0.0, 0.0);
+
+        for i in 0..64 {
+            let x = if i == 0 { 1.0 } else { 0.0 };
+            assert_eq!(
+                a.process(x).to_bits(),
+                fresh.process(x).to_bits(),
+                "HPF state not zeroed on re-engage at {i}"
+            );
         }
     }
 }
