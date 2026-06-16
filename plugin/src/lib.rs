@@ -8,6 +8,7 @@ pub mod adaa;
 pub mod dcblock;
 pub mod delay;
 pub mod dsp;
+pub mod eq;
 mod editor;
 pub mod model;
 pub mod oversample;
@@ -358,6 +359,91 @@ pub enum UiScale {
     X200,
 }
 
+/// Switched high-pass-filter corner of the 1073/1076 EQ (S4): OFF / 50 / 80 / 160 / 300 Hz, ~18
+/// dB/oct. `Off` bypasses the HPF entirely (folding the on/off into the selector, like
+/// [`Oversampling::Auto`]). Both backends; the EQ runs ahead of the model.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum HpfFreq {
+    #[name = "Off"]
+    Off,
+    #[name = "50 Hz"]
+    Hz50,
+    #[name = "80 Hz"]
+    Hz80,
+    #[name = "160 Hz"]
+    Hz160,
+    #[name = "300 Hz"]
+    Hz300,
+}
+
+impl HpfFreq {
+    /// Corner in Hz, or `0.0` for `Off` (the EQ stage treats `<= 0` as bypassed).
+    fn hz(self) -> f32 {
+        match self {
+            HpfFreq::Off => 0.0,
+            HpfFreq::Hz50 => 50.0,
+            HpfFreq::Hz80 => 80.0,
+            HpfFreq::Hz160 => 160.0,
+            HpfFreq::Hz300 => 300.0,
+        }
+    }
+}
+
+/// Switched low-shelf corner of the 1073/1076 EQ (S3): 35 / 60 / 110 / 220 Hz.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum LowShelfFreq {
+    #[name = "35 Hz"]
+    Hz35,
+    #[name = "60 Hz"]
+    Hz60,
+    #[name = "110 Hz"]
+    Hz110,
+    #[name = "220 Hz"]
+    Hz220,
+}
+
+impl LowShelfFreq {
+    fn hz(self) -> f32 {
+        match self {
+            LowShelfFreq::Hz35 => 35.0,
+            LowShelfFreq::Hz60 => 60.0,
+            LowShelfFreq::Hz110 => 110.0,
+            LowShelfFreq::Hz220 => 220.0,
+        }
+    }
+}
+
+/// Switched mid/presence-bell center of the 1073/1076 EQ (S5): 360 / 700 / 1.6k / 3.2k / 4.8k /
+/// 7.2k Hz. Proportional-Q (narrows with boost) is applied in [`crate::eq`].
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum MidFreq {
+    #[name = "360 Hz"]
+    Hz360,
+    #[name = "700 Hz"]
+    Hz700,
+    #[name = "1.6 kHz"]
+    Hz1600,
+    #[name = "3.2 kHz"]
+    Hz3200,
+    #[name = "4.8 kHz"]
+    Hz4800,
+    #[name = "7.2 kHz"]
+    Hz7200,
+}
+
+impl MidFreq {
+    fn hz(self) -> f32 {
+        match self {
+            MidFreq::Hz360 => 360.0,
+            MidFreq::Hz700 => 700.0,
+            MidFreq::Hz1600 => 1600.0,
+            MidFreq::Hz3200 => 3200.0,
+            MidFreq::Hz4800 => 4800.0,
+            MidFreq::Hz7200 => 7200.0,
+        }
+    }
+}
+
 #[derive(Params)]
 pub struct Ba283Params {
     #[id = "backend"]
@@ -384,6 +470,29 @@ pub struct Ba283Params {
     pub output_db: FloatParam,
     #[id = "mix"]
     pub mix: FloatParam,
+    /// Neve 1073/1076-style EQ ON/OFF (both backends). OFF (default) = bit-exact today's sound; ON
+    /// inserts the analog-matched biquad EQ on the input signal, ahead of the model (matching the
+    /// real signal flow EQ → BA283/AV → LO1166). See [`crate::eq`].
+    #[id = "eq_on"]
+    pub eq_on: BoolParam,
+    /// EQ high-pass corner (S4): Off / 50 / 80 / 160 / 300 Hz. `Off` bypasses the HPF.
+    #[id = "eq_hpf_freq"]
+    pub eq_hpf_freq: EnumParam<HpfFreq>,
+    /// EQ low-shelf corner (S3): 35 / 60 / 110 / 220 Hz.
+    #[id = "eq_low_freq"]
+    pub eq_low_freq: EnumParam<LowShelfFreq>,
+    /// EQ low-shelf gain (RV2), ±16 dB. 0 dB = flat.
+    #[id = "eq_low_gain"]
+    pub eq_low_gain: FloatParam,
+    /// EQ mid/presence center (S5): 360 / 700 / 1.6k / 3.2k / 4.8k / 7.2k Hz.
+    #[id = "eq_mid_freq"]
+    pub eq_mid_freq: EnumParam<MidFreq>,
+    /// EQ mid/presence gain (RV3), ±18 dB. Proportional-Q narrows with boost. 0 dB = flat.
+    #[id = "eq_mid_gain"]
+    pub eq_mid_gain: FloatParam,
+    /// EQ high-shelf gain (RV1, fixed 12 kHz), ±16 dB. 0 dB = flat.
+    #[id = "eq_high_gain"]
+    pub eq_high_gain: FloatParam,
     /// ADAA2 output-saturation stage ON/OFF (both backends). OFF (default) = bit-exact today's sound;
     /// ON adds an antialiased, asymmetric soft-clip on the wet path before the dry/wet mix.
     #[id = "sat_on"]
@@ -486,6 +595,20 @@ impl Default for Ba283Params {
             .with_unit(" %")
             .with_value_to_string(formatters::v2s_f32_rounded(0))
             .with_smoother(SmoothingStyle::Linear(20.0)),
+            // EQ defaults: OFF + all gains 0 dB so the stage is a provable no-op until engaged.
+            eq_on: BoolParam::new("EQ", false),
+            eq_hpf_freq: EnumParam::new("EQ HPF", HpfFreq::Off),
+            eq_low_freq: EnumParam::new("EQ Low Freq", LowShelfFreq::Hz60),
+            eq_low_gain: FloatParam::new("EQ Low", 0.0, FloatRange::Linear { min: -16.0, max: 16.0 })
+                .with_unit(" dB")
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            eq_mid_freq: EnumParam::new("EQ Mid Freq", MidFreq::Hz1600),
+            eq_mid_gain: FloatParam::new("EQ Mid", 0.0, FloatRange::Linear { min: -18.0, max: 18.0 })
+                .with_unit(" dB")
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            eq_high_gain: FloatParam::new("EQ High", 0.0, FloatRange::Linear { min: -16.0, max: 16.0 })
+                .with_unit(" dB")
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
             sat_on: BoolParam::new("Saturation", false),
             sat_amount: FloatParam::new("Sat Amount", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_value_to_string(formatters::v2s_f32_rounded(2))
@@ -508,7 +631,7 @@ impl Default for Ba283Params {
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             age_reroll: BoolParam::new("Re-roll Unit", false),
             age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
-            editor_state: EguiState::from_size(660, 740),
+            editor_state: EguiState::from_size(660, 900),
             #[cfg(feature = "trafo-core")]
             trafo_on: BoolParam::new("Transformer", true),
             #[cfg(feature = "trafo-core")]
@@ -692,6 +815,8 @@ impl Plugin for Ba283Plugin {
             ch.wdf_set_age(age);
             ch.wdf_set_rgain(rgain);
             ch.wdf_set_bias(bias);
+            // EQ runs at host rate ahead of the model; size its biquad coeffs to the real SR.
+            ch.eq_prepare(self.sample_rate);
         }
         self.last_rgain = rgain;
         self.last_bias = bias;
@@ -757,6 +882,20 @@ impl Plugin for Ba283Plugin {
         let backend = self.params.backend.value();
         // ADAA2 output-saturation enable (block-rate, like level_norm); amount is per-sample smoothed.
         let sat_on = self.params.sat_on.value();
+
+        // Neve EQ (both backends): resolve the switched frequencies and push the current settings to
+        // each channel at block rate. `Eq::set` recomputes biquad coeffs only when they change, and
+        // the stage is a bit-exact identity while `eq_on` is false.
+        let eq_on = self.params.eq_on.value();
+        let eq_hpf_hz = self.params.eq_hpf_freq.value().hz();
+        let eq_low_hz = self.params.eq_low_freq.value().hz();
+        let eq_low_g = self.params.eq_low_gain.value();
+        let eq_mid_hz = self.params.eq_mid_freq.value().hz();
+        let eq_mid_g = self.params.eq_mid_gain.value();
+        let eq_high_g = self.params.eq_high_gain.value();
+        for ch in self.channels.iter_mut() {
+            ch.eq_set(eq_on, eq_hpf_hz, eq_low_hz, eq_low_g, eq_mid_hz, eq_mid_g, eq_high_g);
+        }
 
         // WDF gain/bias are consumed at block rate (a cheap G0 rebuild, not per-sample-smoothed). Apply
         // to both channels only when changed; integrator state is preserved so the model re-settles

@@ -18,6 +18,7 @@
 
 use crate::adaa::{Adaa2Sat, SatTables};
 use crate::dcblock::DcBlock;
+use crate::eq::Eq;
 use crate::delay::ShortDelay;
 use crate::model::Ba283Model;
 use crate::oversample::{HostBridge, HOST_BRIDGE_LATENCY};
@@ -105,6 +106,9 @@ pub struct ChannelDsp {
     /// symmetric signal into it rectifies a DC term onto the wet path; this removes it. Runs only
     /// when `sat_on` (DcBlock is not identity), so the OFF path stays bit-exact.
     sat_dcblock: DcBlock,
+    /// Neve 1073/1076-style EQ, applied to the input signal BEFORE the model (the EQ section sits
+    /// upstream of the BA283/AV card on the real strip). Bit-exact identity while disabled.
+    eq: Eq,
     /// De-normed wet (volts→dBFS) from the most recent `process_sample`, BEFORE the levelNorm gain,
     /// `out_gain`, and `mix` are applied. The plugin reads this to feed the stereo-linked levelNorm
     /// RMS estimator (the norm gain is computed across both channels, so it lives one level up).
@@ -130,6 +134,7 @@ impl ChannelDsp {
             dcblock: DcBlock::new(),
             sat: Adaa2Sat::new(SatTables::build()),
             sat_dcblock: DcBlock::new(),
+            eq: Eq::new(),
             last_wet: 0.0,
         }
     }
@@ -161,7 +166,30 @@ impl ChannelDsp {
         self.dcblock.reset();
         self.sat.reset();
         self.sat_dcblock.reset();
+        self.eq.reset();
         self.last_wet = 0.0;
+    }
+
+    /// Size the EQ biquad coefficients to the host sample rate (called from `initialize`). The EQ
+    /// runs at host rate ahead of the model.
+    pub fn eq_prepare(&mut self, host_sr: f32) {
+        self.eq.prepare(host_sr);
+    }
+
+    /// Push the current EQ settings (block-rate). `hpf_hz <= 0` bypasses the high-pass. Coeffs are
+    /// recomputed only when they change; the stage stays bit-exact identity while `on` is false.
+    #[allow(clippy::too_many_arguments)]
+    pub fn eq_set(
+        &mut self,
+        on: bool,
+        hpf_hz: f32,
+        low_hz: f32,
+        low_g: f32,
+        mid_hz: f32,
+        mid_g: f32,
+        high_g: f32,
+    ) {
+        self.eq.set(on, hpf_hz, low_hz, low_g, mid_hz, mid_g, high_g);
     }
 
     // --- WDF block-rate config (used by Phase D plugin wiring) ---
@@ -298,7 +326,10 @@ impl ChannelDsp {
         sat_on: bool,
         sat_amount: f32,
     ) -> f32 {
-        let driven = x * drive;
+        // Neve EQ sits ahead of the BA283/AV card on the real strip, so it shapes the signal BEFORE
+        // either backend — EQ boosts drive the amp harder on boosted bands, exactly as the hardware
+        // does. Bit-exact identity while the EQ is off, so the model's golden path is untouched.
+        let driven = self.eq.process(x * drive);
         match backend {
             InferenceBackend::NeuralNet => {
                 // De-norm: recover volts (`* output_ref_v`) then express in the 0 dBFS ≡ 0.5 V
