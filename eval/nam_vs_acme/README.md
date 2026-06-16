@@ -91,6 +91,36 @@ uv run --extra eval python -m eval.nam_vs_acme.run_nam \
 
 ## Latest result
 
+### Conditioned WaveNet — full gain sweep (2026-06-16)
+
+The FiLM gain-conditioned `model.cond.nam` (one model, 9-gain T3K reamp, 40-epoch
+CPU run, val_esr 0.00172) scored 3-way at every grid gain (30 s, bias 0.77):
+
+| gain_norm | NAM vs SPICE | NAM vs ACME | ACME vs SPICE |
+|----------:|-------------:|------------:|--------------:|
+| 0.000 | −29.75 dB | −28.88 dB | −39.68 dB |
+| 0.125 | −29.84 dB | −29.03 dB | −39.75 dB |
+| 0.250 | −29.42 dB | −28.71 dB | −39.88 dB |
+| 0.375 | −29.00 dB | −28.38 dB | −40.04 dB |
+| 0.500 | −28.87 dB | −28.33 dB | −40.30 dB |
+| 0.625 | −29.72 dB | −29.13 dB | −40.52 dB |
+| 0.750 | −30.49 dB | −29.82 dB | −40.25 dB |
+| 0.875 | **−30.64 dB** (best) | −29.65 dB | −37.85 dB |
+| 1.000 | **−28.80 dB** (worst) | −27.51 dB | −34.05 dB |
+
+**VERDICT: STRONG** — worst-gain NAM vs SPICE **−28.8 dB** @ gain 1.0 (gate is the
+worst operating point). Clears the ≤ −20 dB target by ~9 dB and is **flat across
+the whole gain range** — proving the FiLM conditioning works. It also *beats* the
+old fixed-gain `model.nam` (−25.5 dB at its single best point) at every gain.
+`fit_gain` lands 63.8–64.0 ≈ `OUTPUT_REF_V` 64 at all gains (scale/pad correct).
+
+Note: this is a **provisional** CPU run (40 epochs, T3K single-sweep only). Already
+strong; a longer run or the richer `gdrive:ba283_spice_gain` set (risk-register
+fallback) could tighten the high-gain end (1.0 is the weakest, where ACME-vs-SPICE
+itself degrades to −34 dB).
+
+### Fixed-gain model (original `model.nam`, single point)
+
 NAM vs SPICE-truth **−25.5 dB** ESR, FR midband error **0.05 dB**, coherence 1.0;
 ACME vs SPICE **−42.3 dB** (reference sanity). The residual is the NAM's own
 modelling error at `gain_norm 0.5` — concentrated at HF/transients.
