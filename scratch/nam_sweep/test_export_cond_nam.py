@@ -73,3 +73,23 @@ def test_to_nam_dict_metadata_provenance():
     model = build_cond_wavenet(seed=0)
     d = to_nam_dict(model, sample_rate=48000)
     assert d["metadata"] == {}
+
+
+def test_export_condition_metadata(tmp_path):
+    # The export must record the conditioning-channel contract so consumers
+    # (Task-6 eval, plugin) don't re-derive it from train/dataset.py. Matches
+    # the dataset convention: ch0 = audio x INPUT_SCALE, ch1 = constant gain.
+    model = build_cond_wavenet(seed=0)
+    out = tmp_path / "model.cond.nam"
+    ckpt = tmp_path / "best.pth"
+    torch.save(model.state_dict(), ckpt)
+    export_main(ckpt_path=ckpt, out_path=out, seed=0, sample_rate=48000)
+
+    d = json.loads(out.read_text())
+    cond = d["metadata"]["condition"]
+    assert cond["channels"] == ["audio", "gain"]
+    assert cond["gain_channel"] == 1
+    assert cond["gain_range"] == [0.0, 1.0]
+    # audio_input_scale must agree with the standalone input_scale field.
+    assert cond["audio_input_scale"] == 2.0
+    assert cond["audio_input_scale"] == d["metadata"]["input_scale"]
