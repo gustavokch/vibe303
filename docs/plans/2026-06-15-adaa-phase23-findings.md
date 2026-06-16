@@ -60,3 +60,44 @@ The Phase-1 **ADAA2 output-saturation stage (PR #56) is the one place ADAA clean
 plugin: a genuinely memoryless stage, antialiased by construction. The two stateful targets here are
 either filter-insensitive (Phase 2) or alias-negligible (Phase 3). Both documented as NO-GO so the
 measurement isn't re-run from scratch later.
+
+## Broadband sweep confirmation (2026-06-16)
+
+The above used a single tone at two folded bins. To rule out a methodology blind-spot, a **broadband**
+alias metric was run over a **frequency sweep**: energy in the sub-fundamental band `(0, f0)` — where a
+single tone has *no* legitimate content, so all of it is folded aliasing — relative to the
+fundamental, with coherent (`f0 = p/N`) rectangular FFTs. Grid = 7 f0 (`0.12…0.36·host`) × 2 operating
+points × {trafo OFF, ON} × {4th-order, 8th-order, raw os=2}. The WDF model is driven directly
+(saturation stage out of path). Reproducible, feature-gated harness:
+`plugin/tests/alias_sweep.rs` + `WdfModel::capture_os_raw` (both behind the `measure` Cargo feature).
+Run: `cargo test --features measure --release --test alias_sweep -- --nocapture`.
+
+Alias/fundamental (dB); `4th` = shipped path (verified to match live `process_host_sample` within
+0.5 dB across every cell), `8th` = 4-biquad Butterworth, `raw2x` = pre-decimation os=2 stream:
+
+| trafo | op | f0 | 4th | 8th | raw2x | Δ(8−4) |
+|---|---|---|---|---|---|---|
+| off | moderate | 0.160 | −38.87 | −38.87 | −38.87 | +0.00 |
+| off | moderate | 0.240 | −19.61 | −19.61 | −19.61 | −0.01 |
+| off | moderate | 0.360 | −2.24 | −2.46 | −2.49 | −0.23 |
+| off | hot | 0.200 | −18.42 | −18.42 | −18.42 | −0.00 |
+| off | hot | 0.280 | −0.32 | −0.35 | −0.35 | −0.03 |
+| off | hot | 0.360 | +6.31 | +6.04 | +6.00 | −0.27 |
+| on | hot | 0.200 | −23.59 | −23.59 | −23.59 | −0.00 |
+
+(full 28-cell table printed by the harness)
+
+**Phase 2 — confirmed, broadly.** `|8th − 4th| ≤ 0.27 dB` across **all 28 cells** (largest at the
+top of the band, where the image is closest); typically ≈ 0. And **`raw2x ≈ 4th` everywhere** — the
+alias energy is already in-band *before* decimation, so a steeper low-pass has nothing left to remove.
+Direct confirmation of the in-solve-foldback mechanism. Steeper decimation remains a NO-GO.
+
+**Phase 3 — confirmed, and sharpened.** The single-point 0.227 reading of "−0.0 dB" sat near a null.
+The sweep shows the transformer's contribution is **non-uniform but one-sided: ON is always ≤ OFF**
+(delta `0 → −5.17 dB`; e.g. hot f0=0.200, OFF −18.42 → ON −23.59). The JA core (RK4-band-limited,
+one-step-lag-injected) **never adds aliasing** — at some f0 its gentle compression *reduces* the BJT
+foldback. ADAA-ing a stage that adds no aliasing is pointless: NO-GO stands, now on broadband evidence
+rather than one operating point.
+
+**Net:** both NO-GO verdicts hold across the sweep; the harness is retained (off-by-default `measure`
+feature) as a regression guard. Default `cargo test` and `--no-default-features` are unaffected.

@@ -31,6 +31,10 @@ subrate-spike = []
 # Opt out with `--no-default-features` for a bit-exact linear-transformer A/B build.
 default = ["trafo-core"]
 trafo-core = []
+# Measurement-only hooks (alias-sweep harness). Additive, off by default — never in the shipped
+# plugin. Gates `WdfModel::capture_os_raw` + the `tests/alias_sweep.rs` broadband-alias harness.
+# Run with: cargo test --features measure --release --test alias_sweep -- --nocapture
+measure = []
 
 [[bin]]
 name = "ba283_standalone"
