@@ -20,6 +20,13 @@ const U_MAX: f32 = 8.0;
 /// Asymmetry operating point: shaping the signal around a non-zero `tanh` bias gives unequal
 /// positive/negative curvature (even-harmonic colour) while staying C-infinity smooth.
 const BIAS: f64 = 0.3;
+/// Input drive range mapped from `amount` 0..1. At `DRIVE_LO` the shape is near-linear over the
+/// signal range (clean); at `DRIVE_HI` it saturates hard.
+const DRIVE_LO: f32 = 0.25;
+const DRIVE_HI: f32 = 8.0;
+/// Small-signal slope of the shape, `f'(0) = sech²(BIAS) = 1 − tanh²(BIAS)`. Used as constant makeup
+/// so the post-saturation small-signal gain is unity at any `amount`.
+const SLOPE0: f32 = 0.915_199_5;
 /// Ill-conditioning threshold (input units). The 2nd-order divided difference amplifies f32
 /// table-lerp noise by ~2/|x0−x2|, so a too-small threshold lets quiet/slow passages explode; `1e-2`
 /// bounds the amplification while staying far below the per-sample step of any hard-driven (i.e.
@@ -131,6 +138,15 @@ impl Adaa2Sat {
         self.x2 = 0.0;
     }
 
+    /// Voiced output-saturation of one sample. `amount` (0..1) drives the signal harder into the
+    /// fixed shape; a constant small-signal makeup keeps quiet passages at unity gain so the knob
+    /// sweeps clean → saturated without changing perceived level until the signal is actually pushed.
+    #[inline]
+    pub fn process(&mut self, x: f32, amount: f32) -> f32 {
+        let g = DRIVE_LO + amount.clamp(0.0, 1.0) * (DRIVE_HI - DRIVE_LO);
+        self.process_sample(x * g) / (g * SLOPE0)
+    }
+
     /// Antialiased shape of one (drive-scaled) input sample.
     #[inline]
     pub fn process_sample(&mut self, x0: f32) -> f32 {
@@ -201,6 +217,27 @@ mod tests {
             let want = shape(c as f64);
             assert!((y as f64 - want).abs() < 2e-3, "constant {c} → {y}, want {want}");
         }
+    }
+
+    #[test]
+    fn amount_unity_small_signal_and_compresses_loud() {
+        let mut sat = Adaa2Sat::new(SatTables::build());
+        let settle = |sat: &mut Adaa2Sat, x: f32, a: f32| {
+            let mut y = 0.0;
+            for _ in 0..4 {
+                y = sat.process(x, a);
+            }
+            y
+        };
+        // Small-signal gain ≈ unity at any amount (constant makeup).
+        for &a in &[0.0f32, 0.5, 1.0] {
+            let y = settle(&mut sat, 0.01, a);
+            assert!((y - 0.01).abs() < 5e-4, "small-signal gain off at amount {a}: {y}");
+        }
+        // A loud sample compresses harder as amount rises.
+        let lo = settle(&mut sat, 0.9, 0.0);
+        let hi = settle(&mut sat, 0.9, 1.0);
+        assert!(hi < lo && hi < 0.9, "expected compression: amount0={lo}, amount1={hi}");
     }
 
     #[test]

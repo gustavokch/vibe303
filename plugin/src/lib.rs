@@ -384,6 +384,14 @@ pub struct Ba283Params {
     pub output_db: FloatParam,
     #[id = "mix"]
     pub mix: FloatParam,
+    /// ADAA2 output-saturation stage ON/OFF (both backends). OFF (default) = bit-exact today's sound;
+    /// ON adds an antialiased, asymmetric soft-clip on the wet path before the dry/wet mix.
+    #[id = "sat_on"]
+    pub sat_on: BoolParam,
+    /// Output-saturation amount (0..1). Drives the signal harder into the soft-clip; small-signal gain
+    /// stays unity (constant makeup) so the knob sweeps clean → saturated. Inert when `sat_on` is off.
+    #[id = "sat_amount"]
+    pub sat_amount: FloatParam,
     /// When on, scale the wet signal so output RMS tracks input RMS (stereo-linked, applied before
     /// `output_db`/`mix`). Off = faithful preamp gain (the default).
     #[id = "level_norm"]
@@ -478,6 +486,10 @@ impl Default for Ba283Params {
             .with_unit(" %")
             .with_value_to_string(formatters::v2s_f32_rounded(0))
             .with_smoother(SmoothingStyle::Linear(20.0)),
+            sat_on: BoolParam::new("Saturation", false),
+            sat_amount: FloatParam::new("Sat Amount", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(formatters::v2s_f32_rounded(2))
+                .with_smoother(SmoothingStyle::Linear(20.0)),
             level_norm: BoolParam::new("Level Norm", false),
             gain_stepped: BoolParam::new("Stepped Gain", false),
             circuit_gain: FloatParam::new(
@@ -743,6 +755,8 @@ impl Plugin for Ba283Plugin {
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
         let use_bridge = self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ;
         let backend = self.params.backend.value();
+        // ADAA2 output-saturation enable (block-rate, like level_norm); amount is per-sample smoothed.
+        let sat_on = self.params.sat_on.value();
 
         // WDF gain/bias are consumed at block rate (a cheap G0 rebuild, not per-sample-smoothed). Apply
         // to both channels only when changed; integrator state is preserved so the model re-settles
@@ -988,6 +1002,7 @@ impl Plugin for Ba283Plugin {
             let bias = self.params.bias.smoothed.next();
             let out_g = db_to_gain(self.params.output_db.smoothed.next());
             let mix = self.params.mix.smoothed.next() * 0.01;
+            let sat_amount = self.params.sat_amount.smoothed.next();
             frame_i += 1.0;
             let norm_gain = g_start + g_step * frame_i;
             for (ch, sample) in frame.iter_mut().enumerate() {
@@ -996,8 +1011,9 @@ impl Plugin for Ba283Plugin {
                     break;
                 }
                 let x = *sample;
-                *sample = self.channels[ch]
-                    .process_sample(x, drive, bias, out_g, norm_gain, mix, use_bridge, backend);
+                *sample = self.channels[ch].process_sample(
+                    x, drive, bias, out_g, norm_gain, mix, use_bridge, backend, sat_on, sat_amount,
+                );
             }
         }
         // The applied gain reached the target by the last frame; carry it as the next block's start.

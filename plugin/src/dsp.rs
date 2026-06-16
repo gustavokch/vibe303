@@ -16,6 +16,7 @@
 //! `process_sample` is zero-alloc: it only calls the existing zero-alloc
 //! model/bridge/delay methods plus arithmetic.
 
+use crate::adaa::{Adaa2Sat, SatTables};
 use crate::dcblock::DcBlock;
 use crate::delay::ShortDelay;
 use crate::model::Ba283Model;
@@ -97,6 +98,9 @@ pub struct ChannelDsp {
     resume_remain: u32,
     /// DC blocker on the final blended output — kills operating-point DC offsets from G0 re-stamps.
     dcblock: DcBlock,
+    /// Optional ADAA2 output-saturation stage (memoryless, antialiased). Bypassed when `sat_on` is
+    /// false so the dry-of-saturation path stays bit-exact.
+    sat: Adaa2Sat,
     /// De-normed wet (volts→dBFS) from the most recent `process_sample`, BEFORE the levelNorm gain,
     /// `out_gain`, and `mix` are applied. The plugin reads this to feed the stereo-linked levelNorm
     /// RMS estimator (the norm gain is computed across both channels, so it lives one level up).
@@ -120,6 +124,7 @@ impl ChannelDsp {
             xfade_len: 0,
             resume_remain: 0,
             dcblock: DcBlock::new(),
+            sat: Adaa2Sat::new(SatTables::build()),
             last_wet: 0.0,
         }
     }
@@ -149,6 +154,7 @@ impl ChannelDsp {
         // (xfade_len == 0 -> resume_remain == 0), which is harmless: there is nothing to ramp.
         self.resume_remain = self.xfade_len;
         self.dcblock.reset();
+        self.sat.reset();
         self.last_wet = 0.0;
     }
 
@@ -282,6 +288,8 @@ impl ChannelDsp {
         mix: f32,
         use_bridge: bool,
         backend: InferenceBackend,
+        sat_on: bool,
+        sat_amount: f32,
     ) -> f32 {
         let driven = x * drive;
         match backend {
@@ -302,6 +310,8 @@ impl ChannelDsp {
                 let wet = model_out * deref;
                 self.last_wet = wet;
                 let wet = wet * norm_gain * out_gain;
+                // Optional antialiased output saturation (post-level, pre-mix). Bypassed when off.
+                let wet = if sat_on { self.sat.process(wet, sat_amount) } else { wet };
                 // Dry path delayed to match the wet-path (bridge) latency so Mix aligns.
                 let dry_aligned = if use_bridge { self.dry_delay.push_pop(x) } else { x };
                 wet * mix + dry_aligned * (1.0 - mix)
@@ -346,6 +356,8 @@ impl ChannelDsp {
                 };
                 self.last_wet = wet;
                 let wet = wet * norm_gain * out_gain;
+                // Optional antialiased output saturation (post-level, pre-mix). Bypassed when off.
+                let wet = if sat_on { self.sat.process(wet, sat_amount) } else { wet };
                 // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
                 let blended = wet * mix + x * (1.0 - mix);
                 // Keep the host-reported latency honest: when the NeuralNet path would be bridged

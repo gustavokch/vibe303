@@ -7,6 +7,8 @@
 //! sub-Nyquist harmonics. ADAA2 must crush those aliases relative to the raw shaper.
 
 use ba283::adaa::{Adaa2Sat, SatTables};
+use ba283::dsp::ChannelDsp;
+use ba283::InferenceBackend;
 
 const TWO_PI: f64 = std::f64::consts::TAU;
 
@@ -56,6 +58,32 @@ fn adaa2_suppresses_aliasing_vs_raw_shaper() {
         reduction_db > 18.0,
         "ADAA2 alias reduction {reduction_db:.1} dB below 18 dB target (raw={raw}, adaa={adaa})"
     );
+}
+
+#[test]
+fn channel_sat_toggle_is_wired_and_off_is_bypassed() {
+    // Drive a hot signal through the WDF backend with the saturation stage OFF and ON. OFF must be
+    // bypassed (identical to a parallel OFF channel — proves no state leak); ON must change the
+    // output (proves the stage is actually wired into the chain) while staying finite.
+    let setup = || {
+        let mut ch = ChannelDsp::new();
+        ch.wdf_warmup();
+        ch
+    };
+    let (mut off_a, mut off_b, mut on) = (setup(), setup(), setup());
+    let mut any_diff = false;
+    for i in 0..512 {
+        let x = (i as f32 * 0.06).sin() * 0.8;
+        let ya = off_a.process_sample(x, 4.0, 0.5, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf, false, 0.0);
+        let yb = off_b.process_sample(x, 4.0, 0.5, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf, false, 0.0);
+        let yon = on.process_sample(x, 4.0, 0.5, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf, true, 0.8);
+        assert_eq!(ya, yb, "OFF path not deterministic / state leaked at {i}");
+        assert!(yon.is_finite() && yon.abs() < 100.0, "ON output bad at {i}: {yon}");
+        if (yon - ya).abs() > 1e-6 {
+            any_diff = true;
+        }
+    }
+    assert!(any_diff, "saturation ON did not change the output — stage not wired");
 }
 
 #[test]

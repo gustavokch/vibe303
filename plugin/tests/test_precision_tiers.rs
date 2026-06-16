@@ -145,7 +145,7 @@ fn live_switch_all_combos_finite() {
                             for (i, &x) in s.iter().enumerate() {
                                 let y = ch.process_sample(
                                     x, drive, bias, 1.0, 1.0, 1.0, host_ge_96k,
-                                    InferenceBackend::Wdf,
+                                    InferenceBackend::Wdf, false, 0.0,
                                 );
                                 if !y.is_finite() || y.abs() > DIVERGE {
                                     return Some((i, y));
@@ -208,7 +208,7 @@ fn peak_after_switch(cfg: QualityConfig, sr: f64) -> f32 {
         ch.wdf_set_trafo_voicing(0.5, _trafo);
     }
     for &x in &sweep {
-        ch.process_sample(x, drive, bias, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+        ch.process_sample(x, drive, bias, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf, false, 0.0);
     }
     ch.wdf_set_tier(cfg, sr as f32, rgain, bias);
     ch.wdf_set_age_seed(DEFAULT_AGE_SEED);
@@ -222,7 +222,7 @@ fn peak_after_switch(cfg: QualityConfig, sr: f64) -> f32 {
     ch.wdf_set_bias(bias);
     let mut peak = 0.0f32;
     for &x in &sweep {
-        let y = ch.process_sample(x, drive, bias, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+        let y = ch.process_sample(x, drive, bias, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf, false, 0.0);
         if y.is_finite() && y.abs() > peak {
             peak = y.abs();
         }
