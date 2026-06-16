@@ -23,9 +23,18 @@ is downsampled back); SPICE is the on-disk target.  All scoring is at 48 kHz.
 The NAM output is not in volts; every ESR is **level-matched** (optimal LS
 scalar) and lag-aligned (|lag| <= SPAN) after a 20 Hz high-pass.
 
+Gain sweep (Task 6)
+-------------------
+With a gain-CONDITIONED ``.nam`` (``model.cond.nam``: 2-channel ``[audio,gain]``
+WaveNet) the harness sweeps the 9-point gain grid.  At each gain it renders NAM
+at that gain (the conditioning channel), runs ACME at the matching R_KJ, pulls
+the per-gain SPICE target from the Task-2 ``ds48/`` reamp, and scores the same
+3-way contract (lag-align / 20 Hz HP / level-match).  ``summary.json`` carries a
+``per_gain`` ESR table and a worst-gain gate.
+
 Usage:
     uv run --extra eval python -m eval.nam_vs_acme.compare \\
-        [--gain 0.5] [--bias 0.77] [--max-seconds 30] \\
+        [--gains 0.0,0.125,...,1.0] [--bias 0.77] [--max-seconds 30] \\
         [--out eval/nam_vs_acme/out]
 """
 from __future__ import annotations
@@ -45,11 +54,16 @@ from scipy.signal import butter, csd, sosfiltfilt, welch  # type: ignore[import-
 from data_gen.netlist import gain_norm_to_rkj
 from eval.wdf_vs_spice.compare import ONSET_SKIP, SPAN, best_lag
 from eval.acme_vs_spice.run_acme import run_acme
-from eval.nam_vs_acme.run_nam import DEFAULT_NAM, NamModel
+from eval.nam_vs_acme.run_nam import NamModel
 
 SR_ACME = 96_000
 NAM_SWEEP = Path.home() / "Git/ba283-nam-lstm/scratch/nam_sweep/ds48"
 DRY48 = NAM_SWEEP / "T3K-60s_dry.wav"
+# Default to the gain-CONDITIONED model (Task 5); the legacy SlimmableContainer
+# model.nam has no gain input and is scored single-point by an older run.
+COND_NAM = Path.home() / "Git/ba283-nam-lstm/exported_models/model.cond.nam"
+# The 9-point gain grid the conditioned model was trained on (ds48 reamp set).
+DEFAULT_GAINS = "0.0,0.125,0.25,0.375,0.5,0.625,0.75,0.875,1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -232,24 +246,97 @@ def _overlay(spice, acme, nam, fit_gain, sr, tag, out_dir) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _score_one_gain(model, dry, sr, gain, bias, out_dir):
+    """Render NAM (at *gain*) + ACME (at the matching R_KJ) + load the SPICE
+    target for *gain*, score the 3-way, write per-gain FR/overlay plots.
+
+    Returns ``(summary_dict, per_gain_row)`` or raises on a missing target.
+    """
+    rkj = gain_norm_to_rkj(gain)
+    target = NAM_SWEEP / f"T3K-60s_gain{gain:.3f}.wav"
+    if not target.exists():
+        raise FileNotFoundError(f"SPICE target for gain {gain:.3f} not found: {target}")
+
+    spice, sr_t = sf.read(target, always_2d=False)
+    spice = np.asarray(spice, dtype=np.float64)
+    if sr_t != sr:
+        spice = _resample(spice, sr_t, sr)
+    spice = spice[: len(dry)]
+
+    print(f"\n--- gain_norm={gain:.3f} (R_KJ={rkj:.0f}Ω) -> {target.name} ---")
+
+    # NAM at this gain.  Conditioned model uses the gain channel; the legacy
+    # SlimmableContainer ignores `gain` (back-compat) and renders one point.
+    nam_gain = gain if model._conditioned else None
+    nam_wet, thr = model.run(dry, gain=nam_gain)
+    print(f"[nam] gain={thr}  out_pk={np.max(np.abs(nam_wet)):.4f}  "
+          f"finite={np.all(np.isfinite(nam_wet))}")
+
+    # ACME at the operating point (run at 96 kHz, then back to 48 kHz).
+    dry96 = _resample(dry, sr, SR_ACME)
+    acme96 = run_acme(dry96, SR_ACME, rgain=rkj, bias=bias)
+    acme = _resample(acme96, SR_ACME, sr)
+    print(f"[acme] out_pk={np.max(np.abs(acme)):.3f}  finite={np.all(np.isfinite(acme))}")
+
+    n = min(len(nam_wet), len(acme), len(spice))
+    nam_wet, acme, spice_n, dry_n = nam_wet[:n], acme[:n], spice[:n], dry[:n]
+
+    m_na = metrics(acme, nam_wet, sr)     # NAM vs ACME
+    m_ns = metrics(spice_n, nam_wet, sr)  # NAM vs SPICE truth
+    m_as = metrics(spice_n, acme, sr)     # ACME vs SPICE (reference sanity)
+
+    print(f"  NAM  vs ACME : ESR {m_na['esr_matched_db']:+6.2f} dB  lag={m_na['lag']:+d}")
+    print(f"  NAM  vs SPICE: ESR {m_ns['esr_matched_db']:+6.2f} dB  "
+          f"fit_gain={m_ns['fit_gain']:.2f}  lag={m_ns['lag']:+d}")
+    print(f"  ACME vs SPICE: ESR {m_as['esr_matched_db']:+6.2f} dB  lag={m_as['lag']:+d}")
+
+    tag = f"T3K_g{gain:.3f}"
+    nam_lm = m_ns["fit_gain"] * nam_wet
+    fcs, sdb, _ = _welch_tf(spice_n, dry_n, sr)
+    _, adb, _ = _welch_tf(acme, dry_n, sr)
+    _, ndb, nco = _welch_tf(nam_lm, dry_n, sr)
+    fr = _fr_plot(fcs, sdb, adb, ndb, nco, gain, rkj, bias, sr, out_dir, tag)
+    _overlay(spice_n, acme, nam_wet, m_ns["fit_gain"], sr, tag, out_dir)
+
+    def _pack(m):
+        return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items()}
+
+    per_gain_summary = {
+        "gain_norm": gain, "rkj_ohm": round(rkj, 1), "target": target.name,
+        "nam_vs_acme": _pack(m_na), "nam_vs_spice": _pack(m_ns),
+        "acme_vs_spice": _pack(m_as), "frequency_response": fr,
+        "verdict": _verdict_one(m_na, m_ns, m_as, gain),
+    }
+    row = {
+        "gain_norm": gain, "rkj_ohm": round(rkj, 1),
+        "nam_vs_spice_esr_db": round(m_ns["esr_matched_db"], 2),
+        "nam_vs_acme_esr_db": round(m_na["esr_matched_db"], 2),
+        "acme_vs_spice_esr_db": round(m_as["esr_matched_db"], 2),
+    }
+    return per_gain_summary, row
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--gain", type=float, default=0.5,
-                    help="gain_norm operating point (NAM matches 0.5 best)")
+    ap.add_argument("--gains", type=str, default=DEFAULT_GAINS,
+                    help="comma-separated gain_norm grid to sweep")
+    ap.add_argument("--gain", type=float, default=None,
+                    help="single gain_norm shortcut (overrides --gains if given)")
     ap.add_argument("--bias", type=float, default=0.77)
     ap.add_argument("--dry", type=Path, default=DRY48, help="T3K training dry (48 kHz)")
-    ap.add_argument("--target", type=Path, default=None,
-                    help="SPICE target wav (default: T3K-60s_gain{G}.wav)")
-    ap.add_argument("--nam", type=Path, default=DEFAULT_NAM)
+    ap.add_argument("--nam", type=Path, default=COND_NAM,
+                    help="conditioned .nam (default: model.cond.nam)")
     ap.add_argument("--max-seconds", type=float, default=30.0,
                     help="trim dry/target to keep the ACME (Julia) sim tractable")
     ap.add_argument("--out", type=Path, default=Path("eval/nam_vs_acme/out"))
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    target = args.target or (NAM_SWEEP / f"T3K-60s_gain{args.gain:.3f}.wav")
-    rkj = gain_norm_to_rkj(args.gain)
+    if args.gain is not None:
+        gains = [float(args.gain)]
+    else:
+        gains = [float(g) for g in args.gains.split(",") if g.strip()]
 
     model = NamModel(args.nam)
     sr = model.sample_rate
@@ -258,97 +345,86 @@ def main() -> None:
     dry = np.asarray(dry, dtype=np.float64)
     if sr_dry != sr:
         dry = _resample(dry, sr_dry, sr)
-    spice, sr_t = sf.read(target, always_2d=False)
-    spice = np.asarray(spice, dtype=np.float64)
-    if sr_t != sr:
-        spice = _resample(spice, sr_t, sr)
-
-    nmax = int(args.max_seconds * sr)
-    dry, spice = dry[:nmax], spice[:nmax]
+    dry = dry[: int(args.max_seconds * sr)]
 
     print("=" * 64)
-    print("NAM vs ACME vs SPICE — BA283 T3K accuracy harness")
-    print(f"  model   : {args.nam}  (arch={model.arch}, SR={sr})")
+    print("NAM vs ACME vs SPICE — BA283 T3K gain sweep")
+    print(f"  model   : {args.nam}")
+    print(f"            arch={model.arch}, SR={sr}, "
+          f"conditioned={model._conditioned}")
     print(f"  dry     : {args.dry.name}  ({len(dry)/sr:.1f}s)")
-    print(f"  target  : {target.name}  (SPICE truth)")
-    print(f"  point   : gain_norm={args.gain} (R_KJ={rkj:.0f}Ω), bias={args.bias}")
-    print(f"  ACME    : {SR_ACME} Hz (dry upsampled), compared at {sr} Hz")
+    print(f"  gains   : {gains}")
+    print(f"  ACME    : {SR_ACME} Hz (dry upsampled), compared at {sr} Hz, bias={args.bias}")
     print("=" * 64)
 
-    # NAM on the exact training dry (no gain input; routed by input peak).
-    nam_wet, thr = model.run(dry)
-    print(f"[nam] routed max_value={thr}  out_pk={np.max(np.abs(nam_wet)):.4f}")
+    per_gain: list[dict] = []
+    rows: list[dict] = []
+    for g in gains:
+        s, row = _score_one_gain(model, dry, sr, g, args.bias, args.out)
+        per_gain.append(s)
+        rows.append(row)
 
-    # ACME at the operating point (run at 96 kHz, then back to 48 kHz).
-    dry96 = _resample(dry, sr, SR_ACME)
-    acme96 = run_acme(dry96, SR_ACME, rgain=rkj, bias=args.bias)
-    acme = _resample(acme96, SR_ACME, sr)
-    print(f"[acme] out_pk={np.max(np.abs(acme)):.3f}  finite={np.all(np.isfinite(acme))}")
-
-    n = min(len(nam_wet), len(acme), len(spice))
-    nam_wet, acme, spice, dry = nam_wet[:n], acme[:n], spice[:n], dry[:n]
-
-    m_na = metrics(acme, nam_wet, sr)    # NAM vs ACME (primary ask)
-    m_ns = metrics(spice, nam_wet, sr)   # NAM vs SPICE truth
-    m_as = metrics(spice, acme, sr)      # ACME vs SPICE (reference sanity)
-
-    print(f"  NAM  vs ACME : ESR {m_na['esr_matched_db']:+6.2f} dB (matched)  "
-          f"fit_gain={m_na['fit_gain']:.2f}  lag={m_na['lag']:+d}")
-    print(f"  NAM  vs SPICE: ESR {m_ns['esr_matched_db']:+6.2f} dB (matched)  "
-          f"fit_gain={m_ns['fit_gain']:.2f}  lag={m_ns['lag']:+d}")
-    print(f"  ACME vs SPICE: ESR {m_as['esr_matched_db']:+6.2f} dB (matched)  "
-          f"raw {m_as['esr_db']:+6.2f} dB  lag={m_as['lag']:+d}")
-
-    # 3-way FR (each vs dry) and waveform overlay.
-    tag = f"T3K_g{args.gain:.2f}"
-    nam_lm = m_ns["fit_gain"] * nam_wet  # NAM into SPICE volt domain
-    fcs, sdb, _ = _welch_tf(spice, dry, sr)
-    _, adb, _ = _welch_tf(acme, dry, sr)
-    _, ndb, nco = _welch_tf(nam_lm, dry, sr)
-    fr = _fr_plot(fcs, sdb, adb, ndb, nco, args.gain, rkj, args.bias, sr, args.out, tag)
-    _overlay(spice, acme, nam_wet, m_ns["fit_gain"], sr, tag, args.out)
-
-    def _pack(m):
-        return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items()}
+    # Worst-gain gate: the conditioned model must hold accuracy across the
+    # whole sweep, so the verdict is driven by the WORST (highest) NAM-vs-SPICE
+    # ESR over all gains.
+    worst = max(rows, key=lambda r: r["nam_vs_spice_esr_db"])
+    best = min(rows, key=lambda r: r["nam_vs_spice_esr_db"])
+    worst_ns = worst["nam_vs_spice_esr_db"]
+    quality = ("STRONG" if worst_ns <= -25 else "FAIR" if worst_ns <= -18 else
+               "MODERATE" if worst_ns <= -12 else "WEAK")
+    verdict = (f"{quality} — worst-gain NAM vs SPICE {worst_ns:+.1f} dB "
+               f"@ gain_norm={worst['gain_norm']:.3f} "
+               f"(best {best['nam_vs_spice_esr_db']:+.1f} dB @ "
+               f"gain_norm={best['gain_norm']:.3f}); gate = worst gain over the sweep.")
 
     summary = {
-        "config": {"nam": str(args.nam), "arch": model.arch, "sr": sr,
-                   "acme_sr": SR_ACME, "gain_norm": args.gain, "rkj_ohm": round(rkj, 1),
-                   "bias": args.bias, "dry": str(args.dry), "target": str(target),
-                   "seconds": round(len(dry) / sr, 2),
+        "config": {"nam": str(args.nam), "arch": model.arch,
+                   "conditioned": model._conditioned, "sr": sr,
+                   "acme_sr": SR_ACME, "gains": gains, "bias": args.bias,
+                   "dry": str(args.dry), "seconds": round(len(dry) / sr, 2),
                    "max_lag_samples": SPAN, "onset_skip_s": ONSET_SKIP,
                    "metric": "level-matched ESR (optimal LS scalar), 20Hz HP, lag-aligned"},
-        "nam_vs_acme": _pack(m_na),
-        "nam_vs_spice": _pack(m_ns),
-        "acme_vs_spice": _pack(m_as),
-        "frequency_response": fr,
-        "verdict": _verdict(m_na, m_ns, m_as),
+        "per_gain_table": rows,
+        "worst_gain": worst,
+        "best_gain": best,
+        "verdict": verdict,
+        "per_gain": per_gain,
         "notes": [
-            "NAM trained (neural-amp-modeler) on T3K-60s_dry -> SPICE reamp; no gain "
-            "conditioning, so scored at its best operating point gain_norm 0.5.",
+            "Gain-conditioned NAM (2-ch [audio,gain] WaveNet) swept over the ds48 "
+            "9-gain grid; each gain feeds the NAM conditioning channel + the matching "
+            "R_KJ to ACME + the per-gain SPICE reamp target.",
+            "NAM audio channel scaled by audio_input_scale (=2.0, the training "
+            "INPUT_SCALE) and front-padded RF-1 zeros for time alignment.",
             "NAM output is normalized (not volts); ESR is level-matched (fit_gain ~ the "
             "target volt scale, near OUTPUT_REF_V≈64).",
             "ACME at 96 kHz (dry upsampled from 48 kHz), wet downsampled to 48 kHz; "
             "SPICE target is the on-disk 48 kHz training wet.",
-            "A -24 sample latency (NAM's calibrated delay) and a DC/sub-bass offset are "
-            "removed before scoring (lag-align + 20 Hz HP).",
+            "Lag-align (|lag| <= SPAN) + 20 Hz HP remove the calibrated delay and the "
+            "DC/sub-bass offset before scoring.",
+            "Worst-gain gate: the verdict tracks the worst NAM-vs-SPICE ESR across the "
+            "sweep so a single weak operating point is not hidden by the average.",
         ],
     }
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2))
 
     print("\n" + "=" * 64)
-    print(f"VERDICT: {summary['verdict']}")
+    print("PER-GAIN ESR (NAM vs SPICE, matched dB):")
+    for r in rows:
+        print(f"  gain_norm={r['gain_norm']:.3f}  "
+              f"NAM-SPICE {r['nam_vs_spice_esr_db']:+6.2f}  "
+              f"NAM-ACME {r['nam_vs_acme_esr_db']:+6.2f}  "
+              f"ACME-SPICE {r['acme_vs_spice_esr_db']:+6.2f}")
+    print(f"VERDICT: {verdict}")
     print(f"Plots + summary in: {args.out}")
     print("=" * 64)
 
 
-def _verdict(m_na, m_ns, m_as) -> str:
+def _verdict_one(m_na, m_ns, m_as, gain) -> str:
     na, ns, as_ = m_na["esr_matched_db"], m_ns["esr_matched_db"], m_as["esr_matched_db"]
     quality = ("STRONG" if ns <= -25 else "FAIR" if ns <= -18 else
                "MODERATE" if ns <= -12 else "WEAK")
-    return (f"{quality} — NAM vs SPICE-truth {ns:+.1f} dB, NAM vs ACME {na:+.1f} dB; "
-            f"ACME tracks SPICE at {as_:+.1f} dB (reference sanity). "
-            f"Residual is the NAM's own modelling error at gain_norm 0.5.")
+    return (f"{quality} — gain_norm={gain:.3f}: NAM vs SPICE {ns:+.1f} dB, "
+            f"NAM vs ACME {na:+.1f} dB; ACME tracks SPICE at {as_:+.1f} dB.")
 
 
 if __name__ == "__main__":
