@@ -408,7 +408,13 @@ def export_main(
     # bare state_dict. Accept either by unwrapping the "model" key when present.
     if isinstance(state, dict) and "model" in state and "optimizer" in state:
         state = state["model"]
-    model.load_state_dict(state)
+    try:
+        model.load_state_dict(state)
+    except RuntimeError as e:
+        raise RuntimeError(
+            f"checkpoint {ckpt_path} does not match the current build_cond_wavenet "
+            f"architecture; was it trained with a different config? Original error: {e}"
+        ) from e
     model.train(False)
 
     d = to_nam_dict(model, sample_rate=sample_rate)
@@ -417,10 +423,24 @@ def export_main(
         "output_ref_v": _OUTPUT_REF_V,
         "source": _EXPORT_SOURCE,
         "checkpoint": str(ckpt_path),
+        # The conditioning contract the dataset encodes (train/dataset.py
+        # __getitem__): input channel 0 = audio x INPUT_SCALE, channel 1 = a
+        # constant normalized gain in [0, 1]. Recorded here so every consumer
+        # (eval, plugin) reads it from the .nam instead of re-deriving it.
+        "condition": {
+            "channels": ["audio", "gain"],
+            "gain_channel": 1,
+            "gain_range": [0.0, 1.0],
+            "audio_input_scale": _INPUT_SCALE,
+        },
     }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(d))
+    # Atomic write (tmp + os.replace), mirroring _atomic_save: a crash/ENOSPC
+    # mid-write must not leave a truncated .nam in place.
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(d))
+    os.replace(tmp_path, out_path)
     print(
         f"export: wrote {out_path} "
         f"(architecture={d['architecture']}, input_size="
