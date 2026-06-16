@@ -18,10 +18,12 @@ symmetric clipping.
 
 This project reproduces that stage as a plugin with **two runtime-selectable
 inference backends**, both validated against ngspice renders of the real circuit.
+The default backend is **Circuit (WDF)**; the Neural Net is the learned
+alternative.
 
 ## The two backends
 
-### Neural Net (default)
+### Neural Net
 
 Hand-coded pure-Rust NAM-style stacked `LSTM(3 x 18)` + FiLM gain conditioning +
 `Dense(1)` with a learned initial state, native 48 kHz, learned from
@@ -31,15 +33,40 @@ The Rust inference matches the PyTorch reference to `< 1e-5`.
 
 → `plugin/src/model.rs`, weights `plugin/weights/ba283_lstm_3x18.json`
 
-### Circuit (WDF)
+### Circuit (WDF, default)
 
 A nodal MNA + Newton-Raphson solver with Gummel-Poon BJT models and coupled
 inductors, ported from [`gustavokch/ba283_wdf`](https://github.com/gustavokch/ba283-wdf).
-Circuit-faithful: tracks SPICE at ESR ≈ −30 dB, coherence 1.0. Offers two
-quality tiers — `Realtime` (bit-exact reference, all speed levers off) and
-`Fast` (near-transparent, faster).
+Circuit-faithful: tracks SPICE at ESR ≈ −30 dB, coherence 1.0. Includes a
+Jiles-Atherton model of the LO1166 output-transformer core (feature `trafo-core`,
+on by default) and per-component aging.
 
-→ `plugin/src/wdf.rs`
+Four quality tiers trade accuracy for speed:
+
+- `Realtime` — bit-exact reference, all speed levers off (2× oversampled).
+- `Fast` — predict + Schur + freeze-caps, near-transparent, ~5× faster.
+- `UltraFast` — adds cheap transport-exp and drops to 1×, ~9× faster.
+- `Warp` — also drops the BJT junction-charge model, ~12× faster.
+
+Two orthogonal dials further tune the WDF backend. **Precision** is the
+device-model fidelity axis — it steps the BJT charge-storage model down from the
+tier baseline (and never up), independent of the tier's iteration strategy and
+the oversampling rate:
+
+- `High` — identity; preserves the bit-exact Realtime/golden contract.
+- `Medium` — junction charge model → depletion-only, plus the cheap low-order
+  transport exp (~−3%; the depletion step itself is near-zero CPU, fidelity-only).
+- `Low` — drop the charge model entirely (the dominant lever, ~−26% on Fast),
+  plus the cheap transport exp.
+
+Steps are monotone (a tier already at the lowest charge model, e.g. `Warp`,
+stays there). Loss stays within the harness budget (added ESR vs Realtime+High
+≤ −50 dB; the ACME model floor is ~−23 dB).
+
+**Oversampling** (`Auto`/`1×`/`2×`) is the antialiasing-rate axis: `Auto` defers
+to the tier, `1×`/`2×` force the internal rate.
+
+→ `plugin/src/wdf/` (solver module)
 
 ## Build
 
@@ -60,8 +87,9 @@ cargo run --release --bin ba283_standalone -- \
 ```
 
 Run `ba283_standalone` with no args to see the full flag list (`--bias`,
-`--drive-db`, `--output-db`, `--mix`, `--backend nn|wdf`, `--tier realtime|fast`,
-`--raw`, …).
+`--drive-db`, `--output-db`, `--mix`, `--backend nn|wdf`,
+`--tier realtime|fast|ultra-fast|warp`, `--precision high|medium|low`,
+`--level-norm`, `--raw`, …).
 
 ## Install
 
@@ -99,19 +127,78 @@ To build from source instead, see [Build](#build) above.
 
 ## Usage in a DAW
 
-Load **BA283**, then drive these parameters:
+Load **BA283** and drive its parameters. Groups marked _WDF-only_ are inert
+when the Neural Net backend is selected.
 
-| Parameter | Notes |
-|-----------|-------|
-| **Backend** | `Neural Net` (default) or `Circuit (WDF)` |
-| **WDF Tier** | `Realtime` / `Fast` — WDF-only, inert for Neural Net |
-| **Drive** | input drive (dB) |
-| **Bias** | TR3 bias trim, 0–1 |
-| **Output** | output trim (dB) |
-| **Mix** | dry/wet |
-| **Circuit Gain** | `R_KJ` shunt (ohms) — WDF-only, inert for Neural Net |
+**Backend & signal**
 
-Full parameter definitions live in `plugin/src/lib.rs`.
+| Parameter | Range / values | Default |
+|-----------|----------------|---------|
+| **Backend** | `Circuit (WDF)` / `Neural Net` | Circuit (WDF) |
+| **Drive** | −12 .. +24 dB | 0 dB |
+| **Bias** | 0 .. 1 (TR3 idle-current trim) | 0.5 |
+| **Output** | −24 .. +12 dB | 0 dB |
+| **Mix** | 0 .. 100% (wet) | 100% |
+
+**WDF quality** _(WDF-only)_
+
+| Parameter | Range / values | Default |
+|-----------|----------------|---------|
+| **WDF Tier** | `Realtime` / `Fast` / `UltraFast` / `Warp` | Realtime |
+| **Precision** | `High` / `Medium` / `Low` | High |
+| **Oversampling** | `Auto` / `1×` / `2×` | Auto |
+
+**Circuit** _(WDF-only)_
+
+| Parameter | Range / values | Default |
+|-----------|----------------|---------|
+| **Circuit Gain** | `R_KJ` shunt, 47 .. 10 000 Ω | 220 Ω |
+| **Stepped Gain** | bool — snap to 5 hardware positions (15/20/25/30/35 dB) | Off |
+| **Age** | 0 .. 1 component drift (vintage wear) | 0 |
+| **Age Re-roll** | momentary — pick a new random unit | — |
+
+**Transformer core** _(WDF-only, feature `trafo-core`)_
+
+| Parameter | Range / values | Default |
+|-----------|----------------|---------|
+| **Transformer** | On / Off (Jiles-Atherton LO1166 core) | On |
+| **Hysteresis** | 0 .. 1 (loop width) | 0.5 |
+| **Saturation** | 0 .. 1 (knee position) | 0.5 |
+
+**EQ** _(both backends, Neve 1073/1076, pre-model)_
+
+| Parameter | Range / values | Default |
+|-----------|----------------|---------|
+| **EQ** | On / Off (bit-exact when off) | Off |
+| **HPF** | `Off` / 50 / 80 / 160 / 300 Hz | Off |
+| **Low-Shelf** | freq 35/60/110/220 Hz · gain ±16 dB | 0 dB |
+| **Mid / Presence** | freq 360 Hz..7.2 kHz · gain ±18 dB (proportional-Q) | 0 dB |
+| **High-Shelf** | gain ±16 dB (fixed 12 kHz) | 0 dB |
+
+**Output saturation** _(both backends)_
+
+| Parameter | Range / values | Default |
+|-----------|----------------|---------|
+| **Saturation** | On / Off (ADAA antialiased soft-clip) | Off |
+| **Amount** | 0 .. 1 (constant makeup) | 0.5 |
+
+**Other**
+
+| Parameter | Range / values | Default |
+|-----------|----------------|---------|
+| **Level Norm** _(WDF-only)_ | On / Off — RMS-match output to input | Off |
+| **UI Scale** | `Auto` / 100–200% (not automatable) | Auto |
+
+The EQ sits **before** the modeled stage, matching the real channel strip
+(`MIC → EQ → BA283/AV → LO1166 → OUT`), and is bit-exact when off. Full
+parameter definitions live in `plugin/src/lib.rs`.
+
+### GUI
+
+BA283 ships a custom egui editor (660×900). The **CIRCUIT** panel dims and
+disables when the Neural Net backend is active (its params are WDF-only).
+HiDPI follows the host by default (`UI Scale = Auto`), with manual 100–200%
+overrides for hosts that misreport their scale.
 
 ## ML / data pipeline
 
@@ -142,12 +229,14 @@ Cloud training is available via `colab/ba283_train_colab.ipynb`.
   against SPICE (ESR, NRMSE, Welch FR coherence).
 - [`eval/acme_vs_spice/`](eval/acme_vs_spice/README.md) — ACME.jl circuit-model
   feasibility spike vs SPICE.
+- [`eval/nam_vs_acme/`](eval/nam_vs_acme/README.md) — 3-way scoring of the NAM /
+  Neural Net export against ACME + SPICE references.
 
 ## Repository map
 
 | Path | Purpose |
 |------|---------|
-| `plugin/` | Rust VST3 plugin (nih-plug): `lib.rs`, `model.rs`, `wdf.rs`, `dsp.rs`, weights |
+| `plugin/` | Rust VST3 plugin (nih-plug): `lib.rs`, `model.rs`, `wdf/` (solver), `eq.rs`, `editor.rs`, `dsp.rs`, weights |
 | `xtask/` | nih-plug build runner (`cargo xtask bundle ba283`) |
 | `train/` | PyTorch training pipeline (`train.py`, `model.py`, `export.py`) |
 | `data_gen/` | SPICE dataset generation (PySpice + ngspice) |
