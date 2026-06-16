@@ -216,10 +216,16 @@ impl ChannelDsp {
         self.wdf.set_age_seed(seed);
     }
 
-    /// Live transformer-core saturation change (`trafo` knob; feature `trafo-core`).
+    /// Live transformer ON/OFF (feature `trafo-core`). OFF => bit-exact linear core.
     #[cfg(feature = "trafo-core")]
-    pub fn wdf_set_trafo(&mut self, trafo: f32) {
-        self.wdf.set_trafo(trafo as f64);
+    pub fn wdf_set_trafo_enabled(&mut self, on: bool) {
+        self.wdf.set_trafo_enabled(on);
+    }
+
+    /// Live transformer voicing: HYSTERESIS + SATURATION dials (each 0..1; feature `trafo-core`).
+    #[cfg(feature = "trafo-core")]
+    pub fn wdf_set_trafo_voicing(&mut self, hyst: f32, sat: f32) {
+        self.wdf.set_trafo_voicing(hyst as f64, sat as f64);
     }
 
     /// Zero the WDF Newton-iteration counters (offline A/B: call after warmup, before the audio pass).

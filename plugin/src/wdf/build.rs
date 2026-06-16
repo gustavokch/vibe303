@@ -144,8 +144,6 @@ impl WdfModel {
             v_pprev: 0.0,
             v_sprev: 0.0,
             #[cfg(feature = "trafo-core")]
-            trafo: 0.0,
-            #[cfg(feature = "trafo-core")]
             ja_active: false,
             #[cfg(feature = "trafo-core")]
             ja: JaCore::lo1166(),

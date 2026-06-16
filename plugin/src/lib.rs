@@ -59,7 +59,11 @@ pub struct ProbeReq {
     age: f32,
     seed: u64,
     #[cfg(feature = "trafo-core")]
-    trafo: f32,
+    trafo_on: bool,
+    #[cfg(feature = "trafo-core")]
+    trafo_hyst: f32,
+    #[cfg(feature = "trafo-core")]
+    trafo_sat: f32,
 }
 
 /// The worker's persistent warmed model plus the (cfg, sr) it was built for. Re-stamped in place on
@@ -108,7 +112,10 @@ fn run_probe(shared: &ProbeShared, req: ProbeReq) {
         m.set_age_seed(req.seed);
         m.set_age(req.age as f64);
         #[cfg(feature = "trafo-core")]
-        m.set_trafo(req.trafo as f64);
+        {
+            m.set_trafo_enabled(req.trafo_on);
+            m.set_trafo_voicing(req.trafo_hyst as f64, req.trafo_sat as f64);
+        }
         m.warmup();
         *guard = Some(ProbeModel { model: m, cfg: req.cfg, sr: req.sr });
     } else {
@@ -118,7 +125,10 @@ fn run_probe(shared: &ProbeShared, req: ProbeReq) {
         slot.model.set_rgain(req.rgain as f64);
         slot.model.set_bias(req.bias as f64);
         #[cfg(feature = "trafo-core")]
-        slot.model.set_trafo(req.trafo as f64);
+        {
+            slot.model.set_trafo_enabled(req.trafo_on);
+            slot.model.set_trafo_voicing(req.trafo_hyst as f64, req.trafo_sat as f64);
+        }
     }
     let slot = guard.as_mut().unwrap();
     let g = slot.model.resettle_and_measure_gain();
@@ -178,9 +188,15 @@ pub struct Ba283Plugin {
     last_seed: u64,
     last_reroll: bool,
     #[cfg(feature = "trafo-core")]
-    wdf_trafo_smooth: f32,
+    wdf_trafo_hyst_smooth: f32,
     #[cfg(feature = "trafo-core")]
-    last_trafo: f32,
+    wdf_trafo_sat_smooth: f32,
+    #[cfg(feature = "trafo-core")]
+    last_trafo_on: bool,
+    #[cfg(feature = "trafo-core")]
+    last_trafo_hyst: f32,
+    #[cfg(feature = "trafo-core")]
+    last_trafo_sat: f32,
 }
 
 /// Which emulation runs per sample. `Wdf` (the circuit-faithful MNA solver) is the default;
@@ -398,14 +414,23 @@ pub struct Ba283Params {
     /// round-trips with the project. Fixed-size today, but `create_egui_editor` requires it.
     #[persist = "editor_state"]
     pub editor_state: Arc<EguiState>,
-    /// Transformer magnetic-core saturation/hysteresis amount (Jiles-Atherton). 0 = linear
-    /// (legacy sound), 0.5 = realistic LO1166 (the default), 1 = heavy. WDF-only. Ships in all
-    /// default builds (`trafo-core` is a default feature since the GO verdict); opt out with
-    /// `--no-default-features` for a bit-exact linear-transformer A/B build. NOTE: default 0.5 is
-    /// ACTIVE — the JA RK4 cost applies whenever the knob > 0; zero the knob to A/B the linear core.
+    /// Transformer (Jiles-Atherton magnetic core) ON/OFF. ON (default) = today's sound; OFF =
+    /// bit-exact linear core (the JA RK4 cost vanishes — A/B the transformer). WDF-only. The whole
+    /// model ships in default builds (`trafo-core` is a default feature since the GO verdict); opt
+    /// out at compile time with `--no-default-features`.
     #[cfg(feature = "trafo-core")]
-    #[id = "trafo"]
-    pub trafo: FloatParam,
+    #[id = "trafo_on"]
+    pub trafo_on: BoolParam,
+    /// Transformer HYSTERESIS dial (0..1). 0 = no loop (near-anhysteretic), 0.5 = today's voicing
+    /// (`k=300`, `c=0.7`), 1 = wide loop. Shapes the core's pinning/reversibility (loop width).
+    #[cfg(feature = "trafo-core")]
+    #[id = "trafo_hyst"]
+    pub trafo_hyst: FloatParam,
+    /// Transformer SATURATION dial (0..1). 0 = clean (knee above signal), 0.5 = today's voicing
+    /// (`b_sat=0.3T`), 1 = hard/early knee. Shapes where the saturation knee sits.
+    #[cfg(feature = "trafo-core")]
+    #[id = "trafo_sat"]
+    pub trafo_sat: FloatParam,
 }
 
 impl Default for Ba283Params {
@@ -470,9 +495,15 @@ impl Default for Ba283Params {
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             age_reroll: BoolParam::new("Re-roll Unit", false),
             age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
-            editor_state: EguiState::from_size(660, 480),
+            editor_state: EguiState::from_size(660, 610),
             #[cfg(feature = "trafo-core")]
-            trafo: FloatParam::new("Trafo", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+            trafo_on: BoolParam::new("Transformer", true),
+            #[cfg(feature = "trafo-core")]
+            trafo_hyst: FloatParam::new("Hysteresis", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(formatters::v2s_f32_rounded(2))
+                .with_smoother(SmoothingStyle::Linear(50.0)),
+            #[cfg(feature = "trafo-core")]
+            trafo_sat: FloatParam::new("Saturation", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_value_to_string(formatters::v2s_f32_rounded(2))
                 .with_smoother(SmoothingStyle::Linear(50.0)),
         }
@@ -501,9 +532,15 @@ impl Default for Ba283Plugin {
             last_seed: u64::MAX,
             last_reroll: false,
             #[cfg(feature = "trafo-core")]
-            wdf_trafo_smooth: 0.5,
+            wdf_trafo_hyst_smooth: 0.5,
             #[cfg(feature = "trafo-core")]
-            last_trafo: f32::NAN,
+            wdf_trafo_sat_smooth: 0.5,
+            #[cfg(feature = "trafo-core")]
+            last_trafo_on: false,
+            #[cfg(feature = "trafo-core")]
+            last_trafo_hyst: f32::NAN,
+            #[cfg(feature = "trafo-core")]
+            last_trafo_sat: f32::NAN,
         }
     }
 }
@@ -545,6 +582,9 @@ impl Ba283Plugin {
         trafo: f32,
     ) {
         let _ = trafo; // unused when the `trafo-core` feature is off
+        // The single `trafo` arg is interpreted as legacy depth: > 0 enables the core and drives the
+        // SATURATION dial; HYSTERESIS stays at the default. The probe only measures small-signal
+        // gain, so the exact voicing is immaterial here.
         let req = ProbeReq {
             cfg,
             sr,
@@ -553,7 +593,11 @@ impl Ba283Plugin {
             age,
             seed,
             #[cfg(feature = "trafo-core")]
-            trafo,
+            trafo_on: trafo > 0.0,
+            #[cfg(feature = "trafo-core")]
+            trafo_hyst: 0.5,
+            #[cfg(feature = "trafo-core")]
+            trafo_sat: trafo,
         };
         run_probe(&self.probe, req);
     }
@@ -649,12 +693,18 @@ impl Plugin for Ba283Plugin {
         self.wdf_age_smooth = age;
         #[cfg(feature = "trafo-core")]
         {
-            let trafo = self.params.trafo.value();
+            let on = self.params.trafo_on.value();
+            let hyst = self.params.trafo_hyst.value();
+            let sat = self.params.trafo_sat.value();
             for ch in self.channels.iter_mut() {
-                ch.wdf_set_trafo(trafo);
+                ch.wdf_set_trafo_enabled(on);
+                ch.wdf_set_trafo_voicing(hyst, sat);
             }
-            self.last_trafo = trafo;
-            self.wdf_trafo_smooth = trafo;
+            self.last_trafo_on = on;
+            self.last_trafo_hyst = hyst;
+            self.last_trafo_sat = sat;
+            self.wdf_trafo_hyst_smooth = hyst;
+            self.wdf_trafo_sat_smooth = sat;
         }
 
         // Seed the levelNorm trim synchronously off the audio thread (this is `initialize`): probe the
@@ -735,16 +785,24 @@ impl Plugin for Ba283Plugin {
             let rgain = self.wdf_rgain_smooth;
             let bias = self.wdf_bias_smooth;
             let age = self.wdf_age_smooth;
+            // Transformer: the ON/OFF gate is read raw (edge-detected below; the JA reseed makes the
+            // toggle click-free). The two voicing dials are glided into the per-block re-voice so a
+            // knob drag doesn't step `m_s/k/c`. No partition flip to land on (the J-A is a post-solve
+            // filter), so a plain one-pole with an epsilon settle-snap suffices.
             #[cfg(feature = "trafo-core")]
-            let trafo = {
-                let trafo_t = self.params.trafo.value();
-                self.wdf_trafo_smooth += a * (trafo_t - self.wdf_trafo_smooth);
-                // Snap to the target within an epsilon so the glide settles and, crucially, lands
-                // exactly on 0 (the linear/active boundary) instead of thrashing the partition flip.
-                if (trafo_t - self.wdf_trafo_smooth).abs() < WDF_TRAFO_EPS {
-                    self.wdf_trafo_smooth = trafo_t;
+            let (trafo_on, trafo_hyst, trafo_sat) = {
+                let on = self.params.trafo_on.value();
+                let hyst_t = self.params.trafo_hyst.value();
+                let sat_t = self.params.trafo_sat.value();
+                self.wdf_trafo_hyst_smooth += a * (hyst_t - self.wdf_trafo_hyst_smooth);
+                self.wdf_trafo_sat_smooth += a * (sat_t - self.wdf_trafo_sat_smooth);
+                if (hyst_t - self.wdf_trafo_hyst_smooth).abs() < WDF_TRAFO_EPS {
+                    self.wdf_trafo_hyst_smooth = hyst_t;
                 }
-                self.wdf_trafo_smooth
+                if (sat_t - self.wdf_trafo_sat_smooth).abs() < WDF_TRAFO_EPS {
+                    self.wdf_trafo_sat_smooth = sat_t;
+                }
+                (on, self.wdf_trafo_hyst_smooth, self.wdf_trafo_sat_smooth)
             };
             // Tier change: rebuild each channel at the new tier and re-install the settled snapshot
             // (no fresh warmup). Block-rate, on actual change only. Reset rgain/bias trackers so the
@@ -772,10 +830,13 @@ impl Plugin for Ba283Plugin {
                 self.last_seed = u64::MAX;
                 self.last_rgain = f32::NAN;
                 self.last_bias = f32::NAN;
-                // The rebuild also reset the JA core to linear — force trafo to re-apply.
+                // The rebuild also reset the JA core to linear/default — force the gate + both
+                // voicing dials to re-apply.
                 #[cfg(feature = "trafo-core")]
                 {
-                    self.last_trafo = f32::NAN;
+                    self.last_trafo_on = !self.params.trafo_on.value();
+                    self.last_trafo_hyst = f32::NAN;
+                    self.last_trafo_sat = f32::NAN;
                 }
             }
             // Aging (ordered after tier, before bias/rgain): re-roll edge -> seed -> age. Any change
@@ -807,11 +868,20 @@ impl Plugin for Ba283Plugin {
                 changed = true;
             }
             #[cfg(feature = "trafo-core")]
-            if trafo != self.last_trafo {
+            if trafo_on != self.last_trafo_on {
                 for ch in self.channels.iter_mut() {
-                    ch.wdf_set_trafo(trafo);
+                    ch.wdf_set_trafo_enabled(trafo_on);
                 }
-                self.last_trafo = trafo;
+                self.last_trafo_on = trafo_on;
+                changed = true;
+            }
+            #[cfg(feature = "trafo-core")]
+            if trafo_hyst != self.last_trafo_hyst || trafo_sat != self.last_trafo_sat {
+                for ch in self.channels.iter_mut() {
+                    ch.wdf_set_trafo_voicing(trafo_hyst, trafo_sat);
+                }
+                self.last_trafo_hyst = trafo_hyst;
+                self.last_trafo_sat = trafo_sat;
                 changed = true;
             }
             if rgain != self.last_rgain {
@@ -855,7 +925,11 @@ impl Plugin for Ba283Plugin {
                     age,
                     seed,
                     #[cfg(feature = "trafo-core")]
-                    trafo,
+                    trafo_on,
+                    #[cfg(feature = "trafo-core")]
+                    trafo_hyst,
+                    #[cfg(feature = "trafo-core")]
+                    trafo_sat,
                 };
                 context.execute_background(req);
             }
