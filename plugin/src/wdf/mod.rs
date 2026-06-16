@@ -97,11 +97,9 @@ pub struct WdfModel {
     v_pprev: f64,  // winding voltages at n-1
     v_sprev: f64,
 
-    // --- nonlinear JA transformer core (`trafo` knob; feature `trafo-core`) ---
+    // --- nonlinear JA transformer core (ON/OFF switch + HYST/SAT dials; feature `trafo-core`) ---
     #[cfg(feature = "trafo-core")]
-    trafo: f64, // knob 0..1; 0 => ja_active false (linear, bit-exact)
-    #[cfg(feature = "trafo-core")]
-    ja_active: bool,
+    ja_active: bool, // ON/OFF gate; false => linear, bit-exact
     #[cfg(feature = "trafo-core")]
     ja: JaCore,
     #[cfg(feature = "trafo-core")]
@@ -247,7 +245,9 @@ use math::*;
 
 // Public API surface — explicit re-exports reproduce the pre-split `crate::wdf::*`
 // paths exactly (consumed by `dsp.rs` and the integration-test/bench/bin crates).
-pub use aging::{reroll_seed, AgePattern, JaCore};
+pub use aging::{reroll_seed, AgePattern};
+#[cfg(feature = "trafo-core")]
+pub use aging::JaCore;
 pub use bjt::{compute_bjt, BjtOut};
 pub use components::{bc184c, dep_sat_consts, q2n3055, Bjt, BjtParams, Biquad, Cap, Res};
 pub use config::{CapTier, Oversampling, Precision, QualityConfig, Solver, OS};

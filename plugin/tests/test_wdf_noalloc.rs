@@ -46,23 +46,26 @@ fn fast_tier_process_host_sample_is_alloc_free() {
 #[cfg(feature = "trafo-core")]
 #[test]
 fn set_trafo_and_core_is_alloc_free() {
-    // The separable RK4 J-A core runs on the per-sample path (ja_commit) and set_trafo flips a gate
-    // block-rate. Both must be heap-free: fixed-size scalar state, no partition rebuild.
+    // The separable RK4 J-A core runs on the per-sample path (ja_commit); the ON/OFF gate and the
+    // voicing setter run block-rate. All must be heap-free: fixed-size scalar state, no partition
+    // rebuild, no lump reallocation.
     let mut m = WdfModel::new(48_000.0, 220.0, 0.5);
-    m.set_trafo(0.5);
+    m.set_trafo_enabled(true);
+    m.set_trafo_voicing(0.5, 0.5);
     for i in 0..32 {
         let _ = m.process_host_sample((i as f32 * 0.01).sin());
     }
     reset_violation_count();
     assert_no_alloc(|| {
         for k in 0..8 {
-            m.set_trafo(k as f64 / 8.0);
+            m.set_trafo_voicing(k as f64 / 8.0, k as f64 / 8.0);
+            m.set_trafo_enabled(k % 2 == 0);
         }
         for i in 0..1024 {
             let _ = m.process_host_sample((i as f32 * 0.001).sin());
         }
     });
-    assert_eq!(violation_count(), 0, "set_trafo / JA RK4 core allocated on the heap");
+    assert_eq!(violation_count(), 0, "trafo voicing/gate / JA RK4 core allocated on the heap");
 }
 
 #[test]

@@ -327,11 +327,6 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                         }
                         ui.add_space(8.0);
                         knob_cell(ui, setter, &p.age, "AGE", 64.0);
-                        #[cfg(feature = "trafo-core")]
-                        {
-                            ui.add_space(8.0);
-                            knob_cell(ui, setter, &p.trafo, "TRAFO", 64.0);
-                        }
                         ui.add_space(10.0);
                         ui.vertical(|ui| {
                             ui.add_space(22.0);
@@ -351,6 +346,25 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                     ui.add_space(12.0);
                     hairline(ui);
                     ui.add_space(12.0);
+
+                    // ── TRANSFORMER (Jiles-Atherton core) — its own row so the pill + two dials
+                    //    never crowd the gain/age row off the right edge on HiDPI. ──
+                    #[cfg(feature = "trafo-core")]
+                    {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.add_space(22.0);
+                                toggle_pill(ui, setter, &p.trafo_on, "TRANSFORMER");
+                            });
+                            ui.add_space(12.0);
+                            knob_cell(ui, setter, &p.trafo_hyst, "HYSTERESIS", 64.0);
+                            ui.add_space(8.0);
+                            knob_cell(ui, setter, &p.trafo_sat, "SATURATION", 64.0);
+                        });
+                        ui.add_space(12.0);
+                        hairline(ui);
+                        ui.add_space(12.0);
+                    }
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("TIER").font(display_font(12.0)).color(DIM));

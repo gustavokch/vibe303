@@ -111,6 +111,20 @@ pub struct JaCore {
     pub(in crate::wdf) lp_eff: f64, // small-signal magnetizing inductance implied by the constants (for the deviation)
 }
 
+/// Map a 0..1 dial with a fixed anchor at 0.5 onto a value: `lo` at 0, `mid` at 0.5, `hi` at 1.
+/// Piecewise-linear so the default (0.5) lands EXACTLY on the voiced `mid` (no drift from today's
+/// sound), with independent slopes either side so the clean and hot ends voice separately.
+#[cfg(feature = "trafo-core")]
+#[inline]
+fn dial(d: f64, lo: f64, mid: f64, hi: f64) -> f64 {
+    let d = d.clamp(0.0, 1.0);
+    if d <= 0.5 {
+        lo + (mid - lo) * (d / 0.5)
+    } else {
+        mid + (hi - mid) * ((d - 0.5) / 0.5)
+    }
+}
+
 #[cfg(feature = "trafo-core")]
 impl JaCore {
     /// Voiced LO1166 (gapped) core. The air gap dominates the magnetic reluctance, so the core
@@ -126,20 +140,13 @@ impl JaCore {
     /// `s0 = c·chi_raw/(1−α·c·chi_raw)` (≈14 with `c = 0.7`), because reversibility scales the
     /// differential susceptibility. So at low drive `i_dev` is a small nonzero value → the knob
     /// adds a slight low-drive gain trim on top of the saturation, not pure saturation. Exact
-    /// continuity at trafo=0 is unaffected (the `trafo` gate forces `i_dev = 0`). To make the
-    /// deviation truly vanish at low drive, pin `k_hi` to `s0` instead of `chi0` (uses `1.0 + s0`
+    /// continuity is unaffected (the ON/OFF switch sets `ja_active = false`, forcing `i_dev = 0`).
+    /// To make the deviation truly vanish at low drive, pin `k_hi` to `s0` instead of `chi0` (uses `1.0 + s0`
     /// below) and re-run the `eval/trafo_core` B-H + THD harness — that change weakens `i_dev` ~40%
     /// at all levels, so it is a deliberate re-voice, left for a harness pass. No datasheet exists.
     pub fn lo1166() -> Self {
         let mu0 = std::f64::consts::PI * 4.0e-7;
-        let b_sat = 0.3; // saturation flux density (T) — knee sits at the top of the line-level swing
-                         // (measured electrical-flux peak ≈ 0.48 T at hard drive), so heavy signal
-                         // pushes past the knee while nominal levels stay near-linear.
-        let m_s = b_sat / mu0; // saturation magnetization (A/m) ≈ 7.96e5
-        let a = m_s / 60.0; // anhysteretic shape (A/m): chi_raw = m_s/(3a) = 20 (low → gapped, soft)
         let alpha = 1.0e-5; // inter-domain coupling (small: chi0 ≈ chi_raw)
-        let k = 300.0; // pinning / coercivity (A/m): soft transformer steel, thin loop
-        let c = 0.7; // reversibility 0..1
         let n_p = 100.0;
         let a_e = 5.0e-4;
         let k_phi = n_p * a_e; // volts→flux lump (= N_p·A_e)
@@ -147,10 +154,31 @@ impl JaCore {
         // static initial susceptibility so the deviation is small at low drive. (Approximate — the
         // dynamic RK4 slope includes the reversibility factor `c`; see the doc-comment above.)
         let lp_eff = 1.9;
-        let chi_raw = m_s / (3.0 * a);
+        // `set_voicing` holds `a = m_s/60`, so the anhysteretic susceptibility `chi_raw = m_s/(3a) =
+        // 20` is constant across BOTH dials — and `k`/`c` don't enter `k_hi`. So the back-solved
+        // current→field lump is constant: compute it once here from that fixed susceptibility.
+        let chi_raw = 20.0;
         let chi0 = chi_raw / (1.0 - alpha * chi_raw);
         let k_hi = lp_eff / (k_phi * mu0 * (1.0 + chi0)); // current→field lump (= N_p/l_e)
-        JaCore { m_s, a, alpha, k, c, mu0, k_phi, k_hi, lp_eff }
+        let mut core = JaCore { m_s: 0.0, a: 0.0, alpha, k: 0.0, c: 0.0, mu0, k_phi, k_hi, lp_eff };
+        core.set_voicing(0.5, 0.5); // anchor at the voiced LO1166 default (b_sat=0.3T, k=300, c=0.7)
+        core
+    }
+
+    /// Re-voice the core from the two front-panel dials (each 0..1, default 0.5 = the voiced LO1166).
+    /// SATURATION moves the knee — `b_sat` → `m_s`, with `a = m_s/60` so `chi_raw` stays 20 and the
+    /// back-solved `k_hi`/`lp_eff` lumps are unchanged. HYSTERESIS moves the loop width — `k` (pinning)
+    /// and `c` (reversibility). At 0 each effect is removed (knee far above signal / near-anhysteretic
+    /// no-loop), at 0.5 it is today's voicing, at 1 it exceeds it. Cheap: only `m_s, a, k, c` change —
+    /// no lump rebuild, no Newton/partition contact (the J-A is a post-solve filter).
+    pub fn set_voicing(&mut self, hyst: f64, sat: f64) {
+        // SATURATION → knee flux density (T): clean (far above swing) .. today .. hard/early knee.
+        let b_sat = dial(sat, 0.9, 0.3, 0.18);
+        self.m_s = b_sat / self.mu0; // saturation magnetization (A/m); today ≈ 7.96e5
+        self.a = self.m_s / 60.0; // hold chi_raw = m_s/(3a) = 20 (keeps k_hi/lp_eff valid)
+        // HYSTERESIS → pinning + reversibility: near-anhysteretic (no loop) .. today .. wide loop.
+        self.k = dial(hyst, 5.0, 300.0, 700.0); // A/m
+        self.c = dial(hyst, 0.98, 0.7, 0.45); // reversibility 0..1
     }
 
     /// JA differential susceptibility `dM/dH` at field `h`, magnetization `m`, direction `delta`

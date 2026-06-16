@@ -1,5 +1,13 @@
 use super::*;
 
+/// Fixed injection reference for the J-A magnetizing-deviation current. The two front-panel dials
+/// shape the *physical character* of the core (knee position, loop width); this constant sets the
+/// overall injection depth. Pinned to 0.5 so the default panel state (switch ON, both dials at noon)
+/// reproduces the legacy `trafo=0.5` sound exactly — the old single knob halved the deviation at its
+/// default, and that depth is preserved here while the dials take over character.
+#[cfg(feature = "trafo-core")]
+const JA_DEV_REF: f64 = 0.5;
+
 impl WdfModel {
 
     /// Update the RV1 split (bias pot) + rebuild G0, preserving all integrator state
@@ -92,21 +100,17 @@ impl WdfModel {
         // so it vanishes at low drive → smooth from trafo=0⁺).
         let i_ja = h / self.ja.k_hi;
         let i_lin = phi / self.ja.lp_eff;
-        self.ja_i_dev = self.trafo * (i_ja - i_lin);
+        self.ja_i_dev = JA_DEV_REF * (i_ja - i_lin);
         self.ja_m = m;
         self.ja_h_prev = h;
         self.ja_phi_prev = phi;
         self.ja_vm_prev = vm;
     }
 
-    /// Set the `trafo` knob (0..1). 0 => `ja_active` false => the magnetizing-deviation current
-    /// `ja_i_dev` is forced to 0 => bit-exact linear core. The J-A is a separable RK4 post-solve
-    /// filter injecting a lagged current source, so it touches neither G0 nor the Schur partition
-    /// (N-set stays 6 always); `set_trafo` only flips the gate.
     /// Reset the JA core to a clean origin: `M=0`, no flux/field/voltage history, `+δ` field-rate
     /// direction, no lagged deviation current. Single source of truth for "what a settled core looks
     /// like" — called on both edges that must not integrate the next trapezoidal step against a stale
-    /// operating point: warmup→audio (`process_host_sample`) and inactive→active (`set_trafo`).
+    /// operating point: warmup→audio (`process_host_sample`) and inactive→active (`set_trafo_enabled`).
     #[cfg(feature = "trafo-core")]
     #[inline]
     pub(in crate::wdf) fn ja_reseed(&mut self) {
@@ -118,20 +122,31 @@ impl WdfModel {
         self.ja_i_dev = 0.0;
     }
 
+    /// Transformer ON/OFF switch. `false` => `ja_active` false => the magnetizing-deviation current
+    /// `ja_i_dev` is forced to 0 => bit-exact linear core. The J-A is a separable RK4 post-solve
+    /// filter injecting a lagged current source, so it touches neither G0 nor the Schur partition
+    /// (N-set stays 6 always); this only flips the gate.
+    ///
+    /// Re-enable from a linear/inactive state: the core stopped committing when it went inactive, so
+    /// `ja_vm_prev`/`ja_phi_prev`/`ja_m` are frozen at a stale operating point. Integrating the next
+    /// trapezoidal flux step against that stale `ja_vm_prev` would jump the flux (audible click).
+    /// Re-seed to a clean start on the inactive→active edge (same reset the warmup→audio transition
+    /// does). No-op on a fresh model (state already zero) and when already active.
     #[cfg(feature = "trafo-core")]
-    pub fn set_trafo(&mut self, trafo: f64) {
-        self.trafo = trafo.clamp(0.0, 1.0);
-        let active = self.trafo > 0.0;
-        // Re-enable from a linear/inactive state: the core stopped committing when it went inactive,
-        // so `ja_vm_prev`/`ja_phi_prev`/`ja_m` are frozen at a stale operating point. Integrating the
-        // next trapezoidal flux step against that stale `ja_vm_prev` would jump the flux (audible
-        // click). Re-seed to a clean start on the inactive→active edge (same reset the warmup→audio
-        // transition does). No-op on a fresh model (state already zero) and on level changes while
-        // already active.
-        if active && !self.ja_active {
+    pub fn set_trafo_enabled(&mut self, on: bool) {
+        if on && !self.ja_active {
             self.ja_reseed();
         }
-        self.ja_active = active;
+        self.ja_active = on;
+    }
+
+    /// Set the transformer voicing from the two front-panel dials (HYSTERESIS, SATURATION; each
+    /// 0..1, default 0.5 = today's sound). Re-voices `m_s, a, k, c` in place — cheap, no lump
+    /// rebuild, no reseed (the magnetization state carries across so a dial glide doesn't click).
+    /// Independent of the ON/OFF gate: voicing a disabled core is harmless (no deviation injected).
+    #[cfg(feature = "trafo-core")]
+    pub fn set_trafo_voicing(&mut self, hyst: f64, sat: f64) {
+        self.ja.set_voicing(hyst.clamp(0.0, 1.0), sat.clamp(0.0, 1.0));
     }
 
     /// Current core operating point `(H, B)` in SI units — for offline B-H loop logging. Inert

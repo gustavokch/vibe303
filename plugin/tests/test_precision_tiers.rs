@@ -132,7 +132,10 @@ fn live_switch_all_combos_finite() {
                         ch.wdf_rebuild(sr as f32, rgain, bias);
                         ch.wdf_warmup();
                         #[cfg(feature = "trafo-core")]
-                        ch.wdf_set_trafo(trafo);
+                        {
+                            ch.wdf_set_trafo_enabled(true);
+                            ch.wdf_set_trafo_voicing(0.5, trafo);
+                        }
                         // A "dead channel" is reported by the user as "loud garbage then dies" —
                         // i.e. the fixed-step solver DIVERGES to large *finite* values (not Inf), so
                         // a bare is_finite() check misses it. Flag non-finite OR a runaway magnitude
@@ -163,7 +166,10 @@ fn live_switch_all_combos_finite() {
                         ch.wdf_set_age_seed(DEFAULT_AGE_SEED);
                         ch.wdf_set_age(0.0);
                         #[cfg(feature = "trafo-core")]
-                        ch.wdf_set_trafo(trafo);
+                        {
+                            ch.wdf_set_trafo_enabled(true);
+                            ch.wdf_set_trafo_voicing(0.5, trafo);
+                        }
                         ch.wdf_set_rgain(rgain);
                         ch.wdf_set_bias(bias);
                         // Post-switch stream at the target combo.
@@ -197,7 +203,10 @@ fn peak_after_switch(cfg: QualityConfig, sr: f64) -> f32 {
     ch.wdf_rebuild(sr as f32, rgain, bias);
     ch.wdf_warmup();
     #[cfg(feature = "trafo-core")]
-    ch.wdf_set_trafo(_trafo);
+    {
+        ch.wdf_set_trafo_enabled(true);
+        ch.wdf_set_trafo_voicing(0.5, _trafo);
+    }
     for &x in &sweep {
         ch.process_sample(x, drive, bias, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
     }
@@ -205,7 +214,10 @@ fn peak_after_switch(cfg: QualityConfig, sr: f64) -> f32 {
     ch.wdf_set_age_seed(DEFAULT_AGE_SEED);
     ch.wdf_set_age(0.0);
     #[cfg(feature = "trafo-core")]
-    ch.wdf_set_trafo(_trafo);
+    {
+        ch.wdf_set_trafo_enabled(true);
+        ch.wdf_set_trafo_voicing(0.5, _trafo);
+    }
     ch.wdf_set_rgain(rgain);
     ch.wdf_set_bias(bias);
     let mut peak = 0.0f32;
