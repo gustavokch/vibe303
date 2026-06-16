@@ -23,12 +23,13 @@ inference backends**, both validated against ngspice renders of the real circuit
 
 ### Neural Net (default)
 
-Hand-coded pure-Rust `LSTM(1, 32)` + FiLM gain conditioning + `Dense(1)`,
-learned from SPICE-rendered dry/wet pairs. Zero-alloc and realtime-safe; the
-trained weights are embedded into the binary at build time. The Rust inference
-matches the PyTorch reference to `< 1e-5`.
+Hand-coded pure-Rust NAM-style stacked `LSTM(3 x 18)` + FiLM gain conditioning +
+`Dense(1)` with a learned initial state, native 48 kHz, learned from
+SPICE-rendered dry/wet pairs (schema `ba283-lstm-v2`). Zero-alloc and
+realtime-safe; the trained weights are embedded into the binary at build time.
+The Rust inference matches the PyTorch reference to `< 1e-5`.
 
-→ `plugin/src/model.rs`, weights `plugin/weights/ba283_lstm32.json`
+→ `plugin/src/model.rs`, weights `plugin/weights/ba283_lstm_3x18.json`
 
 ### Circuit (WDF)
 
@@ -125,7 +126,7 @@ train/      TBPTT training, composite ESR+MSE loss, FiLM gain conditioning
    ▼
 train/export.py   serialize → self-describing JSON
    ▼
-plugin/weights/ba283_lstm32.json   embedded into the plugin at build time
+plugin/weights/ba283_lstm_3x18.json   embedded into the plugin at build time
 ```
 
 Current dataset: `ba283_spice_gain` (gain-conditioned, leakage-free split).

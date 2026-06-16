@@ -8,9 +8,10 @@
 use serde_json::Value;
 
 /// Largest hidden width supported by the fixed-size storage. Covers the 18-wide NAM export with
-/// headroom to 32; bump (and rebuild) if a wider model is exported. Kept modest because the storage
-/// scales as `LAYERS_MAX * (4*HIDDEN_MAX) * HIDDEN_MAX` — at 64 the by-value struct (~512 KB) overflows
-/// the 2 MB test-thread stack at construction.
+/// headroom to 32; bump (and rebuild) if a wider model is exported. The two large per-layer weight
+/// tensors (`w_ih`/`w_hh`, which dominate the size as `LAYERS_MAX * 4*HIDDEN_MAX * HIDDEN_MAX`) are
+/// heap-`Box`ed, so this cap is no longer bounded by the 2 MB test-thread stack — it can grow without
+/// the by-value struct overflowing the stack at construction.
 const HIDDEN_MAX: usize = 32;
 /// Largest stack depth supported by the fixed-size storage (NAM export is 3 layers).
 const LAYERS_MAX: usize = 4;
@@ -34,9 +35,11 @@ const IN_COLS_MAX: usize = HIDDEN_MAX;
 /// Each layer carries a learned initial hidden/cell state (`init_h`/`init_c`); `reset()` loads them
 /// instead of zeros, matching the trained `h0`/`c0` parameters.
 pub struct Ba283Model {
-    // Per-layer weights. Unused rows/cols stay 0.
-    w_ih: [[[f32; IN_COLS_MAX]; GATES_MAX]; LAYERS_MAX], // L x 4H x in_cols
-    w_hh: [[[f32; HIDDEN_MAX]; GATES_MAX]; LAYERS_MAX],  // L x 4H x H
+    // Per-layer weights. Unused rows/cols stay 0. Heap-boxed (they dominate the struct size) so
+    // HIDDEN_MAX is not bounded by the construction-time stack; indexing through the Box is a plain
+    // pointer deref, so `forward`/`gate` stay zero-alloc.
+    w_ih: Box<[[[f32; IN_COLS_MAX]; GATES_MAX]; LAYERS_MAX]>, // L x 4H x in_cols
+    w_hh: Box<[[[f32; HIDDEN_MAX]; GATES_MAX]; LAYERS_MAX]>,  // L x 4H x H
     b_ih: [[f32; GATES_MAX]; LAYERS_MAX],                // L x 4H
     b_hh: [[f32; GATES_MAX]; LAYERS_MAX],                // L x 4H
     // Learned initial state per layer (loaded on reset()).
@@ -100,6 +103,14 @@ impl Ba283Model {
             format, "ba283-lstm-v2",
             "weights: unexpected format `{format}`"
         );
+        // Loud warning so a build embedding the random placeholder export (rather than a real
+        // Colab-trained model) can never ship silently — the NN backend would emit garbage.
+        if doc["meta"]["placeholder"].as_bool() == Some(true) {
+            eprintln!(
+                "WARNING: BA283 NN weights are a PLACEHOLDER (meta.placeholder=true) — the \
+                 NeuralNet backend output is meaningless until trained weights are embedded."
+            );
+        }
         let input_size = doc["input_size"]
             .as_u64()
             .expect("weights: missing `input_size`");
@@ -152,8 +163,8 @@ impl Ba283Model {
             .expect("weights: missing `dense` layer");
 
         let mut model = Self {
-            w_ih: [[[0.0; IN_COLS_MAX]; GATES_MAX]; LAYERS_MAX],
-            w_hh: [[[0.0; HIDDEN_MAX]; GATES_MAX]; LAYERS_MAX],
+            w_ih: Box::new([[[0.0; IN_COLS_MAX]; GATES_MAX]; LAYERS_MAX]),
+            w_hh: Box::new([[[0.0; HIDDEN_MAX]; GATES_MAX]; LAYERS_MAX]),
             b_ih: [[0.0; GATES_MAX]; LAYERS_MAX],
             b_hh: [[0.0; GATES_MAX]; LAYERS_MAX],
             init_h: [[0.0; HIDDEN_MAX]; LAYERS_MAX],

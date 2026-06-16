@@ -478,7 +478,8 @@ impl Ba283Plugin {
     /// At/above the threshold (88.2/96/176.4/192 kHz) the decimate -> model -> interpolate cascade
     /// has a group delay of `HOST_BRIDGE_LATENCY` host-rate samples (measured by the
     /// `host_bridge_identity_after_latency` test). This is the single source of truth for the host
-    /// report and the dry-path delay.
+    /// report and the dry-path delay. (Effective *model* rate per host rate — and the known
+    /// 176.4/192 kHz degradation — is documented on `dsp::HOST_BRIDGE_THRESHOLD_HZ`.)
     fn latency_samples(&self) -> u32 {
         if self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ {
             dsp::OS_LATENCY_SAMPLES as u32

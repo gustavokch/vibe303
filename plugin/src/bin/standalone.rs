@@ -266,9 +266,9 @@ fn main() {
         .unwrap_or_else(|e| die(&format!("cannot create output WAV {output}: {e}")));
 
     // The offline "host SR" is the input WAV's sample rate: a 48k input runs the model directly, a
-    // 96k input exercises the 2x HostBridge (decimate to ~48k, interpolate back). Mirrors the
-    // plugin's HOST_BRIDGE_THRESHOLD_HZ (72 kHz).
-    let use_bridge = spec.sample_rate >= 72_000;
+    // 96k input exercises the 2x HostBridge (decimate to ~48k, interpolate back). Reuse the plugin's
+    // threshold const so the offline harness can't silently diverge from the plugin path.
+    let use_bridge = spec.sample_rate as f32 >= ba283::dsp::HOST_BRIDGE_THRESHOLD_HZ;
 
     if raw {
         // Pure model per channel — the round-trip path (no Drive/Output/Mix/OS).

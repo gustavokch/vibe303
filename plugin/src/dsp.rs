@@ -34,11 +34,27 @@ const WDF_XFADE_S: f32 = 0.060;
 /// runs directly at the host rate the dry delay is bypassed entirely.
 pub const OS_LATENCY_SAMPLES: usize = HOST_BRIDGE_LATENCY;
 
-/// Host sample rate at or above which the model runs through the 2x [`HostBridge`] (decimate to
-/// ~48 kHz, interpolate back) instead of directly at the host rate. Below it (44.1/48/64 kHz) the
-/// model runs at the host rate — exact at 48 kHz, a small rate offset at 44.1 kHz. At/above it
-/// (88.2/96/176.4/192 kHz) the host is ~2x the model rate, so one bridge stage lands the model near
-/// 48 kHz. This is the single threshold the latency report, dry delay, and process path all read.
+/// Host sample rate at or above which the model runs through the single 2x [`HostBridge`] (decimate
+/// to host/2, interpolate back) instead of directly at the host rate. This is the single threshold
+/// the latency report, dry delay, and process path all read.
+///
+/// The model is trained at 48 kHz and its LSTM time constants are rate-specific, so the effective
+/// model rate matters for fidelity. The bridge is a *single* 2x stage, so the model always runs at
+/// `host_rate / 2` when bridging:
+///
+/// | host rate | path     | model runs at | note                                              |
+/// |-----------|----------|---------------|---------------------------------------------------|
+/// | 44.1 kHz  | direct   | 44.1 kHz      | ~8% below 48k training rate (negligible)          |
+/// | 48 kHz    | direct   | 48 kHz        | exact                                             |
+/// | 64 kHz    | direct   | 64 kHz        | ~33% above 48k — notable SR mismatch (rare host)  |
+/// | 88.2 kHz  | bridged  | 44.1 kHz      | ~8% below 48k (good)                              |
+/// | 96 kHz    | bridged  | 48 kHz        | exact (the design target)                         |
+/// | 176.4 kHz | bridged  | 88.2 kHz      | ~2x the training rate — degraded; one 2x stage    |
+/// | 192 kHz   | bridged  | 96 kHz        | ~2x the training rate — degraded; one 2x stage    |
+///
+/// KNOWN LIMITATION: 176.4/192 kHz hosts land the model at 88.2/96 kHz (double the 48 kHz training
+/// rate), and 64 kHz hosts run it ~33% fast. A second (4x) bridge stage would fix the top two rates
+/// (176.4/192 -> 44.1/48) — deferred; documented rather than implemented.
 pub const HOST_BRIDGE_THRESHOLD_HZ: f32 = 72_000.0;
 
 /// Full-scale input voltage convention from the training data: 0 dBFS (a host sample of 1.0) maps to
