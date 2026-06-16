@@ -337,3 +337,37 @@ fn dump_bh_loop() {
         }
     }
 }
+
+/// Voicing-sweep diagnostic: dump a B-H loop + THD for every cell of the HYST×SAT dial grid.
+/// Run with `--features trafo-core -- --ignored --nocapture`. Consumed by sweep_voicing.py to
+/// finalize the dial endpoint constants (knee onset vs SAT, loop area vs HYST, default==today).
+#[test]
+#[ignore = "diagnostic: dumps the HYST×SAT voicing grid to stdout"]
+fn dump_voicing_grid() {
+    let sr = wdf_golden::HOST_SR;
+    let grid = [0.0_f64, 0.5, 1.0];
+    let f = 50.0;
+    let n = (sr / f) as usize;
+    let cycles = 6;
+    let amp = 0.5;
+    for &hyst in &grid {
+        for &sat in &grid {
+            let mut m = wdf::WdfModel::new_with(QualityConfig::realtime(), sr, 220.0, wdf_golden::BIAS);
+            m.set_trafo_enabled(true);
+            m.set_trafo_voicing(hyst, sat);
+            m.warmup();
+            // THD at a hot level (separate render so the B-H drive below starts clean).
+            let cell_thd = thd_voiced(hyst, sat, 0.5);
+            println!("# hyst={hyst} sat={sat} thd={cell_thd:.6}");
+            println!("# H,B");
+            for i in 0..n * cycles {
+                let x = (amp * (2.0 * std::f64::consts::PI * f * i as f64 / sr).sin()) as f32;
+                m.process_host_sample(x);
+                if i >= n * (cycles - 1) {
+                    let (h, b) = m.ja_hb();
+                    println!("{h:.6},{b:.9}");
+                }
+            }
+        }
+    }
+}
