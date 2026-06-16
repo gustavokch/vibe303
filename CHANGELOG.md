@@ -23,7 +23,14 @@ BA283 mic-preamp output stage.
   (loop width: pinning `k` + reversibility `c`) and **Saturation** (knee position
   `b_sat`) dials. The factory default (ON, both dials at noon) reproduces the
   legacy single-`trafo`-knob sound at its `0.5` default.
-- Parameters: Backend, WDF Tier, Drive, Bias, Output, Mix, Circuit Gain.
+- **ADAA2 output saturation** (`Saturation` ON/OFF + `Sat Amount`): an optional,
+  antialiased memoryless soft-clip on the wet path (both backends), before the
+  dry/wet mix. Second-order antiderivative antialiasing over a precomputed
+  lookup table suppresses the harmonic foldover a naïve waveshaper would add. OFF
+  by default (bit-exact today's sound); the amount knob has unity small-signal
+  makeup so it sweeps clean → saturated.
+- Parameters: Backend, WDF Tier, Drive, Bias, Output, Mix, Circuit Gain,
+  Saturation, Sat Amount.
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
 ### Platforms & formats

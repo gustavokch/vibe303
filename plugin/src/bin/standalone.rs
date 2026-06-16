@@ -333,7 +333,7 @@ fn main() {
     for frame in samples.chunks(channels) {
         for (ch, &s) in frame.iter().enumerate() {
             let y = chans[ch]
-                .process_sample(s, drive, bias, out_gain, norm_gain, mix, use_bridge, backend);
+                .process_sample(s, drive, bias, out_gain, norm_gain, mix, use_bridge, backend, false, 0.0);
             writer
                 .write_sample(y)
                 .unwrap_or_else(|e| die(&format!("error writing sample: {e}")));
