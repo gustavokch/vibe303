@@ -1,0 +1,355 @@
+"""
+Evaluate the trained NAM model vs the ACME.jl BA283 reference (and the SPICE
+training target) on the model's own T3K sweep.
+
+Context
+-------
+``model.nam`` (a NAM ``SlimmableContainer`` / WaveNet, no gain conditioning) was
+trained by the ``neural-amp-modeler`` package on the T3K sweep
+(``scratch/nam_sweep/ds48/T3K-60s_dry.wav`` -> SPICE-reamp target).  The model
+ships no metadata sidecar, but the training set on disk pins the contract:
+
+* input  = ``T3K-60s_dry.wav`` (48 kHz, the exact training input)
+* target = ``T3K-60s_gain{G}.wav`` (SPICE reamp at gain_norm G, bias 0.77)
+* the model matches **gain_norm 0.5** best (no conditioning -> one operating
+  point); a latency of -24 samples and a DC/sub-bass bias offset must be removed
+  before scoring (handled here).
+
+So this is a **3-way** comparison at one operating point:
+  NAM (candidate)  vs  ACME.jl (validated near-ground-truth)  vs  SPICE (truth).
+ACME runs at its proven 96 kHz (the 48 kHz dry is soxr-upsampled, then the wet
+is downsampled back); SPICE is the on-disk target.  All scoring is at 48 kHz.
+
+The NAM output is not in volts; every ESR is **level-matched** (optimal LS
+scalar) and lag-aligned (|lag| <= SPAN) after a 20 Hz high-pass.
+
+Usage:
+    uv run --extra eval python -m eval.nam_vs_acme.compare \\
+        [--gain 0.5] [--bias 0.77] [--max-seconds 30] \\
+        [--out eval/nam_vs_acme/out]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import soundfile as sf
+import soxr
+from scipy.signal import butter, csd, sosfiltfilt, welch  # type: ignore[import-untyped]
+
+from data_gen.netlist import gain_norm_to_rkj
+from eval.wdf_vs_spice.compare import ONSET_SKIP, SPAN, best_lag
+from eval.acme_vs_spice.run_acme import run_acme
+from eval.nam_vs_acme.run_nam import DEFAULT_NAM, NamModel
+
+SR_ACME = 96_000
+NAM_SWEEP = Path.home() / "Git/ba283-nam-lstm/scratch/nam_sweep/ds48"
+DRY48 = NAM_SWEEP / "T3K-60s_dry.wav"
+
+
+# ---------------------------------------------------------------------------
+# Resampling / alignment / metrics (at the 48 kHz comparison rate)
+# ---------------------------------------------------------------------------
+
+
+def _resample(x: np.ndarray, sr_from: int, sr_to: int) -> np.ndarray:
+    if sr_from == sr_to:
+        return np.asarray(x, dtype=np.float64)
+    return soxr.resample(np.asarray(x, dtype=np.float64), sr_from, sr_to,
+                         quality="VHQ").astype(np.float64)
+
+
+def _hp(x: np.ndarray, sr: int, fc: float = 20.0) -> np.ndarray:
+    """20 Hz high-pass: ACME/SPICE carry a DC/sub-bass bias-settling component
+    the NAM (trained on AC) lacks; without removing it the ESR and level-fit are
+    dominated by an offset none of the models is being judged on."""
+    sos = butter(2, fc / (sr / 2), btype="high", output="sos")
+    return sosfiltfilt(sos, x)
+
+
+def _align(ref: np.ndarray, mod: np.ndarray, sr: int):
+    """Lag-align (|lag| <= SPAN), trim the startup transient, DC/sub-bass HP."""
+    lag = best_lag(ref, mod)
+    if lag >= 0:
+        r, m = ref[lag:], mod[: len(ref) - lag]
+    else:
+        r, m = ref[: len(ref) + lag], mod[-lag:]
+    n = min(len(r), len(m))
+    r, m = r[:n], m[:n]
+    k = min(int(ONSET_SKIP * sr), n // 4)
+    return _hp(r[k:], sr), _hp(m[k:], sr), lag
+
+
+def metrics(ref: np.ndarray, mod: np.ndarray, sr: int) -> dict:
+    """ESR / levels for *mod* against *ref*, raw and level-matched.
+
+    The level-matched ESR fits ``g = <r,m>/<m,m>`` so the comparison is robust
+    to *mod*'s scale; ``fit_gain`` is reported.
+    """
+    r, m, lag = _align(ref, mod, sr)
+    err = r - m
+    esr_raw = float(np.sum(err**2) / max(np.sum(r**2), 1e-20))
+    g = float(np.dot(r, m) / max(np.dot(m, m), 1e-20))
+    errm = r - g * m
+    esr_m = float(np.sum(errm**2) / max(np.sum(r**2), 1e-20))
+    return {
+        "lag": lag,
+        "esr_db": float(10.0 * np.log10(esr_raw + 1e-30)),
+        "esr_matched_db": float(10.0 * np.log10(esr_m + 1e-30)),
+        "fit_gain": g,
+        "ref_rms": float(np.sqrt(np.mean(r**2))),
+        "mod_rms": float(np.sqrt(np.mean(m**2))),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Welch FR + coherence
+# ---------------------------------------------------------------------------
+
+
+def _welch_tf(out: np.ndarray, inp: np.ndarray, sr: int, nbands: int = 28):
+    n = min(len(out), len(inp))
+    nper = min(16384, n)
+    f, Pxx = welch(inp[:n], sr, nperseg=nper)
+    _, Pyy = welch(out[:n], sr, nperseg=nper)
+    _, Pxy = csd(inp[:n], out[:n], sr, nperseg=nper)
+    H = np.abs(Pxy) / (Pxx + 1e-30)
+    coh = (np.abs(Pxy) ** 2) / (Pxx * Pyy + 1e-30)
+    edges = np.geomspace(20.0, sr / 2 * 0.98, nbands + 1)
+    fcs, dbs, cohs = [], [], []
+    for k in range(nbands):
+        sel = (f >= edges[k]) & (f < edges[k + 1])
+        if not sel.any():
+            continue
+        fcs.append(float(np.sqrt(edges[k] * edges[k + 1])))
+        dbs.append(float(20.0 * np.log10(np.sqrt(np.mean(H[sel] ** 2)) + 1e-12)))
+        cohs.append(float(np.mean(coh[sel])))
+    return np.array(fcs), np.array(dbs), np.array(cohs)
+
+
+# ---------------------------------------------------------------------------
+# Plots (3-way: NAM vs ACME vs SPICE)
+# ---------------------------------------------------------------------------
+
+
+def _fr_plot(fcs, sdb, adb, ndb, nco, gn, rkj, bias, sr, out_dir, tag) -> dict:
+    nyq = sr / 2
+    band = (fcs >= 20) & (fcs <= 20_000)
+    midband = (fcs >= 200) & (fcs <= 5_000)
+    err = ndb - sdb  # NAM vs SPICE truth
+
+    fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+    axes[0].semilogx(fcs, sdb, "o-", color="black", label="SPICE (truth)")
+    axes[0].semilogx(fcs, adb, "^-", color="steelblue", label="ACME")
+    axes[0].semilogx(fcs, ndb, "s--", color="darkorange", label="NAM (level-matched)")
+    axes[0].set_ylabel("|H(f)| (dB)")
+    axes[0].set_title(f"Frequency response (Welch) — T3K, "
+                      f"gain_norm={gn} (R_KJ={rkj:.0f}Ω), bias={bias}")
+    axes[0].legend()
+    axes[0].grid(True, which="both", alpha=0.4)
+    axes[1].semilogx(fcs, err, color="crimson", label="NAM − SPICE")
+    axes[1].semilogx(fcs, adb - sdb, color="steelblue", lw=0.9, label="ACME − SPICE")
+    axes[1].axhline(0, color="k", lw=0.8, ls="--")
+    axes[1].fill_between([20, 20_000], -1, 1, color="green", alpha=0.08, label="±1 dB")
+    axes[1].set_ylabel("Error (dB)")
+    axes[1].set_xlabel("Frequency (Hz)")
+    axes[1].set_ylim(-6, 6)
+    axes[1].set_xlim(20, nyq)
+    axes[1].legend(fontsize=8)
+    axes[1].grid(True, which="both", alpha=0.4)
+    plt.tight_layout()
+    fig.savefig(out_dir / f"fr_welch_{tag}.png", dpi=150)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    ax.semilogx(fcs, nco, color="purple")
+    ax.set_ylim(0, 1.02)
+    ax.set_xlim(20, nyq)
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel("Coherence")
+    ax.set_title("NAM coherence vs dry — T3K")
+    ax.grid(True, which="both", alpha=0.4)
+    plt.tight_layout()
+    fig.savefig(out_dir / f"fr_coherence_{tag}.png", dpi=150)
+    plt.close(fig)
+
+    return {
+        "nam_vs_spice_max_err_db_20_20k": round(float(np.max(np.abs(err[band]))), 2) if band.any() else None,
+        "nam_vs_spice_max_err_db_midband": round(float(np.max(np.abs(err[midband]))), 2) if midband.any() else None,
+        "mean_coherence_midband": round(float(np.mean(nco[midband])), 3) if midband.any() else None,
+    }
+
+
+def _shift(x: np.ndarray, lag: int) -> np.ndarray:
+    """Shift *x* by *lag* (so x[lag:] aligns to index 0), zero-padded."""
+    if lag > 0:
+        return np.concatenate([x[lag:], np.zeros(lag)])
+    if lag < 0:
+        return np.concatenate([np.zeros(-lag), x[:lag]])
+    return x
+
+
+def _overlay(spice, acme, nam, fit_gain, sr, tag, out_dir) -> None:
+    """50 ms 3-way waveform overlay (NAM scaled into the SPICE volt domain),
+    with ACME and NAM lag-aligned to the SPICE truth."""
+    n = min(len(spice), len(acme), len(nam))
+    s_hp = _hp(spice[:n], sr)
+    a_hp = _hp(_shift(acme[:n], best_lag(spice[:n], acme[:n])), sr)
+    nm = _hp(_shift(fit_gain * nam[:n], best_lag(spice[:n], nam[:n])), sr)
+    w = min(int(0.05 * sr), n // 2)
+    # centre the window on the highest-energy 50 ms of the sweep (skip warmup)
+    g0 = int(0.5 * sr)
+    env = np.convolve(s_hp[g0:] ** 2, np.ones(w), "valid")
+    st = g0 + (int(np.argmax(env)) if env.size else 0)
+    st = min(st, n - w)
+    t = np.arange(w) / sr * 1e3
+    fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+    axes[0].plot(t, a_hp[st:st + w], color="steelblue", lw=2.4, label="ACME")
+    axes[0].plot(t, s_hp[st:st + w], color="black", lw=1.0, label="SPICE (truth)")
+    axes[0].plot(t, nm[st:st + w], color="darkorange", ls="--", label="NAM (level-matched)")
+    axes[0].set_ylabel("volts")
+    axes[0].set_title(f"Waveform overlay — {tag}")
+    axes[0].legend(fontsize=8)
+    axes[0].grid(True, alpha=0.3)
+    axes[1].plot(t, s_hp[st:st + w] - nm[st:st + w], color="crimson", label="SPICE − NAM")
+    axes[1].plot(t, s_hp[st:st + w] - a_hp[st:st + w], color="steelblue", lw=0.9, label="SPICE − ACME")
+    axes[1].set_ylabel("residual")
+    axes[1].set_xlabel("time (ms)")
+    axes[1].legend(fontsize=8)
+    axes[1].grid(True, alpha=0.3)
+    plt.tight_layout()
+    fig.savefig(out_dir / f"waveform_overlay_{tag}.png", dpi=150)
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawTextHelpFormatter)
+    ap.add_argument("--gain", type=float, default=0.5,
+                    help="gain_norm operating point (NAM matches 0.5 best)")
+    ap.add_argument("--bias", type=float, default=0.77)
+    ap.add_argument("--dry", type=Path, default=DRY48, help="T3K training dry (48 kHz)")
+    ap.add_argument("--target", type=Path, default=None,
+                    help="SPICE target wav (default: T3K-60s_gain{G}.wav)")
+    ap.add_argument("--nam", type=Path, default=DEFAULT_NAM)
+    ap.add_argument("--max-seconds", type=float, default=30.0,
+                    help="trim dry/target to keep the ACME (Julia) sim tractable")
+    ap.add_argument("--out", type=Path, default=Path("eval/nam_vs_acme/out"))
+    args = ap.parse_args()
+    args.out.mkdir(parents=True, exist_ok=True)
+
+    target = args.target or (NAM_SWEEP / f"T3K-60s_gain{args.gain:.3f}.wav")
+    rkj = gain_norm_to_rkj(args.gain)
+
+    model = NamModel(args.nam)
+    sr = model.sample_rate
+
+    dry, sr_dry = sf.read(args.dry, always_2d=False)
+    dry = np.asarray(dry, dtype=np.float64)
+    if sr_dry != sr:
+        dry = _resample(dry, sr_dry, sr)
+    spice, sr_t = sf.read(target, always_2d=False)
+    spice = np.asarray(spice, dtype=np.float64)
+    if sr_t != sr:
+        spice = _resample(spice, sr_t, sr)
+
+    nmax = int(args.max_seconds * sr)
+    dry, spice = dry[:nmax], spice[:nmax]
+
+    print("=" * 64)
+    print("NAM vs ACME vs SPICE — BA283 T3K accuracy harness")
+    print(f"  model   : {args.nam}  (arch={model.arch}, SR={sr})")
+    print(f"  dry     : {args.dry.name}  ({len(dry)/sr:.1f}s)")
+    print(f"  target  : {target.name}  (SPICE truth)")
+    print(f"  point   : gain_norm={args.gain} (R_KJ={rkj:.0f}Ω), bias={args.bias}")
+    print(f"  ACME    : {SR_ACME} Hz (dry upsampled), compared at {sr} Hz")
+    print("=" * 64)
+
+    # NAM on the exact training dry (no gain input; routed by input peak).
+    nam_wet, thr = model.run(dry)
+    print(f"[nam] routed max_value={thr}  out_pk={np.max(np.abs(nam_wet)):.4f}")
+
+    # ACME at the operating point (run at 96 kHz, then back to 48 kHz).
+    dry96 = _resample(dry, sr, SR_ACME)
+    acme96 = run_acme(dry96, SR_ACME, rgain=rkj, bias=args.bias)
+    acme = _resample(acme96, SR_ACME, sr)
+    print(f"[acme] out_pk={np.max(np.abs(acme)):.3f}  finite={np.all(np.isfinite(acme))}")
+
+    n = min(len(nam_wet), len(acme), len(spice))
+    nam_wet, acme, spice, dry = nam_wet[:n], acme[:n], spice[:n], dry[:n]
+
+    m_na = metrics(acme, nam_wet, sr)    # NAM vs ACME (primary ask)
+    m_ns = metrics(spice, nam_wet, sr)   # NAM vs SPICE truth
+    m_as = metrics(spice, acme, sr)      # ACME vs SPICE (reference sanity)
+
+    print(f"  NAM  vs ACME : ESR {m_na['esr_matched_db']:+6.2f} dB (matched)  "
+          f"fit_gain={m_na['fit_gain']:.2f}  lag={m_na['lag']:+d}")
+    print(f"  NAM  vs SPICE: ESR {m_ns['esr_matched_db']:+6.2f} dB (matched)  "
+          f"fit_gain={m_ns['fit_gain']:.2f}  lag={m_ns['lag']:+d}")
+    print(f"  ACME vs SPICE: ESR {m_as['esr_matched_db']:+6.2f} dB (matched)  "
+          f"raw {m_as['esr_db']:+6.2f} dB  lag={m_as['lag']:+d}")
+
+    # 3-way FR (each vs dry) and waveform overlay.
+    tag = f"T3K_g{args.gain:.2f}"
+    nam_lm = m_ns["fit_gain"] * nam_wet  # NAM into SPICE volt domain
+    fcs, sdb, _ = _welch_tf(spice, dry, sr)
+    _, adb, _ = _welch_tf(acme, dry, sr)
+    _, ndb, nco = _welch_tf(nam_lm, dry, sr)
+    fr = _fr_plot(fcs, sdb, adb, ndb, nco, args.gain, rkj, args.bias, sr, args.out, tag)
+    _overlay(spice, acme, nam_wet, m_ns["fit_gain"], sr, tag, args.out)
+
+    def _pack(m):
+        return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items()}
+
+    summary = {
+        "config": {"nam": str(args.nam), "arch": model.arch, "sr": sr,
+                   "acme_sr": SR_ACME, "gain_norm": args.gain, "rkj_ohm": round(rkj, 1),
+                   "bias": args.bias, "dry": str(args.dry), "target": str(target),
+                   "seconds": round(len(dry) / sr, 2),
+                   "max_lag_samples": SPAN, "onset_skip_s": ONSET_SKIP,
+                   "metric": "level-matched ESR (optimal LS scalar), 20Hz HP, lag-aligned"},
+        "nam_vs_acme": _pack(m_na),
+        "nam_vs_spice": _pack(m_ns),
+        "acme_vs_spice": _pack(m_as),
+        "frequency_response": fr,
+        "verdict": _verdict(m_na, m_ns, m_as),
+        "notes": [
+            "NAM trained (neural-amp-modeler) on T3K-60s_dry -> SPICE reamp; no gain "
+            "conditioning, so scored at its best operating point gain_norm 0.5.",
+            "NAM output is normalized (not volts); ESR is level-matched (fit_gain ~ the "
+            "target volt scale, near OUTPUT_REF_V≈64).",
+            "ACME at 96 kHz (dry upsampled from 48 kHz), wet downsampled to 48 kHz; "
+            "SPICE target is the on-disk 48 kHz training wet.",
+            "A -24 sample latency (NAM's calibrated delay) and a DC/sub-bass offset are "
+            "removed before scoring (lag-align + 20 Hz HP).",
+        ],
+    }
+    (args.out / "summary.json").write_text(json.dumps(summary, indent=2))
+
+    print("\n" + "=" * 64)
+    print(f"VERDICT: {summary['verdict']}")
+    print(f"Plots + summary in: {args.out}")
+    print("=" * 64)
+
+
+def _verdict(m_na, m_ns, m_as) -> str:
+    na, ns, as_ = m_na["esr_matched_db"], m_ns["esr_matched_db"], m_as["esr_matched_db"]
+    quality = ("STRONG" if ns <= -25 else "FAIR" if ns <= -18 else
+               "MODERATE" if ns <= -12 else "WEAK")
+    return (f"{quality} — NAM vs SPICE-truth {ns:+.1f} dB, NAM vs ACME {na:+.1f} dB; "
+            f"ACME tracks SPICE at {as_:+.1f} dB (reference sanity). "
+            f"Residual is the NAM's own modelling error at gain_norm 0.5.")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,53 @@
+{
+  "config": {
+    "nam": "/home/gustavo/Git/ba283-nam-lstm/exported_models/model.nam",
+    "arch": "SlimmableContainer",
+    "sr": 48000,
+    "acme_sr": 96000,
+    "gain_norm": 0.5,
+    "rkj_ohm": 905.5,
+    "bias": 0.77,
+    "dry": "/home/gustavo/Git/ba283-nam-lstm/scratch/nam_sweep/ds48/T3K-60s_dry.wav",
+    "target": "/home/gustavo/Git/ba283-nam-lstm/scratch/nam_sweep/ds48/T3K-60s_gain0.500.wav",
+    "seconds": 30.0,
+    "max_lag_samples": 64,
+    "onset_skip_s": 0.5,
+    "metric": "level-matched ESR (optimal LS scalar), 20Hz HP, lag-aligned"
+  },
+  "nam_vs_acme": {
+    "lag": -24,
+    "esr_db": -0.16,
+    "esr_matched_db": -25.425,
+    "fit_gain": 54.65,
+    "ref_rms": 1.545,
+    "mod_rms": 0.028
+  },
+  "nam_vs_spice": {
+    "lag": -24,
+    "esr_db": -0.16,
+    "esr_matched_db": -25.513,
+    "fit_gain": 54.666,
+    "ref_rms": 1.546,
+    "mod_rms": 0.028
+  },
+  "acme_vs_spice": {
+    "lag": 0,
+    "esr_db": -42.276,
+    "esr_matched_db": -42.281,
+    "fit_gain": 1.0,
+    "ref_rms": 1.546,
+    "mod_rms": 1.545
+  },
+  "frequency_response": {
+    "nam_vs_spice_max_err_db_20_20k": 0.63,
+    "nam_vs_spice_max_err_db_midband": 0.05,
+    "mean_coherence_midband": 1.0
+  },
+  "verdict": "STRONG \u2014 NAM vs SPICE-truth -25.5 dB, NAM vs ACME -25.4 dB; ACME tracks SPICE at -42.3 dB (reference sanity). Residual is the NAM's own modelling error at gain_norm 0.5.",
+  "notes": [
+    "NAM trained (neural-amp-modeler) on T3K-60s_dry -> SPICE reamp; no gain conditioning, so scored at its best operating point gain_norm 0.5.",
+    "NAM output is normalized (not volts); ESR is level-matched (fit_gain ~ the target volt scale, near OUTPUT_REF_V\u224864).",
+    "ACME at 96 kHz (dry upsampled from 48 kHz), wet downsampled to 48 kHz; SPICE target is the on-disk 48 kHz training wet.",
+    "A -24 sample latency (NAM's calibrated delay) and a DC/sub-bass offset are removed before scoring (lag-align + 20 Hz HP)."
+  ]
+}
