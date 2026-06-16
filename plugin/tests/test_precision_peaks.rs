@@ -23,7 +23,7 @@ fn raw_peak(cfg: QualityConfig, drive: f32, amp: f32, secs: usize) -> f32 {
     ch.wdf_warmup();
     let w = 2.0 * std::f32::consts::PI * 220.0 / SR;
     for i in 0..(SR as usize / 10) {
-        let _ = ch.process_sample(amp * (w * i as f32).sin(), drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf, false, 0.0);
+        let _ = ch.process_sample(amp * (w * i as f32).sin(), drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
     }
     ch.wdf_set_tier(cfg, SR, RGAIN, BIAS);
     ch.wdf_set_age_seed(SEED);
@@ -35,7 +35,7 @@ fn raw_peak(cfg: QualityConfig, drive: f32, amp: f32, secs: usize) -> f32 {
     for _ in 0..(SR as usize * secs) {
         let x = amp * (w * phase).sin();
         phase += 1.0;
-        let y = ch.process_sample(x, drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf, false, 0.0);
+        let y = ch.process_sample(x, drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
         peak = peak.max(y.abs());
     }
     peak

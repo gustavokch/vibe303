@@ -4,7 +4,6 @@ use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub mod adaa;
 pub mod dcblock;
 pub mod delay;
 pub mod dsp;
@@ -502,14 +501,6 @@ pub struct Ba283Params {
     /// EQ high-shelf gain (RV1, fixed 12 kHz), ±16 dB. 0 dB = flat.
     #[id = "eq_high_gain"]
     pub eq_high_gain: FloatParam,
-    /// ADAA2 output-saturation stage ON/OFF (both backends). OFF (default) = bit-exact today's sound;
-    /// ON adds an antialiased, asymmetric soft-clip on the wet path before the dry/wet mix.
-    #[id = "sat_on"]
-    pub sat_on: BoolParam,
-    /// Output-saturation amount (0..1). Drives the signal harder into the soft-clip; small-signal gain
-    /// stays unity (constant makeup) so the knob sweeps clean → saturated. Inert when `sat_on` is off.
-    #[id = "sat_amount"]
-    pub sat_amount: FloatParam,
     /// When on, scale the wet signal so output RMS tracks input RMS (stereo-linked, applied before
     /// `output_db`/`mix`). Off = faithful preamp gain (the default).
     #[id = "level_norm"]
@@ -618,10 +609,6 @@ impl Default for Ba283Params {
             eq_high_gain: FloatParam::new("EQ High", 0.0, FloatRange::Linear { min: -16.0, max: 16.0 })
                 .with_unit(" dB")
                 .with_value_to_string(formatters::v2s_f32_rounded(1)),
-            sat_on: BoolParam::new("Saturation", false),
-            sat_amount: FloatParam::new("Sat Amount", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_value_to_string(formatters::v2s_f32_rounded(2))
-                .with_smoother(SmoothingStyle::Linear(20.0)),
             level_norm: BoolParam::new("Level Norm", false),
             gain_stepped: BoolParam::new("Stepped Gain", false),
             circuit_gain: FloatParam::new(
@@ -892,8 +879,6 @@ impl Plugin for Ba283Plugin {
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
         let use_bridge = self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ;
         let backend = self.params.backend.value();
-        // ADAA2 output-saturation enable (block-rate, like level_norm); amount is per-sample smoothed.
-        let sat_on = self.params.sat_on.value();
 
         // Neve EQ (both backends): resolve the switched frequencies and push the current settings to
         // each channel at block rate. `Eq::set` recomputes biquad coeffs only when they change, and
@@ -1180,7 +1165,6 @@ impl Plugin for Ba283Plugin {
             let bias = self.params.bias.smoothed.next();
             let out_g = db_to_gain(self.params.output_db.smoothed.next());
             let mix = self.params.mix.smoothed.next() * 0.01;
-            let sat_amount = self.params.sat_amount.smoothed.next();
             frame_i += 1.0;
             let norm_gain = g_start + g_step * frame_i;
             for (ch, sample) in frame.iter_mut().enumerate() {
@@ -1190,7 +1174,7 @@ impl Plugin for Ba283Plugin {
                 }
                 let x = *sample;
                 *sample = self.channels[ch].process_sample(
-                    x, drive, bias, out_g, norm_gain, mix, use_bridge, backend, sat_on, sat_amount,
+                    x, drive, bias, out_g, norm_gain, mix, use_bridge, backend,
                 );
             }
         }

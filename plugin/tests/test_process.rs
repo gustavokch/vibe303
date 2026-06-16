@@ -39,7 +39,7 @@ fn mix_zero_is_dry_passthrough_direct() {
     let mut dsp = ChannelDsp::new();
     for i in 0..256 {
         let x = (i as f32 * 0.05).sin();
-        let y = dsp.process_sample(x, 1.0, 0.5, 1.0, 1.0, 0.0, false, InferenceBackend::NeuralNet, false, 0.0);
+        let y = dsp.process_sample(x, 1.0, 0.5, 1.0, 1.0, 0.0, false, InferenceBackend::NeuralNet);
         assert!(
             (y - x).abs() < 1e-6,
             "dry passthrough failed at {i}: {y} != {x}"
@@ -56,7 +56,7 @@ fn mix_zero_dry_is_latency_aligned_bridged() {
     let input: Vec<f32> = (0..n).map(|i| (i as f32 * 0.03).sin()).collect();
     let mut out = vec![0.0f32; n];
     for i in 0..n {
-        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::NeuralNet, false, 0.0);
+        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::NeuralNet);
     }
     let lat = HOST_BRIDGE_LATENCY;
     let mut max_err = 0.0f32;
@@ -86,7 +86,7 @@ fn nn_output_is_denormed_by_output_ref_over_input_fs() {
     let bias = 0.5;
     for i in 0..256 {
         let x = (i as f32 * 0.05).sin() * 0.4;
-        let y = dsp.process_sample(x, 1.0, bias, 1.0, 1.0, 1.0, false, InferenceBackend::NeuralNet, false, 0.0);
+        let y = dsp.process_sample(x, 1.0, bias, 1.0, 1.0, 1.0, false, InferenceBackend::NeuralNet);
         let expected = model.forward(&[x, bias])[0] * deref;
         assert!(
             (y - expected).abs() <= 1e-4 * expected.abs().max(1.0),
@@ -103,7 +103,7 @@ fn wdf_backend_produces_finite_output() {
     dsp.wdf_warmup(); // off-thread settle before audio
     for i in 0..256 {
         let x = (i as f32 * 0.05).sin() * 0.3;
-        let y = dsp.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf, false, 0.0);
+        let y = dsp.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf);
         assert!(y.is_finite(), "non-finite WDF output at {i}: {y}");
         assert!(y.abs() < 100.0, "WDF output blew up at {i}: {y}");
     }
@@ -125,9 +125,9 @@ fn wdf_aged_output_finite_and_coherent() {
     let mut moved = false;
     for i in 0..256 {
         let x = (i as f32 * 0.05).sin() * 0.3;
-        let yl = l.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf, false, 0.0);
-        let yr = r.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf, false, 0.0);
-        let yb = base.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf, false, 0.0);
+        let yl = l.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf);
+        let yr = r.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf);
+        let yb = base.process_sample(x, 1.0, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf);
         assert!(yl.is_finite() && yl.abs() < 100.0, "aged L blew up at {i}: {yl}");
         assert_eq!(yl.to_bits(), yr.to_bits(), "stereo not coherent at {i}: {yl} != {yr}");
         if (yl as f64 - yb as f64).abs() > 1e-4 {
@@ -148,7 +148,7 @@ fn wdf_backend_latency_aligned_bridged() {
     let input: Vec<f32> = (0..n).map(|i| (i as f32 * 0.03).sin()).collect();
     let mut out = vec![0.0f32; n];
     for i in 0..n {
-        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::Wdf, false, 0.0);
+        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::Wdf);
     }
     let lat = HOST_BRIDGE_LATENCY;
     let mut max_err = 0.0f32;

@@ -286,21 +286,6 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
 
         ui.add_space(16.0);
 
-        // ── OUTPUT SATURATION (ADAA2) — backend-agnostic output stage, so it lives OUTSIDE the
-        //    WDF-only CIRCUIT panel. AMOUNT knob + ON/OFF pill. ──
-        labelled_rule(ui, "OUTPUT SATURATION");
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            knob_cell(ui, setter, &p.sat_amount, "AMOUNT", 64.0);
-            ui.add_space(10.0);
-            ui.vertical(|ui| {
-                ui.add_space(22.0);
-                toggle_pill(ui, setter, &p.sat_on, "SATURATION");
-            });
-        });
-
-        ui.add_space(16.0);
-
         // ── EQUALIZER (Neve 1073/1076) — backend-agnostic, sits ahead of the model, so OUTSIDE the
         //    WDF-only CIRCUIT panel. Gain knobs row + switched-frequency selector rows + ON/OFF. ──
         labelled_rule(ui, "EQUALIZER");
