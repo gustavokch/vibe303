@@ -81,7 +81,15 @@ def _weights_numel(cfg: dict) -> int:
     flat-weight count for this (2-ch, FiLM-on) config."""
     probe = copy.deepcopy(cfg)
     probe["weights"] = [0.0] * _PROBE_LEN
-    return int(net_from_nam(probe).export_weights().shape[0])
+    n = int(net_from_nam(probe).export_weights().shape[0])
+    # Drain guard: the probe array must NOT be fully consumed, or the true count
+    # could exceed _PROBE_LEN and `import_weights` would silently truncate. A
+    # strict inequality proves the prefix was long enough for this config.
+    assert n < _PROBE_LEN, (
+        f"probe array fully drained (consumed {n} >= _PROBE_LEN={_PROBE_LEN}); "
+        f"the weight count may be truncated -- raise _PROBE_LEN"
+    )
+    return n
 
 
 def net_from_nam(nam_dict: dict):
