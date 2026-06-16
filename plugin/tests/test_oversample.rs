@@ -1,6 +1,6 @@
 mod common;
 
-use ba283::oversample::Oversample2x;
+use ba283::oversample::{HostBridge, Oversample2x, HOST_BRIDGE_LATENCY};
 
 #[test]
 fn upsample_dc_returns_constant() {
@@ -37,6 +37,49 @@ fn upsample_then_downsample_is_unity_after_latency() {
         }
     }
     assert!(max_err < 0.05, "max err {max_err}");
+}
+
+#[test]
+fn host_bridge_dc_returns_constant() {
+    // Decimate->identity->interpolate of a DC input converges to the input.
+    let mut hb = HostBridge::new();
+    let mut last = 0.0;
+    for _ in 0..400 {
+        last = hb.process(1.0, |lo| lo);
+    }
+    assert!((last - 1.0).abs() < 0.01, "DC bridge output {last}");
+}
+
+#[test]
+fn host_bridge_identity_after_latency() {
+    // With an identity model the bridge is a band-limited delayed identity. Find
+    // the delay that best aligns output to input and assert it equals the
+    // published HOST_BRIDGE_LATENCY (the single source of truth the dry-path
+    // delay + host latency report use). A slow sine stays inside the half-band
+    // passband so the cascade reproduces it.
+    let mut hb = HostBridge::new();
+    let input: Vec<f32> = (0..2048).map(|i| ((i as f32) * 0.005).sin()).collect();
+    let output: Vec<f32> = input.iter().map(|&x| hb.process(x, |lo| lo)).collect();
+
+    let mut best = (f32::INFINITY, 0usize);
+    for d in 0..128 {
+        let mut max_err = 0.0f32;
+        for i in (d + 200)..2048 {
+            let e = (output[i] - input[i - d]).abs();
+            if e > max_err {
+                max_err = e;
+            }
+        }
+        if max_err < best.0 {
+            best = (max_err, d);
+        }
+    }
+    assert_eq!(
+        best.1, HOST_BRIDGE_LATENCY,
+        "best-aligning delay {} (err {:.4}) != HOST_BRIDGE_LATENCY {}",
+        best.1, best.0, HOST_BRIDGE_LATENCY
+    );
+    assert!(best.0 < 0.05, "bridge identity max err {:.4}", best.0);
 }
 
 #[test]

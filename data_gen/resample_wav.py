@@ -8,24 +8,28 @@ ablation subsets (``base44k``, ``c4_88k``) are faithful downsamples of the
 *validated* 96 kHz gain dataset — re-rendering them through SPICE would diverge
 from the B0 reference, so the existing wet WAVs must be resampled directly.
 
-Polyphase resampling (``scipy.signal.resample_poly``) is used: it applies an
-anti-alias FIR before decimation, which is required going 96 kHz -> 44.1 kHz
-(C4's 88.2 kHz is a clean 96k->88.2k ratio too). dry and wet of a pair are
-resampled by the identical ratio, so their relative head-trim alignment is
-preserved exactly.
+Resampling uses the SoX resampler (``soxr``) at the **VHQ** (very-high-quality)
+preset: a long, steep anti-alias FIR with excellent stopband rejection and flat
+passband — the quality bar for the 96 kHz -> 48 kHz NAM-grid conversion. dry and
+wet of a pair are resampled by the identical ratio with the identical filter, so
+their relative head-trim alignment is preserved exactly.
 """
 from __future__ import annotations
 
 import argparse
-from math import gcd
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import soundfile as sf
-from scipy.signal import resample_poly
+import soxr
 
 from data_gen.resample import split_manifest, write_manifest
+
+# SoX resampler quality preset. VHQ = very high quality (longest FIR, deepest
+# stopband). Used for every dry/wet conversion so the 48 kHz dataset is a
+# transparent downsample of the validated 96 kHz one.
+SOXR_QUALITY = "VHQ"
 
 
 def resample_wav(
@@ -35,19 +39,18 @@ def resample_wav(
 ) -> int:
     """Resample one float WAV ``src`` to ``target_sr``, write ``dst`` (32-bit float).
 
-    Mono is enforced (stereo is averaged). When the source already sits at
-    ``target_sr`` the samples are copied verbatim (no needless filtering).
-    Returns the written frame count.
+    Mono is enforced (stereo is averaged). Resampling is soxr VHQ. When the
+    source already sits at ``target_sr`` the samples are copied verbatim (no
+    needless filtering). Returns the written frame count.
     """
     dst = Path(dst)
     data, sr = sf.read(str(src), dtype="float32")
     if data.ndim == 2:
         data = data.mean(axis=1)
     if sr != target_sr:
-        g = gcd(int(sr), int(target_sr))
-        up = int(target_sr) // g
-        down = int(sr) // g
-        data = resample_poly(data, up, down).astype(np.float32)
+        data = soxr.resample(
+            data, int(sr), int(target_sr), quality=SOXR_QUALITY
+        ).astype(np.float32)
     dst.parent.mkdir(parents=True, exist_ok=True)
     sf.write(dst, np.ascontiguousarray(data, dtype=np.float32), target_sr, subtype="FLOAT")
     return len(data)
@@ -91,6 +94,18 @@ def build_resampled_subset(
             resample_wav(dry_src, dry_dst, target_sr)
             dry_done[dry_src.name] = dry_dst
         dry_dst = dry_done[dry_src.name]
+
+        # Guard the past dry-resample bug: a dry left at the source rate while
+        # the wet is resampled decorrelates the frame-indexed (dry[i], wet[i])
+        # pairs and collapses training to zero output (ESR -> 1.0). Both legs
+        # went through resample_wav(target_sr); assert the WRITTEN files agree.
+        dry_sr = sf.info(str(dry_dst)).samplerate
+        wet_sr = sf.info(str(wet_dst)).samplerate
+        if not (dry_sr == wet_sr == target_sr):
+            raise ValueError(
+                f"sample-rate mismatch after resample: dry={dry_sr} wet={wet_sr} "
+                f"target={target_sr} ({dry_dst.name} / {wet_dst.name})"
+            )
 
         rows.append(
             {
@@ -140,14 +155,23 @@ def main(argv: list[str] | None = None) -> int:
         default="impulse:1,music:6,sweep:4,synth:4",
         help="kind:count pairs; keep all gains for the first <count> stems per kind.",
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="resample the ENTIRE manifest (ignore --per-kind); used to build the "
+        "full 48 kHz training set, not an ablation subset.",
+    )
     args = parser.parse_args(argv)
 
     df = pd.read_csv(args.manifest)
-    per_kind = {
-        k: int(v)
-        for k, v in (pair.split(":") for pair in args.per_kind.split(","))
-    }
-    sub = _select_subset(df, per_kind)
+    if args.full:
+        sub = df.reset_index(drop=True)
+    else:
+        per_kind = {
+            k: int(v)
+            for k, v in (pair.split(":") for pair in args.per_kind.split(","))
+        }
+        sub = _select_subset(df, per_kind)
     out = build_resampled_subset(sub, args.src_root, args.out_dir, args.target_sr)
     n_stems = sub["dry_path"].nunique()
     print(f"wrote {out} ({len(sub)} rows, {n_stems} stems) @ {args.target_sr} Hz")

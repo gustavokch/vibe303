@@ -4,6 +4,7 @@ mod common;
 use ba283::delay::ShortDelay;
 use ba283::dsp::{ChannelDsp, INPUT_FS_VOLTS};
 use ba283::model::Ba283Model;
+use ba283::oversample::HOST_BRIDGE_LATENCY;
 use ba283::InferenceBackend;
 
 #[test]
@@ -32,13 +33,13 @@ fn db_to_gain_correct() {
 }
 
 #[test]
-fn mix_zero_is_dry_passthrough_at_96k() {
-    // At >=96k (no OS, no latency) with mix=0 (fully dry) and drive=out=1,
-    // output must equal the input exactly.
+fn mix_zero_is_dry_passthrough_direct() {
+    // Direct path (use_bridge=false: model runs at the host rate, no latency) with mix=0 (fully dry)
+    // and drive=out=1: output must equal the input exactly.
     let mut dsp = ChannelDsp::new();
     for i in 0..256 {
         let x = (i as f32 * 0.05).sin();
-        let y = dsp.process_sample(x, 1.0, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::NeuralNet);
+        let y = dsp.process_sample(x, 1.0, 0.5, 1.0, 1.0, 0.0, false, InferenceBackend::NeuralNet);
         assert!(
             (y - x).abs() < 1e-6,
             "dry passthrough failed at {i}: {y} != {x}"
@@ -47,17 +48,17 @@ fn mix_zero_is_dry_passthrough_at_96k() {
 }
 
 #[test]
-fn mix_zero_dry_is_latency_aligned_sub96k() {
-    // At <96k with mix=0, output is the dry path delayed by exactly the OS
-    // latency (32). After the latency, output[i] == input[i-32].
+fn mix_zero_dry_is_latency_aligned_bridged() {
+    // Bridged path (use_bridge=true) with mix=0: output is the dry path delayed by exactly the
+    // HostBridge latency. After the latency, output[i] == input[i - HOST_BRIDGE_LATENCY].
     let mut dsp = ChannelDsp::new();
     let n = 512;
     let input: Vec<f32> = (0..n).map(|i| (i as f32 * 0.03).sin()).collect();
     let mut out = vec![0.0f32; n];
     for i in 0..n {
-        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, false, InferenceBackend::NeuralNet);
+        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::NeuralNet);
     }
-    let lat = 32;
+    let lat = HOST_BRIDGE_LATENCY;
     let mut max_err = 0.0f32;
     for i in lat..n {
         let e = (out[i] - input[i - lat]).abs();
@@ -75,9 +76,9 @@ fn mix_zero_dry_is_latency_aligned_sub96k() {
 fn nn_output_is_denormed_by_output_ref_over_input_fs() {
     // The NeuralNet wet path must de-norm by `output_ref_v / INPUT_FS_VOLTS` (= x128 at the 64 V
     // ref): recover volts, then express in the 0 dBFS == 0.5 V convention. With drive=out=norm=1
-    // and mix=100% (full wet) at >=96k, the chain output must equal a fresh model forward on the
-    // same input times that factor. A fresh ChannelDsp and a fresh model share identical initial
-    // state, so their hidden-state trajectories match sample-for-sample.
+    // and mix=100% (full wet) on the DIRECT path (use_bridge=false), the chain output must equal a
+    // fresh model forward on the same input times that factor. A fresh ChannelDsp and a fresh model
+    // share identical initial state, so their hidden-state trajectories match sample-for-sample.
     let mut dsp = ChannelDsp::new();
     let mut model = Ba283Model::new_from_embedded_weights();
     let deref = model.output_ref_v() / INPUT_FS_VOLTS;
@@ -85,7 +86,7 @@ fn nn_output_is_denormed_by_output_ref_over_input_fs() {
     let bias = 0.5;
     for i in 0..256 {
         let x = (i as f32 * 0.05).sin() * 0.4;
-        let y = dsp.process_sample(x, 1.0, bias, 1.0, 1.0, 1.0, true, InferenceBackend::NeuralNet);
+        let y = dsp.process_sample(x, 1.0, bias, 1.0, 1.0, 1.0, false, InferenceBackend::NeuralNet);
         let expected = model.forward(&[x, bias])[0] * deref;
         assert!(
             (y - expected).abs() <= 1e-4 * expected.abs().max(1.0),
@@ -137,19 +138,19 @@ fn wdf_aged_output_finite_and_coherent() {
 }
 
 #[test]
-fn wdf_backend_latency_aligned_sub96k() {
-    // Sub-96k, mix=0 (fully dry): the WDF blended output is delayed by exactly OS_LATENCY_SAMPLES
-    // (32) so the single host latency report stays valid for both backends. With drive=out=1 and
-    // mix=0 the output is the dry input delayed 32 -> output[i] == input[i-32].
+fn wdf_backend_latency_aligned_bridged() {
+    // Bridged path (use_bridge=true), mix=0 (fully dry): the WDF blended output is delayed by exactly
+    // HOST_BRIDGE_LATENCY so the single host latency report stays valid for both backends. With
+    // drive=out=1 and mix=0 the output is the dry input delayed -> output[i] == input[i - lat].
     let mut dsp = ChannelDsp::new();
     dsp.wdf_warmup();
     let n = 256;
     let input: Vec<f32> = (0..n).map(|i| (i as f32 * 0.03).sin()).collect();
     let mut out = vec![0.0f32; n];
     for i in 0..n {
-        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, false, InferenceBackend::Wdf);
+        out[i] = dsp.process_sample(input[i], 1.0, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::Wdf);
     }
-    let lat = 32;
+    let lat = HOST_BRIDGE_LATENCY;
     let mut max_err = 0.0f32;
     for i in lat..n {
         max_err = max_err.max((out[i] - input[i - lat]).abs());

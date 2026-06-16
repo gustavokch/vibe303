@@ -5,20 +5,22 @@ from train.model import BA283LSTM
 
 
 def test_forward_output_shape():
-    model = BA283LSTM(hidden=32)
+    # NAM-style default: 3 layers, hidden 18. State is (num_layers, batch, hidden).
+    model = BA283LSTM()
     x = torch.randn(4, 4096, 2)
     y, (h, c) = model(x)
     assert y.shape == (4, 4096, 1)
-    assert h.shape == (1, 4, 32)
-    assert c.shape == (1, 4, 32)
+    assert h.shape == (3, 4, 18)
+    assert c.shape == (3, 4, 18)
 
 
 def test_param_count_in_expected_range():
-    # 1-layer LSTM-32 + FiLM(1->64) + Dense(32->1):
-    #   lstm 4*(32*1 + 32*32 + 32 + 32) = 4352, film 64*1+64 = 128, dense 33 -> 4513.
-    model = BA283LSTM(hidden=32)
+    # NAM-style 3-layer LSTM-18 + FiLM(1->36) + Dense(18->1) + learned h0/c0:
+    #   lstm l0 4*(18*1 + 18*18 + 18 + 18) = 1440; l1,l2 each 4*(18*18 + 18*18 + 36)
+    #   = 2736 -> 5472; film 36*1+36 = 72; dense 19; h0/c0 = 3*18*2 = 108. ~7111.
+    model = BA283LSTM()
     total = sum(p.numel() for p in model.parameters())
-    assert 4000 < total < 5000
+    assert 6000 < total < 8500
 
 
 def test_state_dict_keys_match_rtneural_expectations():
@@ -36,14 +38,24 @@ def test_state_dict_keys_match_rtneural_expectations():
 
 
 def test_initial_state_can_be_passed():
-    model = BA283LSTM(hidden=32)
+    # State carries (num_layers, batch, hidden) per the 3-layer default.
+    model = BA283LSTM()
     x = torch.randn(2, 1024, 2)
-    h0 = torch.zeros(1, 2, 32)
-    c0 = torch.zeros(1, 2, 32)
+    h0 = torch.zeros(3, 2, 18)
+    c0 = torch.zeros(3, 2, 18)
     y, (h1, c1) = model(x, (h0, c0))
     assert y.shape == (2, 1024, 1)
-    assert h1.shape == (1, 2, 32)
-    assert c1.shape == (1, 2, 32)
+    assert h1.shape == (3, 2, 18)
+    assert c1.shape == (3, 2, 18)
+
+
+def test_learned_initial_state_trains():
+    # h0/c0 are trainable parameters and appear in state_dict.
+    model = BA283LSTM()
+    keys = set(model.state_dict())
+    assert {"h0", "c0"} <= keys
+    assert model.h0.requires_grad and model.c0.requires_grad
+    assert model.h0.shape == (3, 1, 18)
 
 
 def test_output_is_finite():
