@@ -69,11 +69,11 @@ single tone has *no* legitimate content, so all of it is folded aliasing — rel
 fundamental, with coherent (`f0 = p/N`) rectangular FFTs. Grid = 7 f0 (`0.12…0.36·host`) × 2 operating
 points × {trafo OFF, ON} × {4th-order, 8th-order, raw os=2}. The WDF model is driven directly
 (saturation stage out of path). Reproducible, feature-gated harness:
-`plugin/tests/alias_sweep.rs` + `WdfModel::capture_os2_raw` (both behind the `measure` Cargo feature).
+`plugin/tests/alias_sweep.rs` + `WdfModel::capture_os_raw` (both behind the `measure` Cargo feature).
 Run: `cargo test --features measure --release --test alias_sweep -- --nocapture`.
 
-Alias/fundamental (dB); `4th` = shipped path (verified bit-identical to live `process_host_sample`
-across every cell), `8th` = 4-biquad Butterworth, `raw2x` = pre-decimation os=2 stream:
+Alias/fundamental (dB); `4th` = shipped path (verified to match live `process_host_sample` within
+0.5 dB across every cell), `8th` = 4-biquad Butterworth, `raw2x` = pre-decimation os=2 stream:
 
 | trafo | op | f0 | 4th | 8th | raw2x | Δ(8−4) |
 |---|---|---|---|---|---|---|

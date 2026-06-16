@@ -32,7 +32,7 @@ subrate-spike = []
 default = ["trafo-core"]
 trafo-core = []
 # Measurement-only hooks (alias-sweep harness). Additive, off by default — never in the shipped
-# plugin. Gates `WdfModel::capture_os2_raw` + the `tests/alias_sweep.rs` broadband-alias harness.
+# plugin. Gates `WdfModel::capture_os_raw` + the `tests/alias_sweep.rs` broadband-alias harness.
 # Run with: cargo test --features measure --release --test alias_sweep -- --nocapture
 measure = []
 

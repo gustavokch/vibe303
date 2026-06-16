@@ -17,12 +17,16 @@
 
 #![cfg(feature = "measure")]
 
+use ba283::dsp::INPUT_FS_VOLTS;
 use ba283::wdf::{Biquad, QualityConfig, WdfModel};
 
 const HOST: f64 = 48_000.0;
-const FS_V: f32 = 0.5; // INPUT_FS_VOLTS — circuit is fed/observed in volts
+const FS_V: f32 = INPUT_FS_VOLTS; // circuit is fed/observed in volts (single source of truth, dsp.rs)
 const OS: usize = 2; // realtime tier internal oversampling
-const FC: f64 = 0.45 * HOST; // decimation cutoff (matches shipped dec1/dec2)
+// Decimation cutoff/Q's: must match the shipped dec1/dec2 (build.rs:255-257). Drift here is caught by
+// the harness-fidelity assert below (external-4th vs live `process_host_sample` within 0.5 dB), which
+// fails loudly if these diverge from the model's private dec coeffs.
+const FC: f64 = 0.45 * HOST; // decimation cutoff (matches build.rs:255)
 const FS2X: f64 = OS as f64 * HOST; // internal solve rate
 
 const N: usize = 1 << 14; // 16384-sample analysis window (host rate)
@@ -139,6 +143,7 @@ fn make_input(f0_norm: f64, op: &Op, total: usize) -> Vec<f32> {
 }
 
 fn make_model(trafo: bool) -> WdfModel {
+    // new_with(cfg, host_sr, rgain=220Ω, bias=0.5) — a representative mid-gain operating point.
     let mut m = WdfModel::new_with(QualityConfig::realtime(), HOST, 220.0, 0.5);
     m.warmup();
     #[cfg(feature = "trafo-core")]
@@ -177,7 +182,7 @@ fn broadband_alias_sweep_confirms_phase23_nogo() {
                 // --- captured pre-decimation os=2 stream → external 4th/8th decimation ---
                 m.reset();
                 let mut raw2x = Vec::new();
-                m.capture_os2_raw(&input, &mut raw2x);
+                m.capture_os_raw(&input, &mut raw2x);
                 let raw_settled = &raw2x[DISCARD * OS..]; // N*OS samples
                 let dec4 = butter_decimate(&raw2x, &Q4);
                 let dec8 = butter_decimate(&raw2x, &Q8);
@@ -203,6 +208,9 @@ fn broadband_alias_sweep_confirms_phase23_nogo() {
             }
         }
     }
+
+    // Guard the grid actually ran in full — a trimmed loop bound must fail loudly, not pass vacuously.
+    assert_eq!(cells.len(), F0_TARGETS.len() * OPS.len() * 2, "alias sweep grid is incomplete");
 
     // -------- table --------
     eprintln!(

@@ -343,7 +343,7 @@ impl WdfModel {
     /// what the live path decimates. Not compiled into the shipped plugin (`measure` feature, off by
     /// default).
     #[cfg(feature = "measure")]
-    pub fn capture_os2_raw(&mut self, input: &[f32], out: &mut Vec<f32>) {
+    pub fn capture_os_raw(&mut self, input: &[f32], out: &mut Vec<f32>) {
         out.clear();
         out.reserve(input.len() * self.os);
         for &x in input {
