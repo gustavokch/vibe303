@@ -15,21 +15,30 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
 
 from train.dataset import INPUT_SCALE, OUTPUT_SCALE, BA283Dataset, make_loader
 
 MANIFEST = Path("scratch/nam_sweep/ds48/manifest.csv")
+DRY_WAV = Path("scratch/nam_sweep/ds48/T3K-60s_dry.wav")
 WINDOW = 4096
 STRIDE = 2048
 EXPECTED_GAINS = [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0]
 
 
+def _require_dataset() -> None:
+    # manifest.csv is committed, but the 9-gain ds48 WAVs are git-ignored (large)
+    # and machine-local — produced by the Task 2 reamp + _rebuild_ds48.py in the
+    # ba283-nam-lstm checkout. Skip (don't fail) when the audio is absent, so the
+    # suite is green in any checkout / CI without the local data; run from the
+    # ba283-nam-lstm repo root (where the reamp wrote the WAVs) to exercise these.
+    if not (MANIFEST.exists() and DRY_WAV.exists()):
+        pytest.skip(f"ds48 audio absent ({DRY_WAV}); run the Task 2 reamp first")
+
+
 def _ds() -> BA283Dataset:
-    assert MANIFEST.exists(), (
-        f"manifest {MANIFEST} missing — run the Task 2 reamp + _rebuild_ds48.py "
-        "first, and launch pytest from the ba283-nam-lstm repo root"
-    )
+    _require_dataset()
     return BA283Dataset(MANIFEST, window=WINDOW, stride=STRIDE)
 
 
@@ -74,6 +83,7 @@ def test_all_nine_gains_present():
 def test_batch_axis_order():
     """DataLoader batches to (B, window, 2) / (B, window, 1) — Task 4 transposes
     the input to WaveNet (B, 2, window)."""
+    _require_dataset()
     loader = make_loader(
         MANIFEST,
         batch_size=8,
