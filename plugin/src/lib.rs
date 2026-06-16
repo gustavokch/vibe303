@@ -508,7 +508,7 @@ impl Default for Ba283Params {
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             age_reroll: BoolParam::new("Re-roll Unit", false),
             age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
-            editor_state: EguiState::from_size(660, 610),
+            editor_state: EguiState::from_size(660, 740),
             #[cfg(feature = "trafo-core")]
             trafo_on: BoolParam::new("Transformer", true),
             #[cfg(feature = "trafo-core")]
