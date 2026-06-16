@@ -83,11 +83,14 @@ uv run --extra eval python -m eval.nam_vs_acme.run_nam \
 
 ## Outputs (`out/`)
 
-* `summary.json` — `nam_vs_acme`, `nam_vs_spice`, `acme_vs_spice` (ESR raw +
-  level-matched, fit_gain, lag), FR error, verdict.
-* `fr_welch_T3K_g0.50.png` — 3-way Welch |H(f)| + error vs SPICE (±1 dB band).
-* `fr_coherence_T3K_g0.50.png` — NAM coherence vs dry.
-* `waveform_overlay_T3K_g0.50.png` — 3-way 50 ms overlay (highest-energy window).
+* `summary.json` — `per_gain_table`, `worst_gain`/`best_gain`, per-gain
+  `nam_vs_acme`/`nam_vs_spice`/`acme_vs_spice` (ESR raw + level-matched, fit_gain,
+  lag), FR error, `skipped_gains`, verdict.
+* `fr_welch_T3K_g{gain:.3f}.png` — per-gain 3-way Welch |H(f)| + error vs SPICE
+  (±1 dB band), e.g. `fr_welch_T3K_g0.500.png`.
+* `fr_coherence_T3K_g{gain:.3f}.png` — NAM coherence vs dry, per gain.
+* `waveform_overlay_T3K_g{gain:.3f}.png` — 3-way 50 ms overlay (highest-energy
+  window), per gain.
 
 ## Latest result
 
