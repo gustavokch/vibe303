@@ -57,7 +57,8 @@ aliasing without additional oversampling.
   `debug_assertions`.
 - Toggle clicks: OFF path bypasses entirely and is bit-exact vs today; re-engage ramps amount / short
   xfade like existing toggles.
-- Param-ID shift: documented in CHANGELOG (preset/automation break), as with the trafo-dials split.
+- Param-IDs: `sat_on`/`sat_amount` use explicit string `#[id=...]`, so adding them is additive —
+  existing preset/automation bindings are unaffected (no break, unlike the trafo-dials *rename*).
 
 ## Testing
 

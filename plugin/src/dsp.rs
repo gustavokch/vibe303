@@ -101,6 +101,10 @@ pub struct ChannelDsp {
     /// Optional ADAA2 output-saturation stage (memoryless, antialiased). Bypassed when `sat_on` is
     /// false so the dry-of-saturation path stays bit-exact.
     sat: Adaa2Sat,
+    /// DC blocker AFTER the sat stage. The soft-clip is asymmetric (biased `tanh`), so driving a
+    /// symmetric signal into it rectifies a DC term onto the wet path; this removes it. Runs only
+    /// when `sat_on` (DcBlock is not identity), so the OFF path stays bit-exact.
+    sat_dcblock: DcBlock,
     /// De-normed wet (volts→dBFS) from the most recent `process_sample`, BEFORE the levelNorm gain,
     /// `out_gain`, and `mix` are applied. The plugin reads this to feed the stereo-linked levelNorm
     /// RMS estimator (the norm gain is computed across both channels, so it lives one level up).
@@ -125,6 +129,7 @@ impl ChannelDsp {
             resume_remain: 0,
             dcblock: DcBlock::new(),
             sat: Adaa2Sat::new(SatTables::build()),
+            sat_dcblock: DcBlock::new(),
             last_wet: 0.0,
         }
     }
@@ -155,6 +160,7 @@ impl ChannelDsp {
         self.resume_remain = self.xfade_len;
         self.dcblock.reset();
         self.sat.reset();
+        self.sat_dcblock.reset();
         self.last_wet = 0.0;
     }
 
@@ -166,6 +172,7 @@ impl ChannelDsp {
     pub fn wdf_rebuild(&mut self, host_sr: f32, rgain: f32, bias: f32) {
         self.wdf_rebuild_with(QualityConfig::realtime(), host_sr, rgain, bias);
         self.dcblock.prepare(host_sr);
+        self.sat_dcblock.prepare(host_sr);
         self.xfade_remain = 0; // no crossfade in progress after a full rebuild
     }
 
@@ -309,9 +316,17 @@ impl ChannelDsp {
                 };
                 let wet = model_out * deref;
                 self.last_wet = wet;
-                let wet = wet * norm_gain * out_gain;
-                // Optional antialiased output saturation (post-level, pre-mix). Bypassed when off.
-                let wet = if sat_on { self.sat.process(wet, sat_amount) } else { wet };
+                let wet = wet * norm_gain;
+                // Optional antialiased output saturation, applied BEFORE `out_gain` so the Output
+                // knob sets the post-saturation level instead of driving the saturator harder.
+                // Bypassed when off; DC-block AFTER it since the asymmetric soft-clip rectifies a DC
+                // term onto the wet path.
+                let wet = if sat_on {
+                    self.sat_dcblock.process(self.sat.process(wet, sat_amount))
+                } else {
+                    wet
+                };
+                let wet = wet * out_gain;
                 // Dry path delayed to match the wet-path (bridge) latency so Mix aligns.
                 let dry_aligned = if use_bridge { self.dry_delay.push_pop(x) } else { x };
                 wet * mix + dry_aligned * (1.0 - mix)
@@ -355,9 +370,17 @@ impl ChannelDsp {
                     wet
                 };
                 self.last_wet = wet;
-                let wet = wet * norm_gain * out_gain;
-                // Optional antialiased output saturation (post-level, pre-mix). Bypassed when off.
-                let wet = if sat_on { self.sat.process(wet, sat_amount) } else { wet };
+                let wet = wet * norm_gain;
+                // Optional antialiased output saturation, applied BEFORE `out_gain` so the Output
+                // knob sets the post-saturation level instead of driving the saturator harder.
+                // Bypassed when off; DC-block AFTER it since the asymmetric soft-clip rectifies a DC
+                // term onto the wet path.
+                let wet = if sat_on {
+                    self.sat_dcblock.process(self.sat.process(wet, sat_amount))
+                } else {
+                    wet
+                };
+                let wet = wet * out_gain;
                 // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
                 let blended = wet * mix + x * (1.0 - mix);
                 // Keep the host-reported latency honest: when the NeuralNet path would be bridged

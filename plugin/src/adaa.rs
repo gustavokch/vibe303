@@ -26,7 +26,7 @@ const DRIVE_LO: f32 = 0.25;
 const DRIVE_HI: f32 = 8.0;
 /// Small-signal slope of the shape, `f'(0) = sech²(BIAS) = 1 − tanh²(BIAS)`. Used as constant makeup
 /// so the post-saturation small-signal gain is unity at any `amount`.
-const SLOPE0: f32 = 0.915_199_5;
+const SLOPE0: f32 = 0.915_137; // 1 - tanh²(0.3) = 0.084863... ⇒ 0.915137
 /// Ill-conditioning threshold (input units). The 2nd-order divided difference amplifies f32
 /// table-lerp noise by ~2/|x0−x2|, so a too-small threshold lets quiet/slow passages explode; `1e-2`
 /// bounds the amplification while staying far below the per-sample step of any hard-driven (i.e.
@@ -141,6 +141,12 @@ impl Adaa2Sat {
     /// Voiced output-saturation of one sample. `amount` (0..1) drives the signal harder into the
     /// fixed shape; a constant small-signal makeup keeps quiet passages at unity gain so the knob
     /// sweeps clean → saturated without changing perceived level until the signal is actually pushed.
+    ///
+    /// The drive gain `g` scales the input, and `process_sample` stores the *drive-scaled* previous
+    /// samples. When `amount` is being smoothed (per-sample), `g` changes between samples, so the
+    /// divided differences momentarily mix samples scaled by slightly different `g`. The smoother is
+    /// `Linear(20 ms)`, so the per-sample drift in `g` is tiny and the resulting error is audibly
+    /// negligible; the assumption is that `amount` is quasi-static at audio rate.
     #[inline]
     pub fn process(&mut self, x: f32, amount: f32) -> f32 {
         let g = DRIVE_LO + amount.clamp(0.0, 1.0) * (DRIVE_HI - DRIVE_LO);
