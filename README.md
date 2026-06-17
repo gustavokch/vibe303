@@ -210,7 +210,7 @@ The in-repo pipeline below trains the **dormant** LSTM/GRU engine
 data_gen/   SPICE: parameterized netlist → ngspice transient render (dry/wet pairs)
    │        netlist.py · run_spice.py · stimulus.py · resample.py
    ▼
-train/      TBPTT training, composite ESR+MSE loss, FiLM gain conditioning
+train/      TBPTT training, perceptual loss (pre-emphasised ESR + DC), FiLM gain conditioning
    │        train.py → best.pth
    ▼
 train/export.py   serialize → self-describing JSON (schema ba283-lstm-v2)
@@ -223,7 +223,13 @@ Cloud training is available via `colab/ba283_train_colab.ipynb`.
 
 - **How (operator runbook):** [`docs/training_runbook.md`](docs/training_runbook.md)
 - **Ablation studies (Colab):** [`docs/colab_ablation_runbook.md`](docs/colab_ablation_runbook.md)
-- **Why (concepts — ESR, TBPTT, FiLM):** [`docs/training_explained.md`](docs/training_explained.md)
+- **Why (concepts — perceptual ESR + DC loss, TBPTT, FiLM):** [`docs/training_explained.md`](docs/training_explained.md)
+
+The training objective is the Wright & Välimäki perceptual loss (arXiv:1911.08922):
+pre-emphasised ESR (`α = 0.8613`, 48 kHz matched-z of the paper's 0.85) plus a DC
+term (`--dc-weight`, on by default) that catches the constant offset pre-emphasis is
+blind to. An opt-in IEC A-weighting pre-emphasis filter is available via
+`--preemph-filter aweight`.
 
 ## Evaluation
 
