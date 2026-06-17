@@ -33,7 +33,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from train.dataset import make_loader
 from train.factory import ARCH_FILENAME, arch_spec, make_model, resolve_d_state
-from train.loss import composite_loss, esr
+from train.loss import PREEMPH_ALPHA_48K, composite_loss, esr
 
 
 def resolve_device(name: str) -> str:
@@ -104,6 +104,9 @@ def train_main(
     film_kind: str = "linear",
     weight_decay: float = 0.0,
     stft_weight: float = 0.0,
+    dc_weight: float = 0.1,
+    preemph_alpha: float = PREEMPH_ALPHA_48K,
+    preemph_filter: str = "first_order",
     balance_by_kind: bool = False,
     model_type: str = "lstm",
     d_state: int = 64,
@@ -225,7 +228,12 @@ def train_main(
                 pred_full, _ = model(x)
                 pred = pred_full[:, warmup_samples:]
                 loss = composite_loss(
-                    pred, y[:, warmup_samples:], stft_weight=stft_weight
+                    pred,
+                    y[:, warmup_samples:],
+                    stft_weight=stft_weight,
+                    dc_weight=dc_weight,
+                    alpha=preemph_alpha,
+                    preemph=preemph_filter,
                 )
 
                 if not torch.isfinite(loss):
@@ -412,6 +420,27 @@ def main() -> None:
         help="weight of the multi-resolution STFT loss term (0 = pure ESR)",
     )
     parser.add_argument(
+        "--dc-weight",
+        type=float,
+        default=0.1,
+        help="weight of the Wright & Valimaki DC loss term (paper-recommended, "
+        "ON by default; 0 = legacy pure pre-emphasised ESR)",
+    )
+    parser.add_argument(
+        "--preemph-alpha",
+        type=float,
+        default=PREEMPH_ALPHA_48K,
+        help="first-order pre-emphasis coefficient (default 0.8613 = 0.85 matched-z "
+        "from the paper's 44.1 kHz to our 48 kHz)",
+    )
+    parser.add_argument(
+        "--preemph-filter",
+        choices=("first_order", "aweight"),
+        default="first_order",
+        help="pre-emphasis filter: 'first_order' high-pass (default) or 'aweight' "
+        "(IEC A-weighting FIR)",
+    )
+    parser.add_argument(
         "--balance-by-kind",
         action="store_true",
         help="weighted sampling to de-skew stim_kind imbalance (e.g. music dominance)",
@@ -466,6 +495,9 @@ def main() -> None:
         film_kind=args.film,
         weight_decay=args.weight_decay,
         stft_weight=args.stft_weight,
+        dc_weight=args.dc_weight,
+        preemph_alpha=args.preemph_alpha,
+        preemph_filter=args.preemph_filter,
         balance_by_kind=args.balance_by_kind,
         model_type=args.model,
         d_state=resolve_d_state(args.model, args.d_state),

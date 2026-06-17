@@ -22,7 +22,7 @@ epoch  17  train_loss=0.0745  val_esr=0.0969  best=0.0969  *  no_improve=0
 | term         | meaning |
 | ------------ | ------- |
 | `epoch`      | one full pass over all training windows (362 in the example run) |
-| `train_loss` | mean composite loss on train data this epoch (`0.75·ESR + 0.25·MSE`, both on the pre-emphasized signal). Lower = predictions closer to SPICE on data it is learning from |
+| `train_loss` | mean composite loss on train data this epoch (pre-emphasised ESR + `0.1·`DC by default). Lower = predictions closer to SPICE on data it is learning from |
 | `val_esr`    | pure ESR on the held-out val windows (48 in the example run; different stems, zero leakage). The real score — generalization to unseen audio |
 | `best`       | lowest `val_esr` seen so far |
 | `*`          | this epoch improved on `best` → `best.pth` checkpoint written |
@@ -43,8 +43,8 @@ MSE yet scores well on ESR, which is the perceptually relevant behavior.
 ### Why `train_loss` ≠ `val_esr` numerically
 
 They are different metrics, not the same number on different data. `train_loss` is
-the **composite** (ESR + MSE, on the pre-emphasized signal); `val_esr` is **plain
-ESR** on the raw signal. Do not read a gap between them as overfitting on its own —
+the **composite** (pre-emphasised ESR + DC term); `val_esr` is **plain ESR** on the
+raw signal. Do not read a gap between them as overfitting on its own —
 compare `val_esr` across epochs instead, and watch `best` / `no_improve`.
 
 ---
@@ -123,16 +123,38 @@ both [`ba283_wdf`](../eval/wdf_vs_spice/) and the
 coherence ≈ 1.0), so they are viable as plugin DSP **and** as alternative data
 sources — but the deployed plugin path remains the trained GRU.
 
-### ESR + pre-emphasis loss
+### ESR + pre-emphasis + DC loss
 
-ESR is scale-invariant and perceptually closer than MSE. **Pre-emphasis**
-(`x[t] − 0.85·x[t−1]`, a high-frequency boost) weights the high frequencies where
-the ear is sensitive and where the transformer/clipping character lives — it stops
-the model from nailing the bass and smearing the treble. The `0.75 / 0.25` ESR/MSE
-blend keeps a DC/level anchor so the absolute output stays correct. The ESR
-denominator is floored (`eps = 1e-3`) and the dataset drops near-silent windows
-(`MIN_TARGET_ENERGY = 1e-2`) so a quiet window cannot produce a non-finite
+The objective follows Wright & Välimäki, *"A Perceptual Loss Function for Neural
+Modelling of Audio Systems"* (arXiv:1911.08922). It has two parts.
+
+**Pre-emphasised ESR.** ESR is scale-invariant and perceptually closer than MSE.
+**Pre-emphasis** (`x[t] − α·x[t−1]`, a high-frequency boost) weights the high
+frequencies where the ear is sensitive and where the transformer/clipping character
+lives — it stops the model from nailing the bass and smearing the treble. The filter
+is applied to **both** prediction and target before ESR, so the ESR denominator uses
+the pre-emphasised target energy. `α = 0.8613`: the paper's `0.85` is for 44.1 kHz;
+our data is 48 kHz, so the filter's zero is matched-z mapped to keep the same corner
+in Hz (`0.85 ** (44100/48000)`).
+
+**DC loss.** The high-pass pre-emphasis zeroes DC/low-freq *in the error signal*, so
+pre-emphasised ESR alone cannot see — and cannot penalise — a constant output offset.
+The paper pairs pre-emphasis with a DC term as the explicit safeguard:
+`mean(pred−target)² / mean(target²)`, on the **raw** signals. It is **on by default**
+(`dc_weight = 0.1`); set `--dc-weight 0` to recover the legacy pure-ESR behaviour.
+
+The ESR denominator is floored (`eps = 1e-3`) and the dataset drops near-silent
+windows (`MIN_TARGET_ENERGY = 1e-2`) so a quiet window cannot produce a non-finite
 gradient.
+
+**A-weighting variant (opt-in).** `--preemph-filter aweight` swaps the flat
+first-order high-pass for an IEC 61672 A-weighting FIR — perceptual loudness weighting
+(peak ~2–4 kHz, rolling off lows and extreme highs) instead of a monotone HF boost.
+A fixed linear-phase FIR (its group delay cancels inside ESR); keep `first_order` as
+the default baseline and A/B against it. The DC term still applies (A-weighting also
+nulls DC). Note: the A-weighting path convolves a 513-tap FIR over pred and target
+every step, so it is heavier than the one-tap `first_order` high-pass — expect slower
+training when it is enabled.
 
 ### TBPTT + warmup
 
@@ -185,9 +207,11 @@ Defaults from `train/train.py`; override via CLI flags. The example run in §1 u
 | `--lr`       | 1e-3    | Adam learning rate |
 | `--clip-norm`| 5.0     | gradient-norm clip |
 | `--patience` | 10      | epochs of no `val_esr` improvement before early stop |
+| `--dc-weight` | 0.1    | DC loss term weight (ON by default; `0` = legacy pure ESR) |
+| `--preemph-alpha` | 0.8613 | first-order pre-emphasis coefficient (48 kHz matched-z of 0.85) |
+| `--preemph-filter` | `first_order` | pre-emphasis filter: `first_order` or `aweight` |
 | (dataset) `OUTPUT_REF_V` | 64 | volt scale; plugin de-norm multiplier |
-| (loss) `esr_weight` | 0.75 | ESR vs MSE blend |
-| (loss) pre-emphasis `alpha` | 0.85 | HF-boost coefficient |
+| (loss) `esr_weight` | 1.0 | ESR vs MSE blend (1.0 = no MSE; the default objective is still ESR **plus** the DC term) |
 
 ---
 
@@ -199,8 +223,12 @@ Defaults from `train/train.py`; override via CLI flags. The example run in §1 u
   a carried, detached hidden state, instead of the full sequence.
 - **FiLM** — Feature-wise Linear Modulation. A control signal drives a per-feature
   affine `(1+γ)·y + β` rather than entering the main network as an input.
-- **Pre-emphasis** — `x[t] − α·x[t−1]`, a high-frequency boost applied to pred and
-  target before the loss so HF errors are not under-weighted.
+- **Pre-emphasis** — `x[t] − α·x[t−1]` (`α = 0.8613` at 48 kHz), a high-frequency
+  boost applied to pred and target before the loss so HF errors are not under-weighted.
+- **DC loss** — `mean(pred−target)² / mean(target²)` on the raw signals. Penalises a
+  constant output offset that pre-emphasised ESR is blind to. On by default.
+- **A-weighting** — IEC 61672 perceptual loudness curve; an opt-in pre-emphasis
+  filter (`--preemph-filter aweight`) that weights ~2–4 kHz hardest.
 - **GRU** — Gated Recurrent Unit. A recurrent cell whose hidden state is the
   model's memory of circuit dynamics (caps, transformer, feedback).
 - **Leakage** — train and val sharing source material, which inflates `val_esr`
