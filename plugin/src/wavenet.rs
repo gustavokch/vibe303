@@ -118,18 +118,41 @@ fn active(v: &Value) -> bool {
 }
 
 impl WaveNet {
-    /// Load the embedded conditioned WaveNet (`exported_models/model.cond.nam`).
+    /// Load the embedded conditioned WaveNet (`exported_models/model.cond.nam`). Panics only if the
+    /// *embedded* blob is malformed — that is a build bug, since the constant is validated by the
+    /// test suite (topology + the bit-exact golden-parity gate). It cannot fire from user input.
     pub fn new_from_embedded() -> Self {
         // Single-sourced from the canonical export so the embedded blob can never drift from
         // `exported_models/` (path is relative to this source file: plugin/src → repo root).
         const NAM_JSON: &str = include_str!("../../exported_models/model.cond.nam");
         Self::from_json_str(NAM_JSON)
+            .expect("embedded exported_models/model.cond.nam is malformed (build bug)")
     }
 
-    /// Parse a `.nam` (nam fork export) into the streaming engine. Panics with a clear message if the
-    /// file is not the validated active topology — the engine is deliberately scoped to what this
-    /// export needs rather than re-implementing the whole fork.
-    pub fn from_json_str(s: &str) -> Self {
+    /// Parse a `.nam` (nam fork export) into the streaming engine. Returns `Err` with a clear message
+    /// if the file is not the validated active topology — the engine is deliberately scoped to what
+    /// this export needs rather than re-implementing the whole fork.
+    ///
+    /// The inner parse is panic-based (`require`/`expect`/bounds-checked cursor); this wrapper catches
+    /// any such panic and converts it to `Err` so a runtime- or user-supplied model is rejected
+    /// gracefully instead of unwinding across the host FFI boundary (a panic across FFI is UB / a
+    /// host crash). The embedded path (`new_from_embedded`) re-asserts via `expect`.
+    pub fn from_json_str(s: &str) -> Result<Self, String> {
+        // `s` is a `&str` (unwind-safe); the parse builds a fresh value and never leaves shared
+        // state half-mutated, so asserting unwind-safety is sound.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Self::parse_or_panic(s))).map_err(
+            |e| {
+                let msg = e
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| e.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown parse failure");
+                format!("invalid model.cond.nam: {msg}")
+            },
+        )
+    }
+
+    fn parse_or_panic(s: &str) -> Self {
         let doc: Value = serde_json::from_str(s).expect("model.cond.nam: invalid JSON");
         require(
             doc["architecture"].as_str() == Some("WaveNet"),

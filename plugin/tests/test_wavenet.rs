@@ -49,6 +49,19 @@ fn reset_restores_zero_history() {
 }
 
 #[test]
+fn malformed_input_errors_instead_of_panicking() {
+    // The inner parse is panic-based; `from_json_str` catches those at the boundary and returns
+    // `Err` so a runtime/user-supplied model can't unwind across the host FFI. (Caught panics may
+    // print a backtrace to stderr — harmless; the assertions below are what matter.)
+    assert!(WaveNet::from_json_str("definitely not json").is_err()); // not JSON
+    assert!(WaveNet::from_json_str(r#"{"sample_rate": 48000}"#).is_err()); // missing topology
+    assert!(WaveNet::from_json_str("{}").is_err()); // empty object
+
+    // The embedded model still loads cleanly through the same path.
+    assert!(WaveNet::from_json_str(include_str!("../../exported_models/model.cond.nam")).is_ok());
+}
+
+#[test]
 fn golden_parity_with_pytorch_reference() {
     let doc: Value =
         serde_json::from_str(include_str!("fixtures/wavenet_golden.json")).expect("fixture JSON");
