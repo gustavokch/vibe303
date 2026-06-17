@@ -11,6 +11,7 @@ pub mod eq;
 mod editor;
 pub mod model;
 pub mod oversample;
+pub mod wavenet;
 pub mod wdf;
 
 use dsp::ChannelDsp;
@@ -272,6 +273,17 @@ static GAIN_STEPS: &[GainStep] = &[
     GainStep { label: "30 dB", r_kj_ohm: 220.0, knob_ohm: 220.0 },
     GainStep { label: "35 dB", r_kj_ohm: 110.0, knob_ohm: 110.0 },
 ];
+
+/// Map the `circuit_gain` R_KJ value (Ω) onto the WaveNet's trained 0..1 gain axis. The conditioned
+/// model was reamped over a geometric R_KJ sweep — 10000 Ω → gain_norm 0.0, 82 Ω → 1.0 — so the
+/// inverse is a log ratio (verified against the eval table, e.g. 906 Ω → 0.5). The param's 47 Ω /
+/// open positions extrapolate past 1.0 and are clamped (the model saw no data hotter than 82 Ω).
+fn rgain_to_gain_norm(rgain_ohm: f32) -> f32 {
+    const R_LO: f32 = 10_000.0; // gain_norm 0.0
+    const R_HI: f32 = 82.0; // gain_norm 1.0
+    let g = (rgain_ohm.max(1.0).ln() - R_LO.ln()) / (R_HI.ln() - R_LO.ln());
+    g.clamp(0.0, 1.0)
+}
 
 /// Index of the gain step whose `knob_ohm` is nearest `rgain_ohm` in LOG-ohm space (matches the
 /// `circuit_gain` skew_factor(-2.0), so the snap midpoints sit where the knob spacing is uniform).
@@ -879,6 +891,10 @@ impl Plugin for Ba283Plugin {
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
         let use_bridge = self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ;
         let backend = self.params.backend.value();
+        // FiLM gain-conditioning value for the WaveNet (NeuralNet) backend: the circuit-gain knob
+        // mapped onto the model's trained 0..1 gain axis (block-rate; the model is robust to the
+        // small per-block steps a knob drag produces). Inert for the WDF backend.
+        let gain_norm = rgain_to_gain_norm(self.params.circuit_gain.value());
 
         // Neve EQ (both backends): resolve the switched frequencies and push the current settings to
         // each channel at block rate. `Eq::set` recomputes biquad coeffs only when they change, and
@@ -1173,8 +1189,16 @@ impl Plugin for Ba283Plugin {
                     break;
                 }
                 let x = *sample;
+                // The conditioning scalar feeds the NeuralNet path only: the WaveNet wants the
+                // block-rate `gain_norm`; the WDF path ignores this argument (it uses its own
+                // block-rate bias leg) so passing the smoothed `bias` there is harmless.
+                let cond = if backend == InferenceBackend::NeuralNet {
+                    gain_norm
+                } else {
+                    bias
+                };
                 *sample = self.channels[ch].process_sample(
-                    x, drive, bias, out_g, norm_gain, mix, use_bridge, backend,
+                    x, drive, cond, out_g, norm_gain, mix, use_bridge, backend,
                 );
             }
         }
