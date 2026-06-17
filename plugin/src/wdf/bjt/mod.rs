@@ -451,9 +451,10 @@ fn dep_charge_lane_bl<const FMA: bool>(v: f64, cj0: f64, vj: f64, m: f64, c0: f6
 /// Width-4 SoA depletion charge. Call ×2 (BE then BC) with the appropriate junction params.
 /// Returns `(q[4], c[4])` bit-exact with 4 scalar [`depletion_charge_pre`] calls at `FMA=false`.
 ///
-/// `pub` (not `pub(in crate::wdf)`) so the `bench-internals` re-export in `wdf/mod.rs` can expose
-/// it to `bin/bench_deplut`. The `bjt` module is itself private (`mod bjt;`), so this stays
-/// crate-internal in normal builds — the only external path is the feature-gated re-export.
+/// `pub` (not `pub(in crate::wdf)`) so the `bench-internals` `pub use` re-export in `wdf/mod.rs`
+/// can widen it to `bin/bench_deplut` — `pub use` cannot re-export a `pub(in …)` item as `pub`.
+/// The `bjt` module is itself private (`mod bjt;`), so this stays crate-internal in normal builds:
+/// the feature-gated re-export is the only external path.
 pub fn depletion_charge_pre_batch<const FMA: bool>(
     v: [f64; 4],
     cj0: [f64; 4], vj: [f64; 4], m: [f64; 4],
@@ -474,8 +475,12 @@ pub fn depletion_charge_pre_batch<const FMA: bool>(
 /// evaluating `pow` — skipping the two transcendentals. The linear arm and `cj0 <= 0` guard are
 /// unchanged. Not bit-exact with the `pow` path (table interp); added error is well inside the
 /// −40 dB budget (see `bin/bench_deplut` / the precision-tier gate).
+///
+/// Arg order is `(v, cj0, vj, c0, q0, dcdv, lut)` — deliberately identical to
+/// [`depletion_charge_pre`] and [`depletion_charge_pre_batch`] so the three depletion kernels can
+/// never be silently mis-wired by a copy/paste between sites.
 #[inline(always)]
-pub(in crate::wdf) fn dep_charge_lane_lut(v: f64, vj: f64, cj0: f64, c0: f64, q0: f64, dcdv: f64, lut: &DepLut) -> (f64, f64) {
+pub(in crate::wdf) fn dep_charge_lane_lut(v: f64, cj0: f64, vj: f64, c0: f64, q0: f64, dcdv: f64, lut: &DepLut) -> (f64, f64) {
     const FC: f64 = 0.5;
     let (q_lut, c_lut) = lut.sample(v);
     // linear arm (identical to the pow lane)
@@ -493,7 +498,7 @@ pub(in crate::wdf) fn dep_charge_lane_lut(v: f64, vj: f64, cj0: f64, c0: f64, q0
 /// Width-4 SoA depletion charge via LUT (lossy). Drop-in for [`depletion_charge_pre_batch`] on the
 /// lossy tiers: `m` is unused (the table subsumes the `pow(f, ±m)` evaluation). `luts[k]` must be
 /// the table for lane `k`'s junction; lane 3 is padding (`cj0[3] <= 0`, guarded, table ignored).
-pub fn depletion_charge_pre_batch_lut(
+pub(in crate::wdf) fn depletion_charge_pre_batch_lut(
     v: [f64; 4],
     cj0: [f64; 4],
     vj: [f64; 4],
@@ -502,10 +507,10 @@ pub fn depletion_charge_pre_batch_lut(
     dcdv: [f64; 4],
     luts: [&DepLut; 4],
 ) -> ([f64; 4], [f64; 4]) {
-    let r0 = dep_charge_lane_lut(v[0], vj[0], cj0[0], c0[0], q0[0], dcdv[0], luts[0]);
-    let r1 = dep_charge_lane_lut(v[1], vj[1], cj0[1], c0[1], q0[1], dcdv[1], luts[1]);
-    let r2 = dep_charge_lane_lut(v[2], vj[2], cj0[2], c0[2], q0[2], dcdv[2], luts[2]);
-    let r3 = dep_charge_lane_lut(v[3], vj[3], cj0[3], c0[3], q0[3], dcdv[3], luts[3]);
+    let r0 = dep_charge_lane_lut(v[0], cj0[0], vj[0], c0[0], q0[0], dcdv[0], luts[0]);
+    let r1 = dep_charge_lane_lut(v[1], cj0[1], vj[1], c0[1], q0[1], dcdv[1], luts[1]);
+    let r2 = dep_charge_lane_lut(v[2], cj0[2], vj[2], c0[2], q0[2], dcdv[2], luts[2]);
+    let r3 = dep_charge_lane_lut(v[3], cj0[3], vj[3], c0[3], q0[3], dcdv[3], luts[3]);
     (
         [r0.0, r1.0, r2.0, r3.0],
         [r0.1, r1.1, r2.1, r3.1],

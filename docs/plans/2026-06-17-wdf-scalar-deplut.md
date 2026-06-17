@@ -1,5 +1,9 @@
 # Scalar Depletion-Charge LUT Implementation Plan
 
+> **Status: IMPLEMENTED** in commit `323ae30` (PR #68). The scalar `residual_norm` and
+> `junction_charges` sites now route through the LUT on lossy tiers (later refactored into the
+> shared `WdfModel::dep_charge_scalar` helper). Kept as a design record.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 > On execution, copy this file to `docs/plans/2026-06-17-wdf-scalar-deplut.md` (the repo plans dir).
 

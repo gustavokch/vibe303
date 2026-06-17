@@ -74,21 +74,9 @@ impl WdfModel {
                 } else {
                     // Lossy tiers route the depletion arm through the LUT (matches newton_iterate's
                     // F so the residual is measured against the model actually being solved);
-                    // realtime (`dep_lut=false`) keeps the bit-exact `pow` path.
-                    let (qbe_dep, qbc_dep) = if self.dep_lut {
-                        let dl = &self.dep_luts;
-                        let (qbe_dep, _) = dep_charge_lane_lut(
-                            vbe, t.p.vje, t.p.cje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv, &dl.be[bi]);
-                        let (qbc_dep, _) = dep_charge_lane_lut(
-                            vbc, t.p.vjc, t.p.cjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv, &dl.bc[bi]);
-                        (qbe_dep, qbc_dep)
-                    } else {
-                        let (qbe_dep, _) =
-                            depletion_charge_pre(vbe, t.p.cje, t.p.vje, t.p.mje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv);
-                        let (qbc_dep, _) =
-                            depletion_charge_pre(vbc, t.p.cjc, t.p.vjc, t.p.mjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv);
-                        (qbe_dep, qbc_dep)
-                    };
+                    // realtime (`dep_lut=false`) keeps the bit-exact `pow` path. Shared with the
+                    // trailing-state recompute via `dep_charge_scalar` so the two can't drift.
+                    let (qbe_dep, qbc_dep) = self.dep_charge_scalar(bi, vbe, vbc);
                     (qbe_dep + tf * o.itf, qbc_dep + tr * o.itr)
                 };
                 let ibe = k2 * (qbe - t.qbe_prev) - t.ibe_prev;

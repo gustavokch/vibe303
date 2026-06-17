@@ -260,6 +260,10 @@ impl DepLut {
 
     /// Interpolated `(q, c)` for bias `v` in the `pow` region. Caller guarantees `v < FC*vj` (it
     /// selects the linear arm otherwise) and guards `cj0 > 0`.
+    ///
+    /// Bias below the table floor `v0` (`DEP_LUT_V_MIN`, deep reverse — rare) clamps to index 0,
+    /// i.e. flat extrapolation rather than evaluating `pow`. The depletion charge is already
+    /// near-flat that far into reverse bias, so the added error stays inside the −40 dB budget.
     #[inline(always)]
     pub fn sample(&self, v: f64) -> (f64, f64) {
         let x = ((v - self.v0) * self.inv_dv).max(0.0);
@@ -268,6 +272,13 @@ impl DepLut {
         let q = self.q[i] + f * (self.q[i + 1] - self.q[i]);
         let c = self.c[i] + f * (self.c[i + 1] - self.c[i]);
         (q, c)
+    }
+
+    /// Minimal placeholder table for tiers that never sample it (`dep_lut = false`, the bit-exact
+    /// `pow` path). Skips the `DEP_LUT_N`-point fill — and its `pow` evals — at construction. Kept
+    /// length-2 so the interp index math stays in-bounds even though `sample` is never reached here.
+    fn empty() -> Self {
+        DepLut { q: vec![0.0; 2].into_boxed_slice(), c: vec![0.0; 2].into_boxed_slice(), v0: 0.0, inv_dv: 0.0 }
     }
 }
 
@@ -294,6 +305,16 @@ impl DepLutSet {
             DepLut::build(bjts[2].p.cjc, bjts[2].p.vjc, bjts[2].p.mjc),
         ];
         DepLutSet { be, bc }
+    }
+
+    /// Trivial set for tiers that keep the bit-exact `pow` path (`dep_lut = false`: realtime, warp,
+    /// `Precision::Low`). Skips the per-junction table fill entirely — these tiers never sample it.
+    /// See the gated construction in `WdfModel::new_with`.
+    pub fn empty() -> Self {
+        DepLutSet {
+            be: [DepLut::empty(), DepLut::empty(), DepLut::empty()],
+            bc: [DepLut::empty(), DepLut::empty(), DepLut::empty()],
+        }
     }
 }
 

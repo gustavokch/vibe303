@@ -9,6 +9,11 @@
 //! GATE: candidate must beat baseline net at 4-lane SoA *with the gather included*. If it
 //! does not, the spike is NO-GO — record to memory and do not integrate.
 //!
+//! NOTE: one-shot spike tool, gated behind `bench-internals` and intentionally NOT built in CI
+//! (it would pull the otherwise crate-internal `depletion_charge_pre_batch` into the public
+//! surface). The shipped accuracy invariant is pinned by `tests/test_dep_lut.rs` instead; run this
+//! bench by hand when re-tuning `DEP_LUT_N` or the kernel.
+//!
 //! Build/run with the profiling ISA floor (AVX2+FMA), release, feature-gated:
 //!   RUSTFLAGS='-C target-cpu=x86-64-v3' \
 //!     cargo run --bin bench_deplut --release -p ba283 --features bench-internals

@@ -123,6 +123,12 @@ impl WdfModel {
                     // Lossy LUT path (fast/ultra/Medium). Lanes 0..2 = BJTs, lane 3 = padding
                     // (cje4[3]/cjc4[3] = 0 → guarded, the table ref is never sampled). `m` arrays
                     // are unused here — the table subsumes the `pow(f, ±m)` evaluation.
+                    // Lane 3's table is a dummy (reuses index 0); correctness relies on the
+                    // padding lane being guarded off by `cj0 <= 0`. Pin that invariant.
+                    debug_assert!(
+                        cje4[3] <= 0.0 && cjc4[3] <= 0.0,
+                        "lane 3 must be guarded padding (cj0 <= 0); else its dummy LUT is sampled"
+                    );
                     let dl = &self.dep_luts;
                     let be_luts = [&dl.be[0], &dl.be[1], &dl.be[2], &dl.be[0]];
                     let bc_luts = [&dl.bc[0], &dl.bc[1], &dl.bc[2], &dl.bc[0]];

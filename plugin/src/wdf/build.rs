@@ -130,8 +130,15 @@ impl WdfModel {
             caps,
             n_caps,
             // Depletion-charge LUTs from the fixed junction cards. Built here (off the audio
-            // thread); shared via Arc so model clones (e.g. measure_gain) don't deep-copy.
-            dep_luts: Arc::new(DepLutSet::build(&bjts)),
+            // thread) only when the tier actually samples them (`dep_lut`); the bit-exact `pow`
+            // tiers (realtime/warp/Low) skip the fill via `empty()`. Shared via Arc so model clones
+            // (e.g. measure_gain) don't deep-copy. Tier switches go through a full `new_with`
+            // rebuild, so this stays consistent with `cfg.dep_lut` — never toggled in place.
+            dep_luts: Arc::new(if cfg.dep_lut {
+                DepLutSet::build(&bjts)
+            } else {
+                DepLutSet::empty()
+            }),
             bjts,
             r_kj_idx,
             r_upper_idx,
