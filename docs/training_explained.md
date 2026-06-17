@@ -152,7 +152,9 @@ first-order high-pass for an IEC 61672 A-weighting FIR — perceptual loudness w
 (peak ~2–4 kHz, rolling off lows and extreme highs) instead of a monotone HF boost.
 A fixed linear-phase FIR (its group delay cancels inside ESR); keep `first_order` as
 the default baseline and A/B against it. The DC term still applies (A-weighting also
-nulls DC).
+nulls DC). Note: the A-weighting path convolves a 513-tap FIR over pred and target
+every step, so it is heavier than the one-tap `first_order` high-pass — expect slower
+training when it is enabled.
 
 ### TBPTT + warmup
 
@@ -209,7 +211,7 @@ Defaults from `train/train.py`; override via CLI flags. The example run in §1 u
 | `--preemph-alpha` | 0.8613 | first-order pre-emphasis coefficient (48 kHz matched-z of 0.85) |
 | `--preemph-filter` | `first_order` | pre-emphasis filter: `first_order` or `aweight` |
 | (dataset) `OUTPUT_REF_V` | 64 | volt scale; plugin de-norm multiplier |
-| (loss) `esr_weight` | 1.0 | ESR vs MSE blend (1.0 = pure pre-emphasised ESR) |
+| (loss) `esr_weight` | 1.0 | ESR vs MSE blend (1.0 = no MSE; the default objective is still ESR **plus** the DC term) |
 
 ---
 

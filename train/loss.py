@@ -26,7 +26,8 @@ def dc_loss(
     output offset. The paper pairs pre-emphasis with this term as the explicit
     safeguard. Computed on the RAW signals -- DC is exactly what pre-emphasis
     strips, so it must be measured before any filtering. Per-(batch,channel) time
-    mean, then summed and normalised by mean target energy (mirrors ``esr``).
+    mean, then summed and normalised by mean target energy (cf. ``esr``, which
+    sums target energy over time rather than averaging).
     """
     err = (pred - target).mean(dim=1)  # (B, C): mean over time
     return (err ** 2).sum() / ((target ** 2).mean(dim=1).sum() + eps)

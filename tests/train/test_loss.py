@@ -13,8 +13,8 @@ from train.loss import (
 def test_pre_emphasis_high_passes_signal():
     sr = 96_000
     t = torch.arange(sr) / sr
-    low = torch.sin(2 * 3.14159 * 50 * t).unsqueeze(0).unsqueeze(-1)
-    high = torch.sin(2 * 3.14159 * 10_000 * t).unsqueeze(0).unsqueeze(-1)
+    low = torch.sin(2 * torch.pi * 50 * t).unsqueeze(0).unsqueeze(-1)
+    high = torch.sin(2 * torch.pi * 10_000 * t).unsqueeze(0).unsqueeze(-1)
     low_e = pre_emphasis(low, alpha=0.85)
     high_e = pre_emphasis(high, alpha=0.85)
     assert high_e.pow(2).mean() > 10 * low_e.pow(2).mean()
@@ -64,7 +64,7 @@ def test_aweight_is_bandpass():
     t = torch.arange(sr) / sr
 
     def energy(freq):
-        tone = torch.sin(2 * 3.14159 * freq * t).unsqueeze(0).unsqueeze(-1)
+        tone = torch.sin(2 * torch.pi * freq * t).unsqueeze(0).unsqueeze(-1)
         return aweight(tone, sr).pow(2).mean().item()
 
     peak = energy(3_000)
