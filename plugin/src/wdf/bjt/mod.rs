@@ -475,7 +475,7 @@ pub fn depletion_charge_pre_batch<const FMA: bool>(
 /// unchanged. Not bit-exact with the `pow` path (table interp); added error is well inside the
 /// −40 dB budget (see `bin/bench_deplut` / the precision-tier gate).
 #[inline(always)]
-fn dep_charge_lane_lut(v: f64, vj: f64, cj0: f64, c0: f64, q0: f64, dcdv: f64, lut: &DepLut) -> (f64, f64) {
+pub(in crate::wdf) fn dep_charge_lane_lut(v: f64, vj: f64, cj0: f64, c0: f64, q0: f64, dcdv: f64, lut: &DepLut) -> (f64, f64) {
     const FC: f64 = 0.5;
     let (q_lut, c_lut) = lut.sample(v);
     // linear arm (identical to the pow lane)
