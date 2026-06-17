@@ -25,13 +25,19 @@ alternative.
 
 ### Neural Net
 
-Hand-coded pure-Rust NAM-style stacked `LSTM(3 x 18)` + FiLM gain conditioning +
-`Dense(1)` with a learned initial state, native 48 kHz, learned from
-SPICE-rendered dry/wet pairs (schema `ba283-lstm-v2`). Zero-alloc and
-realtime-safe; the trained weights are embedded into the binary at build time.
-The Rust inference matches the PyTorch reference to `< 1e-5`.
+Hand-coded pure-Rust streaming **FiLM WaveNet** matching a `nam` 0.13-fork
+export: 23 dilated causal conv layers, 3 channels, 2-channel condition
+`[audio, gain]` (gain-conditioned), per-layer `LeakyReLU(0.01)`, receptive field
+6347. Streaming and causal, so it adds **zero latency**. Zero-alloc and
+realtime-safe — all weight/state storage is heap-boxed once at construction; the
+audio path only indexes fixed scratch + ring buffers. Bit-exact with the golden
+reference in steady state.
 
-→ `plugin/src/model.rs`, weights `plugin/weights/ba283_lstm_3x18.json`
+→ `plugin/src/wavenet.rs`, weights `plugin/weights/model.cond.nam`
+
+(The older NAM-style `LSTM(3 x 18)` engine — `plugin/src/model.rs`, schema
+`ba283-lstm-v2` — is still compiled but dormant; it is the model the in-repo
+`train/` pipeline produces. See [ML / data pipeline](#ml--data-pipeline).)
 
 ### Circuit (WDF, default)
 
@@ -175,13 +181,6 @@ when the Neural Net backend is selected.
 | **Mid / Presence** | freq 360 Hz..7.2 kHz · gain ±18 dB (proportional-Q) | 0 dB |
 | **High-Shelf** | gain ±16 dB (fixed 12 kHz) | 0 dB |
 
-**Output saturation** _(both backends)_
-
-| Parameter | Range / values | Default |
-|-----------|----------------|---------|
-| **Saturation** | On / Off (ADAA antialiased soft-clip) | Off |
-| **Amount** | 0 .. 1 (constant makeup) | 0.5 |
-
 **Other**
 
 | Parameter | Range / values | Default |
@@ -202,7 +201,10 @@ overrides for hosts that misreport their scale.
 
 ## ML / data pipeline
 
-The Neural Net backend is trained offline against the real circuit:
+The neural backends are trained offline against the real circuit. The
+**shipped** WaveNet (`model.cond.nam`) is exported by a custom `nam` 0.13 fork.
+The in-repo pipeline below trains the **dormant** LSTM/GRU engine
+(`plugin/src/model.rs`) and emits the `ba283-lstm-v2` JSON schema:
 
 ```
 data_gen/   SPICE: parameterized netlist → ngspice transient render (dry/wet pairs)
@@ -211,9 +213,9 @@ data_gen/   SPICE: parameterized netlist → ngspice transient render (dry/wet p
 train/      TBPTT training, composite ESR+MSE loss, FiLM gain conditioning
    │        train.py → best.pth
    ▼
-train/export.py   serialize → self-describing JSON
+train/export.py   serialize → self-describing JSON (schema ba283-lstm-v2)
    ▼
-plugin/weights/ba283_lstm_3x18.json   embedded into the plugin at build time
+plugin/weights/ba283_lstm_3x18.json   embedded into the plugin at build time (dormant LSTM path)
 ```
 
 Current dataset: `ba283_spice_gain` (gain-conditioned, leakage-free split).
@@ -236,7 +238,7 @@ Cloud training is available via `colab/ba283_train_colab.ipynb`.
 
 | Path | Purpose |
 |------|---------|
-| `plugin/` | Rust VST3 plugin (nih-plug): `lib.rs`, `model.rs`, `wdf/` (solver), `eq.rs`, `editor.rs`, `dsp.rs`, weights |
+| `plugin/` | Rust VST3 plugin (nih-plug): `lib.rs`, `wavenet.rs` (active NN), `model.rs` (dormant LSTM), `wdf/` (solver), `eq.rs`, `editor.rs`, `dsp.rs`, weights |
 | `xtask/` | nih-plug build runner (`cargo xtask bundle ba283`) |
 | `train/` | PyTorch training pipeline (`train.py`, `model.py`, `export.py`) |
 | `data_gen/` | SPICE dataset generation (PySpice + ngspice) |
