@@ -6,18 +6,42 @@ impl WdfModel {
     /// bit-exactness guard, so the two can't silently drift (cf. the duplication warning on the
     /// `depletion_charge_pre` golden test). Mirrors the per-BJT charge built in `newton_iterate`.
     #[inline]
-    pub(in crate::wdf) fn junction_charges(&self, t: &Bjt) -> (f64, f64) {
+    pub(in crate::wdf) fn junction_charges(&self, bi: usize) -> (f64, f64) {
+        let t = self.bjts[bi];
         let tf = if self.cap_tier == CapTier::Full { t.p.tf } else { 0.0 };
         let tr = if self.cap_tier == CapTier::Full { t.p.tr } else { 0.0 };
         let vbe = self.node_v(t.b) - self.node_v(t.e);
         let vbc = self.node_v(t.b) - self.node_v(t.c);
         let (i_be, _) = diode_branch(vbe, t.p.is, t.p.vt, t.p.vcrit, t.p.cheap_exp);
         let (i_bc, _) = diode_branch(vbc, t.p.is, t.p.vt, t.p.vcrit, t.p.cheap_exp);
-        let (qbe_dep, _) =
-            depletion_charge_pre(vbe, t.p.cje, t.p.vje, t.p.mje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv);
-        let (qbc_dep, _) =
-            depletion_charge_pre(vbc, t.p.cjc, t.p.vjc, t.p.mjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv);
+        // Lossy tiers route the depletion arm through the LUT so this trailing-state recompute
+        // matches the LUT-derived `cap_q_cache` it backs up; realtime keeps the bit-exact `pow`.
+        let (qbe_dep, qbc_dep) = self.dep_charge_scalar(bi, vbe, vbc);
         (qbe_dep + tf * i_be, qbc_dep + tr * i_bc)
+    }
+
+    /// Scalar depletion charge `(qbe, qbc)` for BJT `bi` at bias `(vbe, vbc)`. Single source for
+    /// the two scalar callers — `residual_norm` (per-Newton-iteration) and `junction_charges`
+    /// (trailing-state recompute) — so the residual, the trailing update, and `newton_iterate`'s
+    /// batched F all evaluate the *same* depletion model. Lossy tiers (`dep_lut`) read the LUT;
+    /// realtime keeps the bit-exact `pow`. Arg order matches `depletion_charge_pre`.
+    #[inline]
+    pub(in crate::wdf) fn dep_charge_scalar(&self, bi: usize, vbe: f64, vbc: f64) -> (f64, f64) {
+        let t = self.bjts[bi];
+        if self.dep_lut {
+            let dl = &self.dep_luts;
+            let (qbe_dep, _) =
+                dep_charge_lane_lut(vbe, t.p.cje, t.p.vje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv, &dl.be[bi]);
+            let (qbc_dep, _) =
+                dep_charge_lane_lut(vbc, t.p.cjc, t.p.vjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv, &dl.bc[bi]);
+            (qbe_dep, qbc_dep)
+        } else {
+            let (qbe_dep, _) =
+                depletion_charge_pre(vbe, t.p.cje, t.p.vje, t.p.mje, t.p.je_c0, t.p.je_q0, t.p.je_dcdv);
+            let (qbc_dep, _) =
+                depletion_charge_pre(vbc, t.p.cjc, t.p.vjc, t.p.mjc, t.p.jc_c0, t.p.jc_q0, t.p.jc_dcdv);
+            (qbe_dep, qbc_dep)
+        }
     }
 
     /// Sub-rate spike helper: add the linear branch residuals (resistors + linear-cap companions +

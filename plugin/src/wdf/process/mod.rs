@@ -183,7 +183,6 @@ impl WdfModel {
         if self.cap_tier != CapTier::Off {
             let k2 = 2.0 / self.dt;
             for bi in 0..self.bjts.len() {
-                let t = self.bjts[bi];
                 let (qbe, qbc) = if self.cap_cache_valid {
                     let cached = self.cap_q_cache[bi];
                     // Near-lossless, not bit-exact: the cached charges come from the batched device
@@ -195,7 +194,7 @@ impl WdfModel {
                     // O(1), not O(ULP) — at near-zero release cost).
                     #[cfg(debug_assertions)]
                     {
-                        let (rq_be, rq_bc) = self.junction_charges(&t);
+                        let (rq_be, rq_bc) = self.junction_charges(bi);
                         let close = |a: f64, b: f64| {
                             (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-30)
                         };
@@ -204,7 +203,7 @@ impl WdfModel {
                     }
                     cached
                 } else {
-                    self.junction_charges(&t)
+                    self.junction_charges(bi)
                 };
                 let bjt = &mut self.bjts[bi];
                 bjt.ibe_prev = k2 * (qbe - bjt.qbe_prev) - bjt.ibe_prev;

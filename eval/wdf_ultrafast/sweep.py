@@ -40,7 +40,11 @@ from eval.wdf_vs_spice.compare import BIAS, DRY_DIR, metrics, run_spice
 # assembled ultra-fast preset). (label, tier, extra_args).
 LEVERS: list[tuple[str, str, list[str]]] = [
     ("realtime", "realtime", []),
-    ("fast", "fast", []),
+    ("fast", "fast", []),  # NOTE: `fast` now bakes in the depletion-charge LUT (dep_lut=true)
+    # `fast` with the depletion-charge LUT disabled (the pre-LUT baseline). speedup(fast) /
+    # speedup(dep_lut_off) isolates the LUT's marginal win; SPICE-ESR(fast) vs (dep_lut_off)
+    # confirms the LUT keeps fidelity. The LUT replaces the per-junction pow with a 1-D table.
+    ("dep_lut_off", "fast", ["--no-dep-lut"]),
     ("cheap_exp", "fast", ["--cheap-exp"]),
     ("tol_1e-4", "fast", ["--tol", "1e-4"]),
     ("tol_1e-3", "fast", ["--tol", "1e-3"]),
@@ -65,7 +69,7 @@ LEVERS: list[tuple[str, str, list[str]]] = [
 # NOTE: for the OS levers the `added_esr vs realtime` column is MISLEADING (it counts the
 # realtime model's own os=2 decimation phase, which is uncorrelated with SPICE error). The
 # authoritative fidelity check for ultra-fast is ESR vs SPICE — use `measure.py` (cached ref).
-SPICE_LABELS = {"realtime", "fast", "os_1", "os_1_nodec", "ultra_fast", "warp"}
+SPICE_LABELS = {"realtime", "fast", "dep_lut_off", "os_1", "os_1_nodec", "ultra_fast", "warp"}
 
 
 def render(dry: Path, rgain: float, bias: float, tier: str, extra: list[str],

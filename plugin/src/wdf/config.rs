@@ -72,6 +72,13 @@ pub struct QualityConfig {
     /// [`solve_os`](Self::solve_os), runs near-linear, and never enters the program-drive regime that
     /// motivated the old os floor. Realtime/HIGH keep `false` and stay bit-identical.
     pub fixed_step: bool,
+    /// Depletion-charge LUT: replace the per-junction `pow` evaluation in the depletion-charge
+    /// kernel with a precomputed 1-D table + linear interp (the `pow` arm `v < FC*vj` only; the
+    /// linear arm above `FC*vj` is unchanged). Lossy — added error vs realtime is well below the
+    /// −40 dB budget (cap rms ≈ −74 dB at N=512), but not bit-exact. Measured ~7.5× on the isolated
+    /// device-eval kernel. On for fast/ultra-fast (and `with_precision(Medium)`); off at realtime
+    /// (bit-identical / golden) and a no-op on warp / `Precision::Low` (`cap_tier = Off`, no charge).
+    pub dep_lut: bool,
     /// Sub-rate Newton spike lever — **NO-GO, behind `subrate-spike` feature only**.
     /// See the full verdict in the `#[cfg(feature = "subrate-spike")]`-gated field below.
     /// Not present in the default build; compile with `--features subrate-spike` to access.
@@ -140,6 +147,7 @@ impl QualityConfig {
             decimate: true,
             fma: false,
             fixed_step: false,
+            dep_lut: false, // realtime stays bit-exact (golden) — pow path, no table
             #[cfg(feature = "subrate-spike")]
             subrate: 1,
             #[cfg(feature = "subrate-spike")]
@@ -153,6 +161,7 @@ impl QualityConfig {
             freeze_caps: true,
             ls_trim: true,
             fma: true, // T3: FMA contraction in device kernels (lossy, +2.3% fast); realtime stays false
+            dep_lut: true, // depletion-charge LUT (lossy, ~7.5× on the device-eval kernel); inherited by ultra/warp
             ..Self::realtime()
         }
     }
@@ -218,6 +227,8 @@ impl QualityConfig {
                     CapTier::Depletion
                 },
                 cheap_exp: true,
+                // Medium is explicitly lossy: enable the depletion-charge LUT whenever caps stay on.
+                dep_lut: self.cap_tier != CapTier::Off,
                 ..self
             },
             Precision::Low => Self {

@@ -46,6 +46,16 @@ BA283 mic-preamp output stage.
   EQ (+ HPF / Low / Mid frequency selectors and Low / Mid / High gains).
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
+### Performance
+- **Depletion-charge LUT** on the lossy WDF tiers: the per-junction `pow` in the
+  BJT depletion-charge kernel is replaced by a precomputed 1-D table + linear
+  interp (the `pow` arm only; the linear arm is unchanged). Built once off the
+  audio thread and shared via `Arc` (RT-safe clone). On for `Fast` /
+  `UltraFast` / `Precision::Medium`; **`Realtime` keeps the bit-exact `pow` path
+  and the C++ golden-vector contract is unchanged**. Measured ≈ +9–10 % on
+  Fast/UltraFast with added error vs the exact path ≈ −78 dB (well inside the
+  −40 dB tier budget; guarded by `test_dep_lut`).
+
 ### Platforms & formats
 - **Linux x86_64** and **macOS arm64**.
 - **VST3** and **CLAP** bundles per platform.

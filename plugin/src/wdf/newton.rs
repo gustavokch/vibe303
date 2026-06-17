@@ -119,7 +119,22 @@ impl WdfModel {
                 let jc_c04 = [b[0].p.jc_c0, b[1].p.jc_c0, b[2].p.jc_c0, 0.0];
                 let jc_q04 = [b[0].p.jc_q0, b[1].p.jc_q0, b[2].p.jc_q0, 0.0];
                 let jc_dcdv4 = [b[0].p.jc_dcdv, b[1].p.jc_dcdv, b[2].p.jc_dcdv, 0.0];
-                let ((qbe4, cbe4), (qbc4, cbc4)) = if fma_on {
+                let ((qbe4, cbe4), (qbc4, cbc4)) = if self.dep_lut {
+                    // Lossy LUT path (fast/ultra/Medium). Lanes 0..2 = BJTs, lane 3 = padding
+                    // (cje4[3]/cjc4[3] = 0 → guarded, the table ref is never sampled). `m` arrays
+                    // are unused here — the table subsumes the `pow(f, ±m)` evaluation.
+                    // Lane 3's table is a dummy (reuses index 0); correctness relies on the
+                    // padding lane being guarded off by `cj0 <= 0`. Pin that invariant.
+                    debug_assert!(
+                        cje4[3] <= 0.0 && cjc4[3] <= 0.0,
+                        "lane 3 must be guarded padding (cj0 <= 0); else its dummy LUT is sampled"
+                    );
+                    let dl = &self.dep_luts;
+                    let be_luts = [&dl.be[0], &dl.be[1], &dl.be[2], &dl.be[0]];
+                    let bc_luts = [&dl.bc[0], &dl.bc[1], &dl.bc[2], &dl.bc[0]];
+                    (depletion_charge_pre_batch_lut(vbe4, cje4, vje4, je_c04, je_q04, je_dcdv4, be_luts),
+                     depletion_charge_pre_batch_lut(vbc4, cjc4, vjc4, jc_c04, jc_q04, jc_dcdv4, bc_luts))
+                } else if fma_on {
                     (depletion_charge_pre_batch::<true>(vbe4, cje4, vje4, mje4, je_c04, je_q04, je_dcdv4),
                      depletion_charge_pre_batch::<true>(vbc4, cjc4, vjc4, mjc4, jc_c04, jc_q04, jc_dcdv4))
                 } else {

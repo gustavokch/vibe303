@@ -213,3 +213,108 @@ impl Biquad {
     }
 }
 
+/// Depletion-charge LUT for one junction (lossy fast/ultra tiers). Tabulates `(q, c)` over the
+/// hot `pow` region `v ∈ [V_MIN, FC*vj)` at `DEP_LUT_N` points, filled from the exact reference
+/// [`depletion_charge`]. Lookup is `i = (v - v0)*inv_dv`, then linear interp. The linear arm above
+/// `FC*vj` is NOT tabulated (it is already cheap arithmetic; the caller takes it directly).
+///
+/// Built once at model construction (heap, off the audio thread) and shared via `Arc` so cloning a
+/// `WdfModel` (e.g. the audio-thread `measure_gain` probe) is an atomic bump, not a deep copy.
+pub const DEP_LUT_N: usize = 512;
+/// Lower bias bound of the table (volts). Past the supply rail with margin; reverse bias below this
+/// (rare) clamps to index 0.
+pub const DEP_LUT_V_MIN: f64 = -40.0;
+
+#[derive(Clone, Debug)]
+pub struct DepLut {
+    q: Box<[f64]>,
+    c: Box<[f64]>,
+    v0: f64,
+    inv_dv: f64,
+}
+
+impl DepLut {
+    /// Fill the table for junction `(cj0, vj, m)`. For `cj0 <= 0` (unused/padding junctions) the
+    /// table is never sampled (the lane guard returns 0), so a trivial zero table suffices.
+    pub fn build(cj0: f64, vj: f64, m: f64) -> Self {
+        const FC: f64 = 0.5;
+        let v_hi = FC * vj;
+        let dv = (v_hi - DEP_LUT_V_MIN) / (DEP_LUT_N as f64 - 1.0);
+        let mut q = vec![0.0; DEP_LUT_N];
+        let mut c = vec![0.0; DEP_LUT_N];
+        if cj0 > 0.0 {
+            for i in 0..DEP_LUT_N {
+                let v = DEP_LUT_V_MIN + dv * i as f64;
+                let (qi, ci) = depletion_charge(v, cj0, vj, m);
+                q[i] = qi;
+                c[i] = ci;
+            }
+        }
+        DepLut {
+            q: q.into_boxed_slice(),
+            c: c.into_boxed_slice(),
+            v0: DEP_LUT_V_MIN,
+            inv_dv: 1.0 / dv,
+        }
+    }
+
+    /// Interpolated `(q, c)` for bias `v` in the `pow` region. Caller guarantees `v < FC*vj` (it
+    /// selects the linear arm otherwise) and guards `cj0 > 0`.
+    ///
+    /// Bias below the table floor `v0` (`DEP_LUT_V_MIN`, deep reverse — rare) clamps to index 0,
+    /// i.e. flat extrapolation rather than evaluating `pow`. The depletion charge is already
+    /// near-flat that far into reverse bias, so the added error stays inside the −40 dB budget.
+    #[inline(always)]
+    pub fn sample(&self, v: f64) -> (f64, f64) {
+        let x = ((v - self.v0) * self.inv_dv).max(0.0);
+        let i = (x as usize).min(self.q.len() - 2);
+        let f = x - i as f64;
+        let q = self.q[i] + f * (self.q[i + 1] - self.q[i]);
+        let c = self.c[i] + f * (self.c[i + 1] - self.c[i]);
+        (q, c)
+    }
+
+    /// Minimal placeholder table for tiers that never sample it (`dep_lut = false`, the bit-exact
+    /// `pow` path). Skips the `DEP_LUT_N`-point fill — and its `pow` evals — at construction. Kept
+    /// length-2 so the interp index math stays in-bounds even though `sample` is never reached here.
+    fn empty() -> Self {
+        DepLut { q: vec![0.0; 2].into_boxed_slice(), c: vec![0.0; 2].into_boxed_slice(), v0: 0.0, inv_dv: 0.0 }
+    }
+}
+
+/// Per-model set of depletion-charge LUTs: base-emitter and base-collector tables for each of the
+/// 3 BJTs (indices match `WdfModel::bjts` / the width-4 SoA lanes 0..3, lane 3 = padding).
+#[derive(Clone, Debug)]
+pub struct DepLutSet {
+    pub be: [DepLut; 3],
+    pub bc: [DepLut; 3],
+}
+
+impl DepLutSet {
+    /// Build BE/BC tables from each BJT's junction card params (constant — aging never touches the
+    /// BJT junction model, only external R/C). Off the audio thread, at construction.
+    pub fn build(bjts: &[Bjt; 3]) -> Self {
+        let be = [
+            DepLut::build(bjts[0].p.cje, bjts[0].p.vje, bjts[0].p.mje),
+            DepLut::build(bjts[1].p.cje, bjts[1].p.vje, bjts[1].p.mje),
+            DepLut::build(bjts[2].p.cje, bjts[2].p.vje, bjts[2].p.mje),
+        ];
+        let bc = [
+            DepLut::build(bjts[0].p.cjc, bjts[0].p.vjc, bjts[0].p.mjc),
+            DepLut::build(bjts[1].p.cjc, bjts[1].p.vjc, bjts[1].p.mjc),
+            DepLut::build(bjts[2].p.cjc, bjts[2].p.vjc, bjts[2].p.mjc),
+        ];
+        DepLutSet { be, bc }
+    }
+
+    /// Trivial set for tiers that keep the bit-exact `pow` path (`dep_lut = false`: realtime, warp,
+    /// `Precision::Low`). Skips the per-junction table fill entirely — these tiers never sample it.
+    /// See the gated construction in `WdfModel::new_with`.
+    pub fn empty() -> Self {
+        DepLutSet {
+            be: [DepLut::empty(), DepLut::empty(), DepLut::empty()],
+            bc: [DepLut::empty(), DepLut::empty(), DepLut::empty()],
+        }
+    }
+}
+
