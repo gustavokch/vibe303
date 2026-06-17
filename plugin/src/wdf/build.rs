@@ -129,6 +129,9 @@ impl WdfModel {
             n_res,
             caps,
             n_caps,
+            // Depletion-charge LUTs from the fixed junction cards. Built here (off the audio
+            // thread); shared via Arc so model clones (e.g. measure_gain) don't deep-copy.
+            dep_luts: Arc::new(DepLutSet::build(&bjts)),
             bjts,
             r_kj_idx,
             r_upper_idx,
@@ -174,6 +177,7 @@ impl WdfModel {
             freeze_caps: cfg.freeze_caps,
             ls_trim: cfg.ls_trim,
             fma: cfg.fma,
+            dep_lut: cfg.dep_lut,
             fixed_step: cfg.fixed_step,
             // Oversampling is a pure config value: os=1 is the ultra-fast/warp speed lever, os=2 the
             // antialiasing rate. `solve_os`/`solve_decimate` remain the single source of truth (also

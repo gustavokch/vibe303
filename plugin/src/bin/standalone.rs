@@ -180,6 +180,8 @@ fn main() {
             "--no-cheap-exp" => wdf_cfg.cheap_exp = false,
             "--fma" => wdf_cfg.fma = true,
             "--no-fma" => wdf_cfg.fma = false,
+            "--dep-lut" => wdf_cfg.dep_lut = true,
+            "--no-dep-lut" => wdf_cfg.dep_lut = false,
             "--os" => {
                 let v = args.next().unwrap_or_else(|| die("--os needs a value"));
                 wdf_cfg.os = v.parse().unwrap_or_else(|_| die("--os must be a positive integer"));

@@ -38,7 +38,16 @@ trafo-core = []
 # plugin. Gates `WdfModel::capture_os_raw` + the `tests/alias_sweep.rs` broadband-alias harness.
 # Run with: cargo test --features measure --release --test alias_sweep -- --nocapture
 measure = []
+# Bench-only re-exports (depletion_charge LUT spike, Phase 0). Exposes the otherwise
+# pub(in crate::wdf) hot fn `depletion_charge_pre_batch` so `bin/bench_deplut` can time it.
+# Additive, off by default — never in the shipped plugin.
+bench-internals = []
 
 [[bin]]
 name = "ba283_standalone"
 path = "src/bin/standalone.rs"
+
+[[bin]]
+name = "bench_deplut"
+path = "src/bin/bench_deplut.rs"
+required-features = ["bench-internals"]

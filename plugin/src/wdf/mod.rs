@@ -79,6 +79,11 @@ pub struct WdfModel {
     n_caps: usize,
     bjts: [Bjt; 3],
 
+    // Depletion-charge LUTs (BE/BC per BJT), built once at construction from the fixed junction
+    // cards. `Arc` so the audio-thread `measure_gain` clone is a refcount bump, not a deep copy
+    // (preserving the no-heap-on-clone invariant). Used only when `dep_lut` is set (lossy tiers).
+    dep_luts: Arc<DepLutSet>,
+
     r_kj_idx: usize,    // R_KJ resistor index (gain knob), for set_rgain
     r_upper_idx: usize, // RV1 upper-leg index, for set_bias
     r_lower_idx: usize, // RV1 lower-leg index
@@ -134,6 +139,7 @@ pub struct WdfModel {
     freeze_caps: bool,
     ls_trim: bool,
     fma: bool, // T3: FMA contraction in device kernels (lossy fast/ultra); false at realtime
+    dep_lut: bool, // use the depletion-charge LUT (lossy fast/ultra); false at realtime (pow path)
     fixed_step: bool, // exactly max_iters, no residual_norm gate / line search; only `measure_gain`
     os: usize, // internal oversampling factor (host_rate * os = solve rate); 2 normally, 1 ultra-fast
     decimate: bool, // apply output decimation biquads (needless at os==1)
@@ -242,6 +248,7 @@ mod snapshot;
 use bjt::*;
 use config::*;
 use math::*;
+use std::sync::Arc;
 
 // Public API surface — explicit re-exports reproduce the pre-split `crate::wdf::*`
 // paths exactly (consumed by `dsp.rs` and the integration-test/bench/bin crates).
@@ -249,7 +256,11 @@ pub use aging::{reroll_seed, AgePattern};
 #[cfg(feature = "trafo-core")]
 pub use aging::JaCore;
 pub use bjt::{compute_bjt, BjtOut};
-pub use components::{bc184c, dep_sat_consts, q2n3055, Bjt, BjtParams, Biquad, Cap, Res};
+#[cfg(feature = "bench-internals")]
+pub use bjt::depletion_charge_pre_batch;
+pub use components::{
+    bc184c, dep_sat_consts, q2n3055, Bjt, BjtParams, Biquad, Cap, DepLut, DepLutSet, Res,
+};
 pub use config::{CapTier, Oversampling, Precision, QualityConfig, Solver, OS};
 pub use math::{
     depletion_charge, depletion_charge_pre, diode_branch, exp_, fast_exp, fast_log,
