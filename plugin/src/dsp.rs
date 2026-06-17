@@ -21,6 +21,7 @@ use crate::eq::Eq;
 use crate::delay::ShortDelay;
 use crate::model::Ba283Model;
 use crate::oversample::{HostBridge, HOST_BRIDGE_LATENCY};
+use crate::wavenet::WaveNet;
 use crate::wdf::{QualityConfig, WdfModel, WdfSnapshot};
 use crate::InferenceBackend;
 
@@ -71,7 +72,15 @@ pub const HOST_BRIDGE_THRESHOLD_HZ: f32 = 72_000.0;
 pub const INPUT_FS_VOLTS: f32 = 0.5;
 
 pub struct ChannelDsp {
-    model: Ba283Model,
+    /// Active NeuralNet engine: the gain-conditioned streaming FiLM WaveNet (`model.cond.nam`).
+    wavenet: WaveNet,
+    /// Former NeuralNet engine (3×18 LSTM). Kept compiled but dormant — no longer on any signal
+    /// path; retained for an easy revert until the WaveNet is fully proven in hosts. Lazily
+    /// `None` in the plugin (never parses its 153 KB blob); only the offline `standalone` A/B tool
+    /// populates it via `set_model`. `#[allow(dead_code)]` covers the never-read field in the
+    /// cdylib build.
+    #[allow(dead_code)]
+    model: Option<Ba283Model>,
     bridge: HostBridge,
     dry_delay: ShortDelay<OS_LATENCY_SAMPLES>,
     /// Circuit-faithful backend. Self-oversamples internally (OS=2) and decimates with IIR
@@ -110,7 +119,10 @@ pub struct ChannelDsp {
 impl ChannelDsp {
     pub fn new() -> Self {
         Self {
-            model: Ba283Model::new_from_embedded_weights(),
+            wavenet: WaveNet::new_from_embedded(),
+            // Dormant LSTM: not constructed in the plugin path (saves the 153 KB parse per channel).
+            // The offline `standalone --weights` tool installs one via `set_model`.
+            model: None,
             bridge: HostBridge::new(),
             dry_delay: ShortDelay::new(),
             // Placeholder SR/bias; rebuilt + restored with the real settings in `initialize`.
@@ -136,14 +148,17 @@ impl ChannelDsp {
         self.last_wet
     }
 
-    /// Replace the NeuralNet model (offline tools only — e.g. load a different trained export than
-    /// the embedded one for an A/B). The de-norm chain reads `output_ref_v` from the new model.
+    /// Install a dormant LSTM model (offline tools only — e.g. the `standalone` A/B path). The
+    /// active NeuralNet engine is the WaveNet; this field is not on the plugin's signal path.
     pub fn set_model(&mut self, model: Ba283Model) {
-        self.model = model;
+        self.model = Some(model);
     }
 
     pub fn reset(&mut self) {
-        self.model.reset();
+        self.wavenet.reset();
+        if let Some(model) = &mut self.model {
+            model.reset();
+        }
         self.bridge.reset();
         self.dry_delay.reset();
         self.wdf.reset(); // restore the settled snapshot installed in initialize
@@ -292,8 +307,9 @@ impl ChannelDsp {
     }
 
     /// Run one sample through the selected backend. `drive`/`out_gain`/`norm_gain` are linear gains,
-    /// `mix` is the wet fraction in 0..1. `bias` drives the NeuralNet path only — the WDF path uses
-    /// the block-rate bias/gain set via `wdf_set_bias`/`wdf_set_rgain`. The host-reported latency
+    /// `mix` is the wet fraction in 0..1. `cond` drives the NeuralNet path only — it is the WaveNet's
+    /// FiLM gain-conditioning value (0..1). The WDF path ignores it (it uses the block-rate bias/gain
+    /// set via `wdf_set_bias`/`wdf_set_rgain`). The host-reported latency
     /// (`Ba283Plugin::latency_samples`) is honoured for BOTH backends.
     ///
     /// `norm_gain` is the stereo-linked levelNorm gain (1.0 when levelNorm is off); it is applied to
@@ -304,7 +320,7 @@ impl ChannelDsp {
         &mut self,
         x: f32,
         drive: f32,
-        bias: f32,
+        cond: f32,
         out_gain: f32,
         norm_gain: f32,
         mix: f32,
@@ -318,17 +334,19 @@ impl ChannelDsp {
         match backend {
             InferenceBackend::NeuralNet => {
                 // De-norm: recover volts (`* output_ref_v`) then express in the 0 dBFS ≡ 0.5 V
-                // convention (`/ INPUT_FS_VOLTS`). Input stays `driven` (input_scale cancels 0.5).
-                let deref = self.model.output_ref_v() / INPUT_FS_VOLTS;
-                // Disjoint field borrows so the bridge closure can call the model.
-                let (model, bridge) = (&mut self.model, &mut self.bridge);
+                // convention (`/ INPUT_FS_VOLTS`). The WaveNet applies its own `input_scale` to the
+                // audio internally, so it is fed `driven` directly. `cond` is the FiLM
+                // gain-conditioning value (0..1) the host sets from the circuit-gain knob.
+                let deref = self.wavenet.output_ref_v() / INPUT_FS_VOLTS;
+                // Disjoint field borrows so the bridge closure can call the net.
+                let (wavenet, bridge) = (&mut self.wavenet, &mut self.bridge);
                 let model_out = if use_bridge {
-                    // Host runs ~2x the model rate: decimate to ~48 kHz, run the model once per host
+                    // Host runs ~2x the model rate: decimate to ~48 kHz, run the net once per host
                     // pair, interpolate back (HostBridge is itself zero-alloc).
-                    bridge.process(driven, |lo| model.forward(&[lo, bias])[0])
+                    bridge.process(driven, |lo| wavenet.process(lo, cond))
                 } else {
-                    // Host runs at ~the model rate: evaluate the model directly.
-                    model.forward(&[driven, bias])[0]
+                    // Host runs at ~the model rate: evaluate the net directly.
+                    wavenet.process(driven, cond)
                 };
                 let wet = model_out * deref;
                 self.last_wet = wet;

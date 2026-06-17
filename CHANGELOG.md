@@ -12,11 +12,20 @@ BA283 mic-preamp output stage.
 ### Added
 - **Two runtime-selectable inference backends**, both validated against ngspice
   renders of the real circuit:
-  - **Neural Net** (default): pure-Rust `LSTM(1, 32)` + FiLM gain conditioning +
-    `Dense(1)`, weights embedded at build time.
+  - **Neural Net** (active engine): pure-Rust streaming **FiLM WaveNet** (23
+    dilated layers, 3 channels, 2-channel `[audio, gain]` condition,
+    gain-conditioned, RF 6347), exported from a `nam` 0.13 fork as
+    `model.cond.nam`, embedded at build time. Streaming/causal → **zero added
+    latency**. (The legacy `LSTM(3 × 18)` + FiLM engine remains in-tree but
+    dormant; it is what the in-repo `train/` pipeline produces.) This engine is
+    gain-conditioned via the **Circuit Gain** knob, not **Bias** — under the
+    Neural Net backend the Bias control is inert and is greyed out in the editor
+    (it stays active for the Circuit/WDF backend). Weights are provisional pending
+    final training; the rendered tone may change before release.
   - **Circuit (WDF)**: nodal MNA + Newton-Raphson solver with Gummel-Poon BJT
-    models and coupled inductors. Two quality tiers — `Realtime` (bit-exact
-    reference) and `Fast` (near-transparent, faster).
+    models and coupled inductors. Four quality tiers — `Realtime` (bit-exact
+    reference), `Fast` (~5×), `UltraFast` (~9×), `Warp` (~12×) — plus orthogonal
+    **Precision** (High/Medium/Low) and **Oversampling** (Auto/1×/2×) dials.
 - **Transformer-core nonlinearity** (`trafo-core` feature, on by default): a
   Jiles-Atherton output-transformer model exposed via three controls — a
   **Transformer** ON/OFF switch (OFF = bit-exact linear core) plus **Hysteresis**
@@ -32,7 +41,8 @@ BA283 mic-preamp output stage.
   flat defaults are a provable bit-exact no-op (the WDF golden-vector contract is
   unaffected); gain knobs are per-block glided to avoid zipper on a sweep. The mid
   proportional-Q table and shelf shapes are provisional pending a 1073-curve fit.
-- Parameters: Backend, WDF Tier, Drive, Bias, Output, Mix, Circuit Gain,
+- Parameters: Backend, WDF Tier, Precision, Oversampling, Drive, Bias, Output,
+  Mix, Level Norm, Circuit Gain, Stepped Gain, Age (+ Re-roll),
   EQ (+ HPF / Low / Mid frequency selectors and Low / Mid / High gains).
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 

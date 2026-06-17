@@ -1,3 +1,6 @@
+//! DORMANT: superseded as the active NeuralNet engine by the streaming WaveNet in `wavenet.rs`
+//! (`model.cond.nam`). Kept compiled for the in-repo `train/` export round-trip (schema `ba283-lstm-v2`).
+//!
 //! Hand-coded pure-Rust stacked LSTM(num_layers x H)+FiLM+Dense(1) matching PyTorch nn.LSTM exactly.
 //! Parses the self-describing `ba283-lstm-v2` JSON (see train/export.py).
 //! forward() is zero-alloc: fixed `[f32; _]` arrays, no Vec/heap in the audio path.

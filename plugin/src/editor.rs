@@ -267,7 +267,12 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         // ── Core knob row ─────────────────────────────────────────────────────────────
         ui.columns(4, |cols| {
             knob(&mut cols[0], setter, &p.drive_db, "DRIVE", 66.0);
-            knob(&mut cols[1], setter, &p.bias, "BIAS", 66.0);
+            // BIAS drives the WDF circuit's bias leg only. The active NeuralNet engine (WaveNet) is
+            // gain-conditioned (via the circuit-gain knob), not bias-conditioned, so BIAS is inert
+            // there — grey it out when the Neural Net backend is active, mirroring the WDF-tier row.
+            cols[1].add_enabled_ui(wdf_on, |ui| {
+                knob(ui, setter, &p.bias, "BIAS", 66.0);
+            });
             knob(&mut cols[2], setter, &p.output_db, "OUTPUT", 66.0);
             knob(&mut cols[3], setter, &p.mix, "MIX", 66.0);
         });
