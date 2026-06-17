@@ -69,18 +69,24 @@ fn age_seed_round_trips_through_state() {
 #[test]
 fn trafo_default_and_range() {
     let p = Ba283Params::default();
-    // Default 0.5 = realistic LO1166 core saturation (the chosen baseline amount).
-    assert!((p.trafo.value() - 0.5).abs() < 1e-6);
-    assert!(p.trafo.preview_normalized(0.0) >= 0.0);
-    assert!(p.trafo.preview_normalized(1.0) <= 1.0);
+    // ON by default + both voicing dials at noon (0.5) = today's LO1166 sound.
+    assert!(p.trafo_on.value(), "transformer must default ON (current sound)");
+    assert!((p.trafo_hyst.value() - 0.5).abs() < 1e-6);
+    assert!((p.trafo_sat.value() - 0.5).abs() < 1e-6);
+    for d in [&p.trafo_hyst, &p.trafo_sat] {
+        assert!(d.preview_normalized(0.0) >= 0.0);
+        assert!(d.preview_normalized(1.0) <= 1.0);
+    }
 }
 
 #[cfg(feature = "trafo-core")]
 #[test]
 fn trafo_is_registered_in_param_map() {
-    // Guards host visibility: the #[cfg]-gated #[id="trafo"] field must actually appear in the
-    // derived Params param map (not merely exist as a struct field).
+    // Guards host visibility: the #[cfg]-gated transformer params must actually appear in the
+    // derived Params param map (not merely exist as struct fields).
     let p = Ba283Params::default();
     let ids: Vec<String> = p.param_map().into_iter().map(|(id, _, _)| id).collect();
-    assert!(ids.iter().any(|i| i == "trafo"), "trafo not in param_map: {ids:?}");
+    for id in ["trafo_on", "trafo_hyst", "trafo_sat"] {
+        assert!(ids.iter().any(|i| i == id), "{id} not in param_map: {ids:?}");
+    }
 }

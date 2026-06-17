@@ -64,7 +64,10 @@ fn sweep_one_tier(base: QualityConfig) -> f32 {
             ch.wdf_set_age(AGE);
             ch.wdf_set_age_seed(0xBA283_0000_0001);
             #[cfg(feature = "trafo-core")]
-            ch.wdf_set_trafo(0.5);
+            {
+                ch.wdf_set_trafo_enabled(true);
+                ch.wdf_set_trafo_voicing(0.5, 0.5);
+            }
             ch.wdf_set_rgain(RGAIN);
             ch.wdf_set_bias(BIAS);
             last_p = p;

@@ -26,8 +26,8 @@
 //!   --backend <nn|wdf> (default nn)  full-chain only, inference backend
 //!   --circuit-gain <f32> (default 220) WDF R_KJ shunt in ohms, --backend wdf only
 //!   --tier <realtime|fast|ultra-fast|warp> (default realtime) WDF solver tier, --backend wdf only
-//!   --precision <high|medium|low>   (default high) lossy precision dial layered on the tier;
-//!                      medium/low enable the fixed-step solver + reduced charge model, --backend wdf only
+//!   --precision <high|medium|low>   (default high) lossy device-model dial layered on the tier;
+//!                      medium/low step the BJT charge model + transport exp down, --backend wdf only
 //!   --predict / --no-predict        WDF lever overrides (A/B), --backend wdf only
 //!   --ls-trim / --no-ls-trim        WDF lever overrides (A/B), --backend wdf only
 //!   --freeze-caps / --no-freeze-caps WDF lever overrides (A/B), --backend wdf only
@@ -92,7 +92,7 @@ fn main() {
     // `--precision` layers on the resolved tier (second pass so tier always wins first regardless of
     // arg order); the per-lever flags below can still override individual fields it sets. Last `--precision`
     // wins and is applied exactly once: `with_precision(High)` is identity-on-a-fresh-tier, not a reset,
-    // so applying each occurrence would let `... medium ... high` leave the fixed-step lever stuck on.
+    // so applying each occurrence would let `... medium ... high` leave the reduced device model stuck on.
     let mut precision: Option<Precision> = None;
     for w in raw_args.windows(2) {
         if w[0] == "--precision" {

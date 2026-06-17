@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 pub mod dcblock;
 pub mod delay;
 pub mod dsp;
+pub mod eq;
 mod editor;
 pub mod model;
 pub mod oversample;
@@ -28,6 +29,9 @@ const WDF_PARAM_TAU_S: f32 = 0.02;
 const WDF_RGAIN_EPS: f32 = 1.0e-3;
 const WDF_BIAS_EPS: f32 = 1.0e-5;
 const WDF_AGE_EPS: f32 = 1.0e-5;
+/// Settle-snap epsilon (dB) for the per-block EQ gain glide: once a band gain is within this of its
+/// target, snap so the one-pole fully lands (no endless near-equal coeff recomputes).
+const EQ_GAIN_EPS: f32 = 1.0e-3;
 #[cfg(feature = "trafo-core")]
 const WDF_TRAFO_EPS: f32 = 1.0e-5;
 
@@ -59,7 +63,11 @@ pub struct ProbeReq {
     age: f32,
     seed: u64,
     #[cfg(feature = "trafo-core")]
-    trafo: f32,
+    trafo_on: bool,
+    #[cfg(feature = "trafo-core")]
+    trafo_hyst: f32,
+    #[cfg(feature = "trafo-core")]
+    trafo_sat: f32,
 }
 
 /// The worker's persistent warmed model plus the (cfg, sr) it was built for. Re-stamped in place on
@@ -108,7 +116,10 @@ fn run_probe(shared: &ProbeShared, req: ProbeReq) {
         m.set_age_seed(req.seed);
         m.set_age(req.age as f64);
         #[cfg(feature = "trafo-core")]
-        m.set_trafo(req.trafo as f64);
+        {
+            m.set_trafo_enabled(req.trafo_on);
+            m.set_trafo_voicing(req.trafo_hyst as f64, req.trafo_sat as f64);
+        }
         m.warmup();
         *guard = Some(ProbeModel { model: m, cfg: req.cfg, sr: req.sr });
     } else {
@@ -118,7 +129,10 @@ fn run_probe(shared: &ProbeShared, req: ProbeReq) {
         slot.model.set_rgain(req.rgain as f64);
         slot.model.set_bias(req.bias as f64);
         #[cfg(feature = "trafo-core")]
-        slot.model.set_trafo(req.trafo as f64);
+        {
+            slot.model.set_trafo_enabled(req.trafo_on);
+            slot.model.set_trafo_voicing(req.trafo_hyst as f64, req.trafo_sat as f64);
+        }
     }
     let slot = guard.as_mut().unwrap();
     let g = slot.model.resettle_and_measure_gain();
@@ -146,6 +160,9 @@ pub struct Ba283Plugin {
     /// Last WDF precision applied (block-rate). A change triggers the same rebuild path as a tier
     /// change (the precision is folded into the `QualityConfig` via `with_precision`).
     last_precision: Precision,
+    /// Last WDF oversampling override applied (block-rate). A change triggers the same rebuild path
+    /// as a tier change (folded into the `QualityConfig` via `with_oversampling`).
+    last_oversampling: Oversampling,
     /// The levelNorm gain actually applied at the end of the last block (the per-sample ramp's start
     /// for the next block). Carries the ramp state across blocks so a Circuit-Gain sweep — or a
     /// level-norm on/off toggle — fades click-free instead of stepping. NOT a program-dependent RMS
@@ -169,15 +186,27 @@ pub struct Ba283Plugin {
     wdf_rgain_smooth: f32,
     wdf_bias_smooth: f32,
     wdf_age_smooth: f32,
+    /// Per-block-glided EQ band gains (dB). The EQ recomputes biquad coeffs at block rate, so a fast
+    /// gain-knob drag would step coeffs coarsely (audible zipper over the ±16/18 dB span). Gliding the
+    /// gain targets turns each drag into small per-block coeff steps, matching `wdf_rgain_smooth`.
+    eq_low_g_smooth: f32,
+    eq_mid_g_smooth: f32,
+    eq_high_g_smooth: f32,
     /// Last WDF aging value / seed applied to the channels (block-rate). `NAN`/`MAX` force a
     /// first-block apply. `last_reroll` edge-detects the momentary re-roll trigger.
     last_age: f32,
     last_seed: u64,
     last_reroll: bool,
     #[cfg(feature = "trafo-core")]
-    wdf_trafo_smooth: f32,
+    wdf_trafo_hyst_smooth: f32,
     #[cfg(feature = "trafo-core")]
-    last_trafo: f32,
+    wdf_trafo_sat_smooth: f32,
+    #[cfg(feature = "trafo-core")]
+    last_trafo_on: bool,
+    #[cfg(feature = "trafo-core")]
+    last_trafo_hyst: f32,
+    #[cfg(feature = "trafo-core")]
+    last_trafo_sat: f32,
 }
 
 /// Which emulation runs per sample. `Wdf` (the circuit-faithful MNA solver) is the default;
@@ -195,11 +224,10 @@ pub enum InferenceBackend {
 /// predict + schur + freeze-caps + ls-trim (~5x faster, near-transparent); `UltraFast` adds the
 /// cheap low-order transport exp on top of Fast; `Warp` additionally drops the BJT junction charge
 /// model (~19 % more per-sample cost gone) — the caps shape only the top octave. UltraFast/Warp also
-/// drop internal oversampling 2→1 (their dominant ~1.8x speed lever) at High precision, where os=1 is
-/// peak-safe. The os floor is CONDITIONAL: under the Med/Low fixed-step solver (which limit-cycles
-/// into loud peaks at os=1) `QualityConfig::solve_os` forces os back to 2. So selecting UltraFast/Warp
-/// noticeably drops CPU at High; at Med/Low they fall back to the os=2 cost. WDF-only; the NeuralNet
-/// backend ignores it.
+/// drop internal oversampling 2→1 (their dominant ~1.8x speed lever), which is peak-safe under the
+/// full-convergence solver they run. Precision is now device-model-only and the [`Oversampling`] dial
+/// is a separate axis, so selecting UltraFast/Warp drops CPU at every precision — Med/Low no longer
+/// fall back to the os=2 cost. WDF-only; the NeuralNet backend ignores it.
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum WdfTier {
     #[name = "Realtime"]
@@ -261,10 +289,12 @@ fn nearest_gain_step(rgain_ohm: f32) -> usize {
     best
 }
 
-/// Lossy precision dial, orthogonal to [`WdfTier`]. `High` is the identity (Realtime+High stays
-/// bit-exact / golden); `Medium`/`Low` layer the fixed-step solver + reduced charge model onto the
-/// selected tier, trading fidelity for speed within the harness budget (ESR loss ≤ −50 dB vs
-/// Realtime+High). WDF-only; the NeuralNet backend ignores it. Maps 1:1 to [`wdf::Precision`].
+/// Lossy precision dial — the device-model fidelity axis, orthogonal to [`WdfTier`] and
+/// [`Oversampling`]. `High` is the identity (Realtime+High stays bit-exact / golden); `Medium`/`Low`
+/// step the BJT charge model + transport exp down from the tier baseline (`cap_tier` + `cheap_exp`),
+/// trading fidelity for speed within the harness budget (ESR loss ≤ −50 dB vs Realtime+High). It no
+/// longer touches the iteration strategy or oversampling rate, so it never slows a tier. WDF-only;
+/// the NeuralNet backend ignores it. Maps 1:1 to [`wdf::Precision`].
 #[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Precision {
     #[name = "High"]
@@ -281,6 +311,32 @@ impl Precision {
             Precision::High => wdf::Precision::High,
             Precision::Medium => wdf::Precision::Medium,
             Precision::Low => wdf::Precision::Low,
+        }
+    }
+}
+
+/// Internal-oversampling dial — the antialiasing-rate axis, orthogonal to [`WdfTier`] and
+/// [`Precision`]. `Auto` defers to the tier's own rate (UltraFast/Warp keep os=1, Realtime/Fast keep
+/// os=2), so the default reproduces current behaviour bit-for-bit; `X1`/`X2` force the WDF internal
+/// rate. The WDF os is IIR-decimated (phase-only, ~0 integer latency), so this never changes reported
+/// latency / PDC. Only 1×/2× ship now (the decimator is 2×-tuned); 4× lands behind a 4:1 decimator.
+/// WDF-only; the NeuralNet backend ignores it. Maps 1:1 to [`wdf::Oversampling`].
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum Oversampling {
+    #[name = "Auto"]
+    Auto,
+    #[name = "1x"]
+    X1,
+    #[name = "2x"]
+    X2,
+}
+
+impl Oversampling {
+    fn to_wdf(self) -> wdf::Oversampling {
+        match self {
+            Oversampling::Auto => wdf::Oversampling::Auto,
+            Oversampling::X1 => wdf::Oversampling::X1,
+            Oversampling::X2 => wdf::Oversampling::X2,
         }
     }
 }
@@ -311,6 +367,91 @@ pub enum UiScale {
     X200,
 }
 
+/// Switched high-pass-filter corner of the 1073/1076 EQ (S4): OFF / 50 / 80 / 160 / 300 Hz, ~18
+/// dB/oct. `Off` bypasses the HPF entirely (folding the on/off into the selector, like
+/// [`Oversampling::Auto`]). Both backends; the EQ runs ahead of the model.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum HpfFreq {
+    #[name = "Off"]
+    Off,
+    #[name = "50 Hz"]
+    Hz50,
+    #[name = "80 Hz"]
+    Hz80,
+    #[name = "160 Hz"]
+    Hz160,
+    #[name = "300 Hz"]
+    Hz300,
+}
+
+impl HpfFreq {
+    /// Corner in Hz, or `0.0` for `Off` (the EQ stage treats `<= 0` as bypassed).
+    fn hz(self) -> f32 {
+        match self {
+            HpfFreq::Off => 0.0,
+            HpfFreq::Hz50 => 50.0,
+            HpfFreq::Hz80 => 80.0,
+            HpfFreq::Hz160 => 160.0,
+            HpfFreq::Hz300 => 300.0,
+        }
+    }
+}
+
+/// Switched low-shelf corner of the 1073/1076 EQ (S3): 35 / 60 / 110 / 220 Hz.
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum LowShelfFreq {
+    #[name = "35 Hz"]
+    Hz35,
+    #[name = "60 Hz"]
+    Hz60,
+    #[name = "110 Hz"]
+    Hz110,
+    #[name = "220 Hz"]
+    Hz220,
+}
+
+impl LowShelfFreq {
+    fn hz(self) -> f32 {
+        match self {
+            LowShelfFreq::Hz35 => 35.0,
+            LowShelfFreq::Hz60 => 60.0,
+            LowShelfFreq::Hz110 => 110.0,
+            LowShelfFreq::Hz220 => 220.0,
+        }
+    }
+}
+
+/// Switched mid/presence-bell center of the 1073/1076 EQ (S5): 360 / 700 / 1.6k / 3.2k / 4.8k /
+/// 7.2k Hz. Proportional-Q (narrows with boost) is applied in [`crate::eq`].
+#[derive(Enum, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum MidFreq {
+    #[name = "360 Hz"]
+    Hz360,
+    #[name = "700 Hz"]
+    Hz700,
+    #[name = "1.6 kHz"]
+    Hz1600,
+    #[name = "3.2 kHz"]
+    Hz3200,
+    #[name = "4.8 kHz"]
+    Hz4800,
+    #[name = "7.2 kHz"]
+    Hz7200,
+}
+
+impl MidFreq {
+    fn hz(self) -> f32 {
+        match self {
+            MidFreq::Hz360 => 360.0,
+            MidFreq::Hz700 => 700.0,
+            MidFreq::Hz1600 => 1600.0,
+            MidFreq::Hz3200 => 3200.0,
+            MidFreq::Hz4800 => 4800.0,
+            MidFreq::Hz7200 => 7200.0,
+        }
+    }
+}
+
 #[derive(Params)]
 pub struct Ba283Params {
     #[id = "backend"]
@@ -325,6 +466,10 @@ pub struct Ba283Params {
     /// (bit-exact at Realtime). WDF-only; inert for the NeuralNet backend.
     #[id = "precision"]
     pub precision: EnumParam<Precision>,
+    /// Internal-oversampling dial (Auto/1x/2x), orthogonal to tier + precision. Auto defers to the
+    /// tier (bit-exact default). WDF-only; inert for the NeuralNet backend.
+    #[id = "oversampling"]
+    pub oversampling: EnumParam<Oversampling>,
     #[id = "drive_db"]
     pub drive_db: FloatParam,
     #[id = "bias"]
@@ -333,6 +478,29 @@ pub struct Ba283Params {
     pub output_db: FloatParam,
     #[id = "mix"]
     pub mix: FloatParam,
+    /// Neve 1073/1076-style EQ ON/OFF (both backends). OFF (default) = bit-exact today's sound; ON
+    /// inserts the analog-matched biquad EQ on the input signal, ahead of the model (matching the
+    /// real signal flow EQ → BA283/AV → LO1166). See [`crate::eq`].
+    #[id = "eq_on"]
+    pub eq_on: BoolParam,
+    /// EQ high-pass corner (S4): Off / 50 / 80 / 160 / 300 Hz. `Off` bypasses the HPF.
+    #[id = "eq_hpf_freq"]
+    pub eq_hpf_freq: EnumParam<HpfFreq>,
+    /// EQ low-shelf corner (S3): 35 / 60 / 110 / 220 Hz.
+    #[id = "eq_low_freq"]
+    pub eq_low_freq: EnumParam<LowShelfFreq>,
+    /// EQ low-shelf gain (RV2), ±16 dB. 0 dB = flat.
+    #[id = "eq_low_gain"]
+    pub eq_low_gain: FloatParam,
+    /// EQ mid/presence center (S5): 360 / 700 / 1.6k / 3.2k / 4.8k / 7.2k Hz.
+    #[id = "eq_mid_freq"]
+    pub eq_mid_freq: EnumParam<MidFreq>,
+    /// EQ mid/presence gain (RV3), ±18 dB. Proportional-Q narrows with boost. 0 dB = flat.
+    #[id = "eq_mid_gain"]
+    pub eq_mid_gain: FloatParam,
+    /// EQ high-shelf gain (RV1, fixed 12 kHz), ±16 dB. 0 dB = flat.
+    #[id = "eq_high_gain"]
+    pub eq_high_gain: FloatParam,
     /// When on, scale the wet signal so output RMS tracks input RMS (stereo-linked, applied before
     /// `output_db`/`mix`). Off = faithful preamp gain (the default).
     #[id = "level_norm"]
@@ -364,14 +532,23 @@ pub struct Ba283Params {
     /// round-trips with the project. Fixed-size today, but `create_egui_editor` requires it.
     #[persist = "editor_state"]
     pub editor_state: Arc<EguiState>,
-    /// Transformer magnetic-core saturation/hysteresis amount (Jiles-Atherton). 0 = linear
-    /// (legacy sound), 0.5 = realistic LO1166 (the default), 1 = heavy. WDF-only. Ships in all
-    /// default builds (`trafo-core` is a default feature since the GO verdict); opt out with
-    /// `--no-default-features` for a bit-exact linear-transformer A/B build. NOTE: default 0.5 is
-    /// ACTIVE — the JA RK4 cost applies whenever the knob > 0; zero the knob to A/B the linear core.
+    /// Transformer (Jiles-Atherton magnetic core) ON/OFF. ON (default) = today's sound; OFF =
+    /// bit-exact linear core (the JA RK4 cost vanishes — A/B the transformer). WDF-only. The whole
+    /// model ships in default builds (`trafo-core` is a default feature since the GO verdict); opt
+    /// out at compile time with `--no-default-features`.
     #[cfg(feature = "trafo-core")]
-    #[id = "trafo"]
-    pub trafo: FloatParam,
+    #[id = "trafo_on"]
+    pub trafo_on: BoolParam,
+    /// Transformer HYSTERESIS dial (0..1). 0 = no loop (near-anhysteretic), 0.5 = today's voicing
+    /// (`k=300`, `c=0.7`), 1 = wide loop. Shapes the core's pinning/reversibility (loop width).
+    #[cfg(feature = "trafo-core")]
+    #[id = "trafo_hyst"]
+    pub trafo_hyst: FloatParam,
+    /// Transformer SATURATION dial (0..1). 0 = clean (knee above signal), 0.5 = today's voicing
+    /// (`b_sat=0.3T`), 1 = hard/early knee. Shapes where the saturation knee sits.
+    #[cfg(feature = "trafo-core")]
+    #[id = "trafo_sat"]
+    pub trafo_sat: FloatParam,
 }
 
 impl Default for Ba283Params {
@@ -381,6 +558,7 @@ impl Default for Ba283Params {
             ui_scale: EnumParam::new("UI Scale", UiScale::Auto).non_automatable(),
             wdf_tier: EnumParam::new("WDF Tier", WdfTier::Realtime),
             precision: EnumParam::new("Precision", Precision::High),
+            oversampling: EnumParam::new("Oversampling", Oversampling::Auto),
             drive_db: FloatParam::new(
                 "Drive",
                 0.0,
@@ -417,6 +595,20 @@ impl Default for Ba283Params {
             .with_unit(" %")
             .with_value_to_string(formatters::v2s_f32_rounded(0))
             .with_smoother(SmoothingStyle::Linear(20.0)),
+            // EQ defaults: OFF + all gains 0 dB so the stage is a provable no-op until engaged.
+            eq_on: BoolParam::new("EQ", false),
+            eq_hpf_freq: EnumParam::new("EQ HPF", HpfFreq::Off),
+            eq_low_freq: EnumParam::new("EQ Low Freq", LowShelfFreq::Hz60),
+            eq_low_gain: FloatParam::new("EQ Low", 0.0, FloatRange::Linear { min: -16.0, max: 16.0 })
+                .with_unit(" dB")
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            eq_mid_freq: EnumParam::new("EQ Mid Freq", MidFreq::Hz1600),
+            eq_mid_gain: FloatParam::new("EQ Mid", 0.0, FloatRange::Linear { min: -18.0, max: 18.0 })
+                .with_unit(" dB")
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            eq_high_gain: FloatParam::new("EQ High", 0.0, FloatRange::Linear { min: -16.0, max: 16.0 })
+                .with_unit(" dB")
+                .with_value_to_string(formatters::v2s_f32_rounded(1)),
             level_norm: BoolParam::new("Level Norm", false),
             gain_stepped: BoolParam::new("Stepped Gain", false),
             circuit_gain: FloatParam::new(
@@ -435,9 +627,15 @@ impl Default for Ba283Params {
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             age_reroll: BoolParam::new("Re-roll Unit", false),
             age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
-            editor_state: EguiState::from_size(660, 480),
+            editor_state: EguiState::from_size(660, 900),
             #[cfg(feature = "trafo-core")]
-            trafo: FloatParam::new("Trafo", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+            trafo_on: BoolParam::new("Transformer", true),
+            #[cfg(feature = "trafo-core")]
+            trafo_hyst: FloatParam::new("Hysteresis", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(formatters::v2s_f32_rounded(2))
+                .with_smoother(SmoothingStyle::Linear(50.0)),
+            #[cfg(feature = "trafo-core")]
+            trafo_sat: FloatParam::new("Saturation", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_value_to_string(formatters::v2s_f32_rounded(2))
                 .with_smoother(SmoothingStyle::Linear(50.0)),
         }
@@ -454,6 +652,7 @@ impl Default for Ba283Plugin {
             last_bias: f32::NAN,
             last_tier: WdfTier::Realtime,
             last_precision: Precision::High,
+            last_oversampling: Oversampling::Auto,
             norm_trim: 1.0,
             norm_trim_target: 1.0,
             norm_reprobe: true,
@@ -461,13 +660,22 @@ impl Default for Ba283Plugin {
             wdf_rgain_smooth: 220.0,
             wdf_bias_smooth: 0.5,
             wdf_age_smooth: 0.0,
+            eq_low_g_smooth: 0.0,
+            eq_mid_g_smooth: 0.0,
+            eq_high_g_smooth: 0.0,
             last_age: f32::NAN,
             last_seed: u64::MAX,
             last_reroll: false,
             #[cfg(feature = "trafo-core")]
-            wdf_trafo_smooth: 0.5,
+            wdf_trafo_hyst_smooth: 0.5,
             #[cfg(feature = "trafo-core")]
-            last_trafo: f32::NAN,
+            wdf_trafo_sat_smooth: 0.5,
+            #[cfg(feature = "trafo-core")]
+            last_trafo_on: false,
+            #[cfg(feature = "trafo-core")]
+            last_trafo_hyst: f32::NAN,
+            #[cfg(feature = "trafo-core")]
+            last_trafo_sat: f32::NAN,
         }
     }
 }
@@ -509,6 +717,9 @@ impl Ba283Plugin {
         trafo: f32,
     ) {
         let _ = trafo; // unused when the `trafo-core` feature is off
+        // The single `trafo` arg is interpreted as legacy depth: > 0 enables the core and drives the
+        // SATURATION dial; HYSTERESIS stays at the default. The probe only measures small-signal
+        // gain, so the exact voicing is immaterial here.
         let req = ProbeReq {
             cfg,
             sr,
@@ -517,7 +728,11 @@ impl Ba283Plugin {
             age,
             seed,
             #[cfg(feature = "trafo-core")]
-            trafo,
+            trafo_on: trafo > 0.0,
+            #[cfg(feature = "trafo-core")]
+            trafo_hyst: 0.5,
+            #[cfg(feature = "trafo-core")]
+            trafo_sat: trafo,
         };
         run_probe(&self.probe, req);
     }
@@ -577,7 +792,11 @@ impl Plugin for Ba283Plugin {
         let bias = self.params.bias.value();
         let tier = self.params.wdf_tier.value();
         let precision = self.params.precision.value();
-        let cfg = tier.config().with_precision(precision.to_wdf());
+        let oversampling = self.params.oversampling.value();
+        let cfg = tier
+            .config()
+            .with_precision(precision.to_wdf())
+            .with_oversampling(oversampling.to_wdf());
         // Warm at the realtime tier (the DC operating point is tier-independent — freeze-caps only
         // changes the per-iter companion), then install the settled snapshot into each channel's
         // tier-configured model.
@@ -595,11 +814,14 @@ impl Plugin for Ba283Plugin {
             ch.wdf_set_age(age);
             ch.wdf_set_rgain(rgain);
             ch.wdf_set_bias(bias);
+            // EQ runs at host rate ahead of the model; size its biquad coeffs to the real SR.
+            ch.eq_prepare(self.sample_rate);
         }
         self.last_rgain = rgain;
         self.last_bias = bias;
         self.last_tier = tier;
         self.last_precision = precision;
+        self.last_oversampling = oversampling;
         self.last_age = age;
         self.last_seed = seed;
         self.last_reroll = self.params.age_reroll.value();
@@ -608,12 +830,18 @@ impl Plugin for Ba283Plugin {
         self.wdf_age_smooth = age;
         #[cfg(feature = "trafo-core")]
         {
-            let trafo = self.params.trafo.value();
+            let on = self.params.trafo_on.value();
+            let hyst = self.params.trafo_hyst.value();
+            let sat = self.params.trafo_sat.value();
             for ch in self.channels.iter_mut() {
-                ch.wdf_set_trafo(trafo);
+                ch.wdf_set_trafo_enabled(on);
+                ch.wdf_set_trafo_voicing(hyst, sat);
             }
-            self.last_trafo = trafo;
-            self.wdf_trafo_smooth = trafo;
+            self.last_trafo_on = on;
+            self.last_trafo_hyst = hyst;
+            self.last_trafo_sat = sat;
+            self.wdf_trafo_hyst_smooth = hyst;
+            self.wdf_trafo_sat_smooth = sat;
         }
 
         // Seed the levelNorm trim synchronously off the audio thread (this is `initialize`): probe the
@@ -651,6 +879,47 @@ impl Plugin for Ba283Plugin {
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
         let use_bridge = self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ;
         let backend = self.params.backend.value();
+
+        // Neve EQ (both backends): resolve the switched frequencies and push the current settings to
+        // each channel at block rate. `Eq::set` recomputes biquad coeffs only when they change, and
+        // the stage is a bit-exact identity while `eq_on` is false.
+        let eq_on = self.params.eq_on.value();
+        let eq_hpf_hz = self.params.eq_hpf_freq.value().hz();
+        let eq_low_hz = self.params.eq_low_freq.value().hz();
+        let eq_mid_hz = self.params.eq_mid_freq.value().hz();
+        let eq_low_t = self.params.eq_low_gain.value();
+        let eq_mid_t = self.params.eq_mid_gain.value();
+        let eq_high_t = self.params.eq_high_gain.value();
+        // Glide the band gains while the EQ is engaged so a knob drag becomes small per-block coeff
+        // steps instead of coarse jumps (same one-pole + settle-snap as the WDF block-rate params).
+        // While off, snap to target: the stage is bypassed (no audio touched), and a re-enable then
+        // starts from the real gains. The bit-exact-off contract is unaffected — `Eq::set` ignores
+        // these values until `eq_on`.
+        let (eq_low_g, eq_mid_g, eq_high_g) = if eq_on {
+            let n = buffer.samples().max(1) as f32;
+            let a = 1.0 - (-(n / self.sample_rate) / WDF_PARAM_TAU_S).exp();
+            self.eq_low_g_smooth += a * (eq_low_t - self.eq_low_g_smooth);
+            self.eq_mid_g_smooth += a * (eq_mid_t - self.eq_mid_g_smooth);
+            self.eq_high_g_smooth += a * (eq_high_t - self.eq_high_g_smooth);
+            if (eq_low_t - self.eq_low_g_smooth).abs() < EQ_GAIN_EPS {
+                self.eq_low_g_smooth = eq_low_t;
+            }
+            if (eq_mid_t - self.eq_mid_g_smooth).abs() < EQ_GAIN_EPS {
+                self.eq_mid_g_smooth = eq_mid_t;
+            }
+            if (eq_high_t - self.eq_high_g_smooth).abs() < EQ_GAIN_EPS {
+                self.eq_high_g_smooth = eq_high_t;
+            }
+            (self.eq_low_g_smooth, self.eq_mid_g_smooth, self.eq_high_g_smooth)
+        } else {
+            self.eq_low_g_smooth = eq_low_t;
+            self.eq_mid_g_smooth = eq_mid_t;
+            self.eq_high_g_smooth = eq_high_t;
+            (eq_low_t, eq_mid_t, eq_high_t)
+        };
+        for ch in self.channels.iter_mut() {
+            ch.eq_set(eq_on, eq_hpf_hz, eq_low_hz, eq_low_g, eq_mid_hz, eq_mid_g, eq_high_g);
+        }
 
         // WDF gain/bias are consumed at block rate (a cheap G0 rebuild, not per-sample-smoothed). Apply
         // to both channels only when changed; integrator state is preserved so the model re-settles
@@ -694,39 +963,58 @@ impl Plugin for Ba283Plugin {
             let rgain = self.wdf_rgain_smooth;
             let bias = self.wdf_bias_smooth;
             let age = self.wdf_age_smooth;
+            // Transformer: the ON/OFF gate is read raw (edge-detected below; the JA reseed makes the
+            // toggle click-free). The two voicing dials are glided into the per-block re-voice so a
+            // knob drag doesn't step `m_s/k/c`. No partition flip to land on (the J-A is a post-solve
+            // filter), so a plain one-pole with an epsilon settle-snap suffices.
             #[cfg(feature = "trafo-core")]
-            let trafo = {
-                let trafo_t = self.params.trafo.value();
-                self.wdf_trafo_smooth += a * (trafo_t - self.wdf_trafo_smooth);
-                // Snap to the target within an epsilon so the glide settles and, crucially, lands
-                // exactly on 0 (the linear/active boundary) instead of thrashing the partition flip.
-                if (trafo_t - self.wdf_trafo_smooth).abs() < WDF_TRAFO_EPS {
-                    self.wdf_trafo_smooth = trafo_t;
+            let (trafo_on, trafo_hyst, trafo_sat) = {
+                let on = self.params.trafo_on.value();
+                let hyst_t = self.params.trafo_hyst.value();
+                let sat_t = self.params.trafo_sat.value();
+                self.wdf_trafo_hyst_smooth += a * (hyst_t - self.wdf_trafo_hyst_smooth);
+                self.wdf_trafo_sat_smooth += a * (sat_t - self.wdf_trafo_sat_smooth);
+                if (hyst_t - self.wdf_trafo_hyst_smooth).abs() < WDF_TRAFO_EPS {
+                    self.wdf_trafo_hyst_smooth = hyst_t;
                 }
-                self.wdf_trafo_smooth
+                if (sat_t - self.wdf_trafo_sat_smooth).abs() < WDF_TRAFO_EPS {
+                    self.wdf_trafo_sat_smooth = sat_t;
+                }
+                (on, self.wdf_trafo_hyst_smooth, self.wdf_trafo_sat_smooth)
             };
             // Tier change: rebuild each channel at the new tier and re-install the settled snapshot
             // (no fresh warmup). Block-rate, on actual change only. Reset rgain/bias trackers so the
             // post-rebuild model picks up the current values via the cheap G0 path below.
             let tier = self.params.wdf_tier.value();
             let precision = self.params.precision.value();
-            if tier != self.last_tier || precision != self.last_precision {
-                let cfg = tier.config().with_precision(precision.to_wdf());
+            let oversampling = self.params.oversampling.value();
+            if tier != self.last_tier
+                || precision != self.last_precision
+                || oversampling != self.last_oversampling
+            {
+                let cfg = tier
+                    .config()
+                    .with_precision(precision.to_wdf())
+                    .with_oversampling(oversampling.to_wdf());
                 for ch in self.channels.iter_mut() {
                     ch.wdf_set_tier(cfg, self.sample_rate, rgain, bias);
                 }
                 self.last_tier = tier;
                 self.last_precision = precision;
+                self.last_oversampling = oversampling;
                 changed = true;
                 // The rebuild reset aging + the bias/rgain legs to pristine — force all to re-apply.
                 self.last_age = f32::NAN;
                 self.last_seed = u64::MAX;
                 self.last_rgain = f32::NAN;
                 self.last_bias = f32::NAN;
-                // The rebuild also reset the JA core to linear — force trafo to re-apply.
+                // The rebuild also reset the JA core to linear/default — force the gate + both
+                // voicing dials to re-apply.
                 #[cfg(feature = "trafo-core")]
                 {
-                    self.last_trafo = f32::NAN;
+                    self.last_trafo_on = !self.params.trafo_on.value();
+                    self.last_trafo_hyst = f32::NAN;
+                    self.last_trafo_sat = f32::NAN;
                 }
             }
             // Aging (ordered after tier, before bias/rgain): re-roll edge -> seed -> age. Any change
@@ -758,11 +1046,20 @@ impl Plugin for Ba283Plugin {
                 changed = true;
             }
             #[cfg(feature = "trafo-core")]
-            if trafo != self.last_trafo {
+            if trafo_on != self.last_trafo_on {
                 for ch in self.channels.iter_mut() {
-                    ch.wdf_set_trafo(trafo);
+                    ch.wdf_set_trafo_enabled(trafo_on);
                 }
-                self.last_trafo = trafo;
+                self.last_trafo_on = trafo_on;
+                changed = true;
+            }
+            #[cfg(feature = "trafo-core")]
+            if trafo_hyst != self.last_trafo_hyst || trafo_sat != self.last_trafo_sat {
+                for ch in self.channels.iter_mut() {
+                    ch.wdf_set_trafo_voicing(trafo_hyst, trafo_sat);
+                }
+                self.last_trafo_hyst = trafo_hyst;
+                self.last_trafo_sat = trafo_sat;
                 changed = true;
             }
             if rgain != self.last_rgain {
@@ -796,14 +1093,21 @@ impl Plugin for Ba283Plugin {
                     .is_ok()
             {
                 let req = ProbeReq {
-                    cfg: tier.config().with_precision(precision.to_wdf()),
+                    cfg: tier
+                        .config()
+                        .with_precision(precision.to_wdf())
+                        .with_oversampling(oversampling.to_wdf()),
                     sr: self.sample_rate,
                     rgain,
                     bias,
                     age,
                     seed,
                     #[cfg(feature = "trafo-core")]
-                    trafo,
+                    trafo_on,
+                    #[cfg(feature = "trafo-core")]
+                    trafo_hyst,
+                    #[cfg(feature = "trafo-core")]
+                    trafo_sat,
                 };
                 context.execute_background(req);
             }
@@ -869,8 +1173,9 @@ impl Plugin for Ba283Plugin {
                     break;
                 }
                 let x = *sample;
-                *sample = self.channels[ch]
-                    .process_sample(x, drive, bias, out_g, norm_gain, mix, use_bridge, backend);
+                *sample = self.channels[ch].process_sample(
+                    x, drive, bias, out_g, norm_gain, mix, use_bridge, backend,
+                );
             }
         }
         // The applied gain reached the target by the last frame; carry it as the next block's start.

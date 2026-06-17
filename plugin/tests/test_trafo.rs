@@ -10,10 +10,23 @@ mod wdf_golden {
     include!("fixtures/wdf_golden.rs");
 }
 
+/// Legacy-depth shim: the model now exposes an ON/OFF switch + two voicing dials (HYST, SAT) instead
+/// of the single `trafo` knob. These spike tests treat the old 0..1 `trafo` value as SATURATION depth
+/// (0 => OFF/linear; >0 => ON, knee driven by `sat`, hysteresis held at the default), which preserves
+/// their original semantics (more `trafo` = more saturation, 0 = bit-exact linear).
+fn apply_trafo(m: &mut wdf::WdfModel, trafo: f64) {
+    if trafo > 0.0 {
+        m.set_trafo_enabled(true);
+        m.set_trafo_voicing(0.5, trafo);
+    } else {
+        m.set_trafo_enabled(false);
+    }
+}
+
 fn run_stream_trafo(trafo: f64) -> Vec<f32> {
     let mut m =
         wdf::WdfModel::new_with(QualityConfig::realtime(), wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
-    m.set_trafo(trafo);
+    apply_trafo(&mut m, trafo);
     m.warmup();
     wdf_golden::INPUT_256
         .iter()
@@ -38,7 +51,7 @@ fn trafo_zero_is_bit_identical_and_partition_unchanged() {
 
     let mut m =
         wdf::WdfModel::new_with(QualityConfig::realtime(), wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
-    m.set_trafo(0.0);
+    apply_trafo(&mut m, 0.0);
     assert_eq!(m.n_sz(), 6, "trafo=0 must keep N-set at 6");
     m.warmup();
     let got: Vec<f32> =
@@ -55,9 +68,9 @@ fn trafo_active_keeps_partition() {
     // This is the structural invariant that makes the old +13-iter blow-up impossible by design.
     let mut m =
         wdf::WdfModel::new_with(QualityConfig::realtime(), wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
-    m.set_trafo(0.5);
+    apply_trafo(&mut m, 0.5);
     assert_eq!(m.n_sz(), 6, "active JA core (decoupled) must keep N-set 6");
-    m.set_trafo(0.0);
+    apply_trafo(&mut m, 0.0);
     assert_eq!(m.n_sz(), 6, "deactivating must keep N-set 6");
 }
 
@@ -81,7 +94,7 @@ fn trafo_changes_output_and_stays_finite() {
 #[test]
 fn trafo_reenable_reseeds_core_no_flux_jump() {
     // Re-enabling the knob mid-stream must NOT integrate flux against a stale `ja_vm_prev` frozen
-    // from before it was switched off (would jump the flux → audible click). `set_trafo` re-seeds
+    // from before it was switched off (would jump the flux → audible click). `set_trafo_enabled` re-seeds
     // the core on the inactive→active edge, so the operating point is clean (H,B)=(0,0) right after.
     let mut m = wdf::WdfModel::new_with(
         QualityConfig::realtime(),
@@ -89,7 +102,7 @@ fn trafo_reenable_reseeds_core_no_flux_jump() {
         220.0,
         wdf_golden::BIAS,
     );
-    m.set_trafo(0.5);
+    apply_trafo(&mut m, 0.5);
     m.warmup();
     // Drive a hot tone to push the core off the origin (builds up ja_vm_prev / flux / M and a large
     // lagged `ja_i_dev`).
@@ -103,11 +116,11 @@ fn trafo_reenable_reseeds_core_no_flux_jump() {
     assert!(m.ja_i_dev() != 0.0, "hot drive should leave a non-zero lagged deviation current");
 
     // Switch off (freezes the stale state, incl. `ja_i_dev`), run linear, then re-enable.
-    m.set_trafo(0.0);
+    apply_trafo(&mut m, 0.0);
     for _ in 0..64 {
         m.process_host_sample(0.0);
     }
-    m.set_trafo(0.5);
+    apply_trafo(&mut m, 0.5);
     // Immediately after the re-enable edge, before any further commit, the core must be re-seeded:
     // clean operating point AND — the actual click source — a zeroed lagged deviation current. A
     // stale `ja_i_dev` would be injected on N_PA's RHS next sample as a one-step current jump.
@@ -146,7 +159,7 @@ fn trafo_convergence_within_budget() {
             220.0,
             wdf_golden::BIAS,
         );
-        m.set_trafo(trafo);
+        apply_trafo(&mut m, trafo);
         m.warmup();
         m.reset_iter_stats();
         for &x in &drive {
@@ -173,7 +186,7 @@ fn thd(trafo: f64, level: f32) -> f64 {
     let f0 = sr * cycles / n as f64;
     let mut m =
         wdf::WdfModel::new_with(QualityConfig::realtime(), sr, 220.0, wdf_golden::BIAS);
-    m.set_trafo(trafo);
+    apply_trafo(&mut m, trafo);
     m.warmup();
     let omega = 2.0 * std::f64::consts::PI * f0 / sr;
     // settle transient
@@ -220,6 +233,83 @@ fn trafo_thd_rises_with_level_and_knob() {
     );
 }
 
+/// THD with the core ON and the two dials set explicitly (vs `thd`, which maps a single legacy depth).
+fn thd_voiced(hyst: f64, sat: f64, level: f32) -> f64 {
+    let sr = wdf_golden::HOST_SR;
+    let n = 8192usize;
+    let cycles = (100.0 * n as f64 / sr).round();
+    let f0 = sr * cycles / n as f64;
+    let mut m = wdf::WdfModel::new_with(QualityConfig::realtime(), sr, 220.0, wdf_golden::BIAS);
+    m.set_trafo_enabled(true);
+    m.set_trafo_voicing(hyst, sat);
+    m.warmup();
+    let omega = 2.0 * std::f64::consts::PI * f0 / sr;
+    for i in 0..4096 {
+        m.process_host_sample((level as f64 * (omega * i as f64).sin()) as f32);
+    }
+    let mut y = vec![0.0f64; n];
+    for (i, yi) in y.iter_mut().enumerate() {
+        let x = (level as f64 * (omega * (i + 4096) as f64).sin()) as f32;
+        *yi = m.process_host_sample(x) as f64;
+    }
+    let mean = y.iter().sum::<f64>() / n as f64;
+    for yi in &mut y {
+        *yi -= mean;
+    }
+    let (mut ar, mut ai) = (0.0f64, 0.0f64);
+    for (i, &yi) in y.iter().enumerate() {
+        let ph = 2.0 * std::f64::consts::PI * cycles * i as f64 / n as f64;
+        ar += yi * ph.cos();
+        ai += yi * ph.sin();
+    }
+    let fund_rms = 2.0 / n as f64 * (ar * ar + ai * ai).sqrt() / std::f64::consts::SQRT_2;
+    let total_rms = (y.iter().map(|v| v * v).sum::<f64>() / n as f64).sqrt();
+    (total_rms * total_rms - fund_rms * fund_rms).max(0.0).sqrt() / fund_rms.max(1e-12)
+}
+
+#[test]
+fn trafo_dials_voice_independently() {
+    // The two dials must move SEPARATE behaviors of the core (the point of splitting the knob):
+    //   • SATURATION sets the knee — higher `sat` => earlier knee => more THD at a hot level.
+    //   • HYSTERESIS sets the loop width — changing it must move the output, and at HYST=0 the loop
+    //     collapses (near-anhysteretic), so its distortion is below a wide-loop setting.
+    let level = 0.5;
+
+    // SATURATION sweep at fixed (default) hysteresis.
+    let sat_clean = thd_voiced(0.5, 0.15, level);
+    let sat_hard = thd_voiced(0.5, 0.9, level);
+    assert!(
+        sat_hard > sat_clean * 1.05,
+        "SATURATION must raise THD as the knee tightens: clean={sat_clean:.5} hard={sat_hard:.5}"
+    );
+
+    // HYSTERESIS sweep at fixed (default) saturation must change the rendered stream.
+    let lo = run_stream_voiced(0.0, 0.5);
+    let hi = run_stream_voiced(1.0, 0.5);
+    assert!(
+        max_dev(&lo, &hi) > 1e-5,
+        "HYSTERESIS dial must change the output independent of saturation"
+    );
+
+    // Every grid cell stays finite/bounded (no flux runaway at any dial combination).
+    for &h in &[0.0_f64, 0.5, 1.0] {
+        for &s in &[0.0_f64, 0.5, 1.0] {
+            for (i, &y) in run_stream_voiced(h, s).iter().enumerate() {
+                assert!(y.is_finite() && y.abs() < 100.0, "hyst={h} sat={s} sample {i} blew up: {y}");
+            }
+        }
+    }
+}
+
+fn run_stream_voiced(hyst: f64, sat: f64) -> Vec<f32> {
+    let mut m =
+        wdf::WdfModel::new_with(QualityConfig::realtime(), wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
+    m.set_trafo_enabled(true);
+    m.set_trafo_voicing(hyst, sat);
+    m.warmup();
+    wdf_golden::INPUT_256.iter().map(|&x| m.process_host_sample(x as f32)).collect()
+}
+
 /// Diagnostic: dump a B-H loop CSV (run with `--features trafo-core -- --ignored --nocapture`).
 /// Drives a low-frequency sine hard enough to traverse the saturation knee and prints (H,B).
 #[test]
@@ -228,7 +318,7 @@ fn dump_bh_loop() {
     let sr = wdf_golden::HOST_SR;
     for trafo in [0.25_f64, 0.5, 1.0] {
         let mut m = wdf::WdfModel::new_with(QualityConfig::realtime(), sr, 220.0, wdf_golden::BIAS);
-        m.set_trafo(trafo);
+        apply_trafo(&mut m, trafo);
         m.warmup();
         // 50 Hz, large amplitude, a few cycles; sample the last cycle.
         let f = 50.0;
@@ -243,6 +333,40 @@ fn dump_bh_loop() {
             if i >= n * (cycles - 1) {
                 let (h, b) = m.ja_hb();
                 println!("{h:.6},{b:.9}");
+            }
+        }
+    }
+}
+
+/// Voicing-sweep diagnostic: dump a B-H loop + THD for every cell of the HYST×SAT dial grid.
+/// Run with `--features trafo-core -- --ignored --nocapture`. Consumed by sweep_voicing.py to
+/// finalize the dial endpoint constants (knee onset vs SAT, loop area vs HYST, default==today).
+#[test]
+#[ignore = "diagnostic: dumps the HYST×SAT voicing grid to stdout"]
+fn dump_voicing_grid() {
+    let sr = wdf_golden::HOST_SR;
+    let grid = [0.0_f64, 0.5, 1.0];
+    let f = 50.0;
+    let n = (sr / f) as usize;
+    let cycles = 6;
+    let amp = 0.5;
+    for &hyst in &grid {
+        for &sat in &grid {
+            let mut m = wdf::WdfModel::new_with(QualityConfig::realtime(), sr, 220.0, wdf_golden::BIAS);
+            m.set_trafo_enabled(true);
+            m.set_trafo_voicing(hyst, sat);
+            m.warmup();
+            // THD at a hot level (separate render so the B-H drive below starts clean).
+            let cell_thd = thd_voiced(hyst, sat, 0.5);
+            println!("# hyst={hyst} sat={sat} thd={cell_thd:.6}");
+            println!("# H,B");
+            for i in 0..n * cycles {
+                let x = (amp * (2.0 * std::f64::consts::PI * f * i as f64 / sr).sin()) as f32;
+                m.process_host_sample(x);
+                if i >= n * (cycles - 1) {
+                    let (h, b) = m.ja_hb();
+                    println!("{h:.6},{b:.9}");
+                }
             }
         }
     }

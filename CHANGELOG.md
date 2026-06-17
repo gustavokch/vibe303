@@ -18,8 +18,22 @@ BA283 mic-preamp output stage.
     models and coupled inductors. Two quality tiers — `Realtime` (bit-exact
     reference) and `Fast` (near-transparent, faster).
 - **Transformer-core nonlinearity** (`trafo-core` feature, on by default): a
-  Jiles-Atherton output-transformer model driven by the `trafo` knob.
-- Parameters: Backend, WDF Tier, Drive, Bias, Output, Mix, Circuit Gain.
+  Jiles-Atherton output-transformer model exposed via three controls — a
+  **Transformer** ON/OFF switch (OFF = bit-exact linear core) plus **Hysteresis**
+  (loop width: pinning `k` + reversibility `c`) and **Saturation** (knee position
+  `b_sat`) dials. The factory default (ON, both dials at noon) reproduces the
+  legacy single-`trafo`-knob sound at its `0.5` default.
+- **Neve 1073/1076-style EQ** (`EQ` ON/OFF + per-band controls): an optional
+  analog-matched biquad EQ placed ahead of the model (the EQ network sits upstream
+  of the BA283/AV card on the real strip, per schematic EH 10023). Switched HPF
+  (Off / 50 / 80 / 160 / 300 Hz, ~18 dB/oct), switched low shelf (35 / 60 / 110 /
+  220 Hz, ±16 dB), switched mid/presence bell (360 / 700 / 1.6k / 3.2k / 4.8k /
+  7.2k Hz, ±18 dB, proportional-Q) and a fixed 12 kHz high shelf (±16 dB). OFF +
+  flat defaults are a provable bit-exact no-op (the WDF golden-vector contract is
+  unaffected); gain knobs are per-block glided to avoid zipper on a sweep. The mid
+  proportional-Q table and shelf shapes are provisional pending a 1073-curve fit.
+- Parameters: Backend, WDF Tier, Drive, Bias, Output, Mix, Circuit Gain,
+  EQ (+ HPF / Low / Mid frequency selectors and Low / Mid / High gains).
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
 ### Platforms & formats
@@ -32,5 +46,11 @@ BA283 mic-preamp output stage.
 - macOS builds are **unsigned and unnotarized** — clear the gatekeeper
   quarantine flag on first install (`xattr -dr com.apple.quarantine`).
 - No Windows build, no macOS Intel/universal build in this release.
+- **Parameter-id change**: the single `trafo` parameter was replaced by
+  `trafo_on` / `trafo_hyst` / `trafo_sat`. Hosts key automation lanes and saved
+  presets by parameter id, so any project that automated or stored a
+  *non-default* `trafo` value will load the new defaults instead (which equal the
+  legacy `trafo=0.5` sound). Projects left at the default are unaffected. nih-plug
+  offers no id-aliasing/migration hook, so this is one-time and unavoidable.
 
 [0.1.0]: ../../releases/tag/v0.1.0

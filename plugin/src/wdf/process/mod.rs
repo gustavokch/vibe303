@@ -332,6 +332,37 @@ impl WdfModel {
         decimated as f32
     }
 
+    /// Measurement-only: run the os-rate solve for every input sample and emit **every** internal
+    /// subsample tap (the same DC-corrected `v[N_SEC_IN]` that `process_host_sample` decimates,
+    /// line 321), pre-decimation, into `out` at `os × host` rate. A harness can then apply an
+    /// arbitrary external decimator (4th vs 8th order) to one solver run and compare apples-to-apples,
+    /// or FFT the raw stream to see where the alias energy sits (image band vs already-folded in-band).
+    ///
+    /// Mirrors `process_host_sample`'s loop exactly (predictor/JA reseed on the warmup→audio
+    /// transition, `prev_in` linear-interpolation upsample) so the captured stream is identical to
+    /// what the live path decimates. Not compiled into the shipped plugin (`measure` feature, off by
+    /// default).
+    #[cfg(feature = "measure")]
+    pub fn capture_os_raw(&mut self, input: &[f32], out: &mut Vec<f32>) {
+        out.clear();
+        out.reserve(input.len() * self.os);
+        for &x in input {
+            #[cfg(feature = "trafo-core")]
+            if self.ja_active && !self.in_audio_pass {
+                self.ja_reseed();
+            }
+            self.in_audio_pass = true;
+            let cur_in = x as f64;
+            for j in 0..self.os {
+                let frac = (j + 1) as f64 / self.os as f64; // linear-interpolate upsample
+                self.v[node::N_INPUT as usize] = self.prev_in + (cur_in - self.prev_in) * frac;
+                self.process();
+                out.push((self.v[node::N_SEC_IN as usize] - self.sec_in_dc) as f32);
+            }
+            self.prev_in = cur_in;
+        }
+    }
+
     /// Measure the settled circuit's small-signal voltage gain (output/input RMS) at a 1 kHz
     /// reference, on a SCRATCH CLONE so the live model is untouched. This is the one-shot static
     /// levelNorm probe: the plugin caches `1 / measure_gain()` and applies it as a constant trim,
@@ -357,10 +388,14 @@ impl WdfModel {
         // they set the solve timestep + the AC frequency shaping that actually defines G_v.
         //
         // NOTE: this is the one place `fixed_step` runs at the tier's `os` (which is 1 for UltraFast/
-        // Warp at High) — it mutates an already-built model, bypassing `solve_os`. That is deliberate
-        // and safe: the os-floor exists because `fixed_step` + os=1 limit-cycles into loud peaks under
-        // program-level drive, but this probe is a 0.05 V near-linear, deterministic measurement that
-        // never enters that regime, and preserving `os`/`dt` is what keeps the measured gain correct.
+        // Warp — at EVERY precision now, not only High: precision is device-model-only and no longer
+        // floors the rate, so Med/Low also build at os=1 and the probe clones that). It mutates an
+        // already-built model, bypassing `solve_os`. That is deliberate and safe: the old os-floor
+        // existed because `fixed_step` + os=1 limit-cycles into loud peaks under program-level drive,
+        // but this probe is a 0.05 V near-linear, deterministic measurement that never enters that
+        // regime, and preserving `os`/`dt` is what keeps the measured gain correct. (Trapezoidal
+        // frequency warp at the 1 kHz probe differs negligibly between os=1/os=2; the
+        // `gain_probe_os1_tiers_track_high` test pins that Med/Low track High on the os=1 tiers.)
         m.fixed_step = true;
         m.predict = false;
         m.max_iters = m.max_iters.min(2);

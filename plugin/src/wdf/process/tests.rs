@@ -9,42 +9,60 @@ fn precision_high_is_identity() {
         QualityConfig::realtime(),
         QualityConfig::fast(),
         QualityConfig::ultra_fast(),
+        QualityConfig::warp(),
     ] {
         assert_eq!(
             base,
             base.with_precision(Precision::High),
             "with_precision(High) must not alter the tier config"
         );
-        // The bit-exact path is gated on `!fixed_step`; HIGH must never enable it.
+        // Precision never enables fixed_step (device-model-only); HIGH especially must not.
         assert!(!base.with_precision(Precision::High).fixed_step);
     }
 }
 
 #[test]
-fn precision_med_low_enable_fixed_step() {
-    // Med/Low must engage the structural lossy levers (fixed-step solver + reduced charge
-    // model). These are the levers the prior sweep never tested; the harness gates their ESR.
-    let rt = QualityConfig::realtime();
-    for p in [Precision::Medium, Precision::Low] {
-        let c = rt.with_precision(p);
-        assert!(c.fixed_step, "{p:?} must enable fixed-step");
-        assert_eq!(c.max_iters, 2, "{p:?} must cap Newton at 2 iters");
-        assert_ne!(c.cap_tier, CapTier::Full, "{p:?} must reduce the charge model");
+fn precision_med_low_step_device_model() {
+    // Precision is the DEVICE-MODEL axis: Med/Low step `cap_tier`/`cheap_exp` down and touch
+    // NOTHING else — not the iteration strategy (`fixed_step`/`predict`/`max_iters`) nor the
+    // oversampling rate (`os`/`decimate`). This is what removed the os=1 perverse-slowdown bug.
+    for base in [
+        QualityConfig::realtime(),
+        QualityConfig::fast(),
+        QualityConfig::ultra_fast(),
+        QualityConfig::warp(),
+    ] {
+        for p in [Precision::Medium, Precision::Low] {
+            let c = base.with_precision(p);
+            assert!(!c.fixed_step, "{p:?} must NOT enable fixed_step (iteration axis untouched)");
+            assert_eq!(c.predict, base.predict, "{p:?} must not change predict");
+            assert_eq!(c.max_iters, base.max_iters, "{p:?} must not change max_iters");
+            assert_eq!(c.os, base.os, "{p:?} must not change the oversampling rate");
+            assert_eq!(c.decimate, base.decimate, "{p:?} must not change decimate");
+            assert!(c.cheap_exp, "{p:?} must enable the cheap transport exp");
+        }
+        // Medium drops to Depletion (never *up*grading a tier already at Off, e.g. warp).
+        let med = base.with_precision(Precision::Medium).cap_tier;
+        if base.cap_tier == CapTier::Off {
+            assert_eq!(med, CapTier::Off, "Medium must not upgrade a tier already at Off");
+        } else {
+            assert_eq!(med, CapTier::Depletion, "Medium drops the charge model to Depletion");
+        }
+        // Low drops the charge model entirely.
+        assert_eq!(base.with_precision(Precision::Low).cap_tier, CapTier::Off);
     }
-    assert_eq!(rt.with_precision(Precision::Medium).cap_tier, CapTier::Depletion);
-    assert_eq!(rt.with_precision(Precision::Low).cap_tier, CapTier::Off);
 }
 
 #[test]
-fn fixed_step_precision_finite_and_within_budget() {
-    // Behavioral guard for the Medium/Low fixed-step solver — the config field-mapping is covered
-    // by `precision_med_low_enable_fixed_step`; this drives the actual `process()` path:
-    //   (1) a hot, clipping-level input must never yield non-finite output. The fixed-step path
-    //       has no gmin-homotopy fallback, so the H1 guard in `process` holds the last converged
-    //       iterate when a sample fails to converge — a single NaN/Inf can never propagate
-    //       through the forward state (`v_prev`/`hist`/cap+BJT currents).
+fn precision_med_low_finite_and_within_budget() {
+    // Behavioral guard for the Medium/Low device-model downgrade — the config field-mapping is
+    // covered by `precision_med_low_step_device_model`; this drives the actual `process()` path:
+    //   (1) a hot, clipping-level input must never yield non-finite output. Med/Low keep full
+    //       convergence (precision no longer caps iterations), so the gmin-homotopy + H1 guard in
+    //       `process` both hold — a single NaN/Inf can never propagate through the forward state
+    //       (`v_prev`/`hist`/cap+BJT currents).
     //   (2) on a representative swept tone the Medium/Low ESR loss vs Realtime+High must stay
-    //       inside the −50 dB harness budget (the PR's offline sweep measured −56…−60 dB).
+    //       inside the −50 dB harness budget (the reduced charge model + cheap_exp is a small step).
     let host = 48_000.0;
     // Match the offline harness operating point (gain 0.5 → R_KJ 905.5 Ω, RV1 bias 0.77) so the
     // measured loss is comparable to the PR's documented −60 dB sweep point.
@@ -76,10 +94,11 @@ fn fixed_step_precision_finite_and_within_budget() {
     }
 
     // (2) Tracking guardrail: re-install the clean snapshot, then score an 80 Hz→2.5 kHz chirp
-    // (integrated phase) at a musical level against Realtime+High, lag-aligned (the fixed-step
-    // solver adds a small group-delay vs full Newton — same reason the offline harness carries a
-    // `lag` field). The authoritative −50 dB budget is the `eval/plugin_vs_acme` sweep on the real
-    // `sweep_m3` corpus + full metric, which a unit test can't reproduce (a broadband synthetic
+    // (integrated phase) at a musical level against Realtime+High, lag-aligned (the reduced device
+    // model shifts the op-point slightly, adding a small group-delay — same reason the offline
+    // harness carries a `lag` field). The authoritative −50 dB budget is the `eval/plugin_vs_acme`
+    // sweep on the real `sweep_m3` corpus + full metric, which a unit test can't reproduce (a
+    // broadband synthetic
     // chirp excites the reduced charge model harder, ≈−35 dB here). So this asserts the robust
     // property — Medium/Low TRACK Realtime+High (aligned ESR ≤ −25 dB), not collapsed/diverged —
     // with ~10 dB margin; a real regression (NaN, silence, instability) blows far past it.
@@ -145,41 +164,59 @@ fn ultra_exp_within_budget() {
 }
 
 #[test]
-fn ultra_fast_os_conditional_floor() {
-    // ultra-fast runs os=1 (its speed lever) at High precision — peak-safe there — but the os
-    // floor kicks in to os=2 under the Med/Low fixed-step solver, where os=1 limit-cycles.
+fn ultra_fast_os1_no_floor() {
+    // ultra-fast runs os=1 (its speed lever) and STAYS os=1 at every precision — the old
+    // fixed_step os-floor (which made Med/Low slower than High) is gone. solve_os is now identity.
     let cfg = QualityConfig::ultra_fast();
-    assert_eq!(cfg.os, 1, "ultra-fast High runs os=1 (the speed lever)");
-    assert!(!cfg.decimate, "ultra-fast High bypasses decimation (nothing to decimate at os=1)");
+    assert_eq!(cfg.os, 1, "ultra-fast runs os=1 (the speed lever)");
+    assert!(!cfg.decimate, "ultra-fast bypasses decimation (nothing to decimate at os=1)");
     assert!(cfg.cheap_exp, "ultra-fast keeps the cheap transport exp lever");
     assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
             "ultra-fast inherits the fast-tier levers");
-    // solve_os/solve_decimate resolve the effective values.
-    assert_eq!(cfg.solve_os(), 1, "High: no fixed_step -> os=1 stands");
-    assert!(!cfg.solve_decimate(), "High: os=1 -> no decimation");
+    assert_eq!(cfg.solve_os(), 1, "solve_os is the identity now: os=1 stands");
+    assert!(!cfg.solve_decimate(), "os=1 -> no decimation");
 
-    // Med/Low layer on fixed_step -> os floored to 2, decimator re-enabled.
+    // Med/Low keep os=1 — precision is device-model-only, never floors the rate.
     for p in [Precision::Medium, Precision::Low] {
         let c = cfg.with_precision(p);
-        assert_eq!(c.solve_os(), 2, "{p:?}: fixed_step floors os to 2");
-        assert!(c.solve_decimate(), "{p:?}: floored os=2 must re-enable the decimator");
+        assert_eq!(c.solve_os(), 1, "{p:?}: precision must NOT floor os");
+        assert!(!c.solve_decimate(), "{p:?}: still os=1, no decimation");
         let m = WdfModel::new_with(c, 48_000.0, 220.0, 0.5);
-        assert_eq!(m.os, 2, "{p:?}: built model must solve at os=2");
-        assert!(m.decimate, "{p:?}: built model must decimate");
+        assert_eq!(m.os, 1, "{p:?}: built model must still solve at os=1");
+        assert!(!m.decimate, "{p:?}: built model must not decimate at os=1");
     }
-    // Even a hand-assembled fixed_step + os=1 config is floored to 2 (single source of truth).
-    let mut forced = cfg;
-    forced.fixed_step = true;
-    forced.os = 1;
-    let m = WdfModel::new_with(forced, 48_000.0, 220.0, 0.5);
-    assert_eq!(m.os, 2, "fixed_step must floor os at 2 even when hand-assembled");
-    assert!(m.decimate, "and re-enable the decimator");
-    // ultra-fast High produces finite output (no NaN/instability) on a quick ramp.
+    // ultra-fast produces finite output (no NaN/instability) on a quick ramp.
     let mut m = WdfModel::new_with(cfg, 48_000.0, 220.0, 0.5);
     assert_eq!(m.os, 1);
     for i in 0..256 {
         let y = m.process_host_sample((i as f32 / 256.0) * 0.4 - 0.2);
         assert!(y.is_finite(), "ultra-fast output non-finite at sample {i}");
+    }
+}
+
+#[test]
+fn oversampling_dial_overrides_tier() {
+    use crate::wdf::Oversampling;
+    // Auto defers to the tier; X1/X2 force the rate (and the matching decimate setting).
+    for base in [
+        QualityConfig::realtime(),
+        QualityConfig::fast(),
+        QualityConfig::ultra_fast(),
+        QualityConfig::warp(),
+    ] {
+        assert_eq!(base, base.with_oversampling(Oversampling::Auto), "Auto must be identity");
+
+        let x1 = base.with_oversampling(Oversampling::X1);
+        assert_eq!(x1.os, 1, "X1 forces os=1");
+        assert!(!x1.decimate, "X1 bypasses decimation");
+
+        let x2 = base.with_oversampling(Oversampling::X2);
+        assert_eq!(x2.os, 2, "X2 forces os=2");
+        assert!(x2.decimate, "X2 enables the antialiasing decimator");
+
+        // Built models honour the forced rate.
+        assert_eq!(WdfModel::new_with(x1, 48_000.0, 220.0, 0.5).os, 1);
+        assert_eq!(WdfModel::new_with(x2, 48_000.0, 220.0, 0.5).os, 2);
     }
 }
 
@@ -192,8 +229,8 @@ fn warp_drops_charge_model_only() {
     assert!(!cfg.decimate, "inherits ultra-fast os=1 decimation bypass");
     assert!(cfg.predict && cfg.solver == Solver::Schur && cfg.freeze_caps,
             "inherits the fast-tier levers");
-    // Distinct from Precision::Low: this keeps the full convergence gate (no fixed-step cap).
-    assert!(!cfg.fixed_step, "warp keeps the convergence gate (unlike Precision::Low)");
+    // warp reaches cap_tier=Off via the tier, keeping full convergence (no fixed_step at all).
+    assert!(!cfg.fixed_step, "warp keeps the convergence gate");
     assert_eq!(cfg, QualityConfig { cap_tier: CapTier::Off, ..QualityConfig::ultra_fast() });
     // Finite, stable output on a quick ramp.
     let mut m = WdfModel::new_with(cfg, 48_000.0, 220.0, 0.5);
@@ -217,6 +254,33 @@ fn measure_gain_finite_on_os1_tiers() {
         let g = m.measure_gain();
         assert!(g.is_finite() && g > 0.0, "os=1 probe gain must be finite and positive, got {g}");
         assert!(g < 1.0e3, "os=1 probe gain must stay in a sane band (no limit cycle), got {g}");
+    }
+}
+
+#[test]
+fn gain_probe_os1_tiers_track_high() {
+    // After the 3-axis refactor, Med/Low build at the tier os (1 for UltraFast/Warp) instead of the
+    // old floored os=2, so their levelNorm probe now runs at os=1 too. The probe is a 0.05 V
+    // near-linear small-signal measurement, so the os=1/os=2 trapezoidal-warp difference at 1 kHz
+    // must be negligible: Med/Low measured gain must track High closely. (Guards the documented
+    // probe-rate behavior change in `measure_gain`'s NOTE — a regression here means the levelNorm
+    // trim would jump audibly when only the precision dial moved.)
+    for cfg in [QualityConfig::ultra_fast(), QualityConfig::warp()] {
+        let mut hi = WdfModel::new_with(cfg.with_precision(Precision::High), 48_000.0, 220.0, 0.5);
+        hi.warmup();
+        let g_hi = hi.measure_gain();
+        assert!(g_hi.is_finite() && g_hi > 0.0, "High probe gain must be sane, got {g_hi}");
+        for p in [Precision::Medium, Precision::Low] {
+            let mut m = WdfModel::new_with(cfg.with_precision(p), 48_000.0, 220.0, 0.5);
+            assert_eq!(m.os, 1, "{p:?}: os=1 tier must stay os=1 (no floor)");
+            m.warmup();
+            let g = m.measure_gain();
+            assert!(g.is_finite() && g > 0.0, "{p:?} probe gain must be sane, got {g}");
+            // Device-model step at a near-linear probe level moves the gain only slightly; 5% is a
+            // generous band that still catches an os-mismatch or limit-cycle (which would be >>1).
+            let rel = (g - g_hi).abs() / g_hi;
+            assert!(rel < 0.05, "{p:?} probe gain {g} must track High {g_hi} (rel {rel:.3} >= 0.05)");
+        }
     }
 }
 

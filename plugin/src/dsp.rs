@@ -17,6 +17,7 @@
 //! model/bridge/delay methods plus arithmetic.
 
 use crate::dcblock::DcBlock;
+use crate::eq::Eq;
 use crate::delay::ShortDelay;
 use crate::model::Ba283Model;
 use crate::oversample::{HostBridge, HOST_BRIDGE_LATENCY};
@@ -97,6 +98,9 @@ pub struct ChannelDsp {
     resume_remain: u32,
     /// DC blocker on the final blended output — kills operating-point DC offsets from G0 re-stamps.
     dcblock: DcBlock,
+    /// Neve 1073/1076-style EQ, applied to the input signal BEFORE the model (the EQ section sits
+    /// upstream of the BA283/AV card on the real strip). Bit-exact identity while disabled.
+    eq: Eq,
     /// De-normed wet (volts→dBFS) from the most recent `process_sample`, BEFORE the levelNorm gain,
     /// `out_gain`, and `mix` are applied. The plugin reads this to feed the stereo-linked levelNorm
     /// RMS estimator (the norm gain is computed across both channels, so it lives one level up).
@@ -120,6 +124,7 @@ impl ChannelDsp {
             xfade_len: 0,
             resume_remain: 0,
             dcblock: DcBlock::new(),
+            eq: Eq::new(),
             last_wet: 0.0,
         }
     }
@@ -149,7 +154,30 @@ impl ChannelDsp {
         // (xfade_len == 0 -> resume_remain == 0), which is harmless: there is nothing to ramp.
         self.resume_remain = self.xfade_len;
         self.dcblock.reset();
+        self.eq.reset();
         self.last_wet = 0.0;
+    }
+
+    /// Size the EQ biquad coefficients to the host sample rate (called from `initialize`). The EQ
+    /// runs at host rate ahead of the model.
+    pub fn eq_prepare(&mut self, host_sr: f32) {
+        self.eq.prepare(host_sr);
+    }
+
+    /// Push the current EQ settings (block-rate). `hpf_hz <= 0` bypasses the high-pass. Coeffs are
+    /// recomputed only when they change; the stage stays bit-exact identity while `on` is false.
+    #[allow(clippy::too_many_arguments)]
+    pub fn eq_set(
+        &mut self,
+        on: bool,
+        hpf_hz: f32,
+        low_hz: f32,
+        low_g: f32,
+        mid_hz: f32,
+        mid_g: f32,
+        high_g: f32,
+    ) {
+        self.eq.set(on, hpf_hz, low_hz, low_g, mid_hz, mid_g, high_g);
     }
 
     // --- WDF block-rate config (used by Phase D plugin wiring) ---
@@ -241,10 +269,16 @@ impl ChannelDsp {
         self.wdf.set_age_seed(seed);
     }
 
-    /// Live transformer-core saturation change (`trafo` knob; feature `trafo-core`).
+    /// Live transformer ON/OFF (feature `trafo-core`). OFF => bit-exact linear core.
     #[cfg(feature = "trafo-core")]
-    pub fn wdf_set_trafo(&mut self, trafo: f32) {
-        self.wdf.set_trafo(trafo as f64);
+    pub fn wdf_set_trafo_enabled(&mut self, on: bool) {
+        self.wdf.set_trafo_enabled(on);
+    }
+
+    /// Live transformer voicing: HYSTERESIS + SATURATION dials (each 0..1; feature `trafo-core`).
+    #[cfg(feature = "trafo-core")]
+    pub fn wdf_set_trafo_voicing(&mut self, hyst: f32, sat: f32) {
+        self.wdf.set_trafo_voicing(hyst as f64, sat as f64);
     }
 
     /// Zero the WDF Newton-iteration counters (offline A/B: call after warmup, before the audio pass).
@@ -277,7 +311,10 @@ impl ChannelDsp {
         use_bridge: bool,
         backend: InferenceBackend,
     ) -> f32 {
-        let driven = x * drive;
+        // Neve EQ sits ahead of the BA283/AV card on the real strip, so it shapes the signal BEFORE
+        // either backend — EQ boosts drive the amp harder on boosted bands, exactly as the hardware
+        // does. Bit-exact identity while the EQ is off, so the model's golden path is untouched.
+        let driven = self.eq.process(x * drive);
         match backend {
             InferenceBackend::NeuralNet => {
                 // De-norm: recover volts (`* output_ref_v`) then express in the 0 dBFS ≡ 0.5 V
@@ -295,7 +332,8 @@ impl ChannelDsp {
                 };
                 let wet = model_out * deref;
                 self.last_wet = wet;
-                let wet = wet * norm_gain * out_gain;
+                let wet = wet * norm_gain;
+                let wet = wet * out_gain;
                 // Dry path delayed to match the wet-path (bridge) latency so Mix aligns.
                 let dry_aligned = if use_bridge { self.dry_delay.push_pop(x) } else { x };
                 wet * mix + dry_aligned * (1.0 - mix)
@@ -339,7 +377,8 @@ impl ChannelDsp {
                     wet
                 };
                 self.last_wet = wet;
-                let wet = wet * norm_gain * out_gain;
+                let wet = wet * norm_gain;
+                let wet = wet * out_gain;
                 // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
                 let blended = wet * mix + x * (1.0 - mix);
                 // Keep the host-reported latency honest: when the NeuralNet path would be bridged

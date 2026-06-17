@@ -123,6 +123,16 @@ def simulate_one(
         "amplstep=false)\n"
     )
 
+    # Restrict the transient output buffer to the single tapped node. ngspice
+    # otherwise stores every node voltage + branch current (~46 vectors) in its
+    # in-RAM output buffer, which at 60 s / 2x oversample overflows ngspice's
+    # ~2 GB output-memory ceiling on high-gain points (hard clipping drives the
+    # gear integrator to dense adaptive timesteps -> the accumulated buffer
+    # crosses the 2 GB wall and "Setting the output memory is not possible").
+    # simulate_one only ever reads SEC_IN, so saving just that node cuts the
+    # buffer ~40x with zero effect on the solve or the saved target.
+    circuit.raw_spice += ".save v(SEC_IN)\n"
+
     sim = circuit.simulator()
     # method='gear' is accepted as an options kwarg by PySpice 1.5.
     # Tolerances relaxed from the old XSPICE-core era (reltol 1e-4 / abstol 1e-9):

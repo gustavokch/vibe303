@@ -144,8 +144,6 @@ impl WdfModel {
             v_pprev: 0.0,
             v_sprev: 0.0,
             #[cfg(feature = "trafo-core")]
-            trafo: 0.0,
-            #[cfg(feature = "trafo-core")]
             ja_active: false,
             #[cfg(feature = "trafo-core")]
             ja: JaCore::lo1166(),
@@ -177,10 +175,9 @@ impl WdfModel {
             ls_trim: cfg.ls_trim,
             fma: cfg.fma,
             fixed_step: cfg.fixed_step,
-            // os=1 is permitted for the full-convergence solver (ultra-fast/warp speed lever) but
-            // floored to 2 under the fixed-step solver, where os=1 limit-cycles into loud peaks.
-            // `solve_os`/`solve_decimate` are the single source of truth (also used by `new_with`),
-            // so no config — including a hand-assembled `fixed_step` one — can solve at os=1.
+            // Oversampling is a pure config value: os=1 is the ultra-fast/warp speed lever, os=2 the
+            // antialiasing rate. `solve_os`/`solve_decimate` remain the single source of truth (also
+            // used by `new_with`); precision is device-model-only so there is no longer an os floor.
             os: cfg.solve_os(),
             decimate: cfg.solve_decimate(),
             v_pred_prev: [0.0; NUM_NODES],
@@ -248,8 +245,8 @@ impl WdfModel {
 
     /// Like [`new`], but with an explicit [`QualityConfig`] (tier/lever selection).
     pub fn new_with(cfg: QualityConfig, host_sr: f64, rgain: f64, bias: f64) -> Self {
-        // Use the same effective os as build_with (conditional floor under fixed_step) so dt
-        // (= 1/internal_sr) matches the per-host-sample subsample count.
+        // Use the same effective os as build_with so dt (= 1/internal_sr) matches the per-host-sample
+        // subsample count.
         let internal_sr = host_sr * cfg.solve_os() as f64;
         let mut m = Self::build_with(cfg, internal_sr, rgain, bias);
         // Decimation biquads are always configured, used when `cfg.decimate` (see
