@@ -45,3 +45,6 @@ exported_models/*.nam
 
 # git worktrees
 .worktrees/
+
+# Scratch / throwaway experiment dirs (training snapshots live canonically in ba283-nam-lstm)
+scratch/

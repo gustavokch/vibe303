@@ -75,9 +75,12 @@ pub struct ChannelDsp {
     /// Active NeuralNet engine: the gain-conditioned streaming FiLM WaveNet (`model.cond.nam`).
     wavenet: WaveNet,
     /// Former NeuralNet engine (3×18 LSTM). Kept compiled but dormant — no longer on any signal
-    /// path; retained for an easy revert until the WaveNet is fully proven in hosts.
+    /// path; retained for an easy revert until the WaveNet is fully proven in hosts. Lazily
+    /// `None` in the plugin (never parses its 153 KB blob); only the offline `standalone` A/B tool
+    /// populates it via `set_model`. `#[allow(dead_code)]` covers the never-read field in the
+    /// cdylib build.
     #[allow(dead_code)]
-    model: Ba283Model,
+    model: Option<Ba283Model>,
     bridge: HostBridge,
     dry_delay: ShortDelay<OS_LATENCY_SAMPLES>,
     /// Circuit-faithful backend. Self-oversamples internally (OS=2) and decimates with IIR
@@ -117,7 +120,9 @@ impl ChannelDsp {
     pub fn new() -> Self {
         Self {
             wavenet: WaveNet::new_from_embedded(),
-            model: Ba283Model::new_from_embedded_weights(),
+            // Dormant LSTM: not constructed in the plugin path (saves the 153 KB parse per channel).
+            // The offline `standalone --weights` tool installs one via `set_model`.
+            model: None,
             bridge: HostBridge::new(),
             dry_delay: ShortDelay::new(),
             // Placeholder SR/bias; rebuilt + restored with the real settings in `initialize`.
@@ -143,15 +148,17 @@ impl ChannelDsp {
         self.last_wet
     }
 
-    /// Replace the NeuralNet model (offline tools only — e.g. load a different trained export than
-    /// the embedded one for an A/B). The de-norm chain reads `output_ref_v` from the new model.
+    /// Install a dormant LSTM model (offline tools only — e.g. the `standalone` A/B path). The
+    /// active NeuralNet engine is the WaveNet; this field is not on the plugin's signal path.
     pub fn set_model(&mut self, model: Ba283Model) {
-        self.model = model;
+        self.model = Some(model);
     }
 
     pub fn reset(&mut self) {
         self.wavenet.reset();
-        self.model.reset();
+        if let Some(model) = &mut self.model {
+            model.reset();
+        }
         self.bridge.reset();
         self.dry_delay.reset();
         self.wdf.reset(); // restore the settled snapshot installed in initialize

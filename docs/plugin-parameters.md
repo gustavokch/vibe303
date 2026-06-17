@@ -10,7 +10,7 @@ Source: `plugin/src/lib.rs` (`Ba283Params`). Rows are in declaration order.
 | `precision` | Precision | enum | High, Medium, Low | High | Lossy precision dial, orthogonal to tier. High = identity (bit-exact at Realtime); Medium/Low = reduced device charge model. WDF-only; inert for NeuralNet. |
 | `oversampling` | Oversampling | enum | Auto, 1x, 2x | Auto | Internal antialiasing rate. Auto defers to the tier (bit-exact default); 1×/2× force the internal rate. WDF-only; inert for NeuralNet. |
 | `drive_db` | Drive | dB | −12.0 … 24.0 (linear) | 0.0 | Input drive gain. Smoothed (linear 20 ms). |
-| `bias` | Bias | — | 0.0 … 1.0 (linear) | 0.5 | Bias control. Smoothed (linear 50 ms). |
+| `bias` | Bias | — | 0.0 … 1.0 (linear) | 0.5 | Bias control. **WDF-only**: drives the circuit's bias leg. The NeuralNet (WaveNet) engine is gain-conditioned (via `circuit_gain`), not bias-conditioned, so `bias` is inert there and is greyed out in the editor when NeuralNet is active. Smoothed (linear 50 ms). |
 | `output_db` | Output | dB | −24.0 … 12.0 (linear) | 0.0 | Output gain. Smoothed (linear 20 ms). |
 | `mix` | Mix | % | 0.0 … 100.0 (linear) | 100.0 | Dry/wet mix. Smoothed (linear 20 ms). |
 | `eq_on` | EQ | bool | false / true | false | Neve 1073/1076-style EQ ON/OFF (**both backends**, pre-model). OFF (default) = provable bit-exact no-op. |

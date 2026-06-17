@@ -2,7 +2,7 @@
 """Regenerate tests/fixtures/wavenet_golden.json — the PyTorch reference vector the Rust WaveNet
 streaming engine is checked against in tests/test_wavenet.rs::golden_parity_with_pytorch_reference.
 
-Loads the conditioned WaveNet (`~/Git/ba283-nam-lstm/exported_models/model.cond.nam`) via the `nam`
+Loads the conditioned WaveNet (`exported_models/model.cond.nam`, in-repo) via the `nam`
 fork, renders a deterministic dry clip at a fixed gain using the SAME inner-net call as
 eval/nam_vs_acme/run_nam.py::_run_conditioned, and stores the NORMALIZED net output (pre output_ref_v).
 
@@ -20,7 +20,8 @@ import numpy as np
 import torch
 from nam.models import init_from_nam
 
-NAM = Path.home() / "Git/ba283-nam-lstm/exported_models/model.cond.nam"
+# In-repo canonical export (this file: plugin/tests/fixtures → repo root via parents[3]).
+NAM = Path(__file__).resolve().parents[3] / "exported_models/model.cond.nam"
 OUT = Path(__file__).with_name("wavenet_golden.json")
 GAIN = 0.5
 N = 8000

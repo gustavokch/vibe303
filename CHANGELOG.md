@@ -17,7 +17,11 @@ BA283 mic-preamp output stage.
     gain-conditioned, RF 6347), exported from a `nam` 0.13 fork as
     `model.cond.nam`, embedded at build time. Streaming/causal → **zero added
     latency**. (The legacy `LSTM(3 × 18)` + FiLM engine remains in-tree but
-    dormant; it is what the in-repo `train/` pipeline produces.)
+    dormant; it is what the in-repo `train/` pipeline produces.) This engine is
+    gain-conditioned via the **Circuit Gain** knob, not **Bias** — under the
+    Neural Net backend the Bias control is inert and is greyed out in the editor
+    (it stays active for the Circuit/WDF backend). Weights are provisional pending
+    final training; the rendered tone may change before release.
   - **Circuit (WDF)**: nodal MNA + Newton-Raphson solver with Gummel-Poon BJT
     models and coupled inductors. Four quality tiers — `Realtime` (bit-exact
     reference), `Fast` (~5×), `UltraFast` (~9×), `Warp` (~12×) — plus orthogonal

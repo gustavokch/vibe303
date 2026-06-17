@@ -1,6 +1,6 @@
 //! Hand-coded pure-Rust streaming WaveNet matching the `nam` 0.13 fork's FiLM-conditioned
 //! `WaveNet` (`nam/models/wavenet/`) exactly, for the gain-conditioned BA283 export
-//! (`weights/model.cond.nam`). `process()` is zero-alloc: all weight/state storage is heap-`Box`ed
+//! (`exported_models/model.cond.nam`). `process()` is zero-alloc: all weight/state storage is heap-`Box`ed
 //! ONCE in `new`/`from_json_str`; the audio path only indexes fixed `[f32; _]` scratch and the
 //! pre-allocated ring buffers.
 //!
@@ -118,9 +118,11 @@ fn active(v: &Value) -> bool {
 }
 
 impl WaveNet {
-    /// Load the embedded conditioned WaveNet (`weights/model.cond.nam`).
+    /// Load the embedded conditioned WaveNet (`exported_models/model.cond.nam`).
     pub fn new_from_embedded() -> Self {
-        const NAM_JSON: &str = include_str!("../weights/model.cond.nam");
+        // Single-sourced from the canonical export so the embedded blob can never drift from
+        // `exported_models/` (path is relative to this source file: plugin/src → repo root).
+        const NAM_JSON: &str = include_str!("../../exported_models/model.cond.nam");
         Self::from_json_str(NAM_JSON)
     }
 
