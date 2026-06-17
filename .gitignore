@@ -40,5 +40,8 @@ runs/
 # Large local training bundle (kept out of git)
 colab/ba283_train_bundle/
 
+# Exported `.nam` models (large weights JSON; regenerable via train_wavenet.py --export)
+exported_models/*.nam
+
 # git worktrees
 .worktrees/
