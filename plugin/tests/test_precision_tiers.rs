@@ -12,7 +12,9 @@
 //!     bias = the 0..1 Bias param (default 0.5). (NOT 220 — that was a prior repro bug.)
 //!
 //! Two repro paths, because the plugin never cold-starts a non-Realtime tier:
-//!   1. `cold_start_*`  — build+warm each combo fresh, then drive.
+//!   1. `cold_start_*`  — warm each (op, tier) fresh at High precision, then drive every precision
+//!        variant off that shared DC snapshot (precision is device-model-only / inert at the bias
+//!        point, so the warmed state is shared; only the hot drive phase varies per precision).
 //!   2. `switch_into_*` — mirror the live path (`ChannelDsp::wdf_set_tier`): warm at Realtime+High,
 //!        snapshot, rebuild at the target tier+precision, RESTORE the Realtime snapshot, then drive.
 //!
@@ -124,41 +126,64 @@ fn live_switch_all_combos_finite() {
         for &(rgain_f, bias_f, drive_db) in &ops {
             let (rgain, bias) = (rgain_f as f32, bias_f as f32);
             let drive = 10.0_f32.powf(drive_db as f32 / 20.0);
+            // Warm ONCE per (sr, op) at Realtime+High and capture the settled snapshot. Warmup is
+            // pure WDF (trafo-independent) and every combo below starts at Realtime+High, so this
+            // single snapshot seeds them all via `wdf_restore` — bit-identical to a per-combo
+            // `wdf_warmup` (both restore→save_snapshot→set wdf_snap) and exactly how the real plugin
+            // warms once at init and carries `wdf_snap` across switches. Cuts warmups from 96 to 4.
+            let snap = {
+                let mut warm = ChannelDsp::new();
+                warm.wdf_rebuild(sr as f32, rgain, bias);
+                warm.wdf_warmup();
+                warm.wdf_snapshot()
+            };
             for &trafo in trafos {
+                // A "dead channel" is reported by the user as "loud garbage then dies" — i.e. the
+                // fixed-step solver DIVERGES to large *finite* values (not Inf), so a bare
+                // is_finite() check misses it. Flag non-finite OR a runaway magnitude far above any
+                // musical level (the circuit output rarely exceeds ~10).
+                const DIVERGE: f32 = 1.0e3;
+                let run = |ch: &mut ChannelDsp, s: &[f32]| -> Option<(usize, f32)> {
+                    for (i, &x) in s.iter().enumerate() {
+                        let y = ch.process_sample(
+                            x, drive, bias, 1.0, 1.0, 1.0, host_ge_96k,
+                            InferenceBackend::Wdf,
+                        );
+                        if !y.is_finite() || y.abs() > DIVERGE {
+                            return Some((i, y));
+                        }
+                    }
+                    None
+                };
+                // Pre-switch stream ONCE per (sr, op, trafo): it runs at Realtime+High and is
+                // identical across all tier×precision combos, and `set_tier` discards the pre-sweep
+                // state (the post-switch model starts from the warmed `wdf_snap`, not the pre-sweep
+                // end state), so one check covers all 12. Cuts pre-switch sweeps from 96 to 8.
+                let mut pre = ChannelDsp::new();
+                pre.wdf_rebuild(sr as f32, rgain, bias);
+                pre.wdf_restore(&snap);
+                #[cfg(feature = "trafo-core")]
+                {
+                    pre.wdf_set_trafo_enabled(true);
+                    pre.wdf_set_trafo_voicing(0.5, trafo);
+                }
+                if let Some((i, y)) = run(&mut pre, &sweep) {
+                    failures.push(format!(
+                        "@ {sr}Hz drive={drive_db}dB trafo={trafo}: diverged PRE-switch (y={y:.3e} @ {i})"
+                    ));
+                    continue;
+                }
                 for tier in TIERS {
                     for (pname, p) in PRECISIONS {
                         let mut ch = ChannelDsp::new();
-                        // initialize(): realtime tier, warm + carry snapshot, apply trafo.
+                        // initialize(): realtime tier, seed the shared warmup snapshot + carry it,
+                        // apply trafo. (wdf_restore == per-combo wdf_warmup, just reusing the warm.)
                         ch.wdf_rebuild(sr as f32, rgain, bias);
-                        ch.wdf_warmup();
+                        ch.wdf_restore(&snap);
                         #[cfg(feature = "trafo-core")]
                         {
                             ch.wdf_set_trafo_enabled(true);
                             ch.wdf_set_trafo_voicing(0.5, trafo);
-                        }
-                        // A "dead channel" is reported by the user as "loud garbage then dies" —
-                        // i.e. the fixed-step solver DIVERGES to large *finite* values (not Inf), so
-                        // a bare is_finite() check misses it. Flag non-finite OR a runaway magnitude
-                        // far above any musical level (the circuit output rarely exceeds ~10).
-                        const DIVERGE: f32 = 1.0e3;
-                        let run = |ch: &mut ChannelDsp, s: &[f32]| -> Option<(usize, f32)> {
-                            for (i, &x) in s.iter().enumerate() {
-                                let y = ch.process_sample(
-                                    x, drive, bias, 1.0, 1.0, 1.0, host_ge_96k,
-                                    InferenceBackend::Wdf,
-                                );
-                                if !y.is_finite() || y.abs() > DIVERGE {
-                                    return Some((i, y));
-                                }
-                            }
-                            None
-                        };
-                        // Pre-switch stream at Realtime+High.
-                        if let Some((i, y)) = run(&mut ch, &sweep) {
-                            failures.push(format!(
-                                "{tier}+{pname} @ {sr}Hz drive={drive_db}dB trafo={trafo}: diverged PRE-switch (y={y:.3e} @ {i})"
-                            ));
-                            continue;
                         }
                         // The live precision/tier change (lib.rs:458-519): set_tier + forced re-stamps.
                         let cfg = tier_config(tier).with_precision(p);
@@ -286,10 +311,22 @@ fn cold_start_all_combos_finite() {
     for &(rgain, bias, drive_db) in &OPS {
         let input = stimulus(drive_db);
         for tier in TIERS {
+            // Warm ONCE per (op, tier) at this tier's High precision and snapshot the settled DC
+            // operating point. Precision is a device-model-only modifier (cap_tier/cheap_exp) and
+            // never touches max_iters/os/fixed_step, so warmup convergence is precision-independent;
+            // at the N_INPUT=0 DC bias point the junction-charge model is inert, so the warmed state
+            // is identical across the three precision variants. Reusing it (vs warming all 3 cold)
+            // cuts warmups 3×→1× per tier while the hot drive phase — the regime this test stresses
+            // for divergence — still runs on each variant's own device model below.
+            let warm_cfg = tier_config(tier).with_precision(Precision::High);
+            let mut warm = wdf::WdfModel::new_with(warm_cfg, HOST_SR, rgain, bias);
+            warm.warmup();
+            let snap = warm.snapshot();
             for (pname, p) in PRECISIONS {
                 let cfg = tier_config(tier).with_precision(p);
                 let mut m = wdf::WdfModel::new_with(cfg, HOST_SR, rgain, bias);
-                m.warmup();
+                m.restore(&snap);
+                m.save_snapshot();
                 if let Some(idx) = drive_first_nonfinite(&mut m, &input) {
                     failures.push(format!(
                         "{tier}+{pname} @ (rgain={rgain}, bias={bias}, drive={drive_db}dB): NaN at sample {idx}"
