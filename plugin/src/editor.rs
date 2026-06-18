@@ -348,33 +348,7 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                         // bounded inside the core row's `ui.columns`, but in this free
                         // `ui.horizontal` the first knob would eat all the width and shove the
                         // rest off the right edge. `knob_cell` pins each to its own cell width.
-                        //
-                        // CIRCUIT GAIN is backend-AGNOSTIC: it sets the WDF R_KJ leg AND conditions
-                        // the NeuralNet (FiLM gain-norm + the loudness makeup). So keep it live and
-                        // full-opacity even when the rest of this WDF-only panel is greyed for NN —
-                        // a nested scope overrides the frame's `wdf_on` disable + opacity fade.
-                        ui.scope(|ui| {
-                            ui.set_opacity(1.0);
-                            ui.add_enabled_ui(true, |ui| {
-                                if p.gain_stepped.value() {
-                                    // Map each hardware position to a knob detent (norm pos + label).
-                                    let detents: Vec<(f32, &'static str)> = crate::GAIN_STEPS
-                                        .iter()
-                                        .map(|s| (p.circuit_gain.preview_normalized(s.knob_ohm), s.label))
-                                        .collect();
-                                    knob_cell_stepped(
-                                        ui,
-                                        setter,
-                                        &p.circuit_gain,
-                                        "CIRCUIT GAIN",
-                                        64.0,
-                                        &detents,
-                                    );
-                                } else {
-                                    knob_cell(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
-                                }
-                            });
-                        });
+                        circuit_gain_cell(ui, setter, p);
                         ui.add_space(8.0);
                         knob_cell(ui, setter, &p.age, "AGE", 64.0);
                         ui.add_space(10.0);
@@ -497,6 +471,28 @@ fn knob_cell<P: Param>(ui: &mut egui::Ui, setter: &ParamSetter, param: &P, label
     let cell = knob_cell_size(diameter);
     ui.allocate_ui_with_layout(cell, egui::Layout::top_down(egui::Align::Center), |ui| {
         knob(ui, setter, param, label, diameter);
+    });
+}
+
+/// The CIRCUIT GAIN cell (stepped or continuous). Backend-AGNOSTIC: it sets the WDF R_KJ leg AND
+/// conditions the NeuralNet (FiLM gain-norm), so it stays live + full-opacity even when the rest of
+/// the WDF-only panel is greyed for NN — a nested scope overrides the frame's `wdf_on` disable +
+/// opacity fade.
+fn circuit_gain_cell(ui: &mut egui::Ui, setter: &ParamSetter, p: &Arc<Ba283Params>) {
+    ui.scope(|ui| {
+        ui.set_opacity(1.0);
+        ui.add_enabled_ui(true, |ui| {
+            if p.gain_stepped.value() {
+                // Map each hardware position to a knob detent (normalized pos + label).
+                let detents: Vec<(f32, &'static str)> = crate::GAIN_STEPS
+                    .iter()
+                    .map(|s| (p.circuit_gain.preview_normalized(s.knob_ohm), s.label))
+                    .collect();
+                knob_cell_stepped(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0, &detents);
+            } else {
+                knob_cell(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
+            }
+        });
     });
 }
 

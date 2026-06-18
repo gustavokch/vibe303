@@ -17,7 +17,7 @@
 
 use ba283::wavenet::WaveNet;
 use ba283::wdf::WdfModel;
-use ba283::{nn_makeup_gain, nn_norm_trim};
+use ba283::{nn_makeup_gain, nn_norm_trim, rgain_to_gain_norm};
 
 const HOST_SR: f64 = 48_000.0;
 const BIAS: f64 = 0.5; // param default
@@ -27,14 +27,6 @@ const INPUT_FS_VOLTS: f64 = 0.5; // dsp.rs: 0 dBFS ≡ 0.5 V
 
 /// `circuit_gain` R_KJ values the calibration is anchored on (Ω), spanning the param range.
 const RGAINS: &[f64] = &[47.0, 82.0, 110.0, 220.0, 470.0, 906.0, 1200.0, 10_000.0];
-
-/// Re-derive `gain_norm` exactly as `lib.rs::rgain_to_gain_norm` (private there).
-fn rgain_to_gain_norm(rgain_ohm: f64) -> f32 {
-    const R_LO: f64 = 10_000.0;
-    const R_HI: f64 = 82.0;
-    let g = (rgain_ohm.max(1.0).ln() - R_LO.ln()) / (R_HI.ln() - R_LO.ln());
-    g.clamp(0.0, 1.0) as f32
-}
 
 /// WDF small-signal voltage gain at `rgain`, mirroring the live levelNorm probe.
 fn measure_gv(rgain: f64) -> f64 {
@@ -74,7 +66,7 @@ fn regenerate_and_validate_nn_gain_calib() {
     println!("\n   R(Ω)   gain_norm      G_v      G_nn    makeup   gnn_inv   want_mk   want_gi");
     let (mut worst_mk, mut worst_gi) = (0.0f64, 0.0f64);
     for &r in RGAINS {
-        let gn = rgain_to_gain_norm(r);
+        let gn = rgain_to_gain_norm(r as f32);
         let gv = measure_gv(r);
         let gnn = measure_gnn(gn);
         let makeup = gv / gnn;

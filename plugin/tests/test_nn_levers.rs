@@ -7,7 +7,7 @@
 //! Drives the real `ChannelDsp::process_sample` NN path, so a weight/table drift trips this.
 use ba283::dsp::ChannelDsp;
 use ba283::wdf::QualityConfig;
-use ba283::{nn_makeup_gain, nn_norm_trim, norm_apply_gain, InferenceBackend};
+use ba283::{nn_makeup_gain, nn_norm_trim, norm_apply_gain, rgain_to_gain_norm, InferenceBackend};
 
 const SR: f32 = 48_000.0;
 const BIAS: f32 = 0.7;
@@ -16,9 +16,10 @@ const MEAS: usize = 6_000;
 const F: f32 = 220.0;
 const AMP: f32 = 0.1; // linear region
 
+// FiLM cond = the plugin's own gain→0..1 map, so the test drives the NN on the exact curve
+// `NN_GAIN_CALIB` was measured against (no local replica that could drift).
 fn cond_of(r: f32) -> f32 {
-    let (lo, hi) = (10_000.0f32.ln(), 82.0f32.ln());
-    ((r.max(1.0).ln() - lo) / (hi - lo)).clamp(0.0, 1.0)
+    rgain_to_gain_norm(r)
 }
 
 /// RMS of the NN path at rgain `r`, Drive `drive`, applied `norm_gain`.

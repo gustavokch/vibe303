@@ -307,7 +307,10 @@ static GAIN_STEPS: &[GainStep] = &[
 /// model was reamped over a geometric R_KJ sweep — 10000 Ω → gain_norm 0.0, 82 Ω → 1.0 — so the
 /// inverse is a log ratio (verified against the eval table, e.g. 906 Ω → 0.5). The param's 47 Ω /
 /// open positions extrapolate past 1.0 and are clamped (the model saw no data hotter than 82 Ω).
-fn rgain_to_gain_norm(rgain_ohm: f32) -> f32 {
+///
+/// `pub` so the calibration/regression tests drive the NN with the SAME cond curve the plugin uses —
+/// replicating this mapping in the tests would let it silently drift out of sync with `NN_GAIN_CALIB`.
+pub fn rgain_to_gain_norm(rgain_ohm: f32) -> f32 {
     const R_LO: f32 = 10_000.0; // gain_norm 0.0
     const R_HI: f32 = 82.0; // gain_norm 1.0
     let g = (rgain_ohm.max(1.0).ln() - R_LO.ln()) / (R_HI.ln() - R_LO.ln());
@@ -1247,11 +1250,11 @@ impl Plugin for Ba283Plugin {
         // (the per-sample ramp below smooths every transition click-free):
         //   • WDF: the operating-point-tracking trim (probed circuit-gain reciprocal), applied only
         //     when the param is on; off → unity (faithful circuit gain).
-        //   • NeuralNet: the embedded WaveNet already tracks gain via FiLM but sits ~6 dB hot vs the
-        //     WDF circuit (and its cond axis saturates below 82 Ω), so OFF applies an offline-calibrated
-        //     loudness makeup (`nn_makeup_gain`) to match WDF absolute level; ON levels to unity via
-        //     `1/G_nn` (Drive-cancelled, same shape as the WDF trim). No off-thread probe — the NN is a
-        //     fixed black box, so the curve is a static measurement (tests/calib_nn_makeup.rs).
+        //   • NeuralNet: Level Norm controls loudness as a single switch. OFF leaves the NN at its
+        //     natural FiLM-conditioned level (unity makeup), symmetric with the WDF "faithful circuit
+        //     gain" OFF arm; ON levels to unity via `1/G_nn` (Drive-cancelled, same shape as the WDF
+        //     trim). No off-thread probe — the NN is a fixed black box, so the trim is a static
+        //     measurement (`nn_norm_trim` / tests/calib_nn_makeup.rs).
         //
         // Ramp the APPLIED gain per-sample from this block's start value (`norm_trim`) to the latest
         // target across the block, then carry the end value to the next block — so a moving operating
@@ -1283,13 +1286,14 @@ impl Plugin for Ba283Plugin {
                 }
             }
             InferenceBackend::NeuralNet => {
-                // Use the raw knob value (not the WDF-smoothed `rgain`, which is scoped to the WDF
-                // block and not applied on the NN path); in stepped mode it is already a detent value.
-                let rgain_knob = self.params.circuit_gain.value();
+                // OFF → raw NN (FiLM-only, unity makeup), the NN's natural level. ON → level to ~unity
+                // via the `1/G_nn` trim. Use the raw knob value (not the WDF-smoothed `rgain`, which is
+                // scoped to the WDF block); in stepped mode it is already a detent value.
                 if level_norm_on {
+                    let rgain_knob = self.params.circuit_gain.value();
                     norm_apply_gain(nn_norm_trim(rgain_knob), drive_block)
                 } else {
-                    nn_makeup_gain(rgain_knob)
+                    1.0
                 }
             }
         };
