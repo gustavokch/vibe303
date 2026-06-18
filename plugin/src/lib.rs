@@ -36,6 +36,14 @@ const EQ_GAIN_EPS: f32 = 1.0e-3;
 #[cfg(feature = "trafo-core")]
 const WDF_TRAFO_EPS: f32 = 1.0e-5;
 
+// Oversampling factor of the resident adaptive-os `wdf_hi` sibling (the armed state on the os=1
+// lossy tiers). os=4 is the high-payoff target: the A0 decimator gate (2026-06-18) confirmed the
+// existing 4th-order Butterworth decimator is already within +0.57 dB of the steep-sinc ideal at
+// 4:1 (zero added latency — the 0-PDC contract holds), and os1→os4 recovers +15.6..+23 dB of alias
+// floor vs +7.5..+10.7 dB for os1→os2.
+#[cfg(feature = "adaptive-os")]
+const ADAPTIVE_HI_OS: usize = 4;
+
 /// Flush-to-zero + denormals-are-zero on the calling (audio) thread. The FP control register is
 /// thread-local, so this must run on the audio thread (top of `process`), not in `initialize` —
 /// the host may run those on different threads. Subnormal arithmetic carries a ~100x penalty; the
@@ -193,6 +201,10 @@ pub struct Ba283Plugin {
     /// Last WDF oversampling override applied (block-rate). A change triggers the same rebuild path
     /// as a tier change (folded into the `QualityConfig` via `with_oversampling`).
     last_oversampling: Oversampling,
+    /// Last `Adaptive OS` toggle state applied (block-rate). A change re-runs the tier rebuild path
+    /// so the resident `wdf_hi` sibling is added (toggle on) or dropped (toggle off) immediately.
+    #[cfg(feature = "adaptive-os")]
+    last_adaptive_os: bool,
     /// The levelNorm gain actually applied at the end of the last block (the per-sample ramp's start
     /// for the next block). Carries the ramp state across blocks so a Circuit-Gain sweep — or a
     /// level-norm on/off toggle — fades click-free instead of stepping. NOT a program-dependent RMS
@@ -569,6 +581,15 @@ pub struct Ba283Params {
     /// tier (bit-exact default). WDF-only; inert for the NeuralNet backend.
     #[id = "oversampling"]
     pub oversampling: EnumParam<Oversampling>,
+    /// Adaptive level-gated oversampling (feature `adaptive-os`): on the os=1 lossy tiers
+    /// (UltraFast/Warp) under Oversampling = Auto, engage a resident os=4 model only on hot
+    /// transients (os=1 when quiet) — near-os=4 alias quality at near-os=1 average cost. Off by
+    /// default (opt in via the toggle, so an update never silently changes the sound/CPU of an
+    /// existing session). Inert (collapses to plain os=1) when off, or when the tier is not lossy,
+    /// or when Oversampling ≠ Auto. WDF-only.
+    #[cfg(feature = "adaptive-os")]
+    #[id = "adaptive_os"]
+    pub adaptive_os: BoolParam,
     #[id = "drive_db"]
     pub drive_db: FloatParam,
     #[id = "bias"]
@@ -658,6 +679,8 @@ impl Default for Ba283Params {
             wdf_tier: EnumParam::new("WDF Tier", WdfTier::Realtime),
             precision: EnumParam::new("Precision", Precision::High),
             oversampling: EnumParam::new("Oversampling", Oversampling::Auto),
+            #[cfg(feature = "adaptive-os")]
+            adaptive_os: BoolParam::new("Adaptive OS", false),
             drive_db: FloatParam::new(
                 "Drive",
                 0.0,
@@ -752,6 +775,8 @@ impl Default for Ba283Plugin {
             last_tier: WdfTier::Realtime,
             last_precision: Precision::High,
             last_oversampling: Oversampling::Auto,
+            #[cfg(feature = "adaptive-os")]
+            last_adaptive_os: false,
             norm_trim: 1.0,
             norm_trim_target: 1.0,
             norm_reprobe: true,
@@ -904,16 +929,21 @@ impl Plugin for Ba283Plugin {
         let snap = warm.snapshot();
         let age = self.params.age.value();
         let seed = self.params.age_seed.load(Ordering::Relaxed);
+        #[cfg(feature = "adaptive-os")]
+        let adaptive_on = self.params.adaptive_os.value();
         for ch in self.channels.iter_mut() {
             ch.wdf_rebuild_with(cfg, self.sample_rate, rgain, bias);
             ch.wdf_restore(&snap);
-            // Adaptive oversampling (feature `adaptive-os`): on the os=1 lossy tiers under Auto,
-            // build a resident os=2 sibling the envelope detector can engage on hot transients.
+            // Adaptive oversampling (feature `adaptive-os`): on the os=1 lossy tiers under Auto, with
+            // the toggle on, build a resident hi-os sibling the envelope detector engages on hot
+            // transients.
             #[cfg(feature = "adaptive-os")]
-            if matches!(tier, WdfTier::UltraFast | WdfTier::Warp) && oversampling == Oversampling::Auto
+            if adaptive_on
+                && matches!(tier, WdfTier::UltraFast | WdfTier::Warp)
+                && oversampling == Oversampling::Auto
             {
                 let mut hi = cfg;
-                hi.os = 2;
+                hi.os = ADAPTIVE_HI_OS;
                 hi.decimate = true;
                 ch.wdf_set_hi(hi, self.sample_rate, rgain, bias);
             } else {
@@ -933,6 +963,10 @@ impl Plugin for Ba283Plugin {
         self.last_tier = tier;
         self.last_precision = precision;
         self.last_oversampling = oversampling;
+        #[cfg(feature = "adaptive-os")]
+        {
+            self.last_adaptive_os = adaptive_on;
+        }
         self.last_age = age;
         self.last_seed = seed;
         self.last_reroll = self.params.age_reroll.value();
@@ -1104,9 +1138,18 @@ impl Plugin for Ba283Plugin {
             let tier = self.params.wdf_tier.value();
             let precision = self.params.precision.value();
             let oversampling = self.params.oversampling.value();
+            // Flipping the `Adaptive OS` toggle re-runs this gate so the `wdf_hi` sibling is added or
+            // dropped at once (no tier change needed).
+            #[cfg(feature = "adaptive-os")]
+            let adaptive_on = self.params.adaptive_os.value();
+            #[cfg(feature = "adaptive-os")]
+            let adaptive_changed = adaptive_on != self.last_adaptive_os;
+            #[cfg(not(feature = "adaptive-os"))]
+            let adaptive_changed = false;
             if tier != self.last_tier
                 || precision != self.last_precision
                 || oversampling != self.last_oversampling
+                || adaptive_changed
             {
                 let cfg = tier
                     .config()
@@ -1114,13 +1157,14 @@ impl Plugin for Ba283Plugin {
                     .with_oversampling(oversampling.to_wdf());
                 for ch in self.channels.iter_mut() {
                     ch.wdf_set_tier(cfg, self.sample_rate, rgain, bias);
-                    // Rebuild (or drop) the adaptive-os hi sibling for the new tier/oversampling.
+                    // Rebuild (or drop) the adaptive-os hi sibling for the new tier/oversampling/toggle.
                     #[cfg(feature = "adaptive-os")]
-                    if matches!(tier, WdfTier::UltraFast | WdfTier::Warp)
+                    if adaptive_on
+                        && matches!(tier, WdfTier::UltraFast | WdfTier::Warp)
                         && oversampling == Oversampling::Auto
                     {
                         let mut hi = cfg;
-                        hi.os = 2;
+                        hi.os = ADAPTIVE_HI_OS;
                         hi.decimate = true;
                         ch.wdf_set_hi(hi, self.sample_rate, rgain, bias);
                     } else {
@@ -1130,6 +1174,10 @@ impl Plugin for Ba283Plugin {
                 self.last_tier = tier;
                 self.last_precision = precision;
                 self.last_oversampling = oversampling;
+                #[cfg(feature = "adaptive-os")]
+                {
+                    self.last_adaptive_os = adaptive_on;
+                }
                 changed = true;
                 // The rebuild reset aging + the bias/rgain legs to pristine — force all to re-apply.
                 self.last_age = f32::NAN;

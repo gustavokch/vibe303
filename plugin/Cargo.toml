@@ -32,7 +32,7 @@ subrate-spike = []
 # Nonlinear Jiles-Atherton transformer-core model (the `trafo` knob). Promoted to a default
 # feature after the GO verdict (PR #38/#41): all standard builds include it and expose the knob.
 # Opt out with `--no-default-features` for a bit-exact linear-transformer A/B build.
-default = ["trafo-core"]
+default = ["trafo-core", "adaptive-os"]
 trafo-core = []
 # Measurement-only hooks (alias-sweep harness). Additive, off by default — never in the shipped
 # plugin. Gates `WdfModel::capture_os_raw` + the `tests/alias_sweep.rs` broadband-alias harness.
@@ -51,11 +51,14 @@ adaa-insolve = []
 # cargo test --features measure,adaa-port --release --test adaa_port -- --nocapture
 adaa-port = []
 # Adaptive level-gated oversampling for the lossy tiers (UltraFast/Warp): a per-channel envelope
-# detector engages a resident os=2 model only on hot transients, holding os=1 when quiet. Off by
-# default — never in the shipped plugin until the Stage-1 gates (alias/cost/artifact) clear; the
-# default build is bit-identical (no `wdf_hi`, no envelope, no state machine). Plan
-# `~/.claude/plans/unaudhd-review-critique-and-flickering-river.md`, findings
-# `docs/plans/2026-06-18-adaptive-os-stage0-findings.md`. Build/test with `--features adaptive-os`.
+# detector engages a resident os=4 model only on hot transients, holding os=1 when quiet. Promoted
+# to a DEFAULT feature after the Stage-1 gates cleared (alias +32 dB / cost 2.38× vs static 4× /
+# no switch click) — all standard builds compile it in, gated at runtime by the `Adaptive OS` toggle
+# (default OFF, so an update never silently changes the sound/CPU of an existing session) and only
+# active on UltraFast/Warp under Oversampling = Auto. Opt out at compile time with
+# `--no-default-features` for a bit-exact non-adaptive A/B build (no `wdf_hi`, no envelope, no state
+# machine). Plan `~/.claude/plans/unaudhd-review-critique-and-flickering-river.md`, findings
+# `docs/plans/2026-06-18-adaptive-os-stage0-findings.md`.
 adaptive-os = []
 # Bench-only re-exports (depletion_charge LUT spike, Phase 0). Exposes the otherwise
 # pub(in crate::wdf) hot fn `depletion_charge_pre_batch` so `bin/bench_deplut` can time it.

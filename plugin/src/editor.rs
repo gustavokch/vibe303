@@ -13,6 +13,8 @@ use nih_plug_egui::egui::{self, Align2, Color32, FontFamily, FontId, RichText, S
 use nih_plug_egui::{create_egui_editor, EguiState};
 
 use crate::{Ba283Params, UiScale};
+#[cfg(feature = "adaptive-os")]
+use crate::{Oversampling, WdfTier};
 
 // ── Palette ─────────────────────────────────────────────────────────────────────────────
 // Warm-tinted neutrals (no pure black/white). amber = value/focus; oxblood = active/pressed.
@@ -402,6 +404,19 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                         ui.label(RichText::new("OVERSAMPLING").font(display_font(12.0)).color(DIM));
                         ui.add_space(6.0);
                         segmented(ui, setter, &p.oversampling);
+                        // Adaptive level-gated oversampling: only meaningful on the lossy tiers
+                        // (UltraFast/Warp) under Oversampling = Auto. Greyed out elsewhere.
+                        #[cfg(feature = "adaptive-os")]
+                        {
+                            let adaptive_scope = matches!(
+                                p.wdf_tier.value(),
+                                WdfTier::UltraFast | WdfTier::Warp
+                            ) && p.oversampling.value() == Oversampling::Auto;
+                            ui.add_space(20.0);
+                            ui.add_enabled_ui(adaptive_scope, |ui| {
+                                toggle_pill(ui, setter, &p.adaptive_os, "ADAPTIVE OS");
+                            });
+                        }
                     });
                 });
             });

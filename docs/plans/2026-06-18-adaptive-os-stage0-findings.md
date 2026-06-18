@@ -153,3 +153,76 @@ Discipline: test is `measure`-gated, no shipped code, no DSP changes. Decision d
 (see session) — options: (a) build Stage 1 at os=1↔2 accepting modest/sparse-only win; (b) firm the
 duty number with real program-material WAVs before deciding; (c) re-target the bump to os=4 (bigger
 prize, harder Stage 2 decimator+latency); (d) NO-GO — document, users pick Fast for sustained-hot.
+
+---
+
+## A0 — zero-latency decimator quality at 4:1 (productionization follow-up, 2026-06-18)
+
+Test `decimator_4to1_gate` (adaptive_os_stage0.rs). Question: can the adaptive arm bump os=1→os=4
+with a ZERO-LATENCY decimator? (The 0-PDC contract forbids a per-transient FIR group delay; only an
+IIR cascade is admissible.) Compared the shipped 4th-order Butterworth biquad (fc=0.45*host) and
+steeper still-IIR 6th/8th-order cascades against the steep-sinc ideal, hot drive, os=4.
+
+```
+    f0      sinc   butter4   butter6   butter8       g4       g6       g8
+ 0.120    -31.08    -31.10    -31.10    -31.10    -0.03    -0.02    -0.02
+ 0.180    -23.88    -23.89    -23.89    -23.89    -0.01    -0.02    -0.02
+ 0.240    -18.60    -18.58    -18.60    -18.60    +0.02    -0.00    +0.00
+ 0.300    -18.87    -18.74    -18.86    -18.88    +0.14    +0.02    -0.00
+ 0.360    -12.55    -11.98    -12.32    -12.46    +0.57    +0.23    +0.09
+WORST gap vs sinc: butter4 = +0.57 dB, butter6 = +0.23 dB, butter8 = +0.09 dB.
+```
+
+**GO (adaptive 1↔4).** The *shipped* butter4 decimator is already within +0.57 dB of the sinc ideal
+at 4:1 (worst, top f0=0.36). Reason: the alias floor at the lossy tiers is dominated by in-band BJT
+transport foldback that is already below the fundamental in the oversampled signal — the decimator
+only has to remove the >Nyquist images, which even the gentle 2-biquad cascade does. A steeper
+cascade buys only +0.34 dB at the very top octave (not worth deviating the os=2 path).
+
+**Consequence:** Part A1 (steeper os=4 decimator) is UNNECESSARY. `WdfModel::new_with` already
+configures `dec1`/`dec2` at `fs = host*os`, so an os=4 model retunes the existing 4th-order
+Butterworth automatically — no `build.rs`/`components.rs`/`process` change. The os=4 path = the
+existing decimator with `cfg.os = 4, cfg.decimate = true`. Part A reduces to A2: build the resident
+`wdf_hi` at os=4 and re-validate G1/G2/G3.
+
+### A2 — os=4 armed state re-validated (adaptive_os_gate.rs, HI_OS=4)
+
+`lib.rs` resident `wdf_hi` built at `ADAPTIVE_HI_OS = 4` (both block-rate gate + initialize). Gates:
+
+```
+G1: os1=20.97  os4(hi)=-11.23  adaptive(arm)=-11.23  → +32.20 dB vs os1 (was +22.66 at os2)
+G2: duty 46%, avg_solves 2.38 vs static os4=4.0 → 41% saving
+G3: arms=6 (1.5/s), finite, ratio 0.86× ref (was 0.26× at os2) — under the 2.0× click bar
+```
+
+**GO.** os=4 delivers +32 dB alias reduction on hot transients at 2.38× avg cost (vs 4.0× static
+os=4). The 1↔4 dt jump raised the G3 seam 2nd-difference (0.26→0.86×) as predicted, but no click and
+no extra prime needed. Decimator unchanged (existing 4th-order Butterworth, A0). Part A complete.
+
+## Part B — UI toggle + default-on (2026-06-18)
+
+- `adaptive-os` promoted to a DEFAULT cargo feature (`default = ["trafo-core", "adaptive-os"]`);
+  `--no-default-features` still yields the bit-exact non-adaptive A/B build.
+- New `adaptive_os` BoolParam (id `"adaptive_os"`, default **on**) + editor `ADAPTIVE OS` toggle pill
+  next to the OVERSAMPLING selector, greyed unless tier ∈ {UltraFast, Warp} and Oversampling = Auto.
+- Block-rate gate now keys on the toggle (tracked via `last_adaptive_os`): flipping it adds/drops the
+  `wdf_hi` sibling at once. Toggle off ⇒ `wdf_clear_hi` ⇒ `wdf_solve_adaptive` returns exactly
+  `wdf.process_host_sample` ⇒ bit-identical to the non-adaptive build.
+- CHANGELOG additive entry (new id, no break to existing ids). Discipline: golden test_wdf 22/22 with
+  default features (adaptive-os on); `cargo check` clean for default + `--no-default-features`.
+
+## Part C — off-thread wdf_hi build: SKIPPED (2026-06-18)
+
+Investigated and **declined** (user decision). The alloc-guard test (`test_wdf_noalloc.rs`) enforces
+alloc-freedom only on the per-sample path + block-rate setters (`set_age`, `set_trafo`); it does NOT
+guard structural rebuilds. The established RT policy in this codebase is that tier/structural rebuilds
+MAY allocate at block-rate on user gestures — `wdf_set_tier` (the os=1 model rebuild) calls
+`WdfModel::new_with` on the audio thread at a tier change and ships accepted. `wdf_set_hi` allocs at
+the SAME gesture moments (tier/OS/toggle change), so it sits in the same accepted category.
+
+Moving only `wdf_hi` off-thread would leave the gesture still allocating via `wdf_set_tier` (near-zero
+real gain) while adding a new RT-safe-drop mechanism (swap-back-through-Mutex so the outgoing box drops
+on the worker, not the audio thread) = new bug surface for no practical benefit. The consistent
+end-state (whole tier rebuild off-thread, both `wdf` + `wdf_hi`) is a larger refactor out of scope.
+Decision: keep `wdf_hi` build on the audio thread, consistent with `wdf_set_tier`. Revisit only if the
+whole-rebuild-off-thread refactor is taken up.
