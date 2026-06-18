@@ -193,6 +193,8 @@ impl WdfModel {
             decimate: cfg.solve_decimate(),
             #[cfg(feature = "adaa-insolve")]
             adaa: false,
+            #[cfg(feature = "adaa-port")]
+            adaa_port: false,
             v_pred_prev: [0.0; NUM_NODES],
             predict_primed: false,
             in_audio_pass: false,

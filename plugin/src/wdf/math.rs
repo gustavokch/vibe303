@@ -102,7 +102,7 @@ pub fn fast_pow_pos(base: f64, ex: f64) -> f64 {
 /// Below `|v − v_p| < EPS` the divided difference is ill-conditioned (0/0); fall back to the eq-29
 /// midpoint limit `exp(vm/Vt)`, `exp(vm/Vt)/(2·Vt)` with `vm=(v+v_p)/2` (the analytic limit of both
 /// expressions). `ef`/`ef_p` are `exp(v/Vt)`/`exp(v_p/Vt)`, passed in from the caller's batched exp.
-#[cfg(feature = "adaa-insolve")]
+#[cfg(any(feature = "adaa-insolve", feature = "adaa-port"))]
 #[inline]
 pub fn adaa1_exp(ef: f64, ef_p: f64, v: f64, v_p: f64, vt: f64) -> (f64, f64) {
     let d = v - v_p;

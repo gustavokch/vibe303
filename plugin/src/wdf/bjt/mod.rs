@@ -255,7 +255,7 @@ pub(in crate::wdf) fn compute_bjt_preexp_batch<const FMA: bool>(
 /// The `vbe ≥ vcrit` linearized arm is the model's own overflow guard (already affine → no aliasing),
 /// so it is left byte-for-byte identical; the caller only routes a junction here when BOTH `vₙ` and
 /// `vₙ₋₁` sit below `vcrit`. Realtime tier only (no FMA generic; plain `a*b+c`).
-#[cfg(feature = "adaa-insolve")]
+#[cfg(any(feature = "adaa-insolve", feature = "adaa-port"))]
 pub(in crate::wdf) fn compute_bjt_preexp_batch_adaa(
     vbe: &[f64; 4],
     vbc: &[f64; 4],

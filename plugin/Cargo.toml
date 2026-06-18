@@ -43,6 +43,13 @@ measure = []
 # shipped plugin; adds the `adaa` runtime toggle + the `compute_bjt_preexp_batch_adaa` path. Measure
 # with: cargo test --features measure,adaa-insolve --release --test adaa_insolve -- --nocapture
 adaa-insolve = []
+# Path-1 dominant-variable in-solve ADAA spike (`docs/plans/2026-06-17-port-adaa-feasibility.md`,
+# Path 1). Antialiases ONLY the dominant forward base-emitter transport arm per BJT (holding the
+# reverse/cross terms instantaneous) — the JAES §6.3 dominant-variable reduction, the lever the
+# per-term `adaa-insolve` form lacked. Off by default; never in the shipped plugin. Adds the
+# `adaa_port` runtime toggle, reusing `adaa1_exp` + `compute_bjt_preexp_batch_adaa`. Measure with:
+# cargo test --features measure,adaa-port --release --test adaa_port -- --nocapture
+adaa-port = []
 # Bench-only re-exports (depletion_charge LUT spike, Phase 0). Exposes the otherwise
 # pub(in crate::wdf) hot fn `depletion_charge_pre_batch` so `bin/bench_deplut` can time it.
 # Additive, off by default — never in the shipped plugin.

@@ -138,3 +138,51 @@ drive, per Stage 1 of the per-term findings), already supported by the tier mach
 
 This continues the NO-GO discipline of the per-term spike and Phase 2/3
 (`2026-06-15-adaa-phase23-findings.md`). No shipped code, no params, no tier wiring.
+
+---
+
+## Path 1 Stage A — BUILT + MEASURED (2026-06-18) = NO-GO (below GO bar)
+
+Built Stage A of the build plan (`~/.claude/plans/unaudhd-review-critique-and-flickering-river.md`):
+the cheap **dominant-variable reduction in the dense path** before any Schur/2D-LUT work — antialiase
+**only** the forward base-emitter transport arm per BJT (Stage-0's dominant aliasing variable), holding
+the reverse (BC) arm and all cross terms instantaneous. New feature `adaa-port` (off by default, never
+shipped), `adaa_port` toggle, one new branch in `newton.rs` reusing `adaa1_exp` +
+`compute_bjt_preexp_batch_adaa` (the sole code delta from the per-term form is the `aa_bc` flag gating
+the reverse arm). Gate `plugin/tests/adaa_port.rs` = byte-for-byte copy of `adaa_insolve.rs`.
+
+**The dominant-variable reduction worked on the pathologies the per-term form failed:**
+
+- **DC operating point now PRESERVED.** `Δ = 5.6e-9` (per-term form *shifted* the operating point —
+  the named root cause of its NO-GO). Not antialiasing the reverse/cross terms stopped the
+  feedback fight, exactly as hypothesised.
+- **Alias floor now improves HOT instead of degrading.** Converged `Δhi` is **positive in 4 of 5
+  hot cells** (+2.1..+7.6 dB) vs the per-term form which made every cell *worse*. Sign inverted.
+- **FR bounded, loop stable.** Max |FR shift| = 0.272 dB to 20 kHz (≤0.5 dB target); all gains finite.
+- **Floor is formulation-limited, not iter-limited.** `port@30 ≈ port@400` in every cell, so the
+  result is the true formulation floor, not a convergence artefact (though hot cells still pin
+  `maxIters` at the 400 cap — the joint residual does not fully converge).
+
+**But it misses the GO bar.** Hot headroom closed = **−17.9 % .. 26.4 %** of os2→os16 (peak 26.4 % at
+f0=0.30, mean ≈ +12 %, one cell still negative). The gate required **≥ ~30 %** (one OS octave). So:
+
+| gate condition | result | |
+|---|---|---|
+| hot closure ≥ ~30 % | −17.9 .. 26.4 % (peak 26.4) | ❌ |
+| DC Δ ≈ 0 | 5.6e-9 | ✅ |
+| iters bounded | `port@30≈port@400` but `maxIters` pins 400 hot | ⚠️ |
+| FR ≤ ~0.5 dB, finite | 0.272 dB, all finite | ✅ |
+
+**Decision: NO-GO; do NOT build Stage B (Schur-port 2D-LUT).** The residual that caps Stage A at
+~26 % is the **joint 3-BJT coupling** — the operating-point cross-talk that survives *because the port
+is shared*, not per-device (the Con flagged in Path 1's table above). Stage B antialiases at the
+**same joint Schur N-block**, so it inherits the same coupling ceiling; a faithful 2D-LUT at that port
+is very unlikely to clear 30 % when the dense dominant-variable form — identical antialiasing math —
+caps here. And even at its 26 % peak the alias reduction is a few dB, below the **+10–15 dB** plain
+os2→os4 already delivers hot. The expected Stage-B prize does not justify the 2D-LUT + Schur-hook build.
+
+This confirms the feasibility verdict empirically: the dominant-variable trick is the right lever (it
+fixed the per-term DC/FR/sign failures) but the multi-coupled-nonlinearity wall caps the recoverable
+headroom below one octave. **Mitigation stays oversampling.** Code is feature-gated, off by default,
+never compiled into the shipped plugin; golden `test_wdf` 22/22, default + `--no-default-features`
+builds clean, no `adaa_port` symbol leak.

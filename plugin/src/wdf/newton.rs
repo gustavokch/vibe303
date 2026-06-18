@@ -156,44 +156,60 @@ impl WdfModel {
             // intrinsic-base node is pinned. Only the `vbe < vcrit` exp regime is antialiased; if a
             // junction (or its prev) sits in the linearized overflow arm, fall back to the
             // instantaneous value+derivative (already affine there → nothing to antialias).
-            #[cfg(feature = "adaa-insolve")]
-            let bout = if self.adaa {
-                let mut ef_eff4 = [0.0_f64; 4];
-                let mut er_eff4 = [0.0_f64; 4];
-                let mut gef4 = [0.0_f64; 4];
-                let mut ger4 = [0.0_f64; 4];
-                for bi in 0..3 {
-                    let t = &self.bjts[bi];
-                    let vt = t.p.vt;
-                    let vcrit = t.p.vcrit;
-                    let vbe_p = self.node_v_prev(t.b) - self.node_v_prev(t.e);
-                    let vbc_p = self.node_v_prev(t.b) - self.node_v_prev(t.c);
-                    if vbe4[bi] < vcrit && vbe_p < vcrit {
-                        let ef_p = (vbe_p / vt).exp();
-                        let (e, g) = adaa1_exp(ef4[bi], ef_p, vbe4[bi], vbe_p, vt);
-                        ef_eff4[bi] = e;
-                        gef4[bi] = g;
-                    } else {
-                        ef_eff4[bi] = ef4[bi];
-                        gef4[bi] = ef4[bi] / vt; // instantaneous: matches is*(ef-1), is*(ef/vt)
+            // ADAA branch selection. `full` = per-term (`adaa-insolve`): antialiase BOTH the forward
+            // (BE) and reverse (BC) transport arms — the NO-GO form. `port` = dominant-variable
+            // (`adaa-port`, Path 1): antialiase ONLY the dominant forward-BE arm, holding the reverse
+            // arm instantaneous (JAES §6.3). The `aa_bc` flag is the sole code difference between them.
+            #[cfg(any(feature = "adaa-insolve", feature = "adaa-port"))]
+            let bout = {
+                #[cfg(feature = "adaa-insolve")]
+                let full = self.adaa;
+                #[cfg(not(feature = "adaa-insolve"))]
+                let full = false;
+                #[cfg(feature = "adaa-port")]
+                let port = self.adaa_port;
+                #[cfg(not(feature = "adaa-port"))]
+                let port = false;
+
+                if full || port {
+                    let aa_bc = full; // dominant-variable form leaves the reverse arm instantaneous
+                    let mut ef_eff4 = [0.0_f64; 4];
+                    let mut er_eff4 = [0.0_f64; 4];
+                    let mut gef4 = [0.0_f64; 4];
+                    let mut ger4 = [0.0_f64; 4];
+                    for bi in 0..3 {
+                        let t = &self.bjts[bi];
+                        let vt = t.p.vt;
+                        let vcrit = t.p.vcrit;
+                        let vbe_p = self.node_v_prev(t.b) - self.node_v_prev(t.e);
+                        let vbc_p = self.node_v_prev(t.b) - self.node_v_prev(t.c);
+                        if vbe4[bi] < vcrit && vbe_p < vcrit {
+                            let ef_p = (vbe_p / vt).exp();
+                            let (e, g) = adaa1_exp(ef4[bi], ef_p, vbe4[bi], vbe_p, vt);
+                            ef_eff4[bi] = e;
+                            gef4[bi] = g;
+                        } else {
+                            ef_eff4[bi] = ef4[bi];
+                            gef4[bi] = ef4[bi] / vt; // instantaneous: matches is*(ef-1), is*(ef/vt)
+                        }
+                        if aa_bc && vbc4[bi] < vcrit && vbc_p < vcrit {
+                            let er_p = (vbc_p / vt).exp();
+                            let (e, g) = adaa1_exp(er4[bi], er_p, vbc4[bi], vbc_p, vt);
+                            er_eff4[bi] = e;
+                            ger4[bi] = g;
+                        } else {
+                            er_eff4[bi] = er4[bi];
+                            ger4[bi] = er4[bi] / vt;
+                        }
                     }
-                    if vbc4[bi] < vcrit && vbc_p < vcrit {
-                        let er_p = (vbc_p / vt).exp();
-                        let (e, g) = adaa1_exp(er4[bi], er_p, vbc4[bi], vbc_p, vt);
-                        er_eff4[bi] = e;
-                        ger4[bi] = g;
-                    } else {
-                        er_eff4[bi] = er4[bi];
-                        ger4[bi] = er4[bi] / vt;
-                    }
+                    compute_bjt_preexp_batch_adaa(&vbe4, &vbc4, b, &ef_eff4, &er_eff4, &gef4, &ger4, &ec4)
+                } else if fma_on {
+                    compute_bjt_preexp_batch::<true>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
+                } else {
+                    compute_bjt_preexp_batch::<false>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
                 }
-                compute_bjt_preexp_batch_adaa(&vbe4, &vbc4, b, &ef_eff4, &er_eff4, &gef4, &ger4, &ec4)
-            } else if fma_on {
-                compute_bjt_preexp_batch::<true>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
-            } else {
-                compute_bjt_preexp_batch::<false>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
             };
-            #[cfg(not(feature = "adaa-insolve"))]
+            #[cfg(not(any(feature = "adaa-insolve", feature = "adaa-port")))]
             let bout = if fma_on {
                 compute_bjt_preexp_batch::<true>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
             } else {
