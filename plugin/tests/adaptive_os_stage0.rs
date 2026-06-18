@@ -224,6 +224,141 @@ fn lossy_tier_alias_prize() {
 }
 
 // ----------------------------------------------------------------------------
+// Test 1b (A0 gate) — decimator quality at 4:1.
+//
+// The adaptive arm can bump os=1 → os=4 ONLY with a ZERO-LATENCY decimator (the
+// 0-PDC contract forbids a per-transient FIR group delay). The shipped decimator
+// is a 4th-order Butterworth biquad cascade (fc = 0.45*host) — IIR, ~0 integer
+// latency — tuned for 2:1. This test asks whether that, or a steeper still-IIR
+// Butterworth, is clean enough at 4:1 (within ~1–2 dB of the steep-sinc ideal).
+//
+//   GO (adaptive 1↔4): a zero-latency IIR lands within ~2 dB of sinc at 4:1.
+//   NO-GO            : nothing zero-latency is clean ⇒ os=4 only via the static
+//                      Fast tier with a FIR halfband + fixed reported latency.
+// ----------------------------------------------------------------------------
+
+/// Mirror of `wdf::components::Biquad` (RBJ lowpass, Direct Form I) — self-contained so the test
+/// does not reach into `pub(in crate::wdf)` internals.
+#[derive(Clone, Copy, Default)]
+struct TBiquad {
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    a1: f64,
+    a2: f64,
+    x1: f64,
+    x2: f64,
+    y1: f64,
+    y2: f64,
+}
+impl TBiquad {
+    fn lowpass(fc: f64, fs: f64, q: f64) -> Self {
+        let w0 = 2.0 * std::f64::consts::PI * fc / fs;
+        let (c, s) = (w0.cos(), w0.sin());
+        let al = s / (2.0 * q);
+        let a0 = 1.0 + al;
+        TBiquad {
+            b0: (1.0 - c) / 2.0 / a0,
+            b1: (1.0 - c) / a0,
+            b2: (1.0 - c) / 2.0 / a0,
+            a1: (-2.0 * c) / a0,
+            a2: (1.0 - al) / a0,
+            ..Default::default()
+        }
+    }
+    #[inline]
+    fn process(&mut self, x: f64) -> f64 {
+        let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1
+            - self.a2 * self.y2;
+        self.x2 = self.x1;
+        self.x1 = x;
+        self.y2 = self.y1;
+        self.y1 = y;
+        y
+    }
+}
+
+// Butterworth section Q tables (even orders). Order 4 row equals the shipped decimator.
+const BUTTER_Q4: [f64; 2] = [0.54119610, 1.30656296];
+const BUTTER_Q6: [f64; 3] = [0.51763809, 0.70710678, 1.93185165];
+const BUTTER_Q8: [f64; 4] = [0.50979558, 0.60134489, 0.89997622, 2.56291545];
+
+/// Filter `raw` (at `os`×host rate) through a Butterworth biquad cascade at `fc = 0.45*host`, then
+/// downsample by `os` (taking the last subsample of each host frame, matching `process_host_sample`).
+fn butter_decimate(raw: &[f32], os: usize, qs: &[f64]) -> Vec<f32> {
+    let fs = HOST * os as f64;
+    let fc = 0.45 * HOST;
+    let mut secs: Vec<TBiquad> = qs.iter().map(|&q| TBiquad::lowpass(fc, fs, q)).collect();
+    let mut out = Vec::with_capacity(raw.len() / os);
+    let mut o = os - 1;
+    // Filter every subsample (IIR state must see them all); emit at the host grid.
+    let mut idx = 0usize;
+    while idx < raw.len() {
+        let mut v = raw[idx] as f64;
+        for s in secs.iter_mut() {
+            v = s.process(v);
+        }
+        if idx == o {
+            out.push(v as f32);
+            o += os;
+        }
+        idx += 1;
+    }
+    out
+}
+
+#[test]
+fn decimator_4to1_gate() {
+    const OS: usize = 4;
+    let op = &OPS[1]; // hot
+    let mut m = build_warm(OS, CapTier::Full);
+
+    eprintln!(
+        "\n=== A0: zero-latency decimator quality at 4:1 (hot drive) ===\n\
+         alias floor dB (lower=cleaner); gap = IIR − sinc (→0 = matches the ideal)\n\
+         {:>6} {:>9} {:>9} {:>9} {:>9} {:>8} {:>8} {:>8}",
+        "f0", "sinc", "butter4", "butter6", "butter8", "g4", "g6", "g8"
+    );
+    let mut worst_g4 = f64::NEG_INFINITY;
+    let mut worst_g6 = f64::NEG_INFINITY;
+    let mut worst_g8 = f64::NEG_INFINITY;
+    for &target in &F0_TARGETS {
+        let p = (target * N as f64).round() as usize;
+        let f0_host = p as f64 / N as f64;
+        let total = DISCARD + N;
+        let input = make_internal_input(f0_host, OS, op, total);
+
+        m.reset();
+        let mut raw = Vec::new();
+        m.capture_internal_direct(&input, &mut raw);
+
+        let floor = |host: &[f32]| alias_db(&host[DISCARD..DISCARD + N], f0_host);
+        let f_sinc = floor(&sinc_decimate(&raw, OS));
+        let f_b4 = floor(&butter_decimate(&raw, OS, &BUTTER_Q4));
+        let f_b6 = floor(&butter_decimate(&raw, OS, &BUTTER_Q6));
+        let f_b8 = floor(&butter_decimate(&raw, OS, &BUTTER_Q8));
+        let (g4, g6, g8) = (f_b4 - f_sinc, f_b6 - f_sinc, f_b8 - f_sinc);
+        worst_g4 = worst_g4.max(g4);
+        worst_g6 = worst_g6.max(g6);
+        worst_g8 = worst_g8.max(g8);
+        eprintln!(
+            "{:>6.3} {:>9.2} {:>9.2} {:>9.2} {:>9.2} {:>+8.2} {:>+8.2} {:>+8.2}",
+            f0_host, f_sinc, f_b4, f_b6, f_b8, g4, g6, g8
+        );
+    }
+    eprintln!(
+        "\nWORST gap vs sinc: butter4 = {:+.2} dB, butter6 = {:+.2} dB, butter8 = {:+.2} dB.",
+        worst_g4, worst_g6, worst_g8
+    );
+    let best = worst_g4.min(worst_g6).min(worst_g8);
+    eprintln!(
+        "GATE: a zero-latency IIR within ~2 dB of sinc ⇒ adaptive 1↔4 GO. Best = {:+.2} dB ⇒ {}.\n",
+        best,
+        if best <= 2.0 { "GO (adaptive os=4 viable)" } else { "NO-GO (fall back to static Fast 2→4 + FIR)" }
+    );
+}
+
+// ----------------------------------------------------------------------------
 // Test 2 — arm duty-cycle simulation: how often would the gate engage hi-os,
 // and what average solves/host-sample does that cost?
 // ----------------------------------------------------------------------------
