@@ -90,6 +90,34 @@ pub fn fast_pow_pos(base: f64, ex: f64) -> f64 {
     fast_exp(ex * fast_log(base))
 }
 
+/// First-order antiderivative-antialiasing (ADAA1, Parker DAFx-16 eq 9/28/29) of the BJT transport
+/// exponential `exp(v/Vt)` over the per-sample step `[v_p, v]` (`v` = current Newton iterate, `v_p` =
+/// previous sample's converged junction voltage, held fixed across the sample). Returns
+/// `(ef_eff, gef)`:
+///   - `ef_eff = Vt·(exp(v/Vt) − exp(v_p/Vt))/(v − v_p)` — the antialiased exponential value (the
+///     mean of `exp(·/Vt)` over the step); the transport current is then `Is·(ef_eff − 1)`.
+///   - `gef = d(ef_eff)/dv = (exp(v/Vt) − ef_eff)/(v − v_p)` — the **exact** Jacobian of that value
+///     (eq 28), so Newton sees the true derivative of the antialiased current, not the instantaneous
+///     `exp/Vt`. This consistency is what keeps the modified-residual solve convergent.
+/// Below `|v − v_p| < EPS` the divided difference is ill-conditioned (0/0); fall back to the eq-29
+/// midpoint limit `exp(vm/Vt)`, `exp(vm/Vt)/(2·Vt)` with `vm=(v+v_p)/2` (the analytic limit of both
+/// expressions). `ef`/`ef_p` are `exp(v/Vt)`/`exp(v_p/Vt)`, passed in from the caller's batched exp.
+#[cfg(any(feature = "adaa-insolve", feature = "adaa-port"))]
+#[inline]
+pub fn adaa1_exp(ef: f64, ef_p: f64, v: f64, v_p: f64, vt: f64) -> (f64, f64) {
+    let d = v - v_p;
+    const EPS: f64 = 1e-6; // volts
+    if d.abs() < EPS {
+        let vm = 0.5 * (v + v_p);
+        let em = (vm / vt).exp();
+        (em, em / (2.0 * vt))
+    } else {
+        let ef_eff = vt * (ef - ef_p) / d;
+        let gef = (ef - ef_eff) / d;
+        (ef_eff, gef)
+    }
+}
+
 /// `EXP` wrapper — std vs fast per `EXACT` (`main.cpp:149`).
 #[inline]
 pub fn exp_(x: f64) -> f64 {

@@ -144,6 +144,20 @@ pub struct WdfModel {
     os: usize, // internal oversampling factor (host_rate * os = solve rate); 2 normally, 1 ultra-fast
     decimate: bool, // apply output decimation biquads (needless at os==1)
 
+    /// In-solve ADAA1 spike toggle (`adaa-insolve` feature, off by default — never shipped). When
+    /// set, the BJT transport exponentials are evaluated through their first-order antiderivative-
+    /// antialiased form inside the Newton solve. Runtime flag so the harness can A/B baseline vs ADAA
+    /// on one warmed model. See `compute_bjt_preexp_batch_adaa` / `adaa1_exp`.
+    #[cfg(feature = "adaa-insolve")]
+    adaa: bool,
+
+    /// Path-1 dominant-variable ADAA toggle (`adaa-port` feature, off by default — never shipped).
+    /// When set, ONLY the dominant forward base-emitter transport arm is antialiased per BJT; the
+    /// reverse (BC) arm and all cross terms stay instantaneous (JAES §6.3 dominant-variable
+    /// reduction). Shares the `adaa1_exp` / `compute_bjt_preexp_batch_adaa` substrate with `adaa`.
+    #[cfg(feature = "adaa-port")]
+    adaa_port: bool,
+
     // Newton predictor: cross-sample voltage extrapolation (audio pass only).
     v_pred_prev: [f64; NUM_NODES], // sol(n-2) for the unknown nodes
     predict_primed: bool,          // false until the first extrapolation seed exists

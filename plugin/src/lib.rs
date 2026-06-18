@@ -36,6 +36,35 @@ const EQ_GAIN_EPS: f32 = 1.0e-3;
 #[cfg(feature = "trafo-core")]
 const WDF_TRAFO_EPS: f32 = 1.0e-5;
 
+/// Flush-to-zero + denormals-are-zero on the calling (audio) thread. The FP control register is
+/// thread-local, so this must run on the audio thread (top of `process`), not in `initialize` —
+/// the host may run those on different threads. Subnormal arithmetic carries a ~100x penalty; the
+/// DC blocker (`r ≈ 0.9995` feedback), EQ biquads, and WDF f64 internals can drift into subnormal
+/// range during silence/decay tails. There is no safe std API for the FP control register, hence
+/// the (small, sound) unsafe blocks; other arches compile to a no-op.
+#[inline]
+fn enable_ftz_daz() {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        // MXCSR: bit 15 = FTZ, bit 6 = DAZ. The `_mm_{get,set}csr` intrinsics are deprecated in
+        // favour of stmxcsr/ldmxcsr inline asm.
+        use std::arch::asm;
+        let mut mxcsr: u32 = 0;
+        asm!("stmxcsr [{}]", in(reg) &mut mxcsr, options(nostack, preserves_flags));
+        mxcsr |= 0x8000 | 0x0040;
+        asm!("ldmxcsr [{}]", in(reg) &mxcsr, options(nostack, preserves_flags, readonly));
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        // FPCR bit 24 = FZ (flushes subnormal f32/f64 in and out; the ARM equivalent of FTZ+DAZ).
+        // No stable intrinsic exists, so read/modify/write via unprivileged (EL0-legal) mrs/msr.
+        use std::arch::asm;
+        let mut fpcr: u64;
+        asm!("mrs {}, fpcr", out(reg) fpcr, options(nomem, nostack));
+        asm!("msr fpcr, {}", in(reg) fpcr | (1 << 24), options(nomem, nostack));
+    }
+}
+
 /// Default aging "unit" seed (a fixed nonzero constant so a fresh instance is deterministic).
 const DEFAULT_AGE_SEED: u64 = 0xBA283_0000_0001;
 
@@ -299,6 +328,61 @@ fn nearest_gain_step(rgain_ohm: f32) -> usize {
         }
     }
     best
+}
+
+/// NN loudness-makeup + level-norm calibration, indexed by `circuit_gain` R_KJ (Ω) in LOG-ohm space.
+/// Each row is `(ln R, makeup, gnn_inv)`, measured once offline by `tests/calib_nn_makeup.rs`:
+///   `makeup = Gv(R) / G_nn(R)` — multiply the NN wet by this so its absolute loudness matches the
+///     WDF backend at the same gain. The embedded WaveNet already tracks gain via FiLM but runs
+///     ~6 dB hot, and its cond axis saturates at 82 Ω (`rgain_to_gain_norm` clamps), so the makeup is
+///     ~0.48 (−6.4 dB) across 10 k–82 Ω and rises toward 47 Ω where the WDF circuit keeps gaining.
+///   `gnn_inv = 1 / G_nn(R)` — the level-norm trim seed: `norm_apply_gain(gnn_inv, drive)` levels the
+///     NN output to ~unity (gain- AND Drive-independent), mirroring the WDF probe's `1/(G_v·drive)`.
+/// Interpolated linearly in ln-ohm (matches the `circuit_gain` skew); flat-held past either end.
+/// NOT a live probe — the NN is a fixed black box, so the curve is a static measurement.
+static NN_GAIN_CALIB: &[(f32, f32, f32)] = &[
+    (3.8501, 0.7334, 0.010927), //   47 Ω (cond clamps at 82 Ω → G_nn flat below)
+    (4.4067, 0.5022, 0.010927), //   82 Ω
+    (4.7005, 0.4967, 0.013361), //  110 Ω
+    (5.3936, 0.4686, 0.020883), //  220 Ω (default)
+    (6.1527, 0.4809, 0.035590), //  470 Ω
+    (6.8090, 0.4822, 0.050945), //  906 Ω
+    (7.0901, 0.4983, 0.059545), // 1200 Ω
+    (9.2103, 0.4769, 0.089445), //  10 kΩ (cond clamps at 0 → G_nn flat above)
+];
+
+/// Linear-interpolate [`NN_GAIN_CALIB`] in ln-ohm, flat-holding past either end. Returns
+/// `(makeup, gnn_inv)`.
+fn nn_calib_lookup(rgain_ohm: f32) -> (f32, f32) {
+    let x = rgain_ohm.max(1.0).ln();
+    let t = NN_GAIN_CALIB;
+    if x <= t[0].0 {
+        return (t[0].1, t[0].2);
+    }
+    let last = t[t.len() - 1];
+    if x >= last.0 {
+        return (last.1, last.2);
+    }
+    for w in t.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if x <= b.0 {
+            let f = (x - a.0) / (b.0 - a.0);
+            return (a.1 + f * (b.1 - a.1), a.2 + f * (b.2 - a.2));
+        }
+    }
+    (last.1, last.2)
+}
+
+/// NN loudness makeup for `circuit_gain` R_KJ (Ω): multiplies the NN wet so its absolute level tracks
+/// the WDF backend (level-norm OFF). See [`NN_GAIN_CALIB`].
+pub fn nn_makeup_gain(rgain_ohm: f32) -> f32 {
+    nn_calib_lookup(rgain_ohm).0.clamp(NORM_TRIM_MIN, NORM_TRIM_MAX)
+}
+
+/// NN level-norm trim seed `1/G_nn(R)` for `circuit_gain` R_KJ (Ω): fed through `norm_apply_gain` with
+/// the current Drive to level the NN output (level-norm ON). See [`NN_GAIN_CALIB`].
+pub fn nn_norm_trim(rgain_ohm: f32) -> f32 {
+    nn_calib_lookup(rgain_ohm).1
 }
 
 /// Lossy precision dial — the device-model fidelity axis, orthogonal to [`WdfTier`] and
@@ -820,6 +904,18 @@ impl Plugin for Ba283Plugin {
         for ch in self.channels.iter_mut() {
             ch.wdf_rebuild_with(cfg, self.sample_rate, rgain, bias);
             ch.wdf_restore(&snap);
+            // Adaptive oversampling (feature `adaptive-os`): on the os=1 lossy tiers under Auto,
+            // build a resident os=2 sibling the envelope detector can engage on hot transients.
+            #[cfg(feature = "adaptive-os")]
+            if matches!(tier, WdfTier::UltraFast | WdfTier::Warp) && oversampling == Oversampling::Auto
+            {
+                let mut hi = cfg;
+                hi.os = 2;
+                hi.decimate = true;
+                ch.wdf_set_hi(hi, self.sample_rate, rgain, bias);
+            } else {
+                ch.wdf_clear_hi();
+            }
             // Re-apply aging after the fresh build (build resets to pristine), then refresh the
             // bias/rgain legs so their aged factor is current.
             ch.wdf_set_age_seed(seed);
@@ -889,6 +985,7 @@ impl Plugin for Ba283Plugin {
         // Full chain via the shared per-channel `ChannelDsp` core: Drive ->
         // model (direct near 48 kHz, else via the 2x HostBridge) -> Output, blended
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
+        enable_ftz_daz();
         let use_bridge = self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ;
         let backend = self.params.backend.value();
         // FiLM gain-conditioning value for the WaveNet (NeuralNet) backend: the circuit-gain knob
@@ -1014,6 +1111,18 @@ impl Plugin for Ba283Plugin {
                     .with_oversampling(oversampling.to_wdf());
                 for ch in self.channels.iter_mut() {
                     ch.wdf_set_tier(cfg, self.sample_rate, rgain, bias);
+                    // Rebuild (or drop) the adaptive-os hi sibling for the new tier/oversampling.
+                    #[cfg(feature = "adaptive-os")]
+                    if matches!(tier, WdfTier::UltraFast | WdfTier::Warp)
+                        && oversampling == Oversampling::Auto
+                    {
+                        let mut hi = cfg;
+                        hi.os = 2;
+                        hi.decimate = true;
+                        ch.wdf_set_hi(hi, self.sample_rate, rgain, bias);
+                    } else {
+                        ch.wdf_clear_hi();
+                    }
                 }
                 self.last_tier = tier;
                 self.last_precision = precision;
@@ -1134,9 +1243,15 @@ impl Plugin for Ba283Plugin {
         // synchronously in `initialize`, so it is already correct on the first block.
         self.norm_trim_target = f32::from_bits(self.probe.trim.load(Ordering::Relaxed));
 
-        // levelNorm: the operating-point-tracking trim (the probed circuit-gain reciprocal), applied
-        // only when the param is on AND the WDF backend is active. The NeuralNet backend is ignored
-        // (its model is broken / not gain-probed), so its norm gain stays unity.
+        // levelNorm + NN loudness makeup. Two backends, two mechanisms, both folded into `target_gain`
+        // (the per-sample ramp below smooths every transition click-free):
+        //   • WDF: the operating-point-tracking trim (probed circuit-gain reciprocal), applied only
+        //     when the param is on; off → unity (faithful circuit gain).
+        //   • NeuralNet: the embedded WaveNet already tracks gain via FiLM but sits ~6 dB hot vs the
+        //     WDF circuit (and its cond axis saturates below 82 Ω), so OFF applies an offline-calibrated
+        //     loudness makeup (`nn_makeup_gain`) to match WDF absolute level; ON levels to unity via
+        //     `1/G_nn` (Drive-cancelled, same shape as the WDF trim). No off-thread probe — the NN is a
+        //     fixed black box, so the curve is a static measurement (tests/calib_nn_makeup.rs).
         //
         // Ramp the APPLIED gain per-sample from this block's start value (`norm_trim`) to the latest
         // target across the block, then carry the end value to the next block — so a moving operating
@@ -1159,10 +1274,24 @@ impl Plugin for Ba283Plugin {
         // Drive per sample, not worth the cost for a level trim.
         let level_norm_on = self.params.level_norm.value();
         let drive_block = db_to_gain(self.params.drive_db.value());
-        let target_gain = if level_norm_on && backend == InferenceBackend::Wdf {
-            norm_apply_gain(self.norm_trim_target, drive_block)
-        } else {
-            1.0
+        let target_gain = match backend {
+            InferenceBackend::Wdf => {
+                if level_norm_on {
+                    norm_apply_gain(self.norm_trim_target, drive_block)
+                } else {
+                    1.0
+                }
+            }
+            InferenceBackend::NeuralNet => {
+                // Use the raw knob value (not the WDF-smoothed `rgain`, which is scoped to the WDF
+                // block and not applied on the NN path); in stepped mode it is already a detent value.
+                let rgain_knob = self.params.circuit_gain.value();
+                if level_norm_on {
+                    norm_apply_gain(nn_norm_trim(rgain_knob), drive_block)
+                } else {
+                    nn_makeup_gain(rgain_knob)
+                }
+            }
         };
         // Forced reprobe (init / reset / first WDF block): snap the applied gain straight to the
         // final, Drive-cancelled target so the output is leveled from the very first sample — Drive
