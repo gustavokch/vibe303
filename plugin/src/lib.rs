@@ -36,6 +36,35 @@ const EQ_GAIN_EPS: f32 = 1.0e-3;
 #[cfg(feature = "trafo-core")]
 const WDF_TRAFO_EPS: f32 = 1.0e-5;
 
+/// Flush-to-zero + denormals-are-zero on the calling (audio) thread. The FP control register is
+/// thread-local, so this must run on the audio thread (top of `process`), not in `initialize` —
+/// the host may run those on different threads. Subnormal arithmetic carries a ~100x penalty; the
+/// DC blocker (`r ≈ 0.9995` feedback), EQ biquads, and WDF f64 internals can drift into subnormal
+/// range during silence/decay tails. There is no safe std API for the FP control register, hence
+/// the (small, sound) unsafe blocks; other arches compile to a no-op.
+#[inline]
+fn enable_ftz_daz() {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        // MXCSR: bit 15 = FTZ, bit 6 = DAZ. The `_mm_{get,set}csr` intrinsics are deprecated in
+        // favour of stmxcsr/ldmxcsr inline asm.
+        use std::arch::asm;
+        let mut mxcsr: u32 = 0;
+        asm!("stmxcsr [{}]", in(reg) &mut mxcsr, options(nostack, preserves_flags));
+        mxcsr |= 0x8000 | 0x0040;
+        asm!("ldmxcsr [{}]", in(reg) &mxcsr, options(nostack, preserves_flags, readonly));
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        // FPCR bit 24 = FZ (flushes subnormal f32/f64 in and out; the ARM equivalent of FTZ+DAZ).
+        // No stable intrinsic exists, so read/modify/write via unprivileged (EL0-legal) mrs/msr.
+        use std::arch::asm;
+        let mut fpcr: u64;
+        asm!("mrs {}, fpcr", out(reg) fpcr, options(nomem, nostack));
+        asm!("msr fpcr, {}", in(reg) fpcr | (1 << 24), options(nomem, nostack));
+    }
+}
+
 /// Default aging "unit" seed (a fixed nonzero constant so a fresh instance is deterministic).
 const DEFAULT_AGE_SEED: u64 = 0xBA283_0000_0001;
 
@@ -875,6 +904,18 @@ impl Plugin for Ba283Plugin {
         for ch in self.channels.iter_mut() {
             ch.wdf_rebuild_with(cfg, self.sample_rate, rgain, bias);
             ch.wdf_restore(&snap);
+            // Adaptive oversampling (feature `adaptive-os`): on the os=1 lossy tiers under Auto,
+            // build a resident os=2 sibling the envelope detector can engage on hot transients.
+            #[cfg(feature = "adaptive-os")]
+            if matches!(tier, WdfTier::UltraFast | WdfTier::Warp) && oversampling == Oversampling::Auto
+            {
+                let mut hi = cfg;
+                hi.os = 2;
+                hi.decimate = true;
+                ch.wdf_set_hi(hi, self.sample_rate, rgain, bias);
+            } else {
+                ch.wdf_clear_hi();
+            }
             // Re-apply aging after the fresh build (build resets to pristine), then refresh the
             // bias/rgain legs so their aged factor is current.
             ch.wdf_set_age_seed(seed);
@@ -944,6 +985,7 @@ impl Plugin for Ba283Plugin {
         // Full chain via the shared per-channel `ChannelDsp` core: Drive ->
         // model (direct near 48 kHz, else via the 2x HostBridge) -> Output, blended
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
+        enable_ftz_daz();
         let use_bridge = self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ;
         let backend = self.params.backend.value();
         // FiLM gain-conditioning value for the WaveNet (NeuralNet) backend: the circuit-gain knob
@@ -1069,6 +1111,18 @@ impl Plugin for Ba283Plugin {
                     .with_oversampling(oversampling.to_wdf());
                 for ch in self.channels.iter_mut() {
                     ch.wdf_set_tier(cfg, self.sample_rate, rgain, bias);
+                    // Rebuild (or drop) the adaptive-os hi sibling for the new tier/oversampling.
+                    #[cfg(feature = "adaptive-os")]
+                    if matches!(tier, WdfTier::UltraFast | WdfTier::Warp)
+                        && oversampling == Oversampling::Auto
+                    {
+                        let mut hi = cfg;
+                        hi.os = 2;
+                        hi.decimate = true;
+                        ch.wdf_set_hi(hi, self.sample_rate, rgain, bias);
+                    } else {
+                        ch.wdf_clear_hi();
+                    }
                 }
                 self.last_tier = tier;
                 self.last_precision = precision;

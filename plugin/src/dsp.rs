@@ -31,6 +31,47 @@ use crate::InferenceBackend;
 /// operating-point step — well below audibility, while still feeling instant for a setting change.
 const WDF_XFADE_S: f32 = 0.060;
 
+/// Adaptive-oversampling detector + crossfade constants (feature `adaptive-os`). The envelope is a
+/// peak follower (instant attack, `OS_REL_S` exponential release) on the driven, pre-model input
+/// volts. It arms a resident os=2 model above `OS_ARM_V`, disarms below `OS_DISARM_V` (−6 dB
+/// hysteresis) but only after `OS_DWELL_S` minimum dwell (bounds the switch rate). The lo↔hi handoff
+/// is a short smoothstep crossfade — much faster than the 60 ms tier fade because the two models
+/// render the same circuit at the same operating point (highly correlated) under a loud transient.
+/// Thresholds are provisional, calibrated in the Stage-1 gates (G1/G2).
+#[cfg(feature = "adaptive-os")]
+const OS_XFADE_S: f32 = 0.008; // 8 ms lo↔hi crossfade
+#[cfg(feature = "adaptive-os")]
+const OS_DWELL_S: f32 = 0.100; // 100 ms minimum dwell at hi-os (anti-thrash)
+#[cfg(feature = "adaptive-os")]
+const OS_REL_S: f32 = 0.050; // 50 ms envelope release (holds hi-os through the transient decay)
+// Calibrated from the os=1 alias-vs-level sweep (`adaptive_os_stage0::calibrate_arm_threshold`):
+// the os=1 alias floor crosses audibility (~−40 dB) at in_v ≈ 0.4–0.5 V and degrades steeply above
+// (−15 dB at 0.5 V, +3 dB at 1.0 V), so arm just below the knee. Below ~0.4 V os=1 is already clean
+// (≤−40 dB) → no need to oversample, full CPU savings on quiet/moderate material.
+#[cfg(feature = "adaptive-os")]
+const OS_ARM_V: f32 = 0.4; // arm hi-os when the input envelope (volts) exceeds this
+#[cfg(feature = "adaptive-os")]
+const OS_DISARM_V: f32 = 0.2; // disarm below this (−6 dB hysteresis vs OS_ARM_V)
+#[cfg(feature = "adaptive-os")]
+const OS_PRIME_S: f32 = 0.006; // 6 ms silent pre-warm of the incoming model before it is faded in
+
+/// Adaptive-os crossfade phase. `Lo`/`Hi` are the steady states (only that model is solved). On a
+/// transition the incoming model is re-seeded from the settled DC snapshot and then SILENTLY PRIMED
+/// (`PrimeHi`/`PrimeLo`): it is solved on the live input for `OS_PRIME_S` while the outgoing model
+/// still drives the output, so its biquads + operating point catch up to the current signal before
+/// it becomes audible. Only then does the smoothstep crossfade (`ToHi`/`ToLo`) run. Without priming,
+/// re-seeding from DC while the signal is mid-swing injects a large settling transient at the seam.
+#[cfg(feature = "adaptive-os")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OsPhase {
+    Lo,
+    PrimeHi,
+    ToHi,
+    Hi,
+    PrimeLo,
+    ToLo,
+}
+
 /// Dry-path delay depth on the bridged path. MUST equal `Ba283Plugin::latency_samples()` when the
 /// host bridge is active (`HOST_BRIDGE_LATENCY`) so the Mix blend stays phase-aligned. When the model
 /// runs directly at the host rate the dry delay is bypassed entirely.
@@ -114,6 +155,47 @@ pub struct ChannelDsp {
     /// `out_gain`, and `mix` are applied. The plugin reads this to feed the stereo-linked levelNorm
     /// RMS estimator (the norm gain is computed across both channels, so it lives one level up).
     last_wet: f32,
+
+    // --- Adaptive oversampling (feature `adaptive-os`) ---
+    /// Resident high-os (os=2) sibling of `wdf`, built block-rate alongside it on the UltraFast/Warp
+    /// tiers under `Oversampling::Auto`. `None` (and the whole machine inert) on every other tier or
+    /// when the user forces an oversampling factor. Solved ONLY while armed/fading — parked (cold)
+    /// otherwise, which is the CPU win. Re-seeded from `wdf_snap` on each arm (dt-continuity fix).
+    #[cfg(feature = "adaptive-os")]
+    wdf_hi: Option<Box<WdfModel>>,
+    /// Peak-follower envelope on the driven pre-model input volts.
+    #[cfg(feature = "adaptive-os")]
+    os_env: f32,
+    /// Per-sample envelope release multiplier (from `OS_REL_S` + host SR).
+    #[cfg(feature = "adaptive-os")]
+    os_rel_coef: f32,
+    /// Current crossfade phase. `Lo` when `wdf_hi` is `None` (inert).
+    #[cfg(feature = "adaptive-os")]
+    os_phase: OsPhase,
+    /// lo↔hi crossfade samples remaining (0 = steady).
+    #[cfg(feature = "adaptive-os")]
+    os_xfade_remain: u32,
+    /// lo↔hi crossfade length in samples (from `OS_XFADE_S` + host SR).
+    #[cfg(feature = "adaptive-os")]
+    os_xfade_len: u32,
+    /// Silent-prime samples remaining for the incoming model (0 = not priming).
+    #[cfg(feature = "adaptive-os")]
+    os_prime_remain: u32,
+    /// Silent-prime length in samples (from `OS_PRIME_S` + host SR).
+    #[cfg(feature = "adaptive-os")]
+    os_prime_len: u32,
+    /// Minimum-dwell samples remaining at hi-os before a disarm is allowed.
+    #[cfg(feature = "adaptive-os")]
+    os_dwell_remain: u32,
+    /// Minimum-dwell length in samples (from `OS_DWELL_S` + host SR).
+    #[cfg(feature = "adaptive-os")]
+    os_dwell_len: u32,
+    /// Count of arm events since the last `os_reset_stats` — Stage-1 G2/G3 instrumentation.
+    #[cfg(feature = "adaptive-os")]
+    os_arm_count: u64,
+    /// Count of host samples spent solving the hi-os model (steady-hi + fades) — G2 duty proxy.
+    #[cfg(feature = "adaptive-os")]
+    os_hi_samples: u64,
 }
 
 impl ChannelDsp {
@@ -138,6 +220,30 @@ impl ChannelDsp {
             dcblock: DcBlock::new(),
             eq: Eq::new(),
             last_wet: 0.0,
+            #[cfg(feature = "adaptive-os")]
+            wdf_hi: None,
+            #[cfg(feature = "adaptive-os")]
+            os_env: 0.0,
+            #[cfg(feature = "adaptive-os")]
+            os_rel_coef: 0.0,
+            #[cfg(feature = "adaptive-os")]
+            os_phase: OsPhase::Lo,
+            #[cfg(feature = "adaptive-os")]
+            os_xfade_remain: 0,
+            #[cfg(feature = "adaptive-os")]
+            os_xfade_len: 0,
+            #[cfg(feature = "adaptive-os")]
+            os_prime_remain: 0,
+            #[cfg(feature = "adaptive-os")]
+            os_prime_len: 0,
+            #[cfg(feature = "adaptive-os")]
+            os_dwell_remain: 0,
+            #[cfg(feature = "adaptive-os")]
+            os_dwell_len: 0,
+            #[cfg(feature = "adaptive-os")]
+            os_arm_count: 0,
+            #[cfg(feature = "adaptive-os")]
+            os_hi_samples: 0,
         }
     }
 
@@ -171,6 +277,16 @@ impl ChannelDsp {
         self.dcblock.reset();
         self.eq.reset();
         self.last_wet = 0.0;
+        // Adaptive-os: drop to the lo-os steady state and clear the envelope (cancels any in-flight
+        // lo↔hi crossfade; the hi model goes unread until the next arm re-seeds it from the snapshot).
+        #[cfg(feature = "adaptive-os")]
+        {
+            self.os_phase = OsPhase::Lo;
+            self.os_xfade_remain = 0;
+            self.os_prime_remain = 0;
+            self.os_dwell_remain = 0;
+            self.os_env = 0.0;
+        }
     }
 
     /// Size the EQ biquad coefficients to the host sample rate (called from `initialize`). The EQ
@@ -267,33 +383,57 @@ impl ChannelDsp {
     /// Live bias change: rebuild G0 cheaply, preserving integrator state (dynamic re-settle).
     pub fn wdf_set_bias(&mut self, bias: f32) {
         self.wdf.set_bias(bias as f64);
+        #[cfg(feature = "adaptive-os")]
+        if let Some(hi) = self.wdf_hi.as_mut() {
+            hi.set_bias(bias as f64);
+        }
     }
 
     /// Live circuit-gain (R_KJ) change: rebuild G0 cheaply, preserving integrator state.
     pub fn wdf_set_rgain(&mut self, rgain: f32) {
         self.wdf.set_rgain(rgain as f64);
+        #[cfg(feature = "adaptive-os")]
+        if let Some(hi) = self.wdf_hi.as_mut() {
+            hi.set_rgain(rgain as f64);
+        }
     }
 
     /// Live aging change: drift all caps + resistors from base, rebuild G0 (preserves state).
     pub fn wdf_set_age(&mut self, age: f32) {
         self.wdf.set_age(age as f64);
+        #[cfg(feature = "adaptive-os")]
+        if let Some(hi) = self.wdf_hi.as_mut() {
+            hi.set_age(age as f64);
+        }
     }
 
     /// Re-roll the aged "unit": regenerate the drift pattern from `seed`, re-apply at current age.
     pub fn wdf_set_age_seed(&mut self, seed: u64) {
         self.wdf.set_age_seed(seed);
+        #[cfg(feature = "adaptive-os")]
+        if let Some(hi) = self.wdf_hi.as_mut() {
+            hi.set_age_seed(seed);
+        }
     }
 
     /// Live transformer ON/OFF (feature `trafo-core`). OFF => bit-exact linear core.
     #[cfg(feature = "trafo-core")]
     pub fn wdf_set_trafo_enabled(&mut self, on: bool) {
         self.wdf.set_trafo_enabled(on);
+        #[cfg(feature = "adaptive-os")]
+        if let Some(hi) = self.wdf_hi.as_mut() {
+            hi.set_trafo_enabled(on);
+        }
     }
 
     /// Live transformer voicing: HYSTERESIS + SATURATION dials (each 0..1; feature `trafo-core`).
     #[cfg(feature = "trafo-core")]
     pub fn wdf_set_trafo_voicing(&mut self, hyst: f32, sat: f32) {
         self.wdf.set_trafo_voicing(hyst as f64, sat as f64);
+        #[cfg(feature = "adaptive-os")]
+        if let Some(hi) = self.wdf_hi.as_mut() {
+            hi.set_trafo_voicing(hyst as f64, sat as f64);
+        }
     }
 
     /// Zero the WDF Newton-iteration counters (offline A/B: call after warmup, before the audio pass).
@@ -304,6 +444,166 @@ impl ChannelDsp {
     /// WDF Newton-iteration stats since the last reset: `(samples, avg_iters, max_iters)`.
     pub fn wdf_iter_stats(&self) -> (u64, f64, usize) {
         self.wdf.iter_stats()
+    }
+
+    /// Install/refresh the resident hi-os model for adaptive oversampling (feature `adaptive-os`).
+    /// Built at `cfg_hi` (the tier's config with os=2 + decimation), re-seeded from the carried
+    /// settled snapshot so it matches the lo model's operating point. Block-rate only (allocates,
+    /// like `wdf_set_tier`). Resets the detector to the lo-os steady state and sizes the envelope /
+    /// crossfade / dwell timers from the host SR.
+    #[cfg(feature = "adaptive-os")]
+    pub fn wdf_set_hi(&mut self, cfg_hi: QualityConfig, host_sr: f32, rgain: f32, bias: f32) {
+        let mut m = WdfModel::new_with(cfg_hi, host_sr as f64, rgain as f64, bias as f64);
+        if let Some(snap) = self.wdf_snap {
+            m.restore(&snap);
+            m.save_snapshot();
+        }
+        match self.wdf_hi.as_mut() {
+            Some(b) => **b = m, // reuse the box (no extra audio-thread Box alloc)
+            None => self.wdf_hi = Some(Box::new(m)),
+        }
+        self.os_phase = OsPhase::Lo;
+        self.os_xfade_remain = 0;
+        self.os_prime_remain = 0;
+        self.os_dwell_remain = 0;
+        self.os_env = 0.0;
+        self.os_xfade_len = (host_sr * OS_XFADE_S).max(1.0) as u32;
+        self.os_prime_len = (host_sr * OS_PRIME_S).max(1.0) as u32;
+        self.os_dwell_len = (host_sr * OS_DWELL_S).max(1.0) as u32;
+        self.os_rel_coef = (-1.0 / (OS_REL_S * host_sr)).exp();
+    }
+
+    /// Drop the resident hi-os model (tier is not adaptive-eligible, or the user forced an
+    /// oversampling factor). The machine goes inert: `process_sample` runs `wdf` exactly as the
+    /// default build does.
+    #[cfg(feature = "adaptive-os")]
+    pub fn wdf_clear_hi(&mut self) {
+        self.wdf_hi = None;
+        self.os_phase = OsPhase::Lo;
+        self.os_xfade_remain = 0;
+        self.os_prime_remain = 0;
+        self.os_dwell_remain = 0;
+    }
+
+    /// Zero the adaptive-os arm/duty counters (Stage-1 G2/G3 instrumentation).
+    #[cfg(feature = "adaptive-os")]
+    pub fn os_reset_stats(&mut self) {
+        self.os_arm_count = 0;
+        self.os_hi_samples = 0;
+    }
+
+    /// `(arm_count, hi_samples)` since the last `os_reset_stats`: how often the gate engaged and how
+    /// many host samples ran the hi-os model (the average-cost / duty proxy for G2).
+    #[cfg(feature = "adaptive-os")]
+    pub fn os_stats(&self) -> (u64, u64) {
+        (self.os_arm_count, self.os_hi_samples)
+    }
+
+    /// Run one host sample through the adaptive-os state machine, returning the model output in VOLTS
+    /// (pre `/INPUT_FS_VOLTS`). The envelope must already be updated for this sample. Solves only the
+    /// model(s) the current phase needs — the parked sibling stays cold (the CPU win). When `wdf_hi`
+    /// is `None` this is exactly `self.wdf.process_host_sample(in_v)`.
+    #[cfg(feature = "adaptive-os")]
+    #[inline]
+    fn wdf_solve_adaptive(&mut self, in_v: f32) -> f32 {
+        if self.wdf_hi.is_none() {
+            return self.wdf.process_host_sample(in_v);
+        }
+        // Phase transitions. On arm/disarm the incoming model is re-seeded from the settled DC
+        // snapshot and enters a silent PRIME phase (solved on the live input, output still from the
+        // outgoing model) so it catches up to the current signal before being faded in — without
+        // this, re-seeding from DC mid-swing injects a large settling transient at the seam.
+        match self.os_phase {
+            OsPhase::Lo => {
+                if self.os_env >= OS_ARM_V {
+                    if let Some(snap) = self.wdf_snap {
+                        self.wdf_hi.as_mut().unwrap().restore(&snap);
+                    }
+                    self.os_phase = OsPhase::PrimeHi;
+                    self.os_prime_remain = self.os_prime_len;
+                    self.os_dwell_remain = self.os_dwell_len;
+                    self.os_arm_count += 1;
+                }
+            }
+            OsPhase::Hi => {
+                if self.os_dwell_remain > 0 {
+                    self.os_dwell_remain -= 1;
+                }
+                if self.os_dwell_remain == 0 && self.os_env < OS_DISARM_V {
+                    // Re-seed the lo model (parked while at hi-os, so its state is stale).
+                    if let Some(snap) = self.wdf_snap {
+                        self.wdf.restore(&snap);
+                    }
+                    self.os_phase = OsPhase::PrimeLo;
+                    self.os_prime_remain = self.os_prime_len;
+                }
+            }
+            // Mid prime/crossfade (`PrimeHi`/`ToHi`/`PrimeLo`/`ToLo`): no new transition. In
+            // particular a `ToLo`/`PrimeLo` disarm fade is NOT interruptible — a hot transient landing
+            // inside the ~14 ms disarm seam is rendered on lo-os until the fade reaches `Lo`, then the
+            // next sample re-arms from there. Deliberate: it keeps the seam a single monotonic fade
+            // (no fade reversal / partial-crossfade clicks) and bounds the switch rate. The cost is a
+            // few ms of lo-os on a transient that arrives during a disarm — acceptable vs the artifact
+            // risk of cancelling an in-flight crossfade.
+            _ => {}
+        }
+        // Output for this phase. `os_hi_samples` counts every sample the hi model is solved (prime +
+        // fade + steady) — the G2 cost proxy.
+        match self.os_phase {
+            OsPhase::Lo => self.wdf.process_host_sample(in_v),
+            OsPhase::Hi => {
+                self.os_hi_samples += 1;
+                self.wdf_hi.as_mut().unwrap().process_host_sample(in_v)
+            }
+            OsPhase::PrimeHi => {
+                // Settle hi silently; output stays on lo. Both solve, but hi is not yet audible.
+                self.os_hi_samples += 1;
+                let y_lo = self.wdf.process_host_sample(in_v);
+                self.wdf_hi.as_mut().unwrap().process_host_sample(in_v);
+                self.os_prime_remain -= 1;
+                if self.os_prime_remain == 0 {
+                    self.os_phase = OsPhase::ToHi;
+                    self.os_xfade_remain = self.os_xfade_len;
+                }
+                y_lo
+            }
+            OsPhase::ToHi => {
+                self.os_hi_samples += 1;
+                let y_lo = self.wdf.process_host_sample(in_v);
+                let y_hi = self.wdf_hi.as_mut().unwrap().process_host_sample(in_v);
+                self.os_xfade_remain -= 1;
+                let t = 1.0 - self.os_xfade_remain as f32 / self.os_xfade_len.max(1) as f32; // 0→1
+                let s = t * t * (3.0 - 2.0 * t);
+                if self.os_xfade_remain == 0 {
+                    self.os_phase = OsPhase::Hi;
+                }
+                y_lo * (1.0 - s) + y_hi * s
+            }
+            OsPhase::PrimeLo => {
+                // Settle lo silently; output stays on hi.
+                self.os_hi_samples += 1;
+                let y_hi = self.wdf_hi.as_mut().unwrap().process_host_sample(in_v);
+                self.wdf.process_host_sample(in_v);
+                self.os_prime_remain -= 1;
+                if self.os_prime_remain == 0 {
+                    self.os_phase = OsPhase::ToLo;
+                    self.os_xfade_remain = self.os_xfade_len;
+                }
+                y_hi
+            }
+            OsPhase::ToLo => {
+                self.os_hi_samples += 1;
+                let y_hi = self.wdf_hi.as_mut().unwrap().process_host_sample(in_v);
+                let y_lo = self.wdf.process_host_sample(in_v);
+                self.os_xfade_remain -= 1;
+                let t = 1.0 - self.os_xfade_remain as f32 / self.os_xfade_len.max(1) as f32; // 0→1
+                let s = t * t * (3.0 - 2.0 * t);
+                if self.os_xfade_remain == 0 {
+                    self.os_phase = OsPhase::Lo;
+                }
+                y_hi * (1.0 - s) + y_lo * s
+            }
+        }
     }
 
     /// Run one sample through the selected backend. `drive`/`out_gain`/`norm_gain` are linear gains,
@@ -360,6 +660,13 @@ impl ChannelDsp {
                 // The circuit is fed/observed in volts: dBFS->volts in (`* INPUT_FS_VOLTS`),
                 // volts->dBFS out (`/ INPUT_FS_VOLTS`), matching the SPICE 0.5 V stimulus.
                 let in_v = driven * INPUT_FS_VOLTS;
+                // Adaptive-os envelope: peak follower (instant attack, exp release) on the driven
+                // input volts, updated every sample so it is current when a tier crossfade ends.
+                #[cfg(feature = "adaptive-os")]
+                {
+                    let a = in_v.abs();
+                    self.os_env = if a > self.os_env { a } else { self.os_env * self.os_rel_coef };
+                }
                 let wet = if self.xfade_remain > 0 {
                     // Tier/precision switch in progress: equal-gain smoothstep crossfade the
                     // pre-switch model out against the new model so the rebuild/biquad-reset step is
@@ -379,7 +686,16 @@ impl ChannelDsp {
                     let (g_old, g_new) = (1.0 - s, s);
                     (y_old * g_old + y_new * g_new) / INPUT_FS_VOLTS
                 } else {
-                    self.wdf.process_host_sample(in_v) / INPUT_FS_VOLTS
+                    // Adaptive-os state machine (inert / bit-identical to the line below when the
+                    // feature is off or `wdf_hi` is None).
+                    #[cfg(feature = "adaptive-os")]
+                    {
+                        self.wdf_solve_adaptive(in_v) / INPUT_FS_VOLTS
+                    }
+                    #[cfg(not(feature = "adaptive-os"))]
+                    {
+                        self.wdf.process_host_sample(in_v) / INPUT_FS_VOLTS
+                    }
                 };
                 // DC blocker on the WET path only (before mix): kills operating-point DC offsets
                 // from G0 re-stamps without touching the clean dry path — a fully-dry (mix=0) bypass
