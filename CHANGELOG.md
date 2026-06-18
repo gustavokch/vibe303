@@ -47,15 +47,18 @@ BA283 mic-preamp output stage.
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
 ### Changed
-- **Neural Net backend loudness now matches the WDF backend.** The embedded
-  WaveNet tracks Circuit Gain via FiLM but ran ~6 dB hot and its conditioning
-  axis saturates at 82 Ω, so swapping backends changed the output level. A static,
-  Circuit-Gain-indexed makeup curve (`nn_makeup_gain`) is now applied to the
-  Neural Net wet so the two backends sit at equal absolute loudness, and the Neural
-  Net Level-Norm trim is seeded from `1/G_nn` (`nn_norm_trim`) so Level-Norm levels
-  it to unity. The curve is regenerated and validated against the embedded model by
-  `tests/calib_nn_makeup.rs` (no live probe — the model is a fixed black box). The
-  WDF backend is unaffected.
+- **Circuit Gain and Level Norm now function on the Neural Net backend.** The
+  Circuit Gain knob is no longer greyed out under the Neural Net backend — it drives
+  the WaveNet's FiLM gain-conditioning, so it audibly changes level and saturation
+  character. **Level Norm** now also works on the NN backend, folding loudness
+  control into a single switch: OFF leaves the NN at its natural FiLM-conditioned
+  level (default — bit-identical to before this change); ON levels the output to
+  ~constant across gain and Drive via an offline-calibrated `1/G_nn` trim
+  (`nn_norm_trim`, from `NN_GAIN_CALIB`; analytic, no off-thread probe — the WDF
+  probe path is unchanged). The calibration table is regenerated and validated
+  against the embedded model by `tests/calib_nn_makeup.rs` (no live probe — the
+  model is a fixed black box). Level Norm defaults OFF, so existing Neural Net
+  sessions are unaffected, and the WDF backend is unaffected throughout.
 
 ### Internal (off by default, not shipped in the default build)
 - `adaptive-os` feature: adaptive level-gated oversampling for the lossy
