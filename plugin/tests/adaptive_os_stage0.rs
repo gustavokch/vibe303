@@ -356,6 +356,13 @@ fn decimator_4to1_gate() {
         best,
         if best <= 2.0 { "GO (adaptive os=4 viable)" } else { "NO-GO (fall back to static Fast 2→4 + FIR)" }
     );
+    // Soft gate (this file is `#![cfg(feature = "measure")]`, so it only runs under that flag): make
+    // the GO/NO-GO line enforceable so a future decimator regression at 4:1 actually fails CI rather
+    // than just printing NO-GO. butter4 (the shipped decimator) was +0.57 dB worst at GO time.
+    assert!(
+        best <= 2.0,
+        "no zero-latency IIR decimator lands within 2 dB of sinc at 4:1 (best {best:+.2} dB) — adaptive os=4 NO-GO"
+    );
 }
 
 // ----------------------------------------------------------------------------

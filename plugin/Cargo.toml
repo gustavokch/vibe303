@@ -53,8 +53,9 @@ adaa-port = []
 # Adaptive level-gated oversampling for the lossy tiers (UltraFast/Warp): a per-channel envelope
 # detector engages a resident os=4 model only on hot transients, holding os=1 when quiet. Promoted
 # to a DEFAULT feature after the Stage-1 gates cleared (alias +32 dB / cost 2.38× vs static 4× /
-# no switch click) — all standard builds ship it, gated at runtime by the `Adaptive OS` toggle
-# (default on) and only active on UltraFast/Warp under Oversampling = Auto. Opt out with
+# no switch click) — all standard builds compile it in, gated at runtime by the `Adaptive OS` toggle
+# (default OFF, so an update never silently changes the sound/CPU of an existing session) and only
+# active on UltraFast/Warp under Oversampling = Auto. Opt out at compile time with
 # `--no-default-features` for a bit-exact non-adaptive A/B build (no `wdf_hi`, no envelope, no state
 # machine). Plan `~/.claude/plans/unaudhd-review-critique-and-flickering-river.md`, findings
 # `docs/plans/2026-06-18-adaptive-os-stage0-findings.md`.

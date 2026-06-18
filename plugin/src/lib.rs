@@ -580,9 +580,10 @@ pub struct Ba283Params {
     pub oversampling: EnumParam<Oversampling>,
     /// Adaptive level-gated oversampling (feature `adaptive-os`): on the os=1 lossy tiers
     /// (UltraFast/Warp) under Oversampling = Auto, engage a resident os=4 model only on hot
-    /// transients (os=1 when quiet) — near-os=4 alias quality at near-os=1 average cost. On by
-    /// default. Inert (collapses to plain os=1) when off, or when the tier is not lossy, or when
-    /// Oversampling ≠ Auto. WDF-only.
+    /// transients (os=1 when quiet) — near-os=4 alias quality at near-os=1 average cost. Off by
+    /// default (opt in via the toggle, so an update never silently changes the sound/CPU of an
+    /// existing session). Inert (collapses to plain os=1) when off, or when the tier is not lossy,
+    /// or when Oversampling ≠ Auto. WDF-only.
     #[cfg(feature = "adaptive-os")]
     #[id = "adaptive_os"]
     pub adaptive_os: BoolParam,
@@ -676,7 +677,7 @@ impl Default for Ba283Params {
             precision: EnumParam::new("Precision", Precision::High),
             oversampling: EnumParam::new("Oversampling", Oversampling::Auto),
             #[cfg(feature = "adaptive-os")]
-            adaptive_os: BoolParam::new("Adaptive OS", true),
+            adaptive_os: BoolParam::new("Adaptive OS", false),
             drive_db: FloatParam::new(
                 "Drive",
                 0.0,
@@ -772,7 +773,7 @@ impl Default for Ba283Plugin {
             last_precision: Precision::High,
             last_oversampling: Oversampling::Auto,
             #[cfg(feature = "adaptive-os")]
-            last_adaptive_os: true,
+            last_adaptive_os: false,
             norm_trim: 1.0,
             norm_trim_target: 1.0,
             norm_reprobe: true,
@@ -959,6 +960,10 @@ impl Plugin for Ba283Plugin {
         self.last_tier = tier;
         self.last_precision = precision;
         self.last_oversampling = oversampling;
+        #[cfg(feature = "adaptive-os")]
+        {
+            self.last_adaptive_os = adaptive_on;
+        }
         self.last_age = age;
         self.last_seed = seed;
         self.last_reroll = self.params.age_reroll.value();

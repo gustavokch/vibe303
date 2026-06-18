@@ -26,15 +26,17 @@ BA283 mic-preamp output stage.
     models and coupled inductors. Four quality tiers — `Realtime` (bit-exact
     reference), `Fast` (~5×), `UltraFast` (~9×), `Warp` (~12×) — plus orthogonal
     **Precision** (High/Medium/Low) and **Oversampling** (Auto/1×/2×) dials.
-- **Adaptive oversampling** (`adaptive-os` feature, on by default) via a new
-  **Adaptive OS** toggle (`adaptive_os`, default on): on the os=1 lossy tiers
-  (`UltraFast`/`Warp`) under **Oversampling = Auto**, a per-channel envelope
+- **Adaptive oversampling** (`adaptive-os` feature, compiled in by default) via a
+  new **Adaptive OS** toggle (`adaptive_os`, default **off**): on the os=1 lossy
+  tiers (`UltraFast`/`Warp`) under **Oversampling = Auto**, a per-channel envelope
   detector engages a resident os=4 model only on hot transients and runs os=1
   when quiet — near-os=4 alias quality (measured +32 dB cleaner than os=1 on a
   hot tone) at near-os=1 average cost (~2.4× solves vs 4× for static os=4 on
-  sparse material), at zero added latency. The toggle is greyed out unless the
-  tier is lossy and Oversampling is Auto. Off (or any other tier/OS setting) is
-  the plain os=1 path, bit-identical to the non-adaptive build. Opt the whole
+  sparse material), at zero added latency. Off by default so updating never
+  silently changes the sound or CPU of an existing session — opt in via the
+  toggle. The toggle is greyed out unless the tier is lossy and Oversampling is
+  Auto. Off (or any other tier/OS setting) is the plain os=1 path, bit-identical
+  to the non-adaptive build. Opt the whole
   mechanism out at compile time with `--no-default-features`.
 - **Transformer-core nonlinearity** (`trafo-core` feature, on by default): a
   Jiles-Atherton output-transformer model exposed via three controls — a

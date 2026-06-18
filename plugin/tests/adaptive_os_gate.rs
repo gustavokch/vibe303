@@ -184,6 +184,10 @@ fn g2_average_cost() {
     let (arm, hidur) = ad.os_stats();
     let duty = hidur as f64 / total as f64;
     // Armed sample costs HI_OS Newton solves, quiet sample costs 1: avg = (1-duty)*1 + duty*HI_OS.
+    // CAVEAT: this is a LOWER BOUND. `hidur` (and thus `duty`) counts every sample the hi model is
+    // solved, including the PrimeHi/ToHi/PrimeLo/ToLo transitions where BOTH models run (1+HI_OS
+    // solves, not HI_OS) — see `wdf_solve_adaptive` in dsp.rs. The true average is slightly higher
+    // during transitions; the assert margin below (≥20 % under static) absorbs it on sparse material.
     let avg_solves = 1.0 + duty * (HI_OS as f64 - 1.0);
     let static_hi = HI_OS as f64; // the baseline an os=4 delivery is measured against
     let saving = 1.0 - avg_solves / static_hi;
@@ -205,17 +209,22 @@ fn g2_average_cost() {
 #[test]
 fn g3_no_thrash_no_artifact() {
     let total = (4.0 * SR) as usize;
-    let drive = 12.0;
-    // 14 kHz carrier amplitude-modulated by a 6 Hz tremolo that sweeps in_v through the arm/disarm
-    // band (peak in_v ranges ~0.3..2.0 V around OS_ARM_V=1.0 / OS_DISARM_V=0.5).
-    // Low carrier (1 kHz): the os=2 hi model has decimation group delay while os=1 lo has none, so a
+    // HARDENED stimulus (vs the original smooth 1.5 Hz raised-cosine tremolo): a HARD-GATED burst
+    // train with abrupt on/off edges, a faster 2.5 Hz cycle, a hotter drive, and alternating burst
+    // levels. The abrupt edge arms the gate *at a discontinuity* — the worst case for a seam click —
+    // and the larger 1↔4 os jump (vs the old 1↔2) makes the two models more dissimilar, so this is
+    // the stiffer test the os=4 productionization warrants.
+    let drive = 18.0;
+    // Low carrier (1 kHz): the hi model has decimation group delay while os=1 lo has none, so a
     // near-Nyquist carrier phase-decorrelates the two references and the envelope test is meaningless.
     // At 1 kHz they stay phase-aligned; a genuine switch click is broadband and still escapes the band.
     let carrier = 1_000.0 / SR as f64;
-    // Quiet lead-in (300 ms, in_v ≈ 0.3 V < disarm) so the startup resume-fade completes and the
-    // detector stays at Lo before the tremolo begins — arming then happens in steady state, as in
-    // real playback (not tangled with the reset ramp).
+    // Quiet lead-in (300 ms) so the startup resume-fade completes and the detector stays at Lo before
+    // the bursts begin — arming then happens in steady state, as in real playback.
     let lead = (0.30 * SR) as usize;
+    // 2.5 Hz cycle = 200 ms hot / 200 ms silent. The 200 ms gap (> 100 ms dwell + the release decay)
+    // guarantees a disarm each cycle, so every cycle stresses BOTH seam directions (ToHi + ToLo).
+    let burst_hz = 2.5_f32;
     let input: Vec<f32> = (0..total)
         .map(|i| {
             let s = (std::f64::consts::TAU * carrier * i as f64).sin() as f32;
@@ -223,10 +232,15 @@ fn g3_no_thrash_no_artifact() {
                 0.05 * s
             } else {
                 let t = (i - lead) as f32 / SR;
-                // 1.5 Hz so the gaps (333 ms vs 50 ms release) let the envelope decay below disarm —
-                // forces repeated arm AND disarm, exercising both seam directions (ToHi + ToLo).
-                let trem = 0.5 + 0.5 * (std::f32::consts::TAU * 1.5 * t).sin();
-                0.55 * trem * s
+                let cycles = burst_hz * t;
+                let hot = cycles.fract() < 0.5; // hard square gate (abrupt edges)
+                // Alternate hot-burst level so successive arms hit different operating points.
+                let amp = if hot {
+                    if (cycles as u32) % 2 == 0 { 0.75 } else { 0.95 }
+                } else {
+                    0.0 // silent gap → reliable disarm, and the loudest possible seam on re-arm
+                };
+                amp * s
             }
         })
         .collect();
@@ -259,14 +273,14 @@ fn g3_no_thrash_no_artifact() {
     let d2_ref = max_d2(&y_lo).max(max_d2(&y_hi));
     let ratio = d2_ad / d2_ref.max(1e-9);
 
-    eprintln!("\n=== G3: tremolo across thresholds (4 s, 1.5 Hz, 0.3 s lead-in) ===");
+    eprintln!("\n=== G3: hard-gated bursts across thresholds (4 s, 2.5 Hz square, drive 18, 0.3 s lead-in) ===");
     eprintln!(
         "  arms={} ({:.1}/s), finite={}, peak={:.2}, max|Δ²| adaptive={:.4} vs ref={:.4} (ratio {:.2}×)",
         arm, arms_per_s, all_finite, peak, d2_ad, d2_ref, ratio
     );
     assert!(all_finite, "non-finite output — loop unstable");
     assert!(arm >= 3, "tremolo did not exercise repeated arm/disarm cycles (arms={arm})");
-    // 1.5 Hz tremolo → ~1.5 arm/s; hysteresis + 100 ms dwell must keep it bounded (no chatter).
+    // 2.5 Hz burst train → ~2.5 arm/s; hysteresis + 100 ms dwell must keep it bounded (no chatter).
     assert!(arms_per_s <= 10.0, "switch rate {arms_per_s:.1}/s too high — detector chattering");
     // Switching must not add a discontinuity beyond what the models themselves produce. A real click
     // would be many× the steady 2nd-difference; allow 2× for the crossfade's two-model phase blend.
