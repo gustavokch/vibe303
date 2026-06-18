@@ -348,23 +348,33 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                         // bounded inside the core row's `ui.columns`, but in this free
                         // `ui.horizontal` the first knob would eat all the width and shove the
                         // rest off the right edge. `knob_cell` pins each to its own cell width.
-                        if p.gain_stepped.value() {
-                            // Map each hardware position to a knob detent (normalized pos + label).
-                            let detents: Vec<(f32, &'static str)> = crate::GAIN_STEPS
-                                .iter()
-                                .map(|s| (p.circuit_gain.preview_normalized(s.knob_ohm), s.label))
-                                .collect();
-                            knob_cell_stepped(
-                                ui,
-                                setter,
-                                &p.circuit_gain,
-                                "CIRCUIT GAIN",
-                                64.0,
-                                &detents,
-                            );
-                        } else {
-                            knob_cell(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
-                        }
+                        //
+                        // CIRCUIT GAIN is backend-AGNOSTIC: it sets the WDF R_KJ leg AND conditions
+                        // the NeuralNet (FiLM gain-norm + the loudness makeup). So keep it live and
+                        // full-opacity even when the rest of this WDF-only panel is greyed for NN —
+                        // a nested scope overrides the frame's `wdf_on` disable + opacity fade.
+                        ui.scope(|ui| {
+                            ui.set_opacity(1.0);
+                            ui.add_enabled_ui(true, |ui| {
+                                if p.gain_stepped.value() {
+                                    // Map each hardware position to a knob detent (norm pos + label).
+                                    let detents: Vec<(f32, &'static str)> = crate::GAIN_STEPS
+                                        .iter()
+                                        .map(|s| (p.circuit_gain.preview_normalized(s.knob_ohm), s.label))
+                                        .collect();
+                                    knob_cell_stepped(
+                                        ui,
+                                        setter,
+                                        &p.circuit_gain,
+                                        "CIRCUIT GAIN",
+                                        64.0,
+                                        &detents,
+                                    );
+                                } else {
+                                    knob_cell(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
+                                }
+                            });
+                        });
                         ui.add_space(8.0);
                         knob_cell(ui, setter, &p.age, "AGE", 64.0);
                         ui.add_space(10.0);

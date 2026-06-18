@@ -46,6 +46,20 @@ BA283 mic-preamp output stage.
   EQ (+ HPF / Low / Mid frequency selectors and Low / Mid / High gains).
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
+### Changed
+- **Circuit Gain and Level Norm now function on the Neural Net backend**, matching
+  the WDF backend's behaviour. The embedded WaveNet already conditions on Circuit
+  Gain (FiLM) but rendered ~6 dB hot versus the WDF circuit and saturated its
+  conditioning axis below 82 Ω; an offline-calibrated loudness makeup
+  (`NN_GAIN_CALIB`, derived by `tests/calib_nn_makeup.rs`) now aligns the NN's
+  absolute level with the WDF circuit at every gain, so A/B-ing backends is
+  loudness-matched and the gain knob audibly changes level (not just tone). With
+  **Level Norm** on, the NN output is leveled to ~constant across gain and Drive
+  (analytic `1/G_nn` trim — no off-thread probe; the WDF probe path is unchanged).
+  The Circuit Gain knob is no longer greyed out under the Neural Net backend.
+  - *Behaviour note:* existing Neural Net sessions get **~6 dB quieter** at the
+    default gain now that the NN is calibrated to the WDF circuit's absolute level.
+
 ### Performance
 - **Depletion-charge LUT** on the lossy WDF tiers: the per-junction `pow` in the
   BJT depletion-charge kernel is replaced by a precomputed 1-D table + linear

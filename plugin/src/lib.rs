@@ -301,6 +301,61 @@ fn nearest_gain_step(rgain_ohm: f32) -> usize {
     best
 }
 
+/// NN loudness-makeup + level-norm calibration, indexed by `circuit_gain` R_KJ (Ω) in LOG-ohm space.
+/// Each row is `(ln R, makeup, gnn_inv)`, measured once offline by `tests/calib_nn_makeup.rs`:
+///   `makeup = Gv(R) / G_nn(R)` — multiply the NN wet by this so its absolute loudness matches the
+///     WDF backend at the same gain. The embedded WaveNet already tracks gain via FiLM but runs
+///     ~6 dB hot, and its cond axis saturates at 82 Ω (`rgain_to_gain_norm` clamps), so the makeup is
+///     ~0.48 (−6.4 dB) across 10 k–82 Ω and rises toward 47 Ω where the WDF circuit keeps gaining.
+///   `gnn_inv = 1 / G_nn(R)` — the level-norm trim seed: `norm_apply_gain(gnn_inv, drive)` levels the
+///     NN output to ~unity (gain- AND Drive-independent), mirroring the WDF probe's `1/(G_v·drive)`.
+/// Interpolated linearly in ln-ohm (matches the `circuit_gain` skew); flat-held past either end.
+/// NOT a live probe — the NN is a fixed black box, so the curve is a static measurement.
+static NN_GAIN_CALIB: &[(f32, f32, f32)] = &[
+    (3.8501, 0.7334, 0.010927), //   47 Ω (cond clamps at 82 Ω → G_nn flat below)
+    (4.4067, 0.5022, 0.010927), //   82 Ω
+    (4.7005, 0.4967, 0.013361), //  110 Ω
+    (5.3936, 0.4686, 0.020883), //  220 Ω (default)
+    (6.1527, 0.4809, 0.035590), //  470 Ω
+    (6.8090, 0.4822, 0.050945), //  906 Ω
+    (7.0901, 0.4983, 0.059545), // 1200 Ω
+    (9.2103, 0.4769, 0.089445), //  10 kΩ (cond clamps at 0 → G_nn flat above)
+];
+
+/// Linear-interpolate [`NN_GAIN_CALIB`] in ln-ohm, flat-holding past either end. Returns
+/// `(makeup, gnn_inv)`.
+fn nn_calib_lookup(rgain_ohm: f32) -> (f32, f32) {
+    let x = rgain_ohm.max(1.0).ln();
+    let t = NN_GAIN_CALIB;
+    if x <= t[0].0 {
+        return (t[0].1, t[0].2);
+    }
+    let last = t[t.len() - 1];
+    if x >= last.0 {
+        return (last.1, last.2);
+    }
+    for w in t.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if x <= b.0 {
+            let f = (x - a.0) / (b.0 - a.0);
+            return (a.1 + f * (b.1 - a.1), a.2 + f * (b.2 - a.2));
+        }
+    }
+    (last.1, last.2)
+}
+
+/// NN loudness makeup for `circuit_gain` R_KJ (Ω): multiplies the NN wet so its absolute level tracks
+/// the WDF backend (level-norm OFF). See [`NN_GAIN_CALIB`].
+pub fn nn_makeup_gain(rgain_ohm: f32) -> f32 {
+    nn_calib_lookup(rgain_ohm).0.clamp(NORM_TRIM_MIN, NORM_TRIM_MAX)
+}
+
+/// NN level-norm trim seed `1/G_nn(R)` for `circuit_gain` R_KJ (Ω): fed through `norm_apply_gain` with
+/// the current Drive to level the NN output (level-norm ON). See [`NN_GAIN_CALIB`].
+pub fn nn_norm_trim(rgain_ohm: f32) -> f32 {
+    nn_calib_lookup(rgain_ohm).1
+}
+
 /// Lossy precision dial — the device-model fidelity axis, orthogonal to [`WdfTier`] and
 /// [`Oversampling`]. `High` is the identity (Realtime+High stays bit-exact / golden); `Medium`/`Low`
 /// step the BJT charge model + transport exp down from the tier baseline (`cap_tier` + `cheap_exp`),
@@ -1134,9 +1189,15 @@ impl Plugin for Ba283Plugin {
         // synchronously in `initialize`, so it is already correct on the first block.
         self.norm_trim_target = f32::from_bits(self.probe.trim.load(Ordering::Relaxed));
 
-        // levelNorm: the operating-point-tracking trim (the probed circuit-gain reciprocal), applied
-        // only when the param is on AND the WDF backend is active. The NeuralNet backend is ignored
-        // (its model is broken / not gain-probed), so its norm gain stays unity.
+        // levelNorm + NN loudness makeup. Two backends, two mechanisms, both folded into `target_gain`
+        // (the per-sample ramp below smooths every transition click-free):
+        //   • WDF: the operating-point-tracking trim (probed circuit-gain reciprocal), applied only
+        //     when the param is on; off → unity (faithful circuit gain).
+        //   • NeuralNet: the embedded WaveNet already tracks gain via FiLM but sits ~6 dB hot vs the
+        //     WDF circuit (and its cond axis saturates below 82 Ω), so OFF applies an offline-calibrated
+        //     loudness makeup (`nn_makeup_gain`) to match WDF absolute level; ON levels to unity via
+        //     `1/G_nn` (Drive-cancelled, same shape as the WDF trim). No off-thread probe — the NN is a
+        //     fixed black box, so the curve is a static measurement (tests/calib_nn_makeup.rs).
         //
         // Ramp the APPLIED gain per-sample from this block's start value (`norm_trim`) to the latest
         // target across the block, then carry the end value to the next block — so a moving operating
@@ -1159,10 +1220,24 @@ impl Plugin for Ba283Plugin {
         // Drive per sample, not worth the cost for a level trim.
         let level_norm_on = self.params.level_norm.value();
         let drive_block = db_to_gain(self.params.drive_db.value());
-        let target_gain = if level_norm_on && backend == InferenceBackend::Wdf {
-            norm_apply_gain(self.norm_trim_target, drive_block)
-        } else {
-            1.0
+        let target_gain = match backend {
+            InferenceBackend::Wdf => {
+                if level_norm_on {
+                    norm_apply_gain(self.norm_trim_target, drive_block)
+                } else {
+                    1.0
+                }
+            }
+            InferenceBackend::NeuralNet => {
+                // Use the raw knob value (not the WDF-smoothed `rgain`, which is scoped to the WDF
+                // block and not applied on the NN path); in stepped mode it is already a detent value.
+                let rgain_knob = self.params.circuit_gain.value();
+                if level_norm_on {
+                    norm_apply_gain(nn_norm_trim(rgain_knob), drive_block)
+                } else {
+                    nn_makeup_gain(rgain_knob)
+                }
+            }
         };
         // Forced reprobe (init / reset / first WDF block): snap the applied gain straight to the
         // final, Drive-cancelled target so the output is leveled from the very first sample — Drive
