@@ -111,9 +111,28 @@ non-switching references.
 
 Discipline: golden `test_wdf` 22/22; `cargo build` (default) + `--no-default-features` clean; all
 adaptive-os state `#[cfg]`-gated (default build bit-identical, no leak). **Verdict: GO** — adaptive
-os=1↔2 delivers os=2 alias quality on hot transients at ~1.35× avg cost on sparse material, with no
-audible switch artifact. Provisional thresholds (arm 1.0 V / disarm 0.5 V) + the os=4 path
-(bigger ~20 dB prize, needs the 4:1 decimator + latency work) are productionization follow-ups.
+os=1↔2 delivers os=2 alias quality on hot transients with no audible switch artifact.
+
+### Threshold calibration (Stage 0.4)
+
+Swept the os=1 alias floor vs input drive level (`adaptive_os_stage0::calibrate_arm_threshold`) to
+place the arm threshold at the audibility knee instead of guessing:
+
+| in_v peak (V) | os1 worst alias (dB) | os2 worst (dB) |
+|---|---|---|
+| 0.25 | −40.55 | −50.27 |
+| 0.50 | −15.30 | −44.38 |
+| 0.75 | −2.19 | −30.68 |
+| 1.00 | +3.54 | −23.44 |
+
+The os=1 floor falls off a **cliff** — clean (≤−40 dB) below ~0.4 V, catastrophic (+3 dB) by 1.0 V.
+The original guess (arm 1.0 V) was far too high (the signal is already badly aliased there). Set
+**OS_ARM_V = 0.4 V, OS_DISARM_V = 0.2 V** (just below the knee). This also means quiet/moderate
+material (in_v < 0.4 V) is genuinely clean at os=1 → never arms → full CPU savings; the gate engages
+exactly when the signal is hot enough to alias. Re-gated: G1 unchanged (+22.66 dB), G3 ratio 0.26×
+(no click), **G2 duty 34.5%→46%, avg solves 1.46** (< 1.6) — the deliberate quality/cost trade of
+arming earlier. os=4 path (bigger ~20 dB prize, needs the 4:1 decimator + latency work) remains a
+follow-up.
 
 ### (superseded) earlier borderline read
 

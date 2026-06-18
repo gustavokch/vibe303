@@ -44,10 +44,14 @@ const OS_XFADE_S: f32 = 0.008; // 8 ms lo↔hi crossfade
 const OS_DWELL_S: f32 = 0.100; // 100 ms minimum dwell at hi-os (anti-thrash)
 #[cfg(feature = "adaptive-os")]
 const OS_REL_S: f32 = 0.050; // 50 ms envelope release (holds hi-os through the transient decay)
+// Calibrated from the os=1 alias-vs-level sweep (`adaptive_os_stage0::calibrate_arm_threshold`):
+// the os=1 alias floor crosses audibility (~−40 dB) at in_v ≈ 0.4–0.5 V and degrades steeply above
+// (−15 dB at 0.5 V, +3 dB at 1.0 V), so arm just below the knee. Below ~0.4 V os=1 is already clean
+// (≤−40 dB) → no need to oversample, full CPU savings on quiet/moderate material.
 #[cfg(feature = "adaptive-os")]
-const OS_ARM_V: f32 = 1.0; // arm hi-os when the input envelope (volts) exceeds this
+const OS_ARM_V: f32 = 0.4; // arm hi-os when the input envelope (volts) exceeds this
 #[cfg(feature = "adaptive-os")]
-const OS_DISARM_V: f32 = 0.5; // disarm below this (−6 dB hysteresis vs OS_ARM_V)
+const OS_DISARM_V: f32 = 0.2; // disarm below this (−6 dB hysteresis vs OS_ARM_V)
 #[cfg(feature = "adaptive-os")]
 const OS_PRIME_S: f32 = 0.006; // 6 ms silent pre-warm of the incoming model before it is faded in
 

@@ -362,6 +362,52 @@ fn arm_duty_cycle_sim() {
 }
 
 // ----------------------------------------------------------------------------
+// Test 4 — arm-threshold calibration: sweep the input drive LEVEL at os=1 and find
+// the "alias knee" (the in_v peak where the os=1 alias floor crosses audibility).
+// That knee is the arm threshold; disarm = knee − 6 dB.
+// ----------------------------------------------------------------------------
+#[test]
+fn calibrate_arm_threshold() {
+    // Level = peak |driven| in the test's amp·drive units; in_v peak = level · FS_V volts.
+    let levels = [0.5f64, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 9.0, 12.0];
+    let f0_targets = [0.18f64, 0.24, 0.30]; // hot-foldback band
+    const AUDIBLE_DB: f64 = -40.0; // alias floor above this is treated as objectionable
+
+    let mut m1 = build_warm(1, CapTier::Full);
+    let mut m2 = build_warm(2, CapTier::Full);
+
+    eprintln!(
+        "\n=== Stage 0.4: arm-threshold calibration (os=1 alias vs drive level) ===\n\
+         in_v is the peak input volts the envelope follower sees. Knee = first level whose WORST-f0\n\
+         os=1 alias exceeds {:.0} dB.\n{:>7} {:>7} {:>10} {:>10}",
+        AUDIBLE_DB, "level", "in_vpk", "os1_worst", "os2_worst"
+    );
+    let mut knee_in_v = f64::NAN;
+    for &level in &levels {
+        let op = Op { name: "cal", amp: level as f32, drive: 1.0 };
+        let mut os1_worst = f64::NEG_INFINITY;
+        let mut os2_worst = f64::NEG_INFINITY;
+        for &target in &f0_targets {
+            let p = (target * N as f64).round() as usize;
+            let f0 = p as f64 / N as f64;
+            os1_worst = os1_worst.max(cell_alias(&mut m1, 1, f0, &op));
+            os2_worst = os2_worst.max(cell_alias(&mut m2, 2, f0, &op));
+        }
+        let in_vpk = level * FS_V as f64;
+        if knee_in_v.is_nan() && os1_worst > AUDIBLE_DB {
+            knee_in_v = in_vpk;
+        }
+        eprintln!("{:>7.1} {:>7.2} {:>10.2} {:>10.2}", level, in_vpk, os1_worst, os2_worst);
+    }
+    eprintln!(
+        "\nAlias knee (os=1 crosses {:.0} dB) at in_v ≈ {:.2} V → suggested OS_ARM_V ≈ {:.2}, \
+         OS_DISARM_V ≈ {:.2} (−6 dB).",
+        AUDIBLE_DB, knee_in_v, knee_in_v, knee_in_v * 0.5
+    );
+    eprintln!("(Current shipped-spike values: OS_ARM_V = 1.0 V, OS_DISARM_V = 0.5 V.)\n");
+}
+
+// ----------------------------------------------------------------------------
 // Test 3 — duty cycle on REAL audio files (firms the synthetic Test 2). Loads
 // the repo's dry test signals (pink/sweep/twotone/multisine/impulse — real
 // amplitude statistics, not hand-rolled), plus any WAVs in $BA283_REAL_WAV_DIR
