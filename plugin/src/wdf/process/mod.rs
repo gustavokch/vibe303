@@ -362,6 +362,30 @@ impl WdfModel {
         }
     }
 
+    /// Measurement-only (Stage-1 headroom probe): drive the os-rate solve from an input that is
+    /// already sampled at the **internal** rate (`os × host`) and set directly on `N_INPUT` each
+    /// subsample — NO linear `prev_in` interpolation. `capture_os_raw` lerps host samples up to the
+    /// internal rate, which injects the input stage's own reconstruction artifacts; for a high-OS
+    /// *reference* alias floor that contamination understates the recoverable headroom. The headroom
+    /// probe samples the pure test sine analytically at the internal rate and feeds it here, so the
+    /// only variable across os=2/4/8/16 runs is the solve rate, not the input path. Emits the same
+    /// DC-corrected `v[N_SEC_IN]` tap, one per internal sample, into `out`. `measure` feature only.
+    #[cfg(feature = "measure")]
+    pub fn capture_internal_direct(&mut self, internal_input: &[f32], out: &mut Vec<f32>) {
+        out.clear();
+        out.reserve(internal_input.len());
+        #[cfg(feature = "trafo-core")]
+        if self.ja_active && !self.in_audio_pass {
+            self.ja_reseed();
+        }
+        self.in_audio_pass = true;
+        for &x in internal_input {
+            self.v[node::N_INPUT as usize] = x as f64;
+            self.process();
+            out.push((self.v[node::N_SEC_IN as usize] - self.sec_in_dc) as f32);
+        }
+    }
+
     /// Measure the settled circuit's small-signal voltage gain (output/input RMS) at a 1 kHz
     /// reference, on a SCRATCH CLONE so the live model is untouched. This is the one-shot static
     /// levelNorm probe: the plugin caches `1 / measure_gain()` and applies it as a constant trim,

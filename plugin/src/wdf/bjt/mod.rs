@@ -242,6 +242,97 @@ pub(in crate::wdf) fn compute_bjt_preexp_batch<const FMA: bool>(
     o
 }
 
+/// In-solve **ADAA1** variant of [`compute_bjt_preexp_batch`] for the spike
+/// (`docs/plans/2026-06-17-adaa-antialiasing-spike.md`, Stage 2). Identical Gummel-Poon tail —
+/// only the two transport-exponential arms (`vbe/vbc < vcrit`) are replaced by their first-order
+/// antiderivative-antialiased form. The caller supplies, for each junction:
+///   - `ef_eff` / `er_eff`: the antialiased exponential *value* — the divided difference
+///     `Vt·(exp(vₙ/Vt) − exp(vₙ₋₁/Vt))/(vₙ − vₙ₋₁)` (eq 9 applied to `g(v)=Is(exp(v/Vt)−1)`,
+///     whose antiderivative is `Is(Vt·exp(v/Vt) − v)`; the `−v` term contributes the `−1`).
+///   - `gef` / `ger`: the **true** derivative `d(ef_eff)/dvₙ = (exp(vₙ/Vt) − ef_eff)/(vₙ − vₙ₋₁)`
+///     (eq 28), or its midpoint fallback (eq 29) when `|vₙ − vₙ₋₁|` is below tolerance. This is what
+///     keeps Newton consistent: the antialiased current AND its exact Jacobian.
+/// The `vbe ≥ vcrit` linearized arm is the model's own overflow guard (already affine → no aliasing),
+/// so it is left byte-for-byte identical; the caller only routes a junction here when BOTH `vₙ` and
+/// `vₙ₋₁` sit below `vcrit`. Realtime tier only (no FMA generic; plain `a*b+c`).
+#[cfg(feature = "adaa-insolve")]
+pub(in crate::wdf) fn compute_bjt_preexp_batch_adaa(
+    vbe: &[f64; 4],
+    vbc: &[f64; 4],
+    bjts: &[Bjt; 3],
+    ef_eff: &[f64; 4],
+    er_eff: &[f64; 4],
+    gef: &[f64; 4],
+    ger: &[f64; 4],
+    ec: &[f64; 4],
+) -> BjtOutSoA {
+    let is4    = [bjts[0].p.is,    bjts[1].p.is,    bjts[2].p.is,    1e-14];
+    let vt4    = [bjts[0].p.vt,    bjts[1].p.vt,    bjts[2].p.vt,    0.02585];
+    let vcrit4 = [bjts[0].p.vcrit, bjts[1].p.vcrit, bjts[2].p.vcrit, 0.0];
+    let vaf4   = [bjts[0].p.vaf,   bjts[1].p.vaf,   bjts[2].p.vaf,   0.0];
+    let var4   = [bjts[0].p.var,   bjts[1].p.var,   bjts[2].p.var,   0.0];
+    let ikf4   = [bjts[0].p.ikf,   bjts[1].p.ikf,   bjts[2].p.ikf,   0.0];
+    let ikr4   = [bjts[0].p.ikr,   bjts[1].p.ikr,   bjts[2].p.ikr,   0.0];
+    let bf4    = [bjts[0].p.bf,    bjts[1].p.bf,    bjts[2].p.bf,    1.0];
+    let br4    = [bjts[0].p.br,    bjts[1].p.br,    bjts[2].p.br,    1.0];
+
+    let mut o = BjtOutSoA::default();
+    for l in 0..4 {
+        let inv_vt_is = is4[l] / vt4[l];
+        let icrit = is4[l] * (ec[l] - 1.0);
+        let gcrit = inv_vt_is * ec[l];
+        // ADAA transport arm: value = Is·(ef_eff − 1), conductance = Is·d(ef_eff)/dvbe.
+        let (itf, gtf) = if vbe[l] < vcrit4[l] {
+            (is4[l] * (ef_eff[l] - 1.0), is4[l] * gef[l])
+        } else {
+            (gcrit * (vbe[l] - vcrit4[l]) + icrit, gcrit)
+        };
+        let (itr, gtr) = if vbc[l] < vcrit4[l] {
+            (is4[l] * (er_eff[l] - 1.0), is4[l] * ger[l])
+        } else {
+            (gcrit * (vbc[l] - vcrit4[l]) + icrit, gcrit)
+        };
+        let inv_af = if vaf4[l] > 0.0 { 1.0 / vaf4[l] } else { 0.0 };
+        let inv_ar = if var4[l] > 0.0 { 1.0 / var4[l] } else { 0.0 };
+        let mut inv1 = 1.0 - vbc[l] * inv_af - vbe[l] * inv_ar;
+        if inv1 < 0.1 { inv1 = 0.1; }
+        let q1 = 1.0 / inv1;
+        let dq1_vbe = q1 * q1 * inv_ar;
+        let dq1_vbc = q1 * q1 * inv_af;
+        let inv_kf = if ikf4[l] > 0.0 { 1.0 / ikf4[l] } else { 0.0 };
+        let inv_kr = if ikr4[l] > 0.0 { 1.0 / ikr4[l] } else { 0.0 };
+        let q2 = itf * inv_kf + itr * inv_kr;
+        let dq2_vbe = gtf * inv_kf;
+        let dq2_vbc = gtr * inv_kr;
+        let s = (1.0 + 4.0 * q2).sqrt();
+        let qb = q1 * (1.0 + s) / 2.0;
+        let dqb_vbe = dq1_vbe * (1.0 + s) / 2.0 + q1 * dq2_vbe / s;
+        let dqb_vbc = dq1_vbc * (1.0 + s) / 2.0 + q1 * dq2_vbc / s;
+        let diff = itf - itr;
+        let it = diff / qb;
+        let qbsq = qb * qb;
+        let dit_vbe = (gtf * qb - diff * dqb_vbe) / qbsq;
+        let dit_vbc = (-gtr * qb - diff * dqb_vbc) / qbsq;
+        let inv_bf = 1.0 / bf4[l];
+        let inv_br = 1.0 / br4[l];
+        let ic = it - itr * inv_br;
+        let ib = itf * inv_bf + itr * inv_br;
+        let ie = -(ic + ib);
+        let dic_vbe = dit_vbe;
+        let dic_vbc = dit_vbc - gtr * inv_br;
+        let dib_vbe = gtf * inv_bf;
+        let dib_vbc = gtr * inv_br;
+        let die_vbe = -(dic_vbe + dib_vbe);
+        let die_vbc = -(dic_vbc + dib_vbc);
+        o.ib[l] = ib; o.ic[l] = ic; o.ie[l] = ie;
+        o.itf[l] = itf; o.gtf[l] = gtf; o.itr[l] = itr; o.gtr[l] = gtr;
+        o.dic_b[l] = dic_vbe + dic_vbc; o.dic_e[l] = -dic_vbe; o.dic_c[l] = -dic_vbc;
+        o.dib_b[l] = dib_vbe + dib_vbc; o.dib_e[l] = -dib_vbe; o.dib_c[l] = -dib_vbc;
+        o.die_b[l] = die_vbe + die_vbc; o.die_e[l] = -die_vbe; o.die_c[l] = -die_vbc;
+    }
+    o
+}
+
 // ---------------------------------------------------------------------------
 // Width-4 SoA batch device eval. Lane 3 = padding (vbe=vbc=0, params zeroed);
 // only lanes 0-2 are ever scattered. Bit-exact with the scalar path on EXACT=false.

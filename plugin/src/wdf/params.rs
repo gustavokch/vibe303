@@ -19,6 +19,13 @@ impl WdfModel {
         self.build_g0();
     }
 
+    /// Toggle the in-solve ADAA1 transport spike (`adaa-insolve` feature only). Pure A/B switch for
+    /// the offline harness — no state change, no rebuild. Off by default; never set in the plugin.
+    #[cfg(feature = "adaa-insolve")]
+    pub fn set_adaa(&mut self, on: bool) {
+        self.adaa = on;
+    }
+
     /// Update R_KJ (circuit gain) + rebuild G0, preserving integrator state. New vs the C++
     /// reference (which only sets gain at build time); mirrors `set_bias`. Composes aged drift.
     pub fn set_rgain(&mut self, rgain: f64) {
