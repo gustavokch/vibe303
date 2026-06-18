@@ -469,7 +469,7 @@ impl ChannelDsp {
         self.os_env = 0.0;
         self.os_xfade_len = (host_sr * OS_XFADE_S).max(1.0) as u32;
         self.os_prime_len = (host_sr * OS_PRIME_S).max(1.0) as u32;
-        self.os_dwell_len = (host_sr * OS_DWELL_S) as u32;
+        self.os_dwell_len = (host_sr * OS_DWELL_S).max(1.0) as u32;
         self.os_rel_coef = (-1.0 / (OS_REL_S * host_sr)).exp();
     }
 
@@ -538,7 +538,14 @@ impl ChannelDsp {
                     self.os_prime_remain = self.os_prime_len;
                 }
             }
-            _ => {} // mid prime/crossfade: no new transition
+            // Mid prime/crossfade (`PrimeHi`/`ToHi`/`PrimeLo`/`ToLo`): no new transition. In
+            // particular a `ToLo`/`PrimeLo` disarm fade is NOT interruptible — a hot transient landing
+            // inside the ~14 ms disarm seam is rendered on lo-os until the fade reaches `Lo`, then the
+            // next sample re-arms from there. Deliberate: it keeps the seam a single monotonic fade
+            // (no fade reversal / partial-crossfade clicks) and bounds the switch rate. The cost is a
+            // few ms of lo-os on a transient that arrives during a disarm — acceptable vs the artifact
+            // risk of cancelling an in-flight crossfade.
+            _ => {}
         }
         // Output for this phase. `os_hi_samples` counts every sample the hi model is solved (prime +
         // fade + steady) — the G2 cost proxy.

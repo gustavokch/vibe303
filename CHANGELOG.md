@@ -46,6 +46,26 @@ BA283 mic-preamp output stage.
   EQ (+ HPF / Low / Mid frequency selectors and Low / Mid / High gains).
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
+### Changed
+- **Neural Net backend loudness now matches the WDF backend.** The embedded
+  WaveNet tracks Circuit Gain via FiLM but ran ~6 dB hot and its conditioning
+  axis saturates at 82 Ω, so swapping backends changed the output level. A static,
+  Circuit-Gain-indexed makeup curve (`nn_makeup_gain`) is now applied to the
+  Neural Net wet so the two backends sit at equal absolute loudness, and the Neural
+  Net Level-Norm trim is seeded from `1/G_nn` (`nn_norm_trim`) so Level-Norm levels
+  it to unity. The curve is regenerated and validated against the embedded model by
+  `tests/calib_nn_makeup.rs` (no live probe — the model is a fixed black box). The
+  WDF backend is unaffected.
+
+### Internal (off by default, not shipped in the default build)
+- `adaptive-os` feature: adaptive level-gated oversampling for the lossy
+  UltraFast/Warp tiers — a per-channel envelope engages a resident os=2 model only
+  on hot transients. Gated behind a cargo feature; the default build is
+  bit-identical. Still under evaluation (no UI exposure, no default-on).
+- `adaa-insolve` / `adaa-port` features: retained in-solve ADAA spike code, both
+  measured **NO-GO** and never compiled into the shipped plugin (documented trail
+  in `docs/plans/2026-06-17-*`).
+
 ### Performance
 - **Depletion-charge LUT** on the lossy WDF tiers: the per-junction `pow` in the
   BJT depletion-charge kernel is replaced by a precomputed 1-D table + linear
