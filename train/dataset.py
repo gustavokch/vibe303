@@ -10,7 +10,13 @@ import soundfile as sf
 import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
+from data_gen.netlist import input_gain_db_to_norm, rkj_to_gain_norm
+
 _REQUIRED_COLUMNS = ("dry_path", "wet_path", "gain_value", "duration_s", "stim_kind")
+# WS4 dual conditioning: when a manifest carries this column the dataset emits a
+# 3-channel input [audio, circuit_gain_norm, input_gain_norm] and treats
+# ``gain_value`` as R_KJ ohms (-> rkj_to_gain_norm) rather than a [0,1] gain_norm.
+_INPUT_GAIN_COLUMN = "input_gain_db"
 
 # --- Domain scaling -------------------------------------------------------
 # The dry stimulus WAVs sit at ~0.4 peak; INPUT_SCALE lifts them to ~0.9 so the
@@ -131,6 +137,13 @@ class BA283Dataset(Dataset):
         if missing:
             raise ValueError(f"manifest missing required columns: {missing}")
 
+        # WS4 dual conditioning is auto-detected from the manifest schema: an
+        # ``input_gain_db`` column -> 3-channel [audio, circuit_gain, input_gain]
+        # and ``gain_value`` carries R_KJ ohms. Absent -> the legacy 2-channel
+        # [audio, gain] set where ``gain_value`` is already a [0,1] gain_norm.
+        self.dual_cond = _INPUT_GAIN_COLUMN in self.manifest.columns
+        self.n_channels = 3 if self.dual_cond else 2
+
         # Flat index of (row_idx, sample_start) windows across every row. The
         # window count is bounded by min(dry_frames, wet_frames) so a dry file
         # shorter than its wet pair never yields an out-of-range read. Windows
@@ -207,16 +220,23 @@ class BA283Dataset(Dataset):
         dry = self._read_window(row["dry_path"], start)
         wet = self._read_window(row["wet_path"], start)
 
-        x = torch.empty(self.window, 2, dtype=torch.float32)
+        x = torch.empty(self.window, self.n_channels, dtype=torch.float32)
         x[:, 0] = torch.from_numpy(dry) * self.input_scale
-        if self.conditioning == "stepped":
-            # STEPPED (WS4): emit the discrete switch-position index (0..4)
-            # instead of the continuous R_KJ. Stored as float (the x tensor is
-            # float32); the model rounds + casts it back to long for the codebook
-            # lookup. Snap-to-grid tolerates tiny float drift in gain_value.
+        if self.dual_cond:
+            # WS4 dual conditioning (active 3-channel continuous-FiLM path):
+            # gain_value is R_KJ ohms (stepped renderer); map to the model's
+            # [0,1] circuit-gain axis. Channel 2 = normalized input gain.
+            x[:, 1] = rkj_to_gain_norm(float(row["gain_value"]))
+            x[:, 2] = input_gain_db_to_norm(float(row[_INPUT_GAIN_COLUMN]))
+        elif self.conditioning == "stepped":
+            # STEPPED (WS4, dormant LSTM-codebook path): emit the discrete
+            # switch-position index (0..4) instead of the continuous R_KJ. Stored
+            # as float (the x tensor is float32); the model rounds + casts it back
+            # to long for the codebook lookup. Snap-to-grid tolerates tiny float
+            # drift in gain_value.
             x[:, 1] = float(nearest_stepped_index(float(row["gain_value"])))
         else:
-            x[:, 1] = float(row["gain_value"])
+            x[:, 1] = float(row["gain_value"])  # already a [0,1] gain_norm
 
         y = (torch.from_numpy(wet) * self.output_scale).reshape(self.window, 1)
         return x, y
