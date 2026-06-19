@@ -334,8 +334,10 @@ fn main() {
     let mut n_frames = 0usize;
     for frame in samples.chunks(channels) {
         for (ch, &s) in frame.iter().enumerate() {
+            // Offline harness: input_gain is fixed at unity (the circuit gain is set directly via
+            // --circuit-gain ohms; the staging trims are a plugin-UI concern).
             let y = chans[ch]
-                .process_sample(s, drive, bias, out_gain, norm_gain, mix, use_bridge, backend);
+                .process_sample(s, 1.0, drive, bias, out_gain, norm_gain, mix, use_bridge, backend);
             writer
                 .write_sample(y)
                 .unwrap_or_else(|e| die(&format!("error writing sample: {e}")));

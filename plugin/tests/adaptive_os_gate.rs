@@ -108,7 +108,7 @@ fn run(ch: &mut ChannelDsp, input: &[f32], drive: f32) -> Vec<f32> {
     ch.reset();
     input
         .iter()
-        .map(|&x| ch.process_sample(x, drive, 0.0, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf))
+        .map(|&x| ch.process_sample(x, 1.0, drive, 0.0, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf))
         .collect()
 }
 
@@ -179,7 +179,7 @@ fn g2_average_cost() {
     ad.reset();
     ad.os_reset_stats();
     for &x in &input {
-        ad.process_sample(x, drive, 0.0, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+        ad.process_sample(x, 1.0, drive, 0.0, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
     }
     let (arm, hidur) = ad.os_stats();
     let duty = hidur as f64 / total as f64;

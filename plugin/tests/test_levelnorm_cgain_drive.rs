@@ -62,7 +62,7 @@ fn sweep(base: QualityConfig, from: f32, to: f32, label: &str) -> f32 {
             let x = amp * (w * phase as f32).sin();
             phase += 1;
             let g = g_start + g_step * (k as f32 + 1.0);
-            let y = ch.process_sample(x, DRIVE, BIAS, 1.0, g, 1.0, false, InferenceBackend::Wdf);
+            let y = ch.process_sample(x, 1.0, DRIVE, BIAS, 1.0, g, 1.0, false, InferenceBackend::Wdf);
             in_sq += (x * x) as f64;
             out_sq += (y * y) as f64;
             peak = peak.max(y.abs());

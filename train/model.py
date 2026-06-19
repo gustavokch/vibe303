@@ -36,10 +36,25 @@ class BA283LSTM(nn.Module):
     - ``"concat"``: gain is a second LSTM input channel (input_size 2), no FiLM.
       The baseline the A/B compares against.
 
-    The module input is identical in both modes: ``x[..., 0]`` is the (scaled)
-    audio and ``x[..., 1]`` the constant gain, so the dataset/training interface
-    never changes. The carried state is the LSTM ``(h, c)`` tuple; ``film.*``
-    params exist only in film mode.
+    # STEPPED (WS4): a third conditioning mode for the 5-position hardware gain
+    # switch (R_KJ in {1e9, 1200, 470, 220, 110} Ω = idx 0..4 = 15/20/25/30/35
+    # dB, level-normalized). Instead of a continuous scalar -> FiLM-linear, a
+    # LEARNED CODEBOOK of 5 per-position affines (gamma, beta) is indexed by a
+    # discrete class index. The LSTM still runs on AUDIO alone (input_size 1):
+
+          y, (h,c) = LSTM(audio); gamma, beta = film_codebook[idx]
+          out = Dense((1 + gamma) * y + beta)
+
+    #   This matches the plugin: the gain is no longer continuous, so a discrete
+    #   embedding learns each switch detent exactly rather than interpolating a
+    #   smooth gain curve through 5 sampled points. ``film/concat`` are unchanged.
+
+    The module input is identical across modes: ``x[..., 0]`` is the (scaled)
+    audio and ``x[..., 1]`` the conditioning column. For ``film``/``concat`` that
+    column is the continuous gain value; for ``stepped`` (WS4) it is the discrete
+    class INDEX (0..4), cast to ``long`` for the codebook lookup. The carried
+    state is the LSTM ``(h, c)`` tuple; ``film.*`` params exist only in film mode,
+    ``film_codebook.*`` only in stepped mode.
 
     Redesign knobs (the structural defaults are now NAM-style 3x18; the rest
     default to the linear graph so the export keys stay minimal until set):
@@ -59,6 +74,9 @@ class BA283LSTM(nn.Module):
     ``ba283-lstm-v2`` export contract).
     """
 
+    # STEPPED (WS4): the number of discrete hardware-switch positions.
+    STEPPED_POSITIONS = 5
+
     def __init__(
         self,
         hidden: int = 18,
@@ -71,8 +89,11 @@ class BA283LSTM(nn.Module):
         film_hidden: int | None = None,
     ) -> None:
         super().__init__()
-        if conditioning not in ("film", "concat"):
-            raise ValueError(f"conditioning must be 'film' or 'concat', got {conditioning!r}")
+        # STEPPED (WS4): "stepped" added alongside the existing two modes.
+        if conditioning not in ("film", "concat", "stepped"):
+            raise ValueError(
+                f"conditioning must be 'film', 'concat' or 'stepped', got {conditioning!r}"
+            )
         if head not in ("linear", "mlp"):
             raise ValueError(f"head must be 'linear' or 'mlp', got {head!r}")
         if film_kind not in ("linear", "mlp"):
@@ -82,7 +103,9 @@ class BA283LSTM(nn.Module):
         self.conditioning = conditioning
         self.head_kind = head
         self.film_kind = film_kind
-        lstm_in = 1 if conditioning == "film" else 2
+        # STEPPED (WS4): stepped, like film, runs the LSTM on audio alone
+        # (input_size 1); only concat feeds gain as a 2nd input channel.
+        lstm_in = 2 if conditioning == "concat" else 1
         self.lstm = nn.LSTM(
             input_size=lstm_in,
             hidden_size=hidden,
@@ -105,6 +128,15 @@ class BA283LSTM(nn.Module):
                 self.film = nn.Sequential(
                     nn.Linear(1, g), nn.Tanh(), nn.Linear(g, 2 * hidden)
                 )
+        if conditioning == "stepped":
+            # STEPPED (WS4): learned FiLM codebook — one (gamma, beta) row per
+            # switch position. nn.Embedding(5, 2H) is a 5-row lookup table; index
+            # idx in 0..4 selects that position's affine. Initialised to zeros so
+            # an untrained model is identity ((1 + 0) * y + 0), matching how the
+            # linear film map starts ~0. film_kind is ignored in stepped mode
+            # (the codebook IS the per-position map; no scalar to transform).
+            self.film_codebook = nn.Embedding(self.STEPPED_POSITIONS, 2 * hidden)
+            nn.init.zeros_(self.film_codebook.weight)
         if head == "mlp":
             self.head_pre = nn.Linear(hidden, hidden)
         self.dense = nn.Linear(hidden, 1)
@@ -137,6 +169,17 @@ class BA283LSTM(nn.Module):
             gain = x[..., 1:2]
             y, state_out = self.lstm(audio, state)
             gamma, beta = self.film(gain).chunk(2, dim=-1)
+            y = (1.0 + gamma) * y + beta
+            return self._readout(y), state_out
+        if self.conditioning == "stepped":
+            # STEPPED (WS4): x[..., 1] carries the discrete class index (0..4);
+            # round+cast to long, look up the codebook affine, apply per step.
+            # The index is constant over a window but indexed per-sample so the
+            # affine broadcasts to (batch, time, 2H) exactly like the film map.
+            audio = x[..., 0:1]
+            idx = x[..., 1].round().long().clamp_(0, self.STEPPED_POSITIONS - 1)
+            y, state_out = self.lstm(audio, state)
+            gamma, beta = self.film_codebook(idx).chunk(2, dim=-1)
             y = (1.0 + gamma) * y + beta
             return self._readout(y), state_out
         # concat: gain is the second input channel

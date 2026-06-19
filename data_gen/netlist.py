@@ -91,6 +91,28 @@ GAIN_RKJ_MAX = 10_000.0   # gain_norm 0.0 -> ~14 dB (K<->J ~ open)
 GAIN_RKJ_MIN = 82.0       # gain_norm 1.0 -> ~33 dB
 
 
+# STEPPED (WS4) -------------------------------------------------------------
+# The 5 hardware gain-switch detents the plugin now exposes, as R_KJ (ohms),
+# idx 0..4 = 15/20/25/30/35 dB (balanced). idx 0 is the "open" sentinel (1e9 Ω).
+# These replace the continuous gain_norm sweep for the stepped retrain; the
+# continuous gain_norm_to_rkj path above is left intact for the legacy dataset.
+STEPPED_RKJ_OHMS: tuple[float, ...] = (1.0e9, 1200.0, 470.0, 220.0, 110.0)
+
+# Embedded WDF makeup-gain table (idx 0..4) = 1 / G_i, the small-signal output
+# scale per position that level-norm divides out. Recorded here so the WDF and
+# the NN share ONE reference. The data-gen wet normalization (see
+# data_gen.run_spice.run_stepped_batch) should MEASURE G_i per position and
+# assert it matches 1 / STEPPED_MAKEUP, so a netlist drift is caught instead of
+# silently re-scaling the targets away from the WDF's reference.
+STEPPED_MAKEUP: tuple[float, ...] = (
+    0.202892,
+    0.118732,
+    0.073245,
+    0.043799,
+    0.026136,
+)
+
+
 def gain_norm_to_rkj(gain_norm: float) -> float:
     """Map a normalized gain knob in ``[0, 1]`` to the K<->J resistor (ohms).
 

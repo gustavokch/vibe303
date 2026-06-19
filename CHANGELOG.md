@@ -54,12 +54,40 @@ BA283 mic-preamp output stage.
   flat defaults are a provable bit-exact no-op (the WDF golden-vector contract is
   unaffected); gain knobs are per-block glided to avoid zipper on a sweep. The mid
   proportional-Q table and shelf shapes are provisional pending a 1073-curve fit.
-- Parameters: Backend, WDF Tier, Precision, Oversampling, Drive, Bias, Output,
-  Mix, Level Norm, Circuit Gain, Stepped Gain, Age (+ Re-roll),
+- Parameters: Backend, WDF Tier, Precision, Oversampling, Input Gain, Drive,
+  Bias, Output, Mix, Level Norm, Link, Circuit Gain (5-position switch),
+  Age (+ Re-roll),
   EQ (+ HPF / Low / Mid frequency selectors and Low / Mid / High gains).
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
 ### Changed
+- **Stepped circuit gain + level-neutral gain-staging paradigm (BREAKING param
+  changes).** The BA283 has a *stepped* 5-position gain switch and no continuous
+  "drive" of the circuit; the plugin now matches that:
+  - **`circuit_gain` is now a 5-position switch** (`IntParam` 0..4 → 15/20/25/30/35
+    dB), replacing the continuous `FloatParam` (47–10 kΩ). **Param-type change:**
+    hosts that automated `circuit_gain` as a continuous ohm value must re-map the
+    lane to the discrete index. The redundant **`gain_stepped`** toggle is removed
+    (the param is inherently discrete now).
+  - **New gain-staging controls:** **`input_gain`** (clean pre-circuit dB trim),
+    **`link`** (couples input/output in opposite directions for manual net-neutral
+    staging). Signal chain is now
+    `x → ×input_gain → EQ → ×drive → circuit → [levelNorm comp] → ×output → mix`,
+    so `drive` pushes the **post-EQ** signal into the circuit (the saturation
+    amount).
+  - **`level_norm` now defaults ON** (was OFF) and governs full neutrality: at
+    defaults the insert is **unity** (fixes the historical "+30 dB louder at
+    default" bug). ON also forces `input_gain`/`output`/`link` neutral and grays
+    them; OFF restores faithful manual gain staging. **Behaviour change for
+    existing in-dev sessions:** a default insert no longer raises level.
+  - **levelNorm is now a static per-position table** (`GAIN_STEPS[pos].wdf_makeup`
+    = measured `1/G_i`, from `bin/measure_gi`, drift-guarded by
+    `tests/test_stepped_gain.rs`) instead of a runtime off-thread gain probe — the
+    probe worker/task is removed, making levelNorm deterministic and alloc-free.
+  - **NN backend** is conditioned by the discrete position (mapped via its hardware
+    R_KJ). *Staged:* a full NAM retrain for the 5 discrete positions +
+    input-amplitude sweep is pending; the embedded weights remain provisional and
+    still use the continuous FiLM cond map keyed by position R_KJ until then.
 - **Circuit Gain and Level Norm now function on the Neural Net backend.** The
   Circuit Gain knob is no longer greyed out under the Neural Net backend — it drives
   the WaveNet's FiLM gain-conditioning, so it audibly changes level and saturation
@@ -67,11 +95,11 @@ BA283 mic-preamp output stage.
   control into a single switch: OFF leaves the NN at its natural FiLM-conditioned
   level (default — bit-identical to before this change); ON levels the output to
   ~constant across gain and Drive via an offline-calibrated `1/G_nn` trim
-  (`nn_norm_trim`, from `NN_GAIN_CALIB`; analytic, no off-thread probe — the WDF
-  probe path is unchanged). The calibration table is regenerated and validated
-  against the embedded model by `tests/calib_nn_makeup.rs` (no live probe — the
-  model is a fixed black box). Level Norm defaults OFF, so existing Neural Net
-  sessions are unaffected, and the WDF backend is unaffected throughout.
+  (`nn_norm_trim`, from `NN_GAIN_CALIB`; analytic, no off-thread probe). The
+  calibration table is regenerated and validated against the embedded model by
+  `tests/calib_nn_makeup.rs` (no live probe — the model is a fixed black box).
+  (Level Norm now defaults **ON** for a unity insert — see the stepped-gain entry
+  above; the WDF backend reads the static per-position makeup table.)
 
 ### Internal (off by default, not shipped in the default build)
 - `adaptive-os` feature: adaptive level-gated oversampling for the lossy

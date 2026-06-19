@@ -136,6 +136,9 @@ def train_main(
         shuffle=True,
         balance_by_kind=balance_by_kind,
         pin_memory=pin_memory,
+        # STEPPED (WS4): the dataset must emit the discrete index (not the float
+        # gain) when conditioning == "stepped"; forward the mode to both loaders.
+        conditioning=conditioning,
     )
     val_loader = make_loader(
         val_manifest,
@@ -146,6 +149,7 @@ def train_main(
         shuffle=False,
         drop_last=False,
         pin_memory=pin_memory,
+        conditioning=conditioning,
     )
 
     model = make_model(
@@ -389,9 +393,12 @@ def main() -> None:
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument(
         "--conditioning",
-        choices=("film", "concat"),
+        # STEPPED (WS4): 'stepped' = learned 5-entry FiLM codebook indexed by the
+        # discrete hardware gain-switch position (R_KJ in {1e9,1200,470,220,110}).
+        choices=("film", "concat", "stepped"),
         default="film",
-        help="bias conditioning: 'film' (affine modulation) or 'concat' (input channel)",
+        help="bias conditioning: 'film' (affine modulation), 'concat' (input "
+        "channel) or 'stepped' (WS4: 5-position learned FiLM codebook)",
     )
     # --- Redesign knobs (structural defaults are NAM-style 3x18) ---
     parser.add_argument("--layers", type=int, default=3, help="LSTM stack depth")

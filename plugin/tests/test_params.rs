@@ -10,8 +10,11 @@ fn default_params_have_expected_values() {
     assert!((p.bias.value() - 0.5).abs() < 1e-6);
     assert!((p.output_db.value() - 0.0).abs() < 1e-6);
     assert!((p.mix.value() - 100.0).abs() < 1e-6);
-    // levelNorm defaults OFF: faithful preamp gain out of the box.
-    assert!(!p.level_norm.value());
+    // levelNorm defaults ON: inserting the plugin at defaults is level-neutral (unity).
+    assert!(p.level_norm.value());
+    // New staging controls default neutral / off.
+    assert!((p.input_gain.value() - 0.0).abs() < 1e-6);
+    assert!(!p.link.value());
 }
 
 #[test]
@@ -23,12 +26,14 @@ fn default_backend_is_wdf() {
 
 #[test]
 fn circuit_gain_default_and_range() {
+    // The hardware gain switch is an IntParam indexing the 5 wafer positions (0..=4). Default idx 0
+    // (15 dB) — the cleanest stock insert.
     let p = Ba283Params::default();
-    assert!((p.circuit_gain.value() - 220.0).abs() < 1e-6);
-    assert!(p.circuit_gain.preview_normalized(47.0) >= 0.0);
-    assert!(p.circuit_gain.preview_normalized(10_000.0) <= 1.0);
-    assert!((p.circuit_gain.preview_plain(0.0) - 47.0).abs() < 1e-3);
-    assert!((p.circuit_gain.preview_plain(1.0) - 10_000.0).abs() < 1e-1);
+    assert_eq!(p.circuit_gain.value(), 0);
+    assert_eq!(p.circuit_gain.preview_plain(0.0), 0);
+    assert_eq!(p.circuit_gain.preview_plain(1.0), 4);
+    assert!(p.circuit_gain.preview_normalized(0) >= 0.0);
+    assert!(p.circuit_gain.preview_normalized(4) <= 1.0);
 }
 
 #[test]

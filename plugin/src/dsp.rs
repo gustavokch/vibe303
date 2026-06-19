@@ -660,19 +660,22 @@ impl ChannelDsp {
         }
     }
 
-    /// Run one sample through the selected backend. `drive`/`out_gain`/`norm_gain` are linear gains,
-    /// `mix` is the wet fraction in 0..1. `cond` drives the NeuralNet path only — it is the WaveNet's
-    /// FiLM gain-conditioning value (0..1). The WDF path ignores it (it uses the block-rate bias/gain
-    /// set via `wdf_set_bias`/`wdf_set_rgain`). The host-reported latency
+    /// Run one sample through the selected backend. `input_gain`/`drive`/`out_gain`/`norm_gain` are
+    /// linear gains, `mix` is the wet fraction in 0..1. `cond` drives the NeuralNet path only — it is
+    /// the WaveNet's FiLM gain-conditioning value (0..1). The WDF path ignores it (it uses the
+    /// block-rate bias/gain set via `wdf_set_bias`/`wdf_set_rgain`). The host-reported latency
     /// (`Ba283Plugin::latency_samples`) is honoured for BOTH backends.
     ///
-    /// `norm_gain` is the stereo-linked levelNorm gain (1.0 when levelNorm is off); it is applied to
-    /// the de-normed wet BEFORE `out_gain` and `mix`. The pre-norm de-normed wet is stashed in
-    /// `last_wet` so the plugin can drive the levelNorm RMS estimator across both channels.
+    /// Signal chain: `x → ×input_gain → eq → ×drive → [model] → ×norm_gain → ×out_gain → mix`.
+    /// `input_gain` is the clean pre-circuit trim; `drive` pushes the POST-EQ signal into the model
+    /// (the saturation amount). `norm_gain` is the stereo-linked levelNorm gain (1.0 when off),
+    /// applied to the de-normed wet BEFORE `out_gain` and `mix`. The pre-norm de-normed wet is stashed
+    /// in `last_wet` so the plugin can drive the levelNorm RMS estimator across both channels.
     #[allow(clippy::too_many_arguments)]
     pub fn process_sample(
         &mut self,
         x: f32,
+        input_gain: f32,
         drive: f32,
         cond: f32,
         out_gain: f32,
@@ -683,8 +686,10 @@ impl ChannelDsp {
     ) -> f32 {
         // Neve EQ sits ahead of the BA283/AV card on the real strip, so it shapes the signal BEFORE
         // either backend — EQ boosts drive the amp harder on boosted bands, exactly as the hardware
-        // does. Bit-exact identity while the EQ is off, so the model's golden path is untouched.
-        let driven = self.eq.process(x * drive);
+        // does. `input_gain` is the clean pre-EQ trim; `drive` then pushes the post-EQ signal into the
+        // model (the saturation amount). Bit-exact identity while EQ off + input_gain/drive at unity,
+        // so the model's golden path is untouched.
+        let driven = self.eq.process(x * input_gain) * drive;
         match backend {
             InferenceBackend::NeuralNet => {
                 // De-norm: recover volts (`* output_ref_v`) then express in the 0 dBFS ≡ 0.5 V

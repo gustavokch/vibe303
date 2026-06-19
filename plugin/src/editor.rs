@@ -266,28 +266,53 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         hairline(ui);
         ui.add_space(18.0);
 
+        // levelNorm ON = neutral auto-staging: the manual INPUT/OUTPUT/LINK controls are forced
+        // neutral (the DSP ignores them) and grayed. OFF = faithful manual staging.
+        let staging_on = !p.level_norm.value();
+
+        // LINK (levelNorm OFF only): slave OUTPUT to the opposite of INPUT (+X in ⇒ −X out) so the
+        // user pushes the circuit hot while the net output level stays put. Driven here from the
+        // editor so automation/host see consistent values; the DSP just reads both params. The OUTPUT
+        // knob is disabled below while linked, so this never fights a user drag.
+        if staging_on && p.link.value() {
+            let desired = (-p.input_gain.value()).clamp(-24.0, 12.0);
+            if (p.output_db.value() - desired).abs() > 0.01 {
+                setter.begin_set_parameter(&p.output_db);
+                setter.set_parameter(&p.output_db, desired);
+                setter.end_set_parameter(&p.output_db);
+            }
+        }
+
         // ── Core knob row ─────────────────────────────────────────────────────────────
-        ui.columns(4, |cols| {
-            knob(&mut cols[0], setter, &p.drive_db, "DRIVE", 66.0);
-            // BIAS drives the WDF circuit's bias leg only. The active NeuralNet engine (WaveNet) is
-            // gain-conditioned (via the circuit-gain knob), not bias-conditioned, so BIAS is inert
-            // there — grey it out when the Neural Net backend is active, mirroring the WDF-tier row.
-            cols[1].add_enabled_ui(wdf_on, |ui| {
-                knob(ui, setter, &p.bias, "BIAS", 66.0);
+        // INPUT · DRIVE · BIAS · OUTPUT · MIX. INPUT/OUTPUT gray under levelNorm; OUTPUT also grays
+        // when LINK slaves it; BIAS grays for the NeuralNet backend (it is WDF-only).
+        ui.columns(5, |cols| {
+            cols[0].add_enabled_ui(staging_on, |ui| {
+                knob(ui, setter, &p.input_gain, "INPUT", 60.0);
             });
-            knob(&mut cols[2], setter, &p.output_db, "OUTPUT", 66.0);
-            knob(&mut cols[3], setter, &p.mix, "MIX", 66.0);
+            knob(&mut cols[1], setter, &p.drive_db, "DRIVE", 60.0);
+            cols[2].add_enabled_ui(wdf_on, |ui| {
+                knob(ui, setter, &p.bias, "BIAS", 60.0);
+            });
+            cols[3].add_enabled_ui(staging_on && !p.link.value(), |ui| {
+                knob(ui, setter, &p.output_db, "OUTPUT", 60.0);
+            });
+            knob(&mut cols[4], setter, &p.mix, "MIX", 60.0);
         });
 
         ui.add_space(10.0);
 
-        // Level-norm pill, right-aligned under the knob row. The `right_to_left` layout MUST be
-        // nested in a `ui.horizontal` (as the header is): placed directly in the top-down panel
-        // it claims the full remaining height to vertically-center, pushing the CIRCUIT panel off
-        // the bottom of the viewport. The horizontal wrapper bounds the row to its content height.
+        // Level-norm + link pills, right-aligned under the knob row. The `right_to_left` layout MUST
+        // be nested in a `ui.horizontal` (as the header is): placed directly in the top-down panel it
+        // claims the full remaining height to vertically-center, pushing the CIRCUIT panel off the
+        // bottom of the viewport. The horizontal wrapper bounds the row to its content height.
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 toggle_pill(ui, setter, &p.level_norm, "LEVEL NORM");
+                ui.add_space(8.0);
+                ui.add_enabled_ui(staging_on, |ui| {
+                    toggle_pill(ui, setter, &p.link, "LINK");
+                });
             });
         });
 
@@ -364,8 +389,6 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                                     .font(value_font(12.0))
                                     .color(DIM),
                             );
-                            ui.add_space(8.0);
-                            toggle_pill(ui, setter, &p.gain_stepped, "STEPPED");
                         });
                     });
 
@@ -497,16 +520,14 @@ fn circuit_gain_cell(ui: &mut egui::Ui, setter: &ParamSetter, p: &Arc<Ba283Param
     ui.scope(|ui| {
         ui.set_opacity(1.0);
         ui.add_enabled_ui(true, |ui| {
-            if p.gain_stepped.value() {
-                // Map each hardware position to a knob detent (normalized pos + label).
-                let detents: Vec<(f32, &'static str)> = crate::GAIN_STEPS
-                    .iter()
-                    .map(|s| (p.circuit_gain.preview_normalized(s.knob_ohm), s.label))
-                    .collect();
-                knob_cell_stepped(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0, &detents);
-            } else {
-                knob_cell(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0);
-            }
+            // The hardware gain switch is an IntParam(0..4): each index is a detent (normalized pos +
+            // dB label). The knob hard-steps between them — a faithful rotary, never continuous.
+            let detents: Vec<(f32, &'static str)> = crate::GAIN_STEPS
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (p.circuit_gain.preview_normalized(i as i32), s.label))
+                .collect();
+            knob_cell_stepped(ui, setter, &p.circuit_gain, "CIRCUIT GAIN", 64.0, &detents);
         });
     });
 }

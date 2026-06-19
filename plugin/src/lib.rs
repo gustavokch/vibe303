@@ -1,7 +1,7 @@
 use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 use std::num::NonZeroU32;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub mod dcblock;
@@ -22,12 +22,12 @@ const NORM_TRIM_MIN: f32 = 1.0e-4;
 const NORM_TRIM_MAX: f32 = 256.0;
 use wdf::{QualityConfig, WdfModel};
 
-/// Time constant (seconds) for the per-block glide of the WDF block-rate params (circuit_gain,
-/// bias). Smooths coarse host automation steps into small per-block increments so the G0 rebuild
-/// re-settles cleanly instead of stepping. Below these epsilons the glide snaps to the target so it
-/// fully settles (no perpetual rebuilds from a never-quite-equal one-pole).
+/// Time constant (seconds) for the per-block glide of the WDF block-rate params (bias, age).
+/// Smooths coarse host automation steps into small per-block increments so the G0 rebuild re-settles
+/// cleanly instead of stepping. Below these epsilons the glide snaps to the target so it fully
+/// settles (no perpetual rebuilds from a never-quite-equal one-pole). (Circuit gain is now a discrete
+/// switch — it snaps straight to the position with no glide.)
 const WDF_PARAM_TAU_S: f32 = 0.02;
-const WDF_RGAIN_EPS: f32 = 1.0e-3;
 const WDF_BIAS_EPS: f32 = 1.0e-5;
 const WDF_AGE_EPS: f32 = 1.0e-5;
 /// Settle-snap epsilon (dB) for the per-block EQ gain glide: once a band gain is within this of its
@@ -90,94 +90,12 @@ pub fn norm_apply_gain(trim: f32, drive: f32) -> f32 {
     (trim / drive.max(1.0e-6)).clamp(NORM_TRIM_MIN, NORM_TRIM_MAX)
 }
 
-/// Operating point for the off-thread levelNorm gain probe. All `Copy` scalars, so posting one to
-/// the background worker via `execute_background` never allocates on the audio thread.
-#[derive(Clone, Copy)]
-pub struct ProbeReq {
-    cfg: QualityConfig,
-    sr: f32,
-    rgain: f32,
-    bias: f32,
-    age: f32,
-    seed: u64,
-    #[cfg(feature = "trafo-core")]
-    trafo_on: bool,
-    #[cfg(feature = "trafo-core")]
-    trafo_hyst: f32,
-    #[cfg(feature = "trafo-core")]
-    trafo_sat: f32,
-}
-
-/// The worker's persistent warmed model plus the (cfg, sr) it was built for. Re-stamped in place on
-/// each probe so a request costs an `idle_settle` re-converge, not a ~1 s cold `warmup`.
-struct ProbeModel {
-    model: WdfModel,
-    cfg: QualityConfig,
-    sr: f32,
-}
-
-/// State shared between the audio thread (posts requests, reads the result) and the background probe
-/// worker (owns the model, writes the result). The model lives behind a `Mutex` only ever locked by
-/// the single worker thread — the audio thread touches only the two atomics, so it never blocks.
-struct ProbeShared {
-    /// Persistent warmed probe model, lazily built on the first request. Worker-thread only.
-    model: Mutex<Option<ProbeModel>>,
-    /// Latest probed trim (`1 / G_v`, NOT drive-divided), as `f32` bits. Read each block by `process`.
-    trim: AtomicU32,
-    /// A probe is in flight. Set by the audio thread (coalesce: at most one queued), cleared by the
-    /// worker when it finishes — so a fast sweep never floods the background queue.
-    busy: AtomicBool,
-}
-
-impl ProbeShared {
-    fn new() -> Self {
-        Self {
-            model: Mutex::new(None),
-            trim: AtomicU32::new(1.0f32.to_bits()),
-            busy: AtomicBool::new(false),
-        }
-    }
-}
-
-/// Run one levelNorm gain probe: build the worker model (first call, or when cfg/SR change) or cheaply
-/// re-stamp it (the common case), re-settle + measure its small-signal voltage gain, and publish
-/// `1/G_v` to `shared.trim`. The body of the background executor; also called synchronously in tests.
-/// MUST run off the audio thread (it warms / re-settles the circuit).
-fn run_probe(shared: &ProbeShared, req: ProbeReq) {
-    let mut guard = shared.model.lock().unwrap();
-    let rebuild = match guard.as_ref() {
-        Some(slot) => slot.cfg != req.cfg || slot.sr != req.sr,
-        None => true,
-    };
-    if rebuild {
-        let mut m = WdfModel::new_with(req.cfg, req.sr as f64, req.rgain as f64, req.bias as f64);
-        m.set_age_seed(req.seed);
-        m.set_age(req.age as f64);
-        #[cfg(feature = "trafo-core")]
-        {
-            m.set_trafo_enabled(req.trafo_on);
-            m.set_trafo_voicing(req.trafo_hyst as f64, req.trafo_sat as f64);
-        }
-        m.warmup();
-        *guard = Some(ProbeModel { model: m, cfg: req.cfg, sr: req.sr });
-    } else {
-        let slot = guard.as_mut().unwrap();
-        slot.model.set_age_seed(req.seed);
-        slot.model.set_age(req.age as f64);
-        slot.model.set_rgain(req.rgain as f64);
-        slot.model.set_bias(req.bias as f64);
-        #[cfg(feature = "trafo-core")]
-        {
-            slot.model.set_trafo_enabled(req.trafo_on);
-            slot.model.set_trafo_voicing(req.trafo_hyst as f64, req.trafo_sat as f64);
-        }
-    }
-    let slot = guard.as_mut().unwrap();
-    let g = slot.model.resettle_and_measure_gain();
-    let trim = (1.0 / g).clamp(NORM_TRIM_MIN, NORM_TRIM_MAX);
-    shared.trim.store(trim.to_bits(), Ordering::Relaxed);
-    shared.busy.store(false, Ordering::Release);
-}
+// The historical OFF-THREAD levelNorm gain probe was removed when `circuit_gain` became a 5-position
+// switch: each position's small-signal voltage gain `G_i` is now a fixed constant, so levelNorm reads
+// the static `GAIN_STEPS[pos].wdf_makeup` (= `1/G_i`, measured offline by `bin/measure_gi`) instead of
+// re-measuring the circuit at runtime. This makes levelNorm deterministic and alloc-free with no
+// background worker. (The makeup is referenced to default bias/age/trafo; aging/bias drift the true
+// gain slightly, an accepted tradeoff for the fixed-position design.)
 
 /// Number of per-channel DSP cores (mono path still allocates two; only one is driven).
 const N_CH: usize = 2;
@@ -209,12 +127,11 @@ pub struct RebuildReq {
     cfg_hi: Option<QualityConfig>,
 }
 
-/// The background task posted to nih-plug's executor. Widened from the bare levelNorm probe to also
-/// carry off-thread model rebuilds, so a tier/OS switch builds the new model here (worker thread),
-/// not inline on the audio thread.
+/// The background task posted to nih-plug's executor: an off-thread model rebuild, so a tier/OS switch
+/// builds the new model here (worker thread), not inline on the audio thread. (The levelNorm probe
+/// task was removed — levelNorm is now a static per-position table; see the note above.)
 #[derive(Clone, Copy)]
 pub enum BgTask {
-    Probe(ProbeReq),
     Rebuild(RebuildReq),
 }
 
@@ -346,19 +263,14 @@ pub struct Ba283Plugin {
     /// level-norm on/off toggle — fades click-free instead of stepping. NOT a program-dependent RMS
     /// estimator (so no pumping). Applied only when the `level_norm` param is on (WDF backend only).
     norm_trim: f32,
-    /// The latest probed trim target (`1 / G_v`), refreshed each block from [`Self::probe`]'s atomic
-    /// (written by the OFF-THREAD probe worker — the full-fidelity probe is far too slow to run
-    /// inline). The applied `norm_trim` ramps toward it per-sample. At a settled operating point this
-    /// equals `norm_trim`.
+    /// The levelNorm trim target (`1 / G_v` for the current gain position), read each block from the
+    /// static `GAIN_STEPS[pos].wdf_makeup` table (no runtime probe). The applied `norm_trim` ramps
+    /// toward it per-sample so a position change fades click-free. At a settled position this equals
+    /// `norm_trim`.
     norm_trim_target: f32,
     /// Forces a one-shot snap of `norm_trim` straight to the (drive-cancelled) target (set on init /
     /// reset / first WDF block) — leveled from the first sample, no startup ramp.
     norm_reprobe: bool,
-    /// Off-thread levelNorm gain probe (request via `execute_background`, result via an atomic). The
-    /// probe re-settles + measures the circuit at ~5–30 ms — orders of magnitude past a block budget
-    /// — so it MUST NOT run on the audio thread; `process` only posts an operating point and reads
-    /// back the latest `1/G_v`.
-    probe: Arc<ProbeShared>,
     /// Off-thread tier/OS rebuild handoff (request via `execute_background`, models swapped in by a
     /// later `process` block). Makes a tier/OS switch alloc-free on the audio thread: the worker
     /// builds the new models, `process` only pointer-swaps them in and parks the retired ones.
@@ -439,27 +351,38 @@ impl WdfTier {
     }
 }
 
-/// One position of the BA283 stepped gain switch. `r_kj_ohm` is the value actually stamped into the
-/// WDF R_KJ leg; the open position uses a large sentinel (resistor removed → leg conductance ≈ 0).
-/// `knob_ohm` is the same value clamped into the `circuit_gain` param domain (47–10k Ω) — it drives
-/// the knob detent position / DAW automation only, never the model. `label` is the (balanced) dB
-/// reading shown in stepped mode.
+/// One position of the BA283 hardware gain switch. `r_kj_ohm` is the value stamped into the WDF R_KJ
+/// leg (the open position uses a large sentinel — resistor removed → leg conductance ≈ 0). `label`
+/// is the (balanced) dB reading on the rotary. `wdf_makeup` is the static levelNorm circuit-makeup
+/// `1/G_i` — the reciprocal of the position's measured small-signal voltage gain — applied (with the
+/// Drive scalar) so levelNorm holds output at unity. Measured offline by `bin/measure_gi` at the
+/// realtime tier with default bias/age/trafo; the drift-guard test in `tests/test_stepped_gain.rs`
+/// re-measures these and asserts they match, so a silent solver/circuit change cannot desync them.
 struct GainStep {
     label: &'static str,
     r_kj_ohm: f32,
-    knob_ohm: f32,
+    wdf_makeup: f32,
 }
 
-/// Real BA283 gain-switch wafer resistances (5 positions). Lower R ⇒ more gain. Position 0 is the
-/// open contact (no R_KJ): faithful min gain, modelled by a large sentinel resistance. The default
-/// `circuit_gain = 220 Ω` lands exactly on position 3 (30 dB) so toggling stepped on causes no jump.
+/// Real BA283 gain-switch wafer positions (5). Lower R ⇒ more gain. Position 0 is the open contact
+/// (no R_KJ): faithful min gain, modelled by a large sentinel resistance. The `circuit_gain` param is
+/// an `IntParam(0..4)` indexing this table — a faithful rotary detent, never continuous.
 static GAIN_STEPS: &[GainStep] = &[
-    GainStep { label: "15 dB", r_kj_ohm: 1.0e9, knob_ohm: 10_000.0 },
-    GainStep { label: "20 dB", r_kj_ohm: 1_200.0, knob_ohm: 1_200.0 },
-    GainStep { label: "25 dB", r_kj_ohm: 470.0, knob_ohm: 470.0 },
-    GainStep { label: "30 dB", r_kj_ohm: 220.0, knob_ohm: 220.0 },
-    GainStep { label: "35 dB", r_kj_ohm: 110.0, knob_ohm: 110.0 },
+    GainStep { label: "15 dB", r_kj_ohm: 1.0e9, wdf_makeup: 0.202892 },
+    GainStep { label: "20 dB", r_kj_ohm: 1_200.0, wdf_makeup: 0.118732 },
+    GainStep { label: "25 dB", r_kj_ohm: 470.0, wdf_makeup: 0.073245 },
+    GainStep { label: "30 dB", r_kj_ohm: 220.0, wdf_makeup: 0.043799 },
+    GainStep { label: "35 dB", r_kj_ohm: 110.0, wdf_makeup: 0.026136 },
 ];
+
+/// Number of hardware gain-switch positions (the `circuit_gain` IntParam range is `0..=GAIN_STEPS-1`).
+const GAIN_STEPS_LEN: i32 = 5;
+
+/// Clamp a `circuit_gain` param value to a valid `GAIN_STEPS` index.
+#[inline]
+fn gain_pos(idx: i32) -> usize {
+    idx.clamp(0, GAIN_STEPS_LEN - 1) as usize
+}
 
 /// Map the `circuit_gain` R_KJ value (Ω) onto the WaveNet's trained 0..1 gain axis. The conditioned
 /// model was reamped over a geometric R_KJ sweep — 10000 Ω → gain_norm 0.0, 82 Ω → 1.0 — so the
@@ -473,22 +396,6 @@ pub fn rgain_to_gain_norm(rgain_ohm: f32) -> f32 {
     const R_HI: f32 = 82.0; // gain_norm 1.0
     let g = (rgain_ohm.max(1.0).ln() - R_LO.ln()) / (R_HI.ln() - R_LO.ln());
     g.clamp(0.0, 1.0)
-}
-
-/// Index of the gain step whose `knob_ohm` is nearest `rgain_ohm` in LOG-ohm space (matches the
-/// `circuit_gain` skew_factor(-2.0), so the snap midpoints sit where the knob spacing is uniform).
-fn nearest_gain_step(rgain_ohm: f32) -> usize {
-    let target = rgain_ohm.max(1.0).ln();
-    let mut best = 0usize;
-    let mut best_d = f32::INFINITY;
-    for (i, s) in GAIN_STEPS.iter().enumerate() {
-        let d = (s.knob_ohm.ln() - target).abs();
-        if d < best_d {
-            best_d = d;
-            best = i;
-        }
-    }
-    best
 }
 
 /// NN loudness-makeup + level-norm calibration, indexed by `circuit_gain` R_KJ (Ω) in LOG-ohm space.
@@ -767,20 +674,26 @@ pub struct Ba283Params {
     /// EQ high-shelf gain (RV1, fixed 12 kHz), ±16 dB. 0 dB = flat.
     #[id = "eq_high_gain"]
     pub eq_high_gain: FloatParam,
-    /// When on, scale the wet signal so output RMS tracks input RMS (stereo-linked, applied before
-    /// `output_db`/`mix`). Off = faithful preamp gain (the default).
+    /// Level-neutral gain staging. ON (the DEFAULT) ⇒ output is auto-compensated to unity regardless
+    /// of circuit-gain position and Drive (only tone/saturation changes); `input_gain`/`output_db`/
+    /// `link` are forced neutral and grayed in the editor. OFF ⇒ faithful preamp: circuit gain + Drive
+    /// are audible as level and the user trims manually via `input_gain`/`output_db` (+ `link`).
     #[id = "level_norm"]
     pub level_norm: BoolParam,
-    /// Hardware-stepped gain: when on, the `circuit_gain` knob hard-switches between the 5 real
-    /// BA283 wafer positions (`GAIN_STEPS`) instead of gliding continuously — a rotary detent that
-    /// re-settles the circuit instantly. Authenticity feature; no CPU effect. WDF-only.
-    #[id = "gain_stepped"]
-    pub gain_stepped: BoolParam,
-    /// R_KJ gain shunt (ohms), WDF-only. Inert for the NeuralNet backend. Block-rate via a `G0`
-    /// rebuild (matches the C++ `setBias`/`setRgain`); the plugin glides it per block to smooth
-    /// coarse automation steps.
+    /// Clean pre-circuit input trim (dB). Sits at the head of the chain (`x * input_gain → eq →
+    /// Drive → circuit`). Active only when `level_norm` is OFF (forced neutral / grayed when ON).
+    #[id = "input_gain"]
+    pub input_gain: FloatParam,
+    /// Couples `input_gain` and `output_db` in OPPOSITE directions (input +X dB ⇒ output −X dB) for
+    /// manual net-neutral gain staging — push the circuit hot, pull the output back. Only meaningful
+    /// when `level_norm` is OFF; the editor slaves the output knob to input while ON.
+    #[id = "link"]
+    pub link: BoolParam,
+    /// Hardware gain switch: a 5-position rotary (`GAIN_STEPS`, 15/20/25/30/35 dB) indexing the WDF
+    /// R_KJ leg — a faithful detent, never continuous. Also conditions the NeuralNet (FiLM gain-norm).
+    /// Block-rate via a cheap `G0` rebuild on each detent crossing.
     #[id = "circuit_gain"]
-    pub circuit_gain: FloatParam,
+    pub circuit_gain: IntParam,
     /// Component aging: random per-component drift (caps + resistors) emulating vintage units.
     /// 0 = pristine (bit-exact today); 1 = fully aged. WDF-only; inert for the NeuralNet backend.
     /// Block-rate via a `G0` rebuild, glided per block like bias/gain.
@@ -877,19 +790,34 @@ impl Default for Ba283Params {
             eq_high_gain: FloatParam::new("EQ High", 0.0, FloatRange::Linear { min: -16.0, max: 16.0 })
                 .with_unit(" dB")
                 .with_value_to_string(formatters::v2s_f32_rounded(1)),
-            level_norm: BoolParam::new("Level Norm", false),
-            gain_stepped: BoolParam::new("Stepped Gain", false),
-            circuit_gain: FloatParam::new(
-                "Circuit Gain",
-                220.0,
-                FloatRange::Skewed {
-                    min: 47.0,
-                    max: 10_000.0,
-                    factor: FloatRange::skew_factor(-2.0),
+            // Default ON: inserting the plugin at defaults is level-neutral (unity) — fixes the
+            // historical "+30 dB louder at default" bug. Turn OFF for faithful manual gain staging.
+            level_norm: BoolParam::new("Level Norm", true),
+            input_gain: FloatParam::new(
+                "Input Gain",
+                0.0,
+                FloatRange::Linear {
+                    min: -24.0,
+                    max: 24.0,
                 },
             )
-            .with_unit(" Ohm")
-            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1))
+            .with_smoother(SmoothingStyle::Linear(20.0)),
+            link: BoolParam::new("Link", false),
+            // Default position idx 0 (15 dB) — the cleanest / least-coloured stock insert. Under
+            // levelNorm ON the level is neutral at any position, so this is a pure-tone default.
+            circuit_gain: IntParam::new(
+                "Circuit Gain",
+                0,
+                IntRange::Linear { min: 0, max: GAIN_STEPS_LEN - 1 },
+            )
+            .with_value_to_string(Arc::new(|i| {
+                GAIN_STEPS[gain_pos(i)].label.to_string()
+            }))
+            .with_string_to_value(Arc::new(|s| {
+                GAIN_STEPS.iter().position(|g| g.label == s.trim()).map(|p| p as i32)
+            })),
             age: FloatParam::new("Age", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_value_to_string(formatters::v2s_f32_rounded(2))
                 .with_smoother(SmoothingStyle::Linear(50.0)),
@@ -926,11 +854,10 @@ impl Default for Ba283Plugin {
             norm_trim: 1.0,
             norm_trim_target: 1.0,
             norm_reprobe: true,
-            probe: Arc::new(ProbeShared::new()),
             rebuild: Arc::new(RebuildShared::new()),
             rebuild_pending: None,
             rebuild_stall: 0,
-            wdf_rgain_smooth: 220.0,
+            wdf_rgain_smooth: GAIN_STEPS[0].r_kj_ohm,
             wdf_bias_smooth: 0.5,
             wdf_age_smooth: 0.0,
             eq_low_g_smooth: 0.0,
@@ -969,10 +896,10 @@ impl Ba283Plugin {
         }
     }
 
-    /// Latest probed levelNorm trim (`1 / G_v`, NOT drive-divided). Test/diagnostic accessor.
+    /// Static levelNorm trim (`1 / G_v`) for a `circuit_gain` position. Test/diagnostic accessor.
     #[doc(hidden)]
-    pub fn probe_trim(&self) -> f32 {
-        f32::from_bits(self.probe.trim.load(Ordering::Relaxed))
+    pub fn pos_makeup(pos: i32) -> f32 {
+        GAIN_STEPS[gain_pos(pos)].wdf_makeup
     }
 
     /// Park a retired model box for an off-thread drop (the worker drains the ring). Alloc-free
@@ -1087,40 +1014,6 @@ impl Ba283Plugin {
         self.consume_pending_rebuild()
     }
 
-    /// Run one probe synchronously (the background worker's body), exercising the real build /
-    /// re-stamp / measure path. Test/diagnostic helper — never call on the audio thread.
-    #[doc(hidden)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn force_probe(
-        &self,
-        cfg: QualityConfig,
-        sr: f32,
-        rgain: f32,
-        bias: f32,
-        age: f32,
-        seed: u64,
-        trafo: f32,
-    ) {
-        let _ = trafo; // unused when the `trafo-core` feature is off
-        // The single `trafo` arg is interpreted as legacy depth: > 0 enables the core and drives the
-        // SATURATION dial; HYSTERESIS stays at the default. The probe only measures small-signal
-        // gain, so the exact voicing is immaterial here.
-        let req = ProbeReq {
-            cfg,
-            sr,
-            rgain,
-            bias,
-            age,
-            seed,
-            #[cfg(feature = "trafo-core")]
-            trafo_on: trafo > 0.0,
-            #[cfg(feature = "trafo-core")]
-            trafo_hyst: 0.5,
-            #[cfg(feature = "trafo-core")]
-            trafo_sat: trafo,
-        };
-        run_probe(&self.probe, req);
-    }
 }
 
 impl Plugin for Ba283Plugin {
@@ -1146,15 +1039,12 @@ impl Plugin for Ba283Plugin {
     type SysExMessage = ();
     type BackgroundTask = BgTask;
 
-    /// The off-thread workers. nih_plug runs this closure on a dedicated background thread for every
-    /// `execute_background(task)` posted from `process`: the levelNorm probe (owns the persistent
-    /// probe model, publishes `1/G_v`) and the tier/OS rebuild (builds the new models, publishes the
-    /// boxes, drains the retire queue). Both reach their shared state via cloned `Arc`s.
+    /// The off-thread worker. nih_plug runs this closure on a dedicated background thread for every
+    /// `execute_background(task)` posted from `process`: the tier/OS rebuild (builds the new models,
+    /// publishes the boxes, drains the retire queue). Reaches its shared state via a cloned `Arc`.
     fn task_executor(&mut self) -> TaskExecutor<Self> {
-        let probe = self.probe.clone();
         let rebuild = self.rebuild.clone();
         Box::new(move |task| match task {
-            BgTask::Probe(req) => run_probe(&probe, req),
             BgTask::Rebuild(req) => run_rebuild(&rebuild, req),
         })
     }
@@ -1178,7 +1068,7 @@ impl Plugin for Ba283Plugin {
         // Warm ONE WDF model at the real SR / current gain / bias (both channels are identical), then
         // install its settled snapshot into each channel as the reset target. Off the audio thread —
         // bounded (~1 s of internal-rate solves with early-exit), acceptable at plugin load.
-        let rgain = self.params.circuit_gain.value();
+        let rgain = GAIN_STEPS[gain_pos(self.params.circuit_gain.value())].r_kj_ohm;
         let bias = self.params.bias.value();
         let tier = self.params.wdf_tier.value();
         let precision = self.params.precision.value();
@@ -1255,13 +1145,9 @@ impl Plugin for Ba283Plugin {
             self.wdf_trafo_sat_smooth = sat;
         }
 
-        // Seed the levelNorm trim synchronously off the audio thread (this is `initialize`): probe the
-        // just-warmed live model so the very first block is already leveled, before the background
-        // worker has run. `norm_reprobe` then snaps the applied gain to it on the first block.
-        let seed_g = self.channels[0].wdf_measure_gain();
-        self.probe
-            .trim
-            .store((1.0 / seed_g).clamp(NORM_TRIM_MIN, NORM_TRIM_MAX).to_bits(), Ordering::Relaxed);
+        // levelNorm trim is now a static per-position constant (`GAIN_STEPS[pos].wdf_makeup`), read in
+        // `process`. Force a one-shot snap on the first block so the output is leveled from the very
+        // first sample with no startup ramp.
         self.norm_reprobe = true;
 
         // Report the oversampler latency to the host (this nih_plug rev exposes
@@ -1291,10 +1177,13 @@ impl Plugin for Ba283Plugin {
         enable_ftz_daz();
         let use_bridge = self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ;
         let backend = self.params.backend.value();
-        // FiLM gain-conditioning value for the WaveNet (NeuralNet) backend: the circuit-gain knob
-        // mapped onto the model's trained 0..1 gain axis (block-rate; the model is robust to the
-        // small per-block steps a knob drag produces). Inert for the WDF backend.
-        let gain_norm = rgain_to_gain_norm(self.params.circuit_gain.value());
+        // FiLM gain-conditioning value for the WaveNet (NeuralNet) backend: the discrete gain position
+        // mapped onto the model's trained 0..1 gain axis via its hardware R_KJ. Inert for the WDF
+        // backend. (STAGED for the WS4 retrain: the current placeholder weights still use the
+        // continuous `rgain_to_gain_norm` map keyed by the position's R_KJ; the retrain will replace
+        // this with a discrete 5-entry FiLM embedding indexed directly by `gain_pos`.)
+        let gain_pos_idx = gain_pos(self.params.circuit_gain.value());
+        let gain_norm = rgain_to_gain_norm(GAIN_STEPS[gain_pos_idx].r_kj_ohm);
 
         // Neve EQ (both backends): resolve the switched frequencies and push the current settings to
         // each channel at block rate. `Eq::set` recomputes biquad coeffs only when they change, and
@@ -1341,35 +1230,24 @@ impl Plugin for Ba283Plugin {
         // to both channels only when changed; integrator state is preserved so the model re-settles
         // dynamically. NeuralNet blocks skip this entirely.
         if backend == InferenceBackend::Wdf {
-            // Tracks whether the WDF operating point changed this block — drives the levelNorm trim
-            // re-probe below (re-measured on every changed block so the trim tracks a live sweep).
+            // Tracks whether the WDF operating point changed this block — forces the param legs to
+            // re-stamp and arms the levelNorm one-shot snap on a tier/age/gain change.
             let mut changed = false;
-            // Glide the block-rate WDF params toward their targets so a fast knob drag turns into
+            // Glide the block-rate bias/age params toward their targets so a fast knob drag turns into
             // small per-block G0 rebuilds (smooth re-settle) instead of coarse steps. Snap within an
             // epsilon so the one-pole fully settles (no endless near-equal rebuilds).
             let n = buffer.samples().max(1) as f32;
             let a = 1.0 - (-(n / self.sample_rate) / WDF_PARAM_TAU_S).exp();
-            let mut rgain_t = self.params.circuit_gain.value();
+            // Circuit gain is a hardware DETENT: snap straight to the position's R_KJ (no glide). The
+            // apply gate below re-stamps R_KJ once per detent crossing — a cheap G0 rebuild — and the
+            // circuit re-settles dynamically (the 60 ms tier crossfade is not needed for a G0 stamp,
+            // which preserves integrator state; the levelNorm target jumps via the per-sample ramp).
+            let rgain_t = GAIN_STEPS[gain_pos_idx].r_kj_ohm;
+            self.wdf_rgain_smooth = rgain_t;
             let bias_t = self.params.bias.value();
             let age_t = self.params.age.value();
-            // Stepped gain: hard-switch to the nearest hardware position and BYPASS the glide (a
-            // rotary detent jumps instantly). Snapping `wdf_rgain_smooth` here makes the one-pole
-            // below a no-op (delta 0) so `rgain` lands exactly on the step; the apply gate then
-            // re-stamps R_KJ once per detent crossing and the circuit re-settles like `set_bias`.
-            if self.params.gain_stepped.value() {
-                rgain_t = GAIN_STEPS[nearest_gain_step(rgain_t)].r_kj_ohm;
-                self.wdf_rgain_smooth = rgain_t;
-            }
-            self.wdf_rgain_smooth += a * (rgain_t - self.wdf_rgain_smooth);
             self.wdf_bias_smooth += a * (bias_t - self.wdf_bias_smooth);
             self.wdf_age_smooth += a * (age_t - self.wdf_age_smooth);
-            // Relative snap: WDF_RGAIN_EPS is a fraction of the target (Circuit Gain spans 47..10000 Ω,
-            // so a fixed absolute epsilon would never be hit near the top and the one-pole tail would
-            // creep for ~50 blocks, holding `changed` true and starving the trim re-probe). Relative
-            // lands the glide within a few blocks at any setting.
-            if (rgain_t - self.wdf_rgain_smooth).abs() < WDF_RGAIN_EPS * rgain_t.abs().max(1.0) {
-                self.wdf_rgain_smooth = rgain_t;
-            }
             if (bias_t - self.wdf_bias_smooth).abs() < WDF_BIAS_EPS {
                 self.wdf_bias_smooth = bias_t;
             }
@@ -1557,46 +1435,17 @@ impl Plugin for Ba283Plugin {
                 changed = true;
             }
 
-            // levelNorm trim TARGET: post an OFF-THREAD probe of the circuit's small-signal voltage
-            // gain whenever the operating point moves (each glide block of a knob drag / automation
-            // lane) or a forced reprobe is pending. The probe re-settles + measures the circuit
-            // (~5–30 ms — far past a block budget), so it MUST run on the background worker, never
-            // inline. `busy` coalesces to a single in-flight request so a fast sweep never floods the
-            // queue; the worker writes `1/G_v` back to the atomic, read below. The probe is a fixed
-            // internal sine on the worker's model — a pure function of the operating point, NOT the
-            // program — so tracking it introduces no pumping.
-            if (changed || self.norm_reprobe)
-                && self
-                    .probe
-                    .busy
-                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-                    .is_ok()
-            {
-                let req = ProbeReq {
-                    cfg: tier
-                        .config()
-                        .with_precision(precision.to_wdf())
-                        .with_oversampling(oversampling.to_wdf()),
-                    sr: self.sample_rate,
-                    rgain,
-                    bias,
-                    age,
-                    seed,
-                    #[cfg(feature = "trafo-core")]
-                    trafo_on,
-                    #[cfg(feature = "trafo-core")]
-                    trafo_hyst,
-                    #[cfg(feature = "trafo-core")]
-                    trafo_sat,
-                };
-                context.execute_background(BgTask::Probe(req));
-            }
+            // `changed` (used above to force the param legs to re-stamp) is also consumed implicitly:
+            // a gain/tier/age change moves the static levelNorm target below. No off-thread probe is
+            // posted — the trim is the fixed per-position constant read just below.
+            let _ = changed;
         }
 
-        // Refresh the trim target from the worker's latest result (lags the operating point by the
-        // probe's completion latency; the per-sample ramp below smooths each step in). Seeded
-        // synchronously in `initialize`, so it is already correct on the first block.
-        self.norm_trim_target = f32::from_bits(self.probe.trim.load(Ordering::Relaxed));
+        // levelNorm trim TARGET: the static per-position circuit makeup `1/G_v` for the current gain
+        // switch position (measured offline; see `GAIN_STEPS`). No runtime probe — positions are
+        // fixed, so this is a deterministic constant. The per-sample ramp below smooths a position
+        // change in. Inert for the NeuralNet backend (which uses its own static `nn_norm_trim`).
+        self.norm_trim_target = GAIN_STEPS[gain_pos_idx].wdf_makeup;
 
         // levelNorm + NN loudness makeup. Two backends, two mechanisms, both folded into `target_gain`
         // (the per-sample ramp below smooths every transition click-free):
@@ -1639,11 +1488,11 @@ impl Plugin for Ba283Plugin {
             }
             InferenceBackend::NeuralNet => {
                 // OFF → raw NN (FiLM-only, unity makeup), the NN's natural level. ON → level to ~unity
-                // via the `1/G_nn` trim. Use the raw knob value (not the WDF-smoothed `rgain`, which is
-                // scoped to the WDF block); in stepped mode it is already a detent value.
+                // via the `1/G_nn` trim, keyed by the discrete position's hardware R_KJ. (STAGED: the
+                // retrain will level-normalize the NN targets, collapsing this toward a single
+                // constant; the 5-entry table absorbs the residual per-position correction.)
                 if level_norm_on {
-                    let rgain_knob = self.params.circuit_gain.value();
-                    norm_apply_gain(nn_norm_trim(rgain_knob), drive_block)
+                    norm_apply_gain(nn_norm_trim(GAIN_STEPS[gain_pos_idx].r_kj_ohm), drive_block)
                 } else {
                     1.0
                 }
@@ -1664,7 +1513,13 @@ impl Plugin for Ba283Plugin {
         for mut frame in buffer.iter_samples() {
             let drive = db_to_gain(self.params.drive_db.smoothed.next());
             let bias = self.params.bias.smoothed.next();
-            let out_g = db_to_gain(self.params.output_db.smoothed.next());
+            // Advance the input/output smoothers every sample (keeps them coherent across a levelNorm
+            // toggle), then FORCE them neutral when levelNorm is on — the auto-comp (`norm_gain`) owns
+            // the level, and the editor grays these knobs. levelNorm OFF → the user's manual trims
+            // (with `link` already mirroring output↔input in the editor).
+            let in_smooth = db_to_gain(self.params.input_gain.smoothed.next());
+            let out_smooth = db_to_gain(self.params.output_db.smoothed.next());
+            let (in_g, out_g) = if level_norm_on { (1.0, 1.0) } else { (in_smooth, out_smooth) };
             let mix = self.params.mix.smoothed.next() * 0.01;
             frame_i += 1.0;
             let norm_gain = g_start + g_step * frame_i;
@@ -1683,7 +1538,7 @@ impl Plugin for Ba283Plugin {
                     bias
                 };
                 *sample = self.channels[ch].process_sample(
-                    x, drive, cond, out_g, norm_gain, mix, use_bridge, backend,
+                    x, in_g, drive, cond, out_g, norm_gain, mix, use_bridge, backend,
                 );
             }
         }
@@ -1712,36 +1567,16 @@ nih_export_vst3!(Ba283Plugin);
 
 #[cfg(test)]
 mod gain_step_tests {
-    use super::{nearest_gain_step, GAIN_STEPS};
+    use super::{gain_pos, GAIN_STEPS, GAIN_STEPS_LEN};
 
     #[test]
-    fn snaps_each_step_to_itself() {
-        for (i, s) in GAIN_STEPS.iter().enumerate() {
-            assert_eq!(
-                nearest_gain_step(s.knob_ohm),
-                i,
-                "step {} ({}) must snap to itself",
-                i,
-                s.label
-            );
-        }
-    }
-
-    #[test]
-    fn snaps_to_nearest_in_log_space() {
-        // 220 Ω is the default (idx 3). Values between 220 and 470 snap to whichever is nearer in
-        // log-Ω: the geometric mean sqrt(220*470) ≈ 321.5 is the boundary.
-        let mid = (220.0_f32 * 470.0).sqrt();
-        assert_eq!(nearest_gain_step(mid * 0.99), 3, "just below the 220↔470 midpoint → 220 (idx 3)");
-        assert_eq!(nearest_gain_step(mid * 1.01), 2, "just above the 220↔470 midpoint → 470 (idx 2)");
-    }
-
-    #[test]
-    fn clamps_outside_param_range() {
-        // Far below the smallest knob_ohm (110) → highest-gain step (idx 4). Far above the largest
-        // (10k, the open proxy) → idx 0. nearest_gain_step never panics or indexes out of range.
-        assert_eq!(nearest_gain_step(1.0), GAIN_STEPS.len() - 1);
-        assert_eq!(nearest_gain_step(1.0e6), 0);
+    fn gain_pos_clamps_to_valid_index() {
+        // The IntParam range is 0..=4; gain_pos guards against any out-of-range index.
+        assert_eq!(gain_pos(-3), 0);
+        assert_eq!(gain_pos(0), 0);
+        assert_eq!(gain_pos(4), 4);
+        assert_eq!(gain_pos(99), GAIN_STEPS.len() - 1);
+        assert_eq!(GAIN_STEPS.len() as i32, GAIN_STEPS_LEN);
     }
 
     #[test]

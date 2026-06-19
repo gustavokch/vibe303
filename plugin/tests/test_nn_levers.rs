@@ -30,7 +30,7 @@ fn nn_rms(r: f32, drive: f32, norm_gain: f32) -> f32 {
     let mut acc = 0.0f64;
     for i in 0..(WARM + MEAS) {
         let x = AMP * (w * i as f32).sin();
-        let y = ch.process_sample(x, drive, cond, 1.0, norm_gain, 1.0, false, InferenceBackend::NeuralNet);
+        let y = ch.process_sample(x, 1.0, drive, cond, 1.0, norm_gain, 1.0, false, InferenceBackend::NeuralNet);
         if i >= WARM {
             acc += (y * y) as f64;
         }
@@ -47,7 +47,7 @@ fn wdf_rms(r: f32, drive: f32) -> f32 {
     let mut acc = 0.0f64;
     for i in 0..(WARM + MEAS) {
         let x = AMP * (w * i as f32).sin();
-        let y = ch.process_sample(x, drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+        let y = ch.process_sample(x, 1.0, drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
         if i >= WARM {
             acc += (y * y) as f64;
         }
