@@ -184,6 +184,15 @@ const N_CH: usize = 2;
 /// Retire-queue capacity: max model boxes awaiting an off-thread drop. A switch retires ≤2 lo + ≤2
 /// hi boxes and switch coalescing bounds concurrency, so 8 slots is ample headroom.
 const RETIRE_CAP: usize = 8;
+/// Failsafe bound (in `process` blocks) for a pending rebuild whose `busy` latch is held but whose
+/// build never lands. `execute_background` is fire-and-forget — on a full task queue nih-plug drops
+/// the post silently, leaving `busy` stuck `true` forever and wedging the switch machine. After this
+/// many blocks with the latch held and nothing published, the latch is force-released so the next
+/// block re-posts. The bound is far larger than any real off-thread build (a WDF rebuild settles in
+/// well under ~20 blocks at any sane block size), so a trip means the post was dropped — i.e. NO
+/// worker is live — and the force-release cannot race a running build. Re-posts the SAME pending req
+/// (same `gen`), so even a pathological concurrent build would be gen-identical and safe at publish.
+const REBUILD_STALL_LIMIT: u32 = 512;
 
 /// Operating point for an OFF-THREAD tier/OS/adaptive rebuild. All `Copy`, so posting one via
 /// `execute_background` never allocates on the audio thread. `gen` (monotonic) lets the audio thread
@@ -294,13 +303,15 @@ fn run_rebuild(shared: &RebuildShared, req: RebuildReq) {
     // Publish (any previous unconsumed set is dropped here, on the worker thread).
     *shared.ready.lock().unwrap() = Some(set);
     shared.ready_gen.store(req.gen, Ordering::Release);
-    // Drain retired models and drop them here (off the audio thread).
-    {
+    // Drain retired models and drop them here (off the audio thread). Take the slots out under the
+    // lock (a pointer move) and drop them AFTER releasing it, so the lock never spans a `free`. This
+    // keeps the audio thread's `retire_model` `try_lock` from ever contending with an in-progress
+    // drop — i.e. the inline-free fallback in `retire_model` stays unreachable in normal operation.
+    let drained = {
         let mut ring = shared.retire.lock().unwrap();
-        for slot in ring.slots.iter_mut() {
-            *slot = None;
-        }
-    }
+        std::mem::take(&mut ring.slots)
+    };
+    drop(drained);
     shared.busy.store(false, Ordering::Release);
 }
 
@@ -355,6 +366,9 @@ pub struct Ba283Plugin {
     /// The latest tier/OS switch awaiting its off-thread build (`None` when idle). Re-posted each
     /// block until the worker delivers, so a fast sweep converges to the most recent switch.
     rebuild_pending: Option<RebuildReq>,
+    /// Blocks the current `rebuild_pending` has waited with the `busy` latch held but nothing
+    /// published. Resets on a post / consume; trips the [`REBUILD_STALL_LIMIT`] failsafe.
+    rebuild_stall: u32,
     /// Per-block-glided WDF R_KJ gain / bias (smooth the coarse block-rate steps into the G0
     /// rebuild). Distinct from the NeuralNet per-sample bias smoother.
     wdf_rgain_smooth: f32,
@@ -915,6 +929,7 @@ impl Default for Ba283Plugin {
             probe: Arc::new(ProbeShared::new()),
             rebuild: Arc::new(RebuildShared::new()),
             rebuild_pending: None,
+            rebuild_stall: 0,
             wdf_rgain_smooth: 220.0,
             wdf_bias_smooth: 0.5,
             wdf_age_smooth: 0.0,
@@ -1454,15 +1469,33 @@ impl Plugin for Ba283Plugin {
             // (Re)post: while a switch is pending and its models are not yet built, keep one request
             // in flight (coalesced by `busy`) so a fast tier/OS sweep converges without flooding.
             if let Some(req) = self.rebuild_pending {
-                if self.rebuild.ready_gen.load(Ordering::Acquire) != req.gen
-                    && self
+                if self.rebuild.ready_gen.load(Ordering::Acquire) != req.gen {
+                    if self
                         .rebuild
                         .busy
                         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
                         .is_ok()
-                {
-                    context.execute_background(BgTask::Rebuild(req));
+                    {
+                        // We own the latch: post and reset the stall watchdog.
+                        self.rebuild_stall = 0;
+                        context.execute_background(BgTask::Rebuild(req));
+                    } else {
+                        // Latch held but nothing published yet. Normally the worker is mid-build and
+                        // will clear it; but a dropped `execute_background` (full task queue) leaves
+                        // it stuck forever. Watchdog it: past the bound the build cannot still be in
+                        // flight (see `REBUILD_STALL_LIMIT`), so force-release so the next block
+                        // re-posts the same (gen-identical) request.
+                        self.rebuild_stall = self.rebuild_stall.saturating_add(1);
+                        if self.rebuild_stall >= REBUILD_STALL_LIMIT {
+                            self.rebuild.busy.store(false, Ordering::Release);
+                            self.rebuild_stall = 0;
+                        }
+                    }
+                } else {
+                    self.rebuild_stall = 0;
                 }
+            } else {
+                self.rebuild_stall = 0;
             }
             // Aging (ordered after tier, before bias/rgain): re-roll edge -> seed -> age. Any change
             // forces the live bias/rgain legs to re-apply with the current aged factor.

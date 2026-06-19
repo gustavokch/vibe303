@@ -92,7 +92,13 @@ BA283 mic-preamp output stage.
   free touches the audio thread. The swap is deferred a few ms until the build lands
   (the old model keeps playing) and masked by the existing 60 ms crossfade; rapid
   sweeps coalesce to the latest switch. Guarded by `test_rebuild_noalloc`
-  (`assert_no_alloc`, default and `--no-default-features`).
+  (`assert_no_alloc`, default and `--no-default-features`). Hardening: the worker
+  drains the retire ring by moving the slots out under the lock and dropping them after
+  release, so the lock never spans a `free` (the audio thread's `try_lock` can't contend
+  with an in-progress drop → the inline-free fallback stays unreachable); a stall
+  watchdog (`REBUILD_STALL_LIMIT`) force-releases the `busy` latch if a posted rebuild is
+  ever silently dropped by a full task queue, so a switch can never wedge. Coalescing /
+  stale-gen drop covered by `test_rebuild_coalesce`.
 - **Depletion-charge LUT** on the lossy WDF tiers: the per-junction `pow` in the
   BJT depletion-charge kernel is replaced by a precomputed 1-D table + linear
   interp (the `pow` arm only; the linear arm is unchanged). Built once off the
