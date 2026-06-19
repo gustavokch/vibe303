@@ -179,6 +179,142 @@ fn run_probe(shared: &ProbeShared, req: ProbeReq) {
     shared.busy.store(false, Ordering::Release);
 }
 
+/// Number of per-channel DSP cores (mono path still allocates two; only one is driven).
+const N_CH: usize = 2;
+/// Retire-queue capacity: max model boxes awaiting an off-thread drop. A switch retires ≤2 lo + ≤2
+/// hi boxes and switch coalescing bounds concurrency, so 8 slots is ample headroom.
+const RETIRE_CAP: usize = 8;
+/// Failsafe bound (in `process` blocks) for a pending rebuild whose `busy` latch is held but whose
+/// build never lands. `execute_background` is fire-and-forget — on a full task queue nih-plug drops
+/// the post silently, leaving `busy` stuck `true` forever and wedging the switch machine. After this
+/// many blocks with the latch held and nothing published, the latch is force-released so the next
+/// block re-posts. The bound is far larger than any real off-thread build (a WDF rebuild settles in
+/// well under ~20 blocks at any sane block size), so a trip means the post was dropped — i.e. NO
+/// worker is live — and the force-release cannot race a running build. Re-posts the SAME pending req
+/// (same `gen`), so even a pathological concurrent build would be gen-identical and safe at publish.
+const REBUILD_STALL_LIMIT: u32 = 512;
+
+/// Operating point for an OFF-THREAD tier/OS/adaptive rebuild. All `Copy`, so posting one via
+/// `execute_background` never allocates on the audio thread. `gen` (monotonic) lets the audio thread
+/// consume only the build it is waiting for and lets the worker skip superseded params.
+#[derive(Clone, Copy)]
+pub struct RebuildReq {
+    gen: u64,
+    cfg: QualityConfig,
+    sr: f32,
+    rgain: f32,
+    bias: f32,
+    /// `Some` ⇒ build the adaptive-os hi sibling at this config; `None` ⇒ clear it.
+    #[cfg(feature = "adaptive-os")]
+    cfg_hi: Option<QualityConfig>,
+}
+
+/// The background task posted to nih-plug's executor. Widened from the bare levelNorm probe to also
+/// carry off-thread model rebuilds, so a tier/OS switch builds the new model here (worker thread),
+/// not inline on the audio thread.
+#[derive(Clone, Copy)]
+pub enum BgTask {
+    Probe(ProbeReq),
+    Rebuild(RebuildReq),
+}
+
+/// Per-channel models built off the audio thread by [`run_rebuild`], awaiting consume by `process`.
+struct RebuiltSet {
+    gen: u64,
+    lo: [Box<WdfModel>; N_CH],
+    #[cfg(feature = "adaptive-os")]
+    hi: [Option<Box<WdfModel>>; N_CH],
+}
+
+/// Fixed-capacity ring the audio thread parks retired model boxes in (pointer move, no alloc); the
+/// worker drains and drops them so the `free` (and the `Arc<DepLutSet>` refcount-zero) runs off the
+/// audio thread.
+struct RetireRing {
+    slots: [Option<Box<WdfModel>>; RETIRE_CAP],
+}
+impl RetireRing {
+    fn new() -> Self {
+        Self { slots: Default::default() }
+    }
+    /// Park a box for off-thread drop; hands it back as `Err` if full (caller drops inline as a
+    /// documented fallback — should not happen given switch coalescing).
+    fn push(&mut self, b: Box<WdfModel>) -> Result<(), Box<WdfModel>> {
+        for slot in self.slots.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(b);
+                return Ok(());
+            }
+        }
+        Err(b)
+    }
+}
+
+/// Shared state for the off-thread tier/OS rebuild. Mirrors [`ProbeShared`]: the audio thread only
+/// ever `try_lock`s (never blocks) and otherwise touches atomics; the worker owns the heavy build.
+struct RebuildShared {
+    /// Worker → audio: the latest built per-channel models. `try_lock`'d by the audio thread.
+    ready: Mutex<Option<RebuiltSet>>,
+    /// `gen` of the models in `ready` (0 = none). Audio consumes only on a match with its pending
+    /// gen; a superseded build is ignored and then overwritten (dropped) by the worker.
+    ready_gen: AtomicU64,
+    /// Audio → worker: retired model boxes awaiting an off-thread drop.
+    retire: Mutex<RetireRing>,
+    /// Newest rebuild gen the audio thread has requested.
+    latest_gen: AtomicU64,
+    /// A rebuild is in flight (coalesce: at most one queued).
+    busy: AtomicBool,
+}
+impl RebuildShared {
+    fn new() -> Self {
+        Self {
+            ready: Mutex::new(None),
+            ready_gen: AtomicU64::new(0),
+            retire: Mutex::new(RetireRing::new()),
+            latest_gen: AtomicU64::new(0),
+            busy: AtomicBool::new(false),
+        }
+    }
+}
+
+/// Build the per-channel WDF models for a tier/OS switch OFF the audio thread, publish them to
+/// `shared.ready`, and drain the retire queue (dropping retired models here, not on the audio
+/// thread). The body of the background executor's `Rebuild` arm; also called synchronously in tests.
+/// MUST run off the audio thread — `WdfModel::new_with` allocates and rebuilds the circuit.
+fn run_rebuild(shared: &RebuildShared, req: RebuildReq) {
+    // Build both channels' lo models. rgain/bias are applied at build; age/seed/trafo are re-stamped
+    // by the audio thread's forced legs at consume — exactly as the old inline `wdf_set_tier` path.
+    let lo: [Box<WdfModel>; N_CH] = [
+        Box::new(WdfModel::new_with(req.cfg, req.sr as f64, req.rgain as f64, req.bias as f64)),
+        Box::new(WdfModel::new_with(req.cfg, req.sr as f64, req.rgain as f64, req.bias as f64)),
+    ];
+    #[cfg(feature = "adaptive-os")]
+    let hi: [Option<Box<WdfModel>>; N_CH] = {
+        let build = |c: QualityConfig| {
+            Box::new(WdfModel::new_with(c, req.sr as f64, req.rgain as f64, req.bias as f64))
+        };
+        [req.cfg_hi.map(build), req.cfg_hi.map(build)]
+    };
+    let set = RebuiltSet {
+        gen: req.gen,
+        lo,
+        #[cfg(feature = "adaptive-os")]
+        hi,
+    };
+    // Publish (any previous unconsumed set is dropped here, on the worker thread).
+    *shared.ready.lock().unwrap() = Some(set);
+    shared.ready_gen.store(req.gen, Ordering::Release);
+    // Drain retired models and drop them here (off the audio thread). Take the slots out under the
+    // lock (a pointer move) and drop them AFTER releasing it, so the lock never spans a `free`. This
+    // keeps the audio thread's `retire_model` `try_lock` from ever contending with an in-progress
+    // drop — i.e. the inline-free fallback in `retire_model` stays unreachable in normal operation.
+    let drained = {
+        let mut ring = shared.retire.lock().unwrap();
+        std::mem::take(&mut ring.slots)
+    };
+    drop(drained);
+    shared.busy.store(false, Ordering::Release);
+}
+
 pub struct Ba283Plugin {
     params: Arc<Ba283Params>,
     /// One per-channel DSP core (model + oversampler + dry-delay) per channel
@@ -223,6 +359,16 @@ pub struct Ba283Plugin {
     /// — so it MUST NOT run on the audio thread; `process` only posts an operating point and reads
     /// back the latest `1/G_v`.
     probe: Arc<ProbeShared>,
+    /// Off-thread tier/OS rebuild handoff (request via `execute_background`, models swapped in by a
+    /// later `process` block). Makes a tier/OS switch alloc-free on the audio thread: the worker
+    /// builds the new models, `process` only pointer-swaps them in and parks the retired ones.
+    rebuild: Arc<RebuildShared>,
+    /// The latest tier/OS switch awaiting its off-thread build (`None` when idle). Re-posted each
+    /// block until the worker delivers, so a fast sweep converges to the most recent switch.
+    rebuild_pending: Option<RebuildReq>,
+    /// Blocks the current `rebuild_pending` has waited with the `busy` latch held but nothing
+    /// published. Resets on a post / consume; trips the [`REBUILD_STALL_LIMIT`] failsafe.
+    rebuild_stall: u32,
     /// Per-block-glided WDF R_KJ gain / bias (smooth the coarse block-rate steps into the G0
     /// rebuild). Distinct from the NeuralNet per-sample bias smoother.
     wdf_rgain_smooth: f32,
@@ -781,6 +927,9 @@ impl Default for Ba283Plugin {
             norm_trim_target: 1.0,
             norm_reprobe: true,
             probe: Arc::new(ProbeShared::new()),
+            rebuild: Arc::new(RebuildShared::new()),
+            rebuild_pending: None,
+            rebuild_stall: 0,
             wdf_rgain_smooth: 220.0,
             wdf_bias_smooth: 0.5,
             wdf_age_smooth: 0.0,
@@ -824,6 +973,118 @@ impl Ba283Plugin {
     #[doc(hidden)]
     pub fn probe_trim(&self) -> f32 {
         f32::from_bits(self.probe.trim.load(Ordering::Relaxed))
+    }
+
+    /// Park a retired model box for an off-thread drop (the worker drains the ring). Alloc-free
+    /// pointer move via the fixed-capacity ring. On the should-never-happen overflow OR a momentary
+    /// lock contention with the worker's drain, drop inline as a documented fallback.
+    fn retire_model(&self, b: Box<WdfModel>) {
+        match self.rebuild.retire.try_lock() {
+            Ok(mut ring) => {
+                if let Err(b) = ring.push(b) {
+                    nih_warn!("BA283: model retire ring full; dropping on the audio thread");
+                    drop(b);
+                }
+            }
+            Err(_) => drop(b),
+        }
+    }
+
+    /// Consume a finished off-thread tier/OS rebuild if its models are ready: pointer-swap them into
+    /// each channel ([`ChannelDsp::install_prebuilt`]), park the retired boxes for an off-thread drop,
+    /// and force the param legs to re-stamp the freshly built (pristine) models. Returns `true` if a
+    /// swap happened. ALLOC-FREE and FREE-FREE on the audio thread — the gate test asserts it.
+    fn consume_pending_rebuild(&mut self) -> bool {
+        let req = match self.rebuild_pending {
+            Some(r) => r,
+            None => return false,
+        };
+        if self.rebuild.ready_gen.load(Ordering::Acquire) != req.gen {
+            return false;
+        }
+        // Take the published set under a non-blocking try_lock (the worker holds it only briefly to
+        // move pointers); bail to next block on contention. The guard temporary is released before
+        // the channel borrows below.
+        let taken = match self.rebuild.ready.try_lock() {
+            Ok(mut guard) => guard.take(),
+            Err(_) => return false,
+        };
+        let set = match taken {
+            Some(s) => s,
+            None => return false,
+        };
+        debug_assert_eq!(set.gen, req.gen);
+        let [lo0, lo1] = set.lo;
+        let r0 = self.channels[0].install_prebuilt(lo0, self.sample_rate);
+        let r1 = self.channels[1].install_prebuilt(lo1, self.sample_rate);
+        self.retire_model(r0);
+        self.retire_model(r1);
+        #[cfg(feature = "adaptive-os")]
+        {
+            let [hi0, hi1] = set.hi;
+            if let Some(rh) = self.channels[0].install_prebuilt_hi(hi0, self.sample_rate) {
+                self.retire_model(rh);
+            }
+            if let Some(rh) = self.channels[1].install_prebuilt_hi(hi1, self.sample_rate) {
+                self.retire_model(rh);
+            }
+        }
+        self.rebuild_pending = None;
+        // The freshly installed models are pristine (no aging / bias-rgain / trafo applied yet) —
+        // force every leg in `process` to re-stamp them this block.
+        self.last_age = f32::NAN;
+        self.last_seed = u64::MAX;
+        self.last_rgain = f32::NAN;
+        self.last_bias = f32::NAN;
+        #[cfg(feature = "trafo-core")]
+        {
+            self.last_trafo_on = !self.params.trafo_on.value();
+            self.last_trafo_hyst = f32::NAN;
+            self.last_trafo_sat = f32::NAN;
+        }
+        true
+    }
+
+    /// TEST: arm a pending tier/OS rebuild exactly as `process`'s detection gate does (bump the gen,
+    /// stash the request) without a host. When `adaptive-os` is built in, the hi sibling is requested
+    /// too (so the gate test exercises the hi swap + retire). `cfg` should be a lossy tier to build
+    /// the depletion LUTs (the heavy alloc moved off-thread).
+    #[doc(hidden)]
+    pub fn force_arm_rebuild(&mut self, cfg: QualityConfig, rgain: f32, bias: f32) {
+        #[cfg(feature = "adaptive-os")]
+        let cfg_hi = {
+            let mut hi = cfg;
+            hi.os = ADAPTIVE_HI_OS;
+            hi.decimate = true;
+            Some(hi)
+        };
+        let gen = self.rebuild.latest_gen.load(Ordering::Relaxed) + 1;
+        self.rebuild.latest_gen.store(gen, Ordering::Relaxed);
+        self.rebuild_pending = Some(RebuildReq {
+            gen,
+            cfg,
+            sr: self.sample_rate,
+            rgain,
+            bias,
+            #[cfg(feature = "adaptive-os")]
+            cfg_hi,
+        });
+    }
+
+    /// TEST: run the off-thread worker body (build + publish + drain retire) for the currently-pending
+    /// rebuild, exactly as nih_plug's background thread would. Off the audio thread (allocates).
+    #[doc(hidden)]
+    pub fn force_run_pending_rebuild(&self) {
+        if let Some(req) = self.rebuild_pending {
+            run_rebuild(&self.rebuild, req);
+        }
+    }
+
+    /// TEST: the audio-thread consume swap. Wrap this in `assert_no_alloc` to gate alloc-freedom of a
+    /// tier/OS switch. Returns `true` if a swap happened.
+    #[doc(hidden)]
+    pub fn force_consume_rebuild(&mut self) -> bool {
+        self.consume_pending_rebuild()
     }
 
     /// Run one probe synchronously (the background worker's body), exercising the real build /
@@ -883,14 +1144,19 @@ impl Plugin for Ba283Plugin {
     ];
 
     type SysExMessage = ();
-    type BackgroundTask = ProbeReq;
+    type BackgroundTask = BgTask;
 
-    /// The off-thread levelNorm probe worker. nih_plug runs this closure on a dedicated background
-    /// thread for every `execute_background(req)` posted from `process`. It owns the persistent probe
-    /// model (via the shared `Arc`) and publishes `1/G_v` back through the atomic.
+    /// The off-thread workers. nih_plug runs this closure on a dedicated background thread for every
+    /// `execute_background(task)` posted from `process`: the levelNorm probe (owns the persistent
+    /// probe model, publishes `1/G_v`) and the tier/OS rebuild (builds the new models, publishes the
+    /// boxes, drains the retire queue). Both reach their shared state via cloned `Arc`s.
     fn task_executor(&mut self) -> TaskExecutor<Self> {
-        let shared = self.probe.clone();
-        Box::new(move |req| run_probe(&shared, req))
+        let probe = self.probe.clone();
+        let rebuild = self.rebuild.clone();
+        Box::new(move |task| match task {
+            BgTask::Probe(req) => run_probe(&probe, req),
+            BgTask::Rebuild(req) => run_rebuild(&rebuild, req),
+        })
     }
 
     fn params(&self) -> Arc<dyn Params> {
@@ -1155,22 +1421,37 @@ impl Plugin for Ba283Plugin {
                     .config()
                     .with_precision(precision.to_wdf())
                     .with_oversampling(oversampling.to_wdf());
-                for ch in self.channels.iter_mut() {
-                    ch.wdf_set_tier(cfg, self.sample_rate, rgain, bias);
-                    // Rebuild (or drop) the adaptive-os hi sibling for the new tier/oversampling/toggle.
+                // Hi-os sibling config: built only on the adaptive-eligible lossy tiers under Auto
+                // with the toggle on; `None` clears it.
+                #[cfg(feature = "adaptive-os")]
+                let cfg_hi = if adaptive_on
+                    && matches!(tier, WdfTier::UltraFast | WdfTier::Warp)
+                    && oversampling == Oversampling::Auto
+                {
+                    let mut hi = cfg;
+                    hi.os = ADAPTIVE_HI_OS;
+                    hi.decimate = true;
+                    Some(hi)
+                } else {
+                    None
+                };
+                // Queue an OFF-THREAD rebuild instead of building inline — the swap is alloc-free
+                // (done at consume below). The current models keep playing until the worker delivers;
+                // the existing 60 ms crossfade then masks the swap. A new gen each request so a fast
+                // sweep converges to the latest switch (older builds are ignored / dropped).
+                let gen = self.rebuild.latest_gen.load(Ordering::Relaxed) + 1;
+                self.rebuild.latest_gen.store(gen, Ordering::Relaxed);
+                self.rebuild_pending = Some(RebuildReq {
+                    gen,
+                    cfg,
+                    sr: self.sample_rate,
+                    rgain,
+                    bias,
                     #[cfg(feature = "adaptive-os")]
-                    if adaptive_on
-                        && matches!(tier, WdfTier::UltraFast | WdfTier::Warp)
-                        && oversampling == Oversampling::Auto
-                    {
-                        let mut hi = cfg;
-                        hi.os = ADAPTIVE_HI_OS;
-                        hi.decimate = true;
-                        ch.wdf_set_hi(hi, self.sample_rate, rgain, bias);
-                    } else {
-                        ch.wdf_clear_hi();
-                    }
-                }
+                    cfg_hi,
+                });
+                // Accept the requested state now (the swap is deferred). A further flip before the
+                // swap lands re-fires this gate with a newer gen.
                 self.last_tier = tier;
                 self.last_precision = precision;
                 self.last_oversampling = oversampling;
@@ -1178,20 +1459,43 @@ impl Plugin for Ba283Plugin {
                 {
                     self.last_adaptive_os = adaptive_on;
                 }
+            }
+            // Consume a finished off-thread build (alloc-free pointer-swap; see the method). The
+            // freshly installed models are pristine, so a consume forces the param legs below to
+            // re-stamp them and reprobes the levelNorm trim for the new operating point.
+            if self.consume_pending_rebuild() {
                 changed = true;
-                // The rebuild reset aging + the bias/rgain legs to pristine — force all to re-apply.
-                self.last_age = f32::NAN;
-                self.last_seed = u64::MAX;
-                self.last_rgain = f32::NAN;
-                self.last_bias = f32::NAN;
-                // The rebuild also reset the JA core to linear/default — force the gate + both
-                // voicing dials to re-apply.
-                #[cfg(feature = "trafo-core")]
-                {
-                    self.last_trafo_on = !self.params.trafo_on.value();
-                    self.last_trafo_hyst = f32::NAN;
-                    self.last_trafo_sat = f32::NAN;
+            }
+            // (Re)post: while a switch is pending and its models are not yet built, keep one request
+            // in flight (coalesced by `busy`) so a fast tier/OS sweep converges without flooding.
+            if let Some(req) = self.rebuild_pending {
+                if self.rebuild.ready_gen.load(Ordering::Acquire) != req.gen {
+                    if self
+                        .rebuild
+                        .busy
+                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        // We own the latch: post and reset the stall watchdog.
+                        self.rebuild_stall = 0;
+                        context.execute_background(BgTask::Rebuild(req));
+                    } else {
+                        // Latch held but nothing published yet. Normally the worker is mid-build and
+                        // will clear it; but a dropped `execute_background` (full task queue) leaves
+                        // it stuck forever. Watchdog it: past the bound the build cannot still be in
+                        // flight (see `REBUILD_STALL_LIMIT`), so force-release so the next block
+                        // re-posts the same (gen-identical) request.
+                        self.rebuild_stall = self.rebuild_stall.saturating_add(1);
+                        if self.rebuild_stall >= REBUILD_STALL_LIMIT {
+                            self.rebuild.busy.store(false, Ordering::Release);
+                            self.rebuild_stall = 0;
+                        }
+                    }
+                } else {
+                    self.rebuild_stall = 0;
                 }
+            } else {
+                self.rebuild_stall = 0;
             }
             // Aging (ordered after tier, before bias/rgain): re-roll edge -> seed -> age. Any change
             // forces the live bias/rgain legs to re-apply with the current aged factor.
@@ -1285,7 +1589,7 @@ impl Plugin for Ba283Plugin {
                     #[cfg(feature = "trafo-core")]
                     trafo_sat,
                 };
-                context.execute_background(req);
+                context.execute_background(BgTask::Probe(req));
             }
         }
 
