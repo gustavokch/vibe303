@@ -42,6 +42,30 @@ OUTPUT_SCALE = 1.0 / OUTPUT_REF_V
 # energy (1e-2) keeps denom**2 >= 1e-4, so the ESR gradient stays bounded.
 MIN_TARGET_ENERGY = 1e-2
 
+# STEPPED (WS4) ------------------------------------------------------------
+# The 5 hardware gain-switch detents, as R_KJ (ohms), idx 0..4 = 15/20/25/30/35
+# dB (balanced). idx 0 is the "open" sentinel (1e9 Ω); 1..4 are real resistors.
+# Mirrors the Rust plugin's R_KJ table exactly so the NN learns the SAME 5
+# operating points the host can select. The conditioning column for the
+# ``stepped`` mode is the INDEX into this table, not the raw R_KJ value.
+STEPPED_RKJ_OHMS = (1.0e9, 1200.0, 470.0, 220.0, 110.0)
+
+
+def nearest_stepped_index(gain_value: float) -> int:
+    """Map a dataset ``gain_value`` (R_KJ ohms) to the nearest of the 5 positions.
+
+    The gain-sweep manifest stores ``gain_value`` = the R_KJ ohms the SPICE
+    target was rendered at (``data_gen.run_spice`` filename ``_gain<rkj>``). For
+    the ``stepped`` conditioning the data-gen is expected to render EXACTLY at
+    ``STEPPED_RKJ_OHMS``, so this is a snap-to-grid that also tolerates tiny
+    float drift. Distance is measured in log-resistance (the gain axis is
+    log-linear in R_KJ), so a value between two detents snaps to the nearer in
+    dB rather than in raw ohms. Returns the index 0..4.
+    """
+    target = np.log(max(float(gain_value), 1e-9))
+    grid = np.log(np.asarray(STEPPED_RKJ_OHMS, dtype=np.float64))
+    return int(np.argmin(np.abs(grid - target)))
+
 
 def _resolve_path(raw: str) -> Path:
     """Resolve a manifest path to a usable filesystem path.
@@ -85,12 +109,22 @@ class BA283Dataset(Dataset):
         input_scale: float = INPUT_SCALE,
         output_scale: float = OUTPUT_SCALE,
         min_target_energy: float = MIN_TARGET_ENERGY,
+        conditioning: str = "film",
     ) -> None:
         self.window = window
         self.stride = stride
         self.input_scale = input_scale
         self.output_scale = output_scale
         self.min_target_energy = min_target_energy
+        # STEPPED (WS4): selects what the conditioning column (x[:, 1]) carries.
+        # film/concat -> the continuous gain_value (unchanged); stepped -> the
+        # discrete class index (0..4) snapped from gain_value via
+        # nearest_stepped_index. The model side must match (see BA283LSTM).
+        if conditioning not in ("film", "concat", "stepped"):
+            raise ValueError(
+                f"conditioning must be 'film', 'concat' or 'stepped', got {conditioning!r}"
+            )
+        self.conditioning = conditioning
 
         self.manifest = pd.read_csv(manifest_csv)
         missing = [c for c in _REQUIRED_COLUMNS if c not in self.manifest.columns]
@@ -175,7 +209,14 @@ class BA283Dataset(Dataset):
 
         x = torch.empty(self.window, 2, dtype=torch.float32)
         x[:, 0] = torch.from_numpy(dry) * self.input_scale
-        x[:, 1] = float(row["gain_value"])
+        if self.conditioning == "stepped":
+            # STEPPED (WS4): emit the discrete switch-position index (0..4)
+            # instead of the continuous R_KJ. Stored as float (the x tensor is
+            # float32); the model rounds + casts it back to long for the codebook
+            # lookup. Snap-to-grid tolerates tiny float drift in gain_value.
+            x[:, 1] = float(nearest_stepped_index(float(row["gain_value"])))
+        else:
+            x[:, 1] = float(row["gain_value"])
 
         y = (torch.from_numpy(wet) * self.output_scale).reshape(self.window, 1)
         return x, y
@@ -242,6 +283,7 @@ def make_loader(
     drop_last: bool = True,
     balance_by_kind: bool = False,
     pin_memory: bool = True,
+    conditioning: str = "film",
 ) -> DataLoader:
     """Build a ``DataLoader`` wrapping a :class:`BA283Dataset`.
 
@@ -256,7 +298,11 @@ def make_loader(
     honoured when ``shuffle`` is set (validation/eval loaders pass
     ``shuffle=False`` and keep deterministic order).
     """
-    dataset = BA283Dataset(manifest_csv, window=window, stride=stride)
+    # STEPPED (WS4): forward the conditioning mode so the dataset emits the
+    # right conditioning column (float gain vs discrete index).
+    dataset = BA283Dataset(
+        manifest_csv, window=window, stride=stride, conditioning=conditioning
+    )
     sampler = None
     if balance_by_kind and shuffle:
         sampler = _kind_balanced_sampler(dataset)

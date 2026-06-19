@@ -65,6 +65,17 @@ COND_NAM = Path.home() / "Git/ba283-nam-lstm/exported_models/model.cond.nam"
 # The 9-point gain grid the conditioned model was trained on (ds48 reamp set).
 DEFAULT_GAINS = "0.0,0.125,0.25,0.375,0.5,0.625,0.75,0.875,1.0"
 
+# STEPPED (WS4) -------------------------------------------------------------
+# The 5 hardware gain-switch detents, as R_KJ (ohms), idx 0..4 = 15/20/25/30/35
+# dB. Mirrors data_gen.netlist.STEPPED_RKJ_OHMS / the Rust plugin table. The
+# stepped mode scores at THESE positions instead of the continuous 9-gain sweep.
+STEPPED_RKJ_OHMS = (1.0e9, 1200.0, 470.0, 220.0, 110.0)
+# Hot-input-amplitude check: extra input gains (linear, applied to the dry) used
+# to probe each position into clipping. 1.0 = the dry as-rendered; >1 drives
+# harder. The stepped retrain must hold accuracy as input_gain x drive pushes the
+# circuit hot, so these confirm the model tracks SPICE at the loud end too.
+STEPPED_HOT_AMPS = (1.0, 4.0, 16.0)
+
 
 # ---------------------------------------------------------------------------
 # Resampling / alignment / metrics (at the 48 kHz comparison rate)
@@ -316,6 +327,125 @@ def _score_one_gain(model, dry, sr, gain, bias, out_dir):
     return per_gain_summary, row
 
 
+def _score_one_stepped(model, dry, sr, idx, rkj, amp, bias, out_dir):
+    """STEPPED (WS4): score one (position idx, input-amplitude) point.
+
+    Renders NAM at the discrete switch position ``idx`` (the conditioning index),
+    ACME at the matching ``rkj``, and the per-position SPICE target, then scores
+    the 3-way (level-matched ESR, 20 Hz HP, lag-aligned) — the SAME contract as
+    the continuous sweep. ``amp`` is a LINEAR input-gain applied to the dry to
+    drive the circuit hot (hot-input-amplitude check); ``amp == 1.0`` is the
+    nominal point. The SPICE target is looked up by position index and amplitude
+    (``T3K-60s_pos{idx}_amp{amp}.wav``); a missing target raises (recorded as a
+    skip by the caller). Returns ``(summary_dict, per_position_row)``.
+    """
+    dry_a = dry * float(amp)
+    target = NAM_SWEEP / f"T3K-60s_pos{idx}_amp{amp:g}.wav"
+    if not target.exists():
+        raise FileNotFoundError(
+            f"stepped SPICE target for pos {idx} amp {amp:g} not found: {target}"
+        )
+
+    spice, sr_t = sf.read(target, always_2d=False)
+    spice = np.asarray(spice, dtype=np.float64)
+    if sr_t != sr:
+        spice = _resample(spice, sr_t, sr)
+    spice = spice[: len(dry_a)]
+
+    print(f"\n--- pos {idx} (R_KJ={rkj:g}Ω) amp x{amp:g} -> {target.name} ---")
+
+    # The stepped NAM is conditioned on the DISCRETE position index, not a
+    # continuous gain. NamModel's `gain` channel carries that index for stepped
+    # models; legacy/continuous models ignore it (single operating point).
+    nam_gain = float(idx) if model._conditioned else None
+    nam_wet, thr = model.run(dry_a, gain=nam_gain)
+
+    dry96 = _resample(dry_a, sr, SR_ACME)
+    acme96 = run_acme(dry96, SR_ACME, rgain=rkj, bias=bias)
+    acme = _resample(acme96, SR_ACME, sr)
+
+    n = min(len(nam_wet), len(acme), len(spice))
+    nam_wet, acme, spice_n = nam_wet[:n], acme[:n], spice[:n]
+
+    m_na = metrics(acme, nam_wet, sr)
+    m_ns = metrics(spice_n, nam_wet, sr)
+    m_as = metrics(spice_n, acme, sr)
+    print(f"  NAM vs SPICE: ESR {m_ns['esr_matched_db']:+6.2f} dB  lag={m_ns['lag']:+d}")
+
+    def _pack(m):
+        return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items()}
+
+    summary = {
+        "position_idx": idx, "rkj_ohm": round(rkj, 1), "input_amp": amp,
+        "target": target.name, "nam_vs_acme": _pack(m_na),
+        "nam_vs_spice": _pack(m_ns), "acme_vs_spice": _pack(m_as),
+    }
+    row = {
+        "position_idx": idx, "rkj_ohm": round(rkj, 1), "input_amp": amp,
+        "nam_vs_spice_esr_db": round(m_ns["esr_matched_db"], 2),
+        "nam_vs_acme_esr_db": round(m_na["esr_matched_db"], 2),
+        "acme_vs_spice_esr_db": round(m_as["esr_matched_db"], 2),
+    }
+    return summary, row
+
+
+def _run_stepped(model, dry, sr, bias, amps, out_dir) -> None:
+    """STEPPED (WS4): sweep the 5 positions x ``amps`` and write a summary.
+
+    Gate = the WORST NAM-vs-SPICE ESR over every (position, amplitude) point, so
+    a single weak detent or a hot-drive blow-up is not hidden by the average.
+    """
+    rows: list[dict] = []
+    per_pos: list[dict] = []
+    skipped: list[dict] = []
+    for idx, rkj in enumerate(STEPPED_RKJ_OHMS):
+        for amp in amps:
+            try:
+                s, row = _score_one_stepped(
+                    model, dry, sr, idx, rkj, amp, bias, out_dir
+                )
+            except Exception as e:  # noqa: BLE001 — record per-point failure
+                print(f"[skip] pos {idx} amp {amp:g}: {e}")
+                skipped.append({"position_idx": idx, "input_amp": amp, "error": str(e)})
+                continue
+            per_pos.append(s)
+            rows.append(row)
+
+    if not rows:
+        raise SystemExit("all stepped points failed; no summary written")
+
+    worst = max(rows, key=lambda r: r["nam_vs_spice_esr_db"])
+    best = min(rows, key=lambda r: r["nam_vs_spice_esr_db"])
+    quality = _quality_label(worst["nam_vs_spice_esr_db"])
+    verdict = (
+        f"{quality} — worst NAM vs SPICE {worst['nam_vs_spice_esr_db']:+.1f} dB "
+        f"@ pos {worst['position_idx']} amp x{worst['input_amp']:g} "
+        f"(best {best['nam_vs_spice_esr_db']:+.1f} dB @ pos {best['position_idx']} "
+        f"amp x{best['input_amp']:g}); gate = worst (position, amplitude) point."
+        + (f" [{len(skipped)} point(s) skipped]" if skipped else "")
+    )
+    summary = {
+        "mode": "stepped",
+        "config": {
+            "positions_rkj": list(STEPPED_RKJ_OHMS), "hot_amps": list(amps),
+            "bias": bias, "sr": sr,
+            "metric": "level-matched ESR (optimal LS scalar), 20Hz HP, lag-aligned",
+        },
+        "per_position_table": rows,
+        "skipped": skipped,
+        "worst": worst, "best": best, "verdict": verdict,
+        "per_position": per_pos,
+    }
+    (out_dir / "summary_stepped.json").write_text(json.dumps(summary, indent=2))
+    print("\n" + "=" * 64)
+    print("STEPPED (WS4) PER-POSITION ESR (NAM vs SPICE, matched dB):")
+    for r in rows:
+        print(f"  pos {r['position_idx']} R_KJ={r['rkj_ohm']:g}Ω amp x{r['input_amp']:g}  "
+              f"NAM-SPICE {r['nam_vs_spice_esr_db']:+6.2f}")
+    print(f"VERDICT: {verdict}")
+    print("=" * 64)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
@@ -330,8 +460,37 @@ def main() -> None:
     ap.add_argument("--max-seconds", type=float, default=30.0,
                     help="trim dry/target to keep the ACME (Julia) sim tractable")
     ap.add_argument("--out", type=Path, default=Path("eval/nam_vs_acme/out"))
+    # STEPPED (WS4): score the 5 discrete hardware positions (+ hot-input-amp
+    # check) instead of the continuous 9-gain sweep.
+    ap.add_argument("--stepped", action="store_true",
+                    help="WS4: score the 5 discrete gain positions + hot-input "
+                         "amplitudes instead of the continuous gain sweep")
+    ap.add_argument("--hot-amps", type=str,
+                    default=",".join(f"{a:g}" for a in STEPPED_HOT_AMPS),
+                    help="WS4 stepped mode: comma-separated linear input gains "
+                         "for the hot-input-amplitude check")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+
+    # STEPPED (WS4): the stepped path shares the model/dry loading below but
+    # dispatches to _run_stepped instead of the continuous gain sweep.
+    if args.stepped:
+        amps = [float(a) for a in args.hot_amps.split(",") if a.strip()]
+        model = NamModel(args.nam)
+        sr = model.sample_rate
+        dry, sr_dry = sf.read(args.dry, always_2d=False)
+        dry = np.asarray(dry, dtype=np.float64)
+        if sr_dry != sr:
+            dry = _resample(dry, sr_dry, sr)
+        dry = dry[: int(args.max_seconds * sr)]
+        print("=" * 64)
+        print("NAM vs ACME vs SPICE — BA283 STEPPED (WS4) 5-position check")
+        print(f"  model     : {args.nam} (conditioned={model._conditioned})")
+        print(f"  positions : {list(STEPPED_RKJ_OHMS)} Ω")
+        print(f"  hot amps  : {amps}")
+        print("=" * 64)
+        _run_stepped(model, dry, sr, args.bias, amps, args.out)
+        return
 
     if args.gain is not None:
         gains = [float(args.gain)]

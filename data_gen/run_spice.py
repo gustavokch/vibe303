@@ -30,7 +30,13 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from data_gen.netlist import GAIN_RKJ_OHMS, build_netlist
+from data_gen.netlist import (
+    BIAS_NORM_FIXED,
+    GAIN_RKJ_OHMS,
+    STEPPED_MAKEUP,
+    STEPPED_RKJ_OHMS,
+    build_netlist,
+)
 
 # ngspice-46 is our validated target; PySpice 1.5's version table predates it
 # and emits a spurious "Unsupported Ngspice version 46" warning on every sim.
@@ -323,6 +329,106 @@ def run_gain_batch(
     return results
 
 
+# STEPPED (WS4) -------------------------------------------------------------
+# Small-signal probe used to MEASURE the per-position output scale G_i (the
+# secondary-volts-per-input-volt small-signal gain). The wet targets are then
+# normalized by G_i so every position lands at unity small-signal gain — exactly
+# what the plugin's level-norm does — and the WDF + NN share the same reference.
+# Probe is a low-level (well below clipping) 1 kHz tone so the measured gain is
+# the linear operating-point gain, not a saturated one.
+_GI_PROBE_HZ = 1_000.0
+_GI_PROBE_PEAK_V = 0.005  # 0.005 V << 0.5 V ceiling -> stays in the linear region
+_GI_PROBE_S = 0.05        # short: 50 ms is many cycles at 1 kHz, tiny RAM
+
+
+def measure_gi(rkj: float, bias: float = BIAS_NORM_FIXED, sr: int = SAMPLE_RATE) -> float:
+    """Measure the small-signal output scale G_i for one R_KJ position (volts/volt).
+
+    Runs a low-level 1 kHz probe through the netlist at ``rkj`` and returns
+    ``rms(SEC_IN) / rms(input)`` over the settled portion. This is the linear
+    secondary gain the wet targets should be normalized by (``wet /= G_i``) so
+    the stepped dataset is level-normalized per position. The makeup table
+    ``1 / G_i`` is what the plugin/WDF multiplies back in.
+    """
+    n = int(_GI_PROBE_S * sr)
+    t = np.arange(n, dtype=np.float64) / sr
+    probe = (_GI_PROBE_PEAK_V * np.sin(2 * np.pi * _GI_PROBE_HZ * t)).astype(np.float32)
+
+    circuit = build_netlist(bias, rkj)
+    sidecar = WET_RAW_DIR / f"_gi_probe_rkj{_gain_tag(rkj)}.src"
+    WET_RAW_DIR.mkdir(parents=True, exist_ok=True)
+    _write_filesource(probe, sidecar)
+    src_path = str(Path(sidecar).resolve())
+    circuit.raw_spice += (
+        "a_in %vd([INPUT 0]) inputsrc\n"
+        f'.model inputsrc filesource (file="{src_path}" amploffset=[0] '
+        "amplscale=[1] timeoffset=0 timescale=1 timerelative=false "
+        "amplstep=false)\n"
+    )
+    circuit.raw_spice += ".save v(SEC_IN)\n"
+    sim = circuit.simulator()
+    sim.options(reltol=1e-3, abstol=1e-7, vntol=1e-5, gmin=1e-12, method="gear",
+                itl1=500, gminsteps=10, srcsteps=10)
+    analysis = sim.transient(
+        step_time=1 / (sr * OVERSAMPLE), end_time=_GI_PROBE_S + TAIL_S,
+        use_initial_condition=False,
+    )
+    sidecar.unlink(missing_ok=True)
+    tt = np.asarray(analysis.time)
+    vv = np.asarray(analysis["SEC_IN"])
+    # Settle: drop the first half so DC/transient does not bias the RMS ratio.
+    settle = tt >= (tt[0] + 0.5 * (tt[-1] - tt[0]))
+    out_rms = float(np.sqrt(np.mean(vv[settle] ** 2)))
+    in_rms = _GI_PROBE_PEAK_V / np.sqrt(2.0)  # rms of the known input tone
+    return out_rms / max(in_rms, 1e-12)
+
+
+def run_stepped_batch(
+    manifest_or_stim_paths,
+    bias: float = BIAS_NORM_FIXED,
+    positions: tuple[float, ...] = STEPPED_RKJ_OHMS,
+    workers: int | None = None,
+    gi_out: Path = WET_RAW_DIR / "g_i.json",
+):
+    """WS4: run every (stimulus x stepped-position) point and RECORD per-pos G_i.
+
+    The stepped-gain dataset: instead of the continuous gain_norm grid, the wet
+    targets are rendered at EXACTLY the 5 hardware positions
+    ``STEPPED_RKJ_OHMS`` (idx 0..4). For each position the small-signal G_i is
+    measured (see :func:`measure_gi`) and written to ``gi_out`` as
+    ``{idx, rkj, g_i, makeup=1/g_i, makeup_ref}`` so the WDF + NN share one
+    reference. ``makeup_ref`` is the embedded WDF table (STEPPED_MAKEUP) for a
+    drift check. This delegates the actual SPICE runs to :func:`run_gain_batch`
+    (the wet WAVs are written raw; downstream resample/normalize divides by G_i).
+    """
+    import json
+
+    g_rows = []
+    for idx, rkj in enumerate(positions):
+        g_i = measure_gi(rkj, bias=bias)
+        g_rows.append(
+            {
+                "idx": idx,
+                "rkj_ohms": float(rkj),
+                "g_i": float(g_i),
+                "makeup": float(1.0 / g_i) if g_i else None,
+                # Drift check vs the embedded WDF makeup table 1/G_i (idx 0..4).
+                "makeup_ref": float(STEPPED_MAKEUP[idx])
+                if idx < len(STEPPED_MAKEUP)
+                else None,
+            }
+        )
+    gi_out.parent.mkdir(parents=True, exist_ok=True)
+    gi_out.write_text(json.dumps(g_rows, indent=2))
+
+    # Render the wet targets at the same positions (raw volts; the resample step
+    # applies wet /= G_i using gi_out so the NN target is level-normalized).
+    results = run_gain_batch(
+        manifest_or_stim_paths, list(positions), bias, workers=workers
+    )
+    return results, g_rows
+
+
 def _parse_biases(spec: str) -> list[float]:
     return [float(x) for x in spec.split(",") if x.strip()]
 
@@ -377,6 +483,14 @@ def main(argv: list[str] | None = None) -> int:
         help="K<->J gain resistor R_KJ (ohms) for --single (default = 26 dB tap).",
     )
     parser.add_argument("--out", help="Output .npz path for --single.")
+    # STEPPED (WS4): render the dataset at EXACTLY the 5 hardware positions
+    # STEPPED_RKJ_OHMS and record per-position G_i to data/wet_raw/g_i.json.
+    parser.add_argument(
+        "--stepped",
+        action="store_true",
+        help="WS4: sweep the 5 hardware gain positions (R_KJ in "
+        f"{list(STEPPED_RKJ_OHMS)}) at --fixed-bias and record per-pos G_i.",
+    )
     args = parser.parse_args(argv)
 
     if args.smoke:
@@ -402,6 +516,25 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.manifest:
         parser.error("provide --manifest, --single, or --smoke")
+
+    if args.stepped:
+        # WS4: 5-position render + G_i record. Wet WAVs are raw volts; the
+        # resample step divides by the recorded G_i to level-normalize.
+        results, g_rows = run_stepped_batch(
+            args.manifest, bias=args.fixed_bias, workers=args.workers
+        )
+        failed = sum(1 for (_, _, e) in results if e is not None)
+        print(
+            f"stepped-batch done: {len(results)} points at "
+            f"{len(STEPPED_RKJ_OHMS)} positions (bias={args.fixed_bias:g}), "
+            f"{failed} failed. G_i:"
+        )
+        for r in g_rows:
+            print(
+                f"  idx {r['idx']} R_KJ={r['rkj_ohms']:g}Ω  G_i={r['g_i']:.5f}  "
+                f"makeup={r['makeup']:.6f}  (WDF ref {r['makeup_ref']})"
+            )
+        return 0
 
     if args.gains:
         gains = _parse_gains(args.gains)

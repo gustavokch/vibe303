@@ -48,7 +48,7 @@ reproduce) are::
 import json
 from pathlib import Path
 
-from train.dataset import INPUT_SCALE, OUTPUT_REF_V, OUTPUT_SCALE
+from train.dataset import INPUT_SCALE, OUTPUT_REF_V, OUTPUT_SCALE, STEPPED_RKJ_OHMS
 from train.model import BA283LSTM
 
 LSTM_EQUATIONS = (
@@ -132,6 +132,24 @@ def export_rtneural_json(
                 "bias": to_list("film.bias"),
             }
         )
+    # STEPPED (WS4): export the learned 5-entry FiLM codebook (one [gamma|beta]
+    # row of length 2H per switch position). The codebook IS the per-position
+    # affine — there is no scalar gain input — so the plugin indexes this table
+    # by the discrete switch position (0..4) and applies
+    # out = dense((1 + gamma) * y + beta). The R_KJ table is recorded so the
+    # index<->resistor mapping is unambiguous and matches the WDF/plugin table.
+    if conditioning == "stepped":
+        positions = int(model.film_codebook.num_embeddings)
+        layers.append(
+            {
+                "type": "film_codebook",
+                "positions": positions,
+                "shapes": {"weight": [positions, 2 * hidden_size]},
+                # (positions, 2H): each row is [gamma(0:H) | beta(H:2H)].
+                "weight": to_list("film_codebook.weight"),
+                "rkj_ohms": list(STEPPED_RKJ_OHMS),
+            }
+        )
     layers.append(
         {
             "type": "dense",
@@ -144,7 +162,9 @@ def export_rtneural_json(
     doc = {
         # v2 LSTM schema: stacked per-layer cells + learned initial state, plus
         # `sample_rate`. Carries `conditioning` + optional film layer; concat
-        # models are emitted with conditioning="concat".
+        # models are emitted with conditioning="concat". STEPPED (WS4): a
+        # conditioning="stepped" export adds a `film_codebook` layer (5 rows)
+        # plus `stepped_positions`/`stepped_rkj_ohms` and carries NO film layer.
         "format": "ba283-lstm-v2",
         "input_size": 2,
         "lstm_input_size": int(lstm_input_size),
@@ -153,6 +173,25 @@ def export_rtneural_json(
         "sample_rate": int(sample_rate),
         "conditioning": conditioning,
         "film_equation": "out = dense((1 + gamma) * y + beta); [gamma,beta]=film(gain)",
+        # STEPPED (WS4): in stepped mode [gamma,beta] is the codebook ROW for the
+        # selected switch position (0..4), not film(gain). The codebook is the
+        # `film_codebook` layer above; positions map to STEPPED_RKJ_OHMS.
+        "stepped_equation": (
+            "out = dense((1 + gamma) * y + beta); "
+            "[gamma|beta] = film_codebook[switch_position]"
+        ),
+        "stepped_positions": (
+            int(model.film_codebook.num_embeddings)
+            if conditioning == "stepped"
+            else None
+        ),
+        "stepped_rkj_ohms": (
+            list(STEPPED_RKJ_OHMS) if conditioning == "stepped" else None
+        ),
+        # NOTE: the single fixed output reference (volts) is `output_ref_v`,
+        # exported below in the domain-scaling block. The model output is
+        # normalized; the plugin recovers volts as model_out * output_ref_v, then
+        # level-norm holds unity. Shared with the WDF makeup table (handoff doc).
         "gate_order": "ifgo",
         # Domain scaling contract (see train/dataset.py): the model trained on
         # input col 0 = dry_audio * input_scale, target = wet_volts * output_scale.

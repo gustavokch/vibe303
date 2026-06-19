@@ -26,7 +26,7 @@ fn probe_spread(amp: f32, drive: f32, label: &str) {
         for _ in 0..256 {
             let x = amp * (w * phase as f32).sin();
             phase += 1;
-            let _ = ch.process_sample(x, drive, 0.7, 1.0, 0.04, 1.0, false, InferenceBackend::Wdf);
+            let _ = ch.process_sample(x, 1.0, drive, 0.7, 1.0, 0.04, 1.0, false, InferenceBackend::Wdf);
         }
         let g = ch.wdf_measure_gain();
         gmin = gmin.min(g);

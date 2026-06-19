@@ -319,6 +319,60 @@ def build_synthetic_segments(duration_scale: float = 1.0) -> dict[str, np.ndarra
     }
 
 
+# STEPPED (WS4) -------------------------------------------------------------
+# Input-amplitude sweep used at EACH of the 5 hardware gain positions, so the
+# stepped retrain sees the full input range that the plugin's input_gain x drive
+# can produce. The grid spans -24..+48 dB relative to the 0 dBFS == 0.5 V SPICE
+# convention (so +48 dB peaks at 0.5 * 10**(48/20) ~ 126 V at the netlist input,
+# far into clipping — intentional: the model must cover hot drive, level-norm
+# pulls it back to unity). Clips are kept SHORT (default 8 s) because run_spice
+# holds the whole transient in RAM and ngspice has a ~2.1 GB output-buffer wall
+# (hot/clipping points densify the gear timestep); os=1 (OVERSAMPLE=2) is the
+# run_spice default. Coarser dB steps -> fewer points -> a tractable batch.
+STEPPED_AMP_DB = (-24.0, -12.0, -6.0, 0.0, 6.0, 12.0, 24.0, 36.0, 48.0)
+
+
+def _amplitude_base(duration_s: float) -> np.ndarray:
+    """Unit-peak (1.0) broadband base for the amplitude sweep.
+
+    A short log sweep (covers the whole band) followed by a two-tone IMD burst
+    (intermod / asymmetry content) so each amplitude point exercises both the
+    frequency response and the saturation character. Peak-normalized to 1.0 so
+    the per-amplitude scaling below sets the exact 0.5 * 10**(db/20) input peak.
+    """
+    sweep = log_sine_sweep(duration_s * 0.6, 20.0, 20_000.0, 0.0)
+    imd = two_tone_imd(duration_s * 0.4, 220.0, 277.18, 0.0)
+    silence = np.zeros(int(0.05 * SAMPLE_RATE), dtype=np.float32)
+    base = np.concatenate([sweep, silence, imd])
+    return _peak_normalize(base, 1.0)
+
+
+def build_amplitude_sweep(
+    amps_db: tuple[float, ...] = STEPPED_AMP_DB, duration_s: float = 8.0
+) -> dict[str, np.ndarray]:
+    """Per-amplitude dry stimuli as ``{name: float32_array}`` (WS4 stepped set).
+
+    Each entry is the same broadband base scaled to a peak of
+    ``0.5 * 10**(db/20)`` (the 0 dBFS == 0.5 V convention). Names are
+    ``ampsweep_p06`` / ``ampsweep_m24`` etc. (``p``/``m`` = plus/minus the dB).
+    These dry files are then run through SPICE at EACH of the 5 R_KJ positions by
+    ``data_gen.run_spice.run_stepped_batch``; the wet target is normalized by the
+    measured per-position G_i (see that runner).
+
+    NOTE: the peak is set by ``_scale_to_dbfs`` against ``level_db = db``, so the
+    scaling uses the SAME 0.5 V reference as the rest of the library. There is no
+    clipping in the dry signal itself — clipping happens inside the netlist at the
+    hot (positive-dB) points, which is exactly the saturation we want to learn.
+    """
+    base = _amplitude_base(duration_s)
+    out: dict[str, np.ndarray] = {}
+    for db in amps_db:
+        sign = "p" if db >= 0 else "m"
+        tag = f"ampsweep_{sign}{abs(int(round(db))):02d}"
+        out[tag] = _scale_to_dbfs(base, db)
+    return out
+
+
 def main() -> None:
     """CLI: write per-segment dry stimulus files (and optional music) to ``--out``."""
     parser = argparse.ArgumentParser(description="Generate BA283 dry stimulus files.")
@@ -338,6 +392,20 @@ def main() -> None:
         default=1.0,
         help="multiply every segment's base duration (use <1 for a faster/smaller SPICE batch)",
     )
+    # STEPPED (WS4): emit the input-amplitude sweep set instead of the default
+    # per-segment library. These dry files feed run_spice.run_stepped_batch.
+    parser.add_argument(
+        "--amplitude-sweep",
+        action="store_true",
+        help="WS4: write the input-amplitude sweep dry set (covers -24..+48 dB) "
+        "for the stepped-gain retrain instead of the default segment library",
+    )
+    parser.add_argument(
+        "--amp-duration-s",
+        type=float,
+        default=8.0,
+        help="WS4 amplitude-sweep clip length (keep short: ngspice ~2.1 GB buffer)",
+    )
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -352,6 +420,13 @@ def main() -> None:
         return True
 
     written = 0
+    # STEPPED (WS4): the amplitude-sweep set is an alternative dry library.
+    if args.amplitude_sweep:
+        for name, sig in build_amplitude_sweep(duration_s=args.amp_duration_s).items():
+            if _write(out / f"{name}.wav", sig):
+                written += 1
+        print(f"wrote {written} amplitude-sweep dry file(s) to {out}")
+        return
     for name, sig in build_synthetic_segments(args.duration_scale).items():
         if _write(out / f"{name}.wav", sig):
             written += 1

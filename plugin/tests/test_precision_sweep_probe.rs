@@ -44,7 +44,7 @@ fn sweep_raw_peak(base: QualityConfig, switch_ms: f32, drive: f32, amp: f32, sec
             apply_switch(&mut ch, base.with_precision(order[(i / switch_n) % order.len()]));
         }
         let x = amp * (w * i as f32).sin();
-        let y = ch.process_sample(x, drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+        let y = ch.process_sample(x, 1.0, drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
         peak = peak.max(y.abs());
         assert!(y.is_finite(), "non-finite output during sweep on {base:?}");
     }
@@ -60,7 +60,7 @@ fn precision_sweep_does_not_amplify_peaks() {
     let w = 2.0 * std::f32::consts::PI * 220.0 / SR;
     let mut baseline = 0.0f32;
     for i in 0..(SR as usize * 2) {
-        let y = base_ch.process_sample(amp * (w * i as f32).sin(), drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+        let y = base_ch.process_sample(amp * (w * i as f32).sin(), 1.0, drive, BIAS, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
         baseline = baseline.max(y.abs());
     }
     // A crossfade overlap adds a small, bounded bump; well under 1.4x the steady peak on every tier.
