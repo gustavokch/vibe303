@@ -13,13 +13,13 @@ fn process_is_alloc_free() {
     let mut net = WaveNet::new_from_embedded();
     // warm up (construction + first calls may touch lazy statics)
     for _ in 0..16 {
-        let _ = net.process(0.0, 0.5);
+        let _ = net.process(0.0, &[0.5]);
     }
     reset_violation_count();
     assert_no_alloc(|| {
         for i in 0..4096 {
             let x = (i as f32 * 0.001).sin();
-            let _ = net.process(x, 0.5);
+            let _ = net.process(x, &[0.5]);
         }
     });
     assert_eq!(

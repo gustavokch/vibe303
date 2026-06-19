@@ -398,6 +398,16 @@ pub fn rgain_to_gain_norm(rgain_ohm: f32) -> f32 {
     g.clamp(0.0, 1.0)
 }
 
+/// Map the `input_gain` trim (dB) onto the WS4 dual-conditioned model's second 0..1 FiLM channel.
+/// Mirrors `data_gen.netlist.input_gain_db_to_norm` and the `input_gain` param range (Linear
+/// -24..+24 dB), so 0 dB (the levelNorm-ON neutral) → 0.5. Inert for a 2-channel model (the WaveNet
+/// reads only the first conditioning channel until `wavenet::COND` is flipped to 3).
+pub fn input_gain_db_to_norm(db: f32) -> f32 {
+    const DB_MIN: f32 = -24.0;
+    const DB_MAX: f32 = 24.0;
+    ((db - DB_MIN) / (DB_MAX - DB_MIN)).clamp(0.0, 1.0)
+}
+
 /// NN loudness-makeup + level-norm calibration, indexed by `circuit_gain` R_KJ (Ω) in LOG-ohm space.
 /// Each row is `(ln R, makeup, gnn_inv)`, measured once offline by `tests/calib_nn_makeup.rs`:
 ///   `makeup = Gv(R) / G_nn(R)` — multiply the NN wet by this so its absolute loudness matches the
@@ -1517,9 +1527,14 @@ impl Plugin for Ba283Plugin {
             // toggle), then FORCE them neutral when levelNorm is on — the auto-comp (`norm_gain`) owns
             // the level, and the editor grays these knobs. levelNorm OFF → the user's manual trims
             // (with `link` already mirroring output↔input in the editor).
-            let in_smooth = db_to_gain(self.params.input_gain.smoothed.next());
+            let in_gain_db = self.params.input_gain.smoothed.next();
+            let in_smooth = db_to_gain(in_gain_db);
             let out_smooth = db_to_gain(self.params.output_db.smoothed.next());
             let (in_g, out_g) = if level_norm_on { (1.0, 1.0) } else { (in_smooth, out_smooth) };
+            // WS4 input-gain FiLM conditioning (NeuralNet 3-channel model). When levelNorm is ON the
+            // input trim is forced neutral (0 dB), so condition the model at unity drive too; OFF →
+            // the user's actual input_gain. Inert for the WDF backend and for a 2-channel model.
+            let input_cond = input_gain_db_to_norm(if level_norm_on { 0.0 } else { in_gain_db });
             let mix = self.params.mix.smoothed.next() * 0.01;
             frame_i += 1.0;
             let norm_gain = g_start + g_step * frame_i;
@@ -1538,7 +1553,7 @@ impl Plugin for Ba283Plugin {
                     bias
                 };
                 *sample = self.channels[ch].process_sample(
-                    x, in_g, drive, cond, out_g, norm_gain, mix, use_bridge, backend,
+                    x, in_g, drive, cond, input_cond, out_g, norm_gain, mix, use_bridge, backend,
                 );
             }
         }

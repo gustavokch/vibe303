@@ -32,7 +32,11 @@ use serde_json::Value;
 
 /// Residual-stream channel width (`channels`) and bottleneck (`bottleneck`). Equal in this export.
 const C: usize = 3;
-/// Condition / model-input width (`[audio, gain]`).
+/// Condition / model-input width. `2` = the legacy `[audio, circuit_gain]` export; the WS4
+/// dual-conditioned `[audio, circuit_gain, input_gain]` model is `3`. This is the SINGLE switch:
+/// flipping it to `3` (with a matching 3-channel `model.cond.nam` embedded) widens every
+/// cond-shaped array and makes `process` read the second conditioning channel. The parse asserts
+/// the embedded model's `input_size`/`condition_size` equal `COND`, so a mismatch fails loudly.
 const COND: usize = 2;
 /// FiLM 1x1 output width: `scale(C)` followed by `shift(C)`.
 const FILM_OUT: usize = 2 * C;
@@ -168,9 +172,15 @@ impl WaveNet {
             .unwrap_or(2.0) as f32;
         let output_ref_v = meta["output_ref_v"].as_f64().unwrap_or(64.0) as f32;
         let sample_rate = doc["sample_rate"].as_u64().unwrap_or(48_000) as u32;
+        // Circuit-gain occupies channel 1 in both the legacy (`gain_channel`) and the WS4 dual
+        // (`circuit_gain_channel`) metadata shapes; accept either name.
         require(
-            cond["gain_channel"].as_u64().unwrap_or(1) == 1,
-            "gain_channel must be 1",
+            cond["gain_channel"]
+                .as_u64()
+                .or_else(|| cond["circuit_gain_channel"].as_u64())
+                .unwrap_or(1)
+                == 1,
+            "circuit-gain channel must be 1",
         );
 
         let config = &doc["config"];
@@ -198,7 +208,7 @@ impl WaveNet {
         require(
             la["input_size"].as_u64() == Some(COND as u64)
                 && la["condition_size"].as_u64() == Some(COND as u64),
-            "input_size and condition_size must be 2",
+            "input_size and condition_size must equal COND (the embedded model width)",
         );
         // Active-feature gate: only conv_pre_film + layer1x1 are supported; everything else off.
         require(active(&la["conv_pre_film"]), "conv_pre_film must be active");
@@ -428,11 +438,23 @@ impl WaveNet {
     }
 
     /// Run one causal sample. `audio` is the pre-amp-driven input in the plugin's dBFS convention
-    /// (the `input_scale` is applied here); `gain` is the FiLM conditioning value in 0..1. Returns the
-    /// NORMALIZED net output (the caller de-norms via `output_ref_v`). Zero-alloc.
+    /// (the `input_scale` is applied here); `conds` carries the FiLM conditioning channels in 0..1,
+    /// in model-channel order after the audio channel — `[circuit_gain]` for a 2-channel model,
+    /// `[circuit_gain, input_gain]` for the WS4 3-channel model. Only the first `COND - 1` entries
+    /// are read (extra entries are ignored), so the caller may always pass both and the embedded
+    /// model's width (`COND`) selects how many take effect. Returns the NORMALIZED net output (the
+    /// caller de-norms via `output_ref_v`). Zero-alloc.
     #[inline]
-    pub fn process(&mut self, audio: f32, gain: f32) -> f32 {
-        let cin = [audio * self.input_scale, gain];
+    pub fn process(&mut self, audio: f32, conds: &[f32]) -> f32 {
+        debug_assert!(
+            conds.len() >= COND - 1,
+            "WaveNet::process needs at least COND-1 conditioning values"
+        );
+        let mut cin = [0.0f32; COND];
+        cin[0] = audio * self.input_scale;
+        for i in 1..COND {
+            cin[i] = conds[i - 1];
+        }
         // Push the current condition into the shared ring.
         let cspan = self.cring.len();
         self.cring[self.cpos] = cin;

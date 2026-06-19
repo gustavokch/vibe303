@@ -76,10 +76,12 @@ class NamModel:
             subs = sorted(cfg["config"]["submodels"], key=lambda s: s["max_value"])
             self._thresholds = [float(s["max_value"]) for s in subs]
             self._models = [_inference_mode(init_from_nam(s["model"])) for s in subs]
-        elif self.arch == "WaveNet" and self._input_size(cfg) == 2:
-            # FiLM gain-conditioned WaveNet (2-channel input: [audio, gain]).
-            # The public wrapper cannot forward 2 channels; keep the inner net.
+        elif self.arch == "WaveNet" and (self._input_size(cfg) or 0) >= 2:
+            # FiLM-conditioned WaveNet. 2-channel = [audio, gain]; 3-channel
+            # (WS4 dual conditioning) = [audio, circuit_gain, input_gain]. The
+            # public wrapper cannot forward >1 channel; keep the inner net.
             self._conditioned = True
+            self._n_inputs = int(self._input_size(cfg) or 2)
             wrapper = _inference_mode(init_from_nam(cfg))
             net = wrapper._net if hasattr(wrapper, "_net") else wrapper
             self._net = net
@@ -92,7 +94,22 @@ class NamModel:
                 cond.get("audio_input_scale", meta.get("input_scale", 1.0))
             )
             self._output_ref_v = float(meta.get("output_ref_v", 1.0))
-            self._gain_channel = int(cond.get("gain_channel", 1))
+            # Resolve the conditioning channel layout. New exports carry an
+            # ordered `condition.channels` name list (e.g. ["audio",
+            # "circuit_gain", "input_gain"]); fall back to the legacy single
+            # gain_channel for 2-channel models. Build name -> channel index for
+            # every NON-audio channel.
+            channels = cond.get("channels")
+            self._cond_channels = []  # list[(name, channel_idx)]
+            if channels:
+                for ci, name in enumerate(channels):
+                    if name != "audio":
+                        self._cond_channels.append((str(name), ci))
+                self._audio_ch = channels.index("audio") if "audio" in channels else 0
+            else:
+                gain_ch = int(cond.get("gain_channel", 1))
+                self._cond_channels = [("gain", gain_ch)]
+                self._audio_ch = 0 if gain_ch != 0 else 1
             self._thresholds = [float("inf")]
             self._models = [net]
         else:
@@ -117,17 +134,20 @@ class NamModel:
         return self._thresholds[-1], self._models[-1]
 
     @torch.no_grad()
-    def run(self, dry: np.ndarray, gain: float | None = None) -> tuple[np.ndarray, float]:
+    def run(self, dry: np.ndarray, gain: float | None = None,
+            input_gain: float | None = None) -> tuple[np.ndarray, float]:
         """Render *dry* (1-D, native rate, volts).
 
         Returns ``(wet, threshold)`` where *wet* matches *dry*'s length in the
         model's output domain.  For the legacy ``SlimmableContainer`` path
-        *threshold* is the routed submodel's ``max_value`` and *gain* is
-        ignored (back-compat).  For the conditioned WaveNet path *gain* is
-        REQUIRED and *threshold* echoes the gain used.
+        *threshold* is the routed submodel's ``max_value`` and the conditioning
+        args are ignored (back-compat).  For the conditioned WaveNet path *gain*
+        (circuit_gain_norm) is REQUIRED; *input_gain* (input_gain_norm) is
+        required only for a 3-channel (dual-conditioned) model, ignored for a
+        2-channel one.  *threshold* echoes the circuit gain used.
         """
         if self._conditioned:
-            return self._run_conditioned(dry, gain)
+            return self._run_conditioned(dry, gain, input_gain)
         x = np.ascontiguousarray(np.asarray(dry, dtype=np.float32).ravel())
         peak = float(np.max(np.abs(x))) if x.size else 0.0
         thr, model = self._select(peak)
@@ -136,20 +156,24 @@ class NamModel:
         return wet[: len(x)], thr
 
     @torch.no_grad()
-    def _run_conditioned(self, dry: np.ndarray, gain: float | None):
-        """2-channel FiLM-conditioned path: build ``[audio*scale, gain]``,
-        front-pad by ``RF-1`` for time alignment, forward the inner net."""
+    def _run_conditioned(self, dry: np.ndarray, gain: float | None,
+                         input_gain: float | None = None):
+        """N-channel FiLM-conditioned path: build the audio channel plus one
+        constant channel per conditioning input, front-pad by ``RF-1`` for time
+        alignment, forward the inner net. Channel layout comes from
+        ``self._cond_channels`` (``[(name, ch_idx), ...]``).
+
+        Conditioning values are matched by channel name: the circuit-gain
+        channel (``"gain"``/``"circuit_gain"``) takes *gain*; an ``"input_gain"``
+        channel takes *input_gain*. All are normalized to ``[0, 1]``.
+        """
         if gain is None:
             raise ValueError(
                 "conditioned model requires an explicit gain; call run(dry, gain=g)"
             )
-        # The model was trained on normalized gain in [0,1]; an out-of-range or
-        # non-finite condition is out-of-distribution.  Reject at the entry
-        # point (self-defensive: the caller in compare.py also pre-validates).
-        if not np.isfinite(gain) or not (0.0 <= gain <= 1.0):
-            raise ValueError(
-                f"conditioned gain must be finite and in [0,1]; got {gain!r}"
-            )
+        values = {
+            "gain": gain, "circuit_gain": gain, "input_gain": input_gain,
+        }
         x = np.ascontiguousarray(np.asarray(dry, dtype=np.float32).ravel())
         n = len(x)
         rf = self._receptive_field
@@ -159,15 +183,23 @@ class NamModel:
         audio = np.concatenate(
             [np.zeros(rf - 1, dtype=np.float32), x * np.float32(self._audio_input_scale)]
         )
-        # Gain channel: constant over the FULL padded length.
-        gain_ch = np.full(rf - 1 + n, np.float32(gain), dtype=np.float32)
-        # Audio occupies channel 0; the gain occupies metadata gain_channel
-        # (channel 1 by convention).  audio_ch is whichever channel is not gain.
-        audio_ch = 0 if self._gain_channel != 0 else 1
-        inp = np.empty((2, rf - 1 + n), dtype=np.float32)
-        inp[audio_ch] = audio
-        inp[self._gain_channel] = gain_ch
-        xt = torch.from_numpy(inp).unsqueeze(0)  # (1, 2, RF-1+L)
+        inp = np.empty((self._n_inputs, rf - 1 + n), dtype=np.float32)
+        inp[self._audio_ch] = audio
+        for name, ci in self._cond_channels:
+            v = values.get(name)
+            if v is None:
+                raise ValueError(
+                    f"conditioned model needs a value for channel {name!r}; "
+                    f"got {v!r} (pass it to run(...))"
+                )
+            # Trained on normalized conditioning in [0,1]; out-of-range or
+            # non-finite is out-of-distribution. Reject defensively.
+            if not np.isfinite(v) or not (0.0 <= v <= 1.0):
+                raise ValueError(
+                    f"conditioning {name!r} must be finite and in [0,1]; got {v!r}"
+                )
+            inp[ci] = np.float32(v)
+        xt = torch.from_numpy(inp).unsqueeze(0)  # (1, n_inputs, RF-1+L)
         wet = self._net(xt).squeeze().numpy().astype(np.float64)
         return wet[:n], float(gain)
 
