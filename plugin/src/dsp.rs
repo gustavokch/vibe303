@@ -125,8 +125,10 @@ pub struct ChannelDsp {
     bridge: HostBridge,
     dry_delay: ShortDelay<OS_LATENCY_SAMPLES>,
     /// Circuit-faithful backend. Self-oversamples internally (OS=2) and decimates with IIR
-    /// biquads, so its wet path has ~0 integer latency.
-    wdf: WdfModel,
+    /// biquads, so its wet path has ~0 integer latency. Boxed so a live tier/OS switch installs a
+    /// worker-prebuilt model by a single pointer move (`install_prebuilt`) — no struct memcpy and
+    /// no audio-thread alloc.
+    wdf: Box<WdfModel>,
     /// Delays the WDF blended output by `OS_LATENCY_SAMPLES` when the host bridge is active so the
     /// host-reported latency stays valid for BOTH backends (no renegotiation when switching).
     wdf_out_delay: ShortDelay<OS_LATENCY_SAMPLES>,
@@ -208,7 +210,7 @@ impl ChannelDsp {
             bridge: HostBridge::new(),
             dry_delay: ShortDelay::new(),
             // Placeholder SR/bias; rebuilt + restored with the real settings in `initialize`.
-            wdf: WdfModel::new(48_000.0, 220.0, 0.5),
+            wdf: Box::new(WdfModel::new(48_000.0, 220.0, 0.5)),
             wdf_out_delay: ShortDelay::new(),
             wdf_snap: None,
             // Pre-allocate the crossfade scratch model once (off the audio thread, at construction)
@@ -324,7 +326,7 @@ impl ChannelDsp {
 
     /// Rebuild the WDF model with an explicit [`QualityConfig`] (tier/lever selection).
     pub fn wdf_rebuild_with(&mut self, cfg: QualityConfig, host_sr: f32, rgain: f32, bias: f32) {
-        self.wdf = WdfModel::new_with(cfg, host_sr as f64, rgain as f64, bias as f64);
+        *self.wdf = WdfModel::new_with(cfg, host_sr as f64, rgain as f64, bias as f64);
         self.xfade_len = (host_sr * WDF_XFADE_S).max(1.0) as u32;
     }
 
@@ -336,23 +338,75 @@ impl ChannelDsp {
     /// crossfaded from old to new over `xfade_len` samples — masking the click the raw switch would
     /// otherwise produce.
     ///
-    /// NOTE: `WdfModel::new_with` rebuilds the circuit and still allocates its `Vec` build scratch, so
-    /// this is NOT alloc-free — call only on an ACTUAL tier/precision change (a user dropdown gesture,
-    /// block-rate), never per sample. The old model is moved into the pre-allocated `wdf_prev` box, so
-    /// no `Box` is allocated here; making the rebuild itself alloc-free would need an off-thread model
-    /// handoff (a follow-up, mirroring the off-thread levelNorm probe).
+    /// NOTE: `WdfModel::new_with` rebuilds the circuit and allocates its `Vec` build scratch + the
+    /// depletion LUTs, so this is NOT alloc-free. It is retained for the OFF-audio-thread callers
+    /// (`initialize`, the offline standalone, tests). The LIVE audio-thread tier/OS switch instead
+    /// goes through the off-thread worker ([`crate::run_rebuild`]) + the alloc-free pointer-swap
+    /// [`Self::install_prebuilt`], so a switch in `process` never allocates.
     pub fn wdf_set_tier(&mut self, cfg: QualityConfig, host_sr: f32, rgain: f32, bias: f32) {
         // Build the new model and swap it in, moving the old (settled) model into the pre-allocated
         // crossfade box so it can fade out against the new one's startup transient (zeroed biquads +
         // operating-point jump) — no audio-thread `Box` alloc for the carry-over.
         let new = WdfModel::new_with(cfg, host_sr as f64, rgain as f64, bias as f64);
         self.xfade_len = (host_sr * WDF_XFADE_S).max(1.0) as u32;
-        *self.wdf_prev = std::mem::replace(&mut self.wdf, new);
+        *self.wdf_prev = std::mem::replace(&mut *self.wdf, new);
         if let Some(snap) = self.wdf_snap {
             self.wdf.restore(&snap);
             self.wdf.save_snapshot();
         }
         self.xfade_remain = self.xfade_len;
+    }
+
+    /// Install a worker-prebuilt lo (`wdf`) model for a tier/OS switch — the alloc-free counterpart
+    /// to [`Self::wdf_set_tier`]. The new model arrives as a `Box` built off the audio thread, so the
+    /// whole rotation (new → `wdf`, old `wdf` → `wdf_prev`, stale `wdf_prev` → returned) is pointer
+    /// moves only: NO `WdfModel::new_with`, NO `Box` alloc. The returned stale box is handed back to
+    /// the caller to drop OFF the audio thread (its `Arc<DepLutSet>` may otherwise `free` here). The
+    /// carried settled snapshot is re-installed (fixed memcpy) and the 60 ms crossfade is armed,
+    /// exactly as `wdf_set_tier` does.
+    pub fn install_prebuilt(&mut self, lo: Box<WdfModel>, host_sr: f32) -> Box<WdfModel> {
+        self.xfade_len = (host_sr * WDF_XFADE_S).max(1.0) as u32;
+        // new lo box becomes live; the old live box moves out for the crossfade.
+        let old_live = std::mem::replace(&mut self.wdf, lo);
+        if let Some(snap) = self.wdf_snap {
+            self.wdf.restore(&snap);
+            self.wdf.save_snapshot();
+        }
+        // old live → crossfade scratch; the stale 2-switches-ago scratch is returned for off-thread drop.
+        let retired = std::mem::replace(&mut self.wdf_prev, old_live);
+        self.xfade_remain = self.xfade_len;
+        retired
+    }
+
+    /// Install (or clear) a worker-prebuilt hi-os sibling — the alloc-free counterpart to
+    /// [`Self::wdf_set_hi`] / [`Self::wdf_clear_hi`]. `hi` is `Some(box)` to arm the adaptive machine
+    /// or `None` to make it inert; either way the previous `wdf_hi` box (if any) is returned for the
+    /// caller to drop off the audio thread. Seeds the incoming model from the settled snapshot and
+    /// resets the detector to the lo-os steady state, sizing the envelope / crossfade / dwell timers
+    /// from the host SR (identical to `wdf_set_hi`).
+    #[cfg(feature = "adaptive-os")]
+    pub fn install_prebuilt_hi(
+        &mut self,
+        hi: Option<Box<WdfModel>>,
+        host_sr: f32,
+    ) -> Option<Box<WdfModel>> {
+        let retired = std::mem::replace(&mut self.wdf_hi, hi);
+        if let Some(m) = self.wdf_hi.as_mut() {
+            if let Some(snap) = self.wdf_snap {
+                m.restore(&snap);
+                m.save_snapshot();
+            }
+        }
+        self.os_phase = OsPhase::Lo;
+        self.os_xfade_remain = 0;
+        self.os_prime_remain = 0;
+        self.os_dwell_remain = 0;
+        self.os_env = 0.0;
+        self.os_xfade_len = (host_sr * OS_XFADE_S).max(1.0) as u32;
+        self.os_prime_len = (host_sr * OS_PRIME_S).max(1.0) as u32;
+        self.os_dwell_len = (host_sr * OS_DWELL_S).max(1.0) as u32;
+        self.os_rel_coef = (-1.0 / (OS_REL_S * host_sr)).exp();
+        retired
     }
 
     /// Install a settled snapshot (from a single shared warmup) and make it the reset target.

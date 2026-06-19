@@ -82,6 +82,17 @@ BA283 mic-preamp output stage.
   in `docs/plans/2026-06-17-*`).
 
 ### Performance
+- **Off-thread WDF model rebuild** — a quality-tier / oversampling / Adaptive-OS
+  switch is now **alloc-free on the audio thread**. The whole-model rebuild (which
+  allocates the circuit-build scratch + the depletion-charge LUTs) for **both** the
+  resident `wdf` and the adaptive `wdf_hi` siblings runs on the existing background
+  worker (`run_rebuild`, mirroring the levelNorm probe); `process` only pointer-swaps
+  the worker-built models in (`ChannelDsp::install_prebuilt`) and parks the retired
+  models in a fixed-capacity ring for the worker to drop, so neither the alloc nor the
+  free touches the audio thread. The swap is deferred a few ms until the build lands
+  (the old model keeps playing) and masked by the existing 60 ms crossfade; rapid
+  sweeps coalesce to the latest switch. Guarded by `test_rebuild_noalloc`
+  (`assert_no_alloc`, default and `--no-default-features`).
 - **Depletion-charge LUT** on the lossy WDF tiers: the per-junction `pow` in the
   BJT depletion-charge kernel is replaced by a precomputed 1-D table + linear
   interp (the `pow` arm only; the linear arm is unchanged). Built once off the
