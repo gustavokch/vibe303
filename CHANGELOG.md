@@ -14,8 +14,9 @@ BA283 mic-preamp output stage.
   renders of the real circuit:
   - **Neural Net** (active engine): pure-Rust streaming **FiLM WaveNet** (23
     dilated layers, 3 channels, 2-channel `[audio, gain]` condition,
-    gain-conditioned, RF 6347), exported from a `nam` 0.13 fork as
-    `model.cond.nam`, embedded at build time. Streaming/causal → **zero added
+    gain-conditioned, RF 6347), exported from stock `neural-amp-modeler` 0.13
+    (conditioned by config, not a fork) as `model.cond.nam`, embedded at build
+    time. Streaming/causal → **zero added
     latency**. (The legacy `LSTM(3 × 18)` + FiLM engine remains in-tree but
     dormant; it is what the in-repo `train/` pipeline produces.) This engine is
     gain-conditioned via the **Circuit Gain** knob, not **Bias** — under the

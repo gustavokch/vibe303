@@ -25,15 +25,16 @@ alternative.
 
 ### Neural Net
 
-Hand-coded pure-Rust streaming **FiLM WaveNet** matching a `nam` 0.13-fork
-export: 23 dilated causal conv layers, 3 channels, 2-channel condition
-`[audio, gain]` (gain-conditioned), per-layer `LeakyReLU(0.01)`, receptive field
-6347. Streaming and causal, so it adds **zero latency**. Zero-alloc and
-realtime-safe — all weight/state storage is heap-boxed once at construction; the
-audio path only indexes fixed scratch + ring buffers. Bit-exact with the golden
-reference in steady state.
+Hand-coded pure-Rust streaming **FiLM WaveNet** matching a `neural-amp-modeler`
+0.13 export (stock package, conditioned by config — not a fork): 23 dilated
+causal conv layers, 3 channels, 2-channel condition `[audio, gain]`
+(gain-conditioned), per-layer `LeakyReLU(0.01)`, receptive field 6347. Streaming
+and causal, so it adds **zero latency**. Zero-alloc and realtime-safe — all
+weight/state storage is heap-boxed once at construction; the audio path only
+indexes fixed scratch + ring buffers. Bit-exact with the golden reference in
+steady state.
 
-→ `plugin/src/wavenet.rs`, weights `plugin/weights/model.cond.nam`
+→ `plugin/src/wavenet.rs`, weights `exported_models/model.cond.nam`
 
 (The older NAM-style `LSTM(3 x 18)` engine — `plugin/src/model.rs`, schema
 `ba283-lstm-v2` — is still compiled but dormant; it is the model the in-repo
@@ -214,17 +215,45 @@ overrides for hosts that misreport their scale.
 
 ## ML / data pipeline
 
-The neural backends are trained offline against the real circuit. The
-**shipped** WaveNet (`model.cond.nam`) is exported by a custom `nam` 0.13 fork.
-The in-repo pipeline below trains the **dormant** LSTM/GRU engine
-(`plugin/src/model.rs`) and emits the `ba283-lstm-v2` JSON schema:
+The neural backends are trained offline against ngspice renders of the real
+circuit. The objective and SPICE data-gen are shared; the two engines differ in
+architecture and where they are trained.
+
+### Shipped WaveNet (the active backend)
+
+The deployed `exported_models/model.cond.nam` is a FiLM-conditioned WaveNet built
+on **stock `neural-amp-modeler` 0.13** (conditioned by config, not a fork). Its
+training scripts live in the sibling repo
+`~/Git/ba283-nam-lstm/scratch/nam_sweep/`; only the SPICE reamp, the embed, and
+the scoring touch this repo:
+
+```
+gen.py (sibling)        SPICE reamp: T3K-60s dry @ 9-gain grid, bias 0.77
+   │                    (drives this repo's data_gen.run_spice + netlist)
+   ▼
+train_wavenet.py        stateless WaveNet loop, window = RF(6347) + n_out
+   │                    --export → model.cond.nam (input_scale 2.0, output_ref_v 64, 48 kHz)
+   ▼
+exported_models/model.cond.nam   embedded into the plugin at build time (active path)
+   ▼
+eval/nam_vs_acme/       3-way scoring (NAM vs ACME vs SPICE), worst-gain gate
+```
+
+- **Operator runbook:** [`docs/wavenet_training_runbook.md`](docs/wavenet_training_runbook.md)
+
+### Dormant recurrent engine (in-repo `train/`)
+
+The in-repo pipeline trains the **dormant** recurrent engine
+(`plugin/src/model.rs`) and emits the `ba283-lstm-v2` JSON schema. It is
+**selectable** (`--model {lstm|s4d|s6}`, default `lstm` 3×18 FiLM; SSM trains for
+comparison but does not export):
 
 ```
 data_gen/   SPICE: parameterized netlist → ngspice transient render (dry/wet pairs)
    │        netlist.py · run_spice.py · stimulus.py · resample.py
    ▼
 train/      TBPTT training, perceptual loss (pre-emphasised ESR + DC), FiLM gain conditioning
-   │        train.py → best.pth
+   │        train.py --model lstm → best.pth
    ▼
 train/export.py   serialize → self-describing JSON (schema ba283-lstm-v2)
    ▼
@@ -236,9 +265,9 @@ Cloud training is available via `colab/ba283_train_colab.ipynb`.
 
 - **How (operator runbook):** [`docs/training_runbook.md`](docs/training_runbook.md)
 - **Ablation studies (Colab):** [`docs/colab_ablation_runbook.md`](docs/colab_ablation_runbook.md)
-- **Why (concepts — perceptual ESR + DC loss, TBPTT, FiLM):** [`docs/training_explained.md`](docs/training_explained.md)
+- **Why (concepts — perceptual ESR + DC loss, TBPTT, FiLM, WaveNet vs recurrent):** [`docs/training_explained.md`](docs/training_explained.md)
 
-The training objective is the Wright & Välimäki perceptual loss (arXiv:1911.08922):
+The training objective (both engines) is the Wright & Välimäki perceptual loss (arXiv:1911.08922):
 pre-emphasised ESR (`α = 0.8613`, 48 kHz matched-z of the paper's 0.85) plus a DC
 term (`--dc-weight`, on by default) that catches the constant offset pre-emphasis is
 blind to. An opt-in IEC A-weighting pre-emphasis filter is available via
@@ -258,10 +287,11 @@ blind to. An opt-in IEC A-weighting pre-emphasis filter is available via
 | Path | Purpose |
 |------|---------|
 | `plugin/` | Rust VST3 plugin (nih-plug): `lib.rs`, `wavenet.rs` (active NN), `model.rs` (dormant LSTM), `wdf/` (solver), `eq.rs`, `editor.rs`, `dsp.rs`, weights |
+| `exported_models/` | shipped WaveNet `model.cond.nam` (embedded into `wavenet.rs` at build time) |
 | `xtask/` | nih-plug build runner (`cargo xtask bundle ba283`) |
-| `train/` | PyTorch training pipeline (`train.py`, `model.py`, `export.py`) |
+| `train/` | PyTorch training pipeline for the **dormant** recurrent engine (`train.py`, `model.py`, `ssm.py`, `export.py`) — the WaveNet is trained externally (sibling repo `ba283-nam-lstm/scratch/nam_sweep/`) |
 | `data_gen/` | SPICE dataset generation (PySpice + ngspice) |
-| `eval/` | Validation harnesses (`wdf_vs_spice`, `acme_vs_spice`) |
+| `eval/` | Validation harnesses (`wdf_vs_spice`, `acme_vs_spice`, `nam_vs_acme`) |
 | `colab/` | Google Colab training notebooks |
 | `docs/` | Concept guide, runbook, design plans |
 | `docs/adr/` | Architecture decision records (`0001` = adaptive oversampling) |

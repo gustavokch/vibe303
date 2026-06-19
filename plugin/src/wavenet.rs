@@ -1,11 +1,11 @@
-//! Hand-coded pure-Rust streaming WaveNet matching the `nam` 0.13 fork's FiLM-conditioned
-//! `WaveNet` (`nam/models/wavenet/`) exactly, for the gain-conditioned BA283 export
+//! Hand-coded pure-Rust streaming WaveNet matching stock `neural-amp-modeler` 0.13's
+//! FiLM-conditioned `WaveNet` (`nam/models/wavenet/`) exactly, for the gain-conditioned BA283 export
 //! (`exported_models/model.cond.nam`). `process()` is zero-alloc: all weight/state storage is heap-`Box`ed
 //! ONCE in `new`/`from_json_str`; the audio path only indexes fixed `[f32; _]` scratch and the
 //! pre-allocated ring buffers.
 //!
-//! Topology actually used by `model.cond.nam` (validated at parse time; the rest of the fork's
-//! feature-set — gating, slimmable, post-/input-mixin-FiLM, head1x1 — is INACTIVE here and rejected
+//! Topology actually used by `model.cond.nam` (validated at parse time; the rest of stock nam's
+//! WaveNet feature-set — gating, slimmable, post-/input-mixin-FiLM, head1x1 — is INACTIVE here and rejected
 //! if seen): a single layer-array, `channels = bottleneck = 3`, condition/input size 2
 //! (`[audio, gain]`), 23 dilated layers (kernels 21×6 + 2×15), per-layer `LeakyReLU(0.01)`, the
 //! `conv_pre_film` FiLM hook and the `layer1x1` residual conv active, a per-array head rechannel
@@ -129,9 +129,9 @@ impl WaveNet {
             .expect("embedded exported_models/model.cond.nam is malformed (build bug)")
     }
 
-    /// Parse a `.nam` (nam fork export) into the streaming engine. Returns `Err` with a clear message
+    /// Parse a `.nam` (stock nam 0.13 export) into the streaming engine. Returns `Err` with a clear message
     /// if the file is not the validated active topology — the engine is deliberately scoped to what
-    /// this export needs rather than re-implementing the whole fork.
+    /// this export needs rather than re-implementing the whole nam WaveNet feature-set.
     ///
     /// The inner parse is panic-based (`require`/`expect`/bounds-checked cursor); this wrapper catches
     /// any such panic and converts it to `Err` so a runtime- or user-supplied model is rejected

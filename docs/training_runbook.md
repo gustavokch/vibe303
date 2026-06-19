@@ -1,19 +1,29 @@
-# BA283 Training Runbook
+# BA283 Training Runbook (dormant recurrent engine)
 
-Operator runbook for producing a trained, exported BA283 model from scratch.
+Operator runbook for producing a trained, exported BA283 **recurrent** model from
+scratch.
 
-> For *what the numbers mean and why the model is built this way*, see the
+> **This pipeline builds the dormant engine, not the shipped one.** The plugin's
+> active neural backend is the FiLM WaveNet (`plugin/src/wavenet.rs`); to train
+> *that*, see the [WaveNet Training Runbook](wavenet_training_runbook.md). The
+> model below (`plugin/src/model.rs`) is still compiled but **dormant** — train it
+> for LSTM/SSM research and A/B comparison.
+>
+> For *what the numbers mean and why the models are built this way*, see the
 > concept companion: [Training, Explained](training_explained.md).
 
 ## 1. Overview
 
-This pipeline produces `plugin/weights/ba283_gru32.json` — the self-describing
-weight file the Rust plugin (Phase 3) loads into its hand-coded GRU(2, 32) +
-Dense(1) inference engine. The flow is:
+This pipeline produces `plugin/weights/ba283_lstm_3x18.json` — the self-describing
+weight file the Rust plugin loads into its hand-coded `LSTM(3 × 18)` + FiLM +
+Dense(1) inference engine (schema `ba283-lstm-v2`, struct `Ba283Model`). The
+in-tree trainer is **selectable** via `--model {lstm|s4d|s6}` (default `lstm`);
+only the LSTM exports to the plugin schema (S4D/S6 are research/comparison only).
+The flow is:
 
 ```
 stimulus  ->  run_spice  ->  resample  ->  train  ->  export
- (dry WAVs)   (wet .npz)     (wet WAVs +   (best.pth)   (ba283_gru32.json)
+ (dry WAVs)   (wet .npz)     (wet WAVs +   (best.pth)   (ba283_lstm_3x18.json)
                               split CSVs)
 ```
 
@@ -144,10 +154,13 @@ with ~11 we are comfortably fine. With <3 the split raises an error.
 uv run python -m train.train \
   --train-manifest data/train.csv \
   --val-manifest data/val.csv \
+  --model lstm \
   --epochs 200 \
   --batch 64 \
   --lr 5e-3 \
-  --hidden 32 \
+  --hidden 18 \
+  --layers 3 \
+  --conditioning film \
   --warmup 1024 \
   --window 4096 \
   --stride 2048 \
@@ -157,15 +170,21 @@ uv run python -m train.train \
 ```
 
 Roughly **2–4 h on CPU**. TBPTT loop: a `--warmup`-sample no-grad region primes
-the GRU hidden state, then backprop runs over the rest of the window against the
-composite ESR + MSE pre-emphasis loss.
+the LSTM hidden/cell state, then backprop runs over the rest of the window against
+the composite pre-emphasised ESR + DC loss.
+
+**Architecture flags** — `--model {lstm|s4d|s6}` (default `lstm`; only `lstm`
+exports), `--hidden 18`, `--layers 3`, `--conditioning {film|concat}` (default
+`film`), `--head {linear|mlp}`, `--film {linear|mlp}`. SSM-only knobs (when
+`--model` is `s4d`/`s6`): `--d-state`, `--d-conv`, `--expand`. The S4D/S6 paths
+train and score but **do not export** to the plugin schema.
 
 Robustness features for unattended runs:
 - **`--resume`** — restart from `checkpoints/last.pth` (full optimizer +
   scheduler + epoch bundle) after a crash. Re-run the exact same command with
   `--resume` appended.
 - **`--seed`** (default `0xBA283`) — reproducibility.
-- **Gradient clipping** (`--clip-norm`, default `5.0`) — guards against GRU
+- **Gradient clipping** (`--clip-norm`, default `5.0`) — guards against LSTM
   divergence; non-finite batches are skipped with a warning.
 - **Atomic checkpoints** — written via tmp file + rename, so a kill mid-write
   never leaves a truncated file.
@@ -188,44 +207,61 @@ metric; lower is better).
 
 ## 8. Step 6 — Export weights
 
-`train/export.py` has **no CLI** — it exposes `export_rtneural_json(model,
-out_path, meta)`. Load `checkpoints/best.pth` into a fresh `BA283GRU(32)` and
-call the exporter:
+`train/export.py` exposes `export_rtneural_json(model, out_path, meta)`
+(LSTM-only — S4D/S6 have no exporter). The convenience script
+`scratch/nam_sweep/export_checkpoint.py` wraps it:
+
+```bash
+uv run python scratch/nam_sweep/export_checkpoint.py \
+    --ckpt checkpoints/best.pth \
+    --out  plugin/weights/ba283_lstm_3x18.json \
+    --hidden 18 --layers 3 --sample-rate 48000
+```
+
+Or call the exporter directly:
 
 ```bash
 uv run python -c '
 from pathlib import Path
 import torch
-from train.model import BA283GRU
+from train.model import BA283LSTM
 from train.export import export_rtneural_json
 
-model = BA283GRU(32)
+model = BA283LSTM(hidden=18, num_layers=3)
 state = torch.load("checkpoints/best.pth", map_location="cpu", weights_only=True)
 model.load_state_dict(state)
 model.train(False)
 
 export_rtneural_json(
     model,
-    Path("plugin/weights/ba283_gru32.json"),
-    meta={"sample_rate": 96000, "input_scale": 2.0},
+    Path("plugin/weights/ba283_lstm_3x18.json"),
+    meta={"sample_rate": 48000, "input_scale": 2.0},
+    sample_rate=48000,
 )
-print("wrote plugin/weights/ba283_gru32.json")
+print("wrote plugin/weights/ba283_lstm_3x18.json")
 '
 ```
 
-This writes the self-describing weight file plus a `ba283_gru32.meta.json`
-sidecar next to it.
+This writes the self-describing `ba283-lstm-v2` weight file (per-layer cells +
+learned init state) plus a `.meta.json` sidecar next to it. Copy it over the
+embedded placeholder (`include_str!` in `plugin/src/model.rs`) and rebuild.
 
-## 9. Step 7 — Round-trip verification (Phase 3)
+## 9. Step 7 — Round-trip verification
 
-The PyTorch ↔ Rust numerical round-trip (max abs diff **< 1e-5**) is the
-**Phase 3 / Task 3.2** acceptance gate and is **NOT runnable now**: it requires
-the Rust inference engine, which does not yet exist.
+The Rust inference engine now exists (`plugin/src/model.rs`, the dormant LSTM),
+so the PyTorch ↔ Rust numerical round-trip (max abs diff **< 1e-5**) is runnable:
 
-`train/verify_roundtrip.py` is a Phase-2 stub — it only loads `best.pth` and
-saves a PyTorch reference output (`/tmp/pytorch_ref.npy`) for the Rust side to
-compare against later. It does not, on its own, verify the round-trip. Defer the
-real comparison to Task 3.2.
+```bash
+cargo build --release --bin ba283_standalone
+uv run python -m train.verify_roundtrip \
+    --weights plugin/weights/ba283_lstm_3x18.json \
+    --bin target/release/ba283_standalone --tol 1e-5
+# -> max abs diff < 1e-5  (PyTorch vs the zero-alloc Rust forward)
+```
+
+Note this verifies the **dormant LSTM** path. The shipped WaveNet's parity is
+enforced separately (parse-time topology check + the `eval/nam_vs_acme/` harness);
+see the [WaveNet Training Runbook](wavenet_training_runbook.md) §9.
 
 ## 10. Running on Colab (local staging)
 
