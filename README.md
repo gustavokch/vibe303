@@ -54,6 +54,10 @@ Four quality tiers trade accuracy for speed:
 - `UltraFast` — adds cheap transport-exp and drops to 1×, ~9× faster.
 - `Warp` — also drops the BJT junction-charge model, ~12× faster.
 
+The two 1× tiers (`UltraFast`, `Warp`) can opt into **Adaptive OS** (below),
+which engages a resident `os=4` model on hot transients to claw back their
+aliasing without paying the oversampling cost on quiet material.
+
 Two orthogonal dials further tune the WDF backend. **Precision** is the
 device-model fidelity axis — it steps the BJT charge-storage model down from the
 tier baseline (and never up), independent of the tier's iteration strategy and
@@ -72,7 +76,15 @@ stays there). Loss stays within the harness budget (added ESR vs Realtime+High
 **Oversampling** (`Auto`/`1×`/`2×`) is the antialiasing-rate axis: `Auto` defers
 to the tier, `1×`/`2×` force the internal rate.
 
-→ `plugin/src/wdf/` (solver module)
+**Adaptive OS** is the level-gated companion to the `1×` lossy tiers. A
+peak-follower envelope on the driven input arms a resident `os=4` model on hot
+transients (where `os=1` aliases most) and holds `os=1` when quiet — so you pay
+the oversampling cost only on the transients that need it. It ships **off**
+(opt-in) and is inert unless the tier is `UltraFast`/`Warp` and Oversampling is
+`Auto`. See [`docs/adr/0001-adaptive-oversampling.md`](docs/adr/0001-adaptive-oversampling.md).
+
+→ `plugin/src/wdf/` (solver module). Architecture decisions are recorded under
+[`docs/adr/`](docs/adr/).
 
 ## Build
 
@@ -153,6 +165,7 @@ when the Neural Net backend is selected.
 | **WDF Tier** | `Realtime` / `Fast` / `UltraFast` / `Warp` | Realtime |
 | **Precision** | `High` / `Medium` / `Low` | High |
 | **Oversampling** | `Auto` / `1×` / `2×` | Auto |
+| **Adaptive OS** | bool — level-gated `os=4` on hot transients (1× lossy tiers only) | Off |
 
 **Circuit** _(WDF-only)_
 
@@ -251,6 +264,7 @@ blind to. An opt-in IEC A-weighting pre-emphasis filter is available via
 | `eval/` | Validation harnesses (`wdf_vs_spice`, `acme_vs_spice`) |
 | `colab/` | Google Colab training notebooks |
 | `docs/` | Concept guide, runbook, design plans |
+| `docs/adr/` | Architecture decision records (`0001` = adaptive oversampling) |
 | `tests/` | Python + Rust tests |
 | `checkpoints/` | Training checkpoints (`best.pth`, `last.pth`) |
 
