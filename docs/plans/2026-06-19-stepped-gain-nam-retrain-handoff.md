@@ -4,6 +4,35 @@ Date: 2026-06-19
 Status: pipeline STAGED (code/config only). No training, SPICE, or data-gen run
 in this branch. This doc is the runbook for the offline retrain.
 
+## Decisions needed BEFORE starting (resolve open items 1–4 below)
+
+1. **Where to apply `wet /= G_i`** (resample-time hook) — item 1.
+2. **Stepped-eval SPICE target filenames** — item 2.
+3. **G_i drift tolerance** vs the embedded WDF makeup (`makeup_ref`) — item 3.
+4. **NamModel cond-channel format** for stepped (scalar index vs one-hot) — item 4.
+
+## Execution checklist (phases)
+
+- [ ] **P0 — decisions** above resolved; free disk / RAM (ngspice 2.1 GB ceiling).
+- [ ] **P1 — dry sweep**: `data_gen.stimulus --amplitude-sweep` → dry set. Verify
+      amplitude grid + short clips.
+- [ ] **P2 — SPICE render + G_i**: `run_spice --stepped` → wet_raw + `g_i.json`.
+      **GATE:** measured `makeup` ≈ `makeup_ref` (embedded WDF `1/G_i`) within the
+      chosen tolerance — else netlist drifted from WDF; STOP and reconcile.
+- [ ] **P3 — resample + normalize**: apply `wet /= G_i`; build manifest; assert
+      dry SR == wet SR.
+- [ ] **P4 — train**: `train.train --conditioning stepped` (lstm 3×18). Watch
+      val_esr; learned codebook starts at identity.
+- [ ] **P5 — export**: stepped `film_codebook` + `rkj_ohms` + `output_ref_v`.
+- [ ] **P6 — eval**: `compare --stepped --hot-amps 1,4,16`. **GATE:** worst
+      NAM-vs-SPICE ESR comparable to prior continuous (~−28..−30 dB).
+- [ ] **P7 — ship**: embed weights in `plugin/`, flip the Rust NN cond path from
+      the staged continuous map to the discrete 5-entry codebook lookup
+      (`wavenet.rs` / `lib.rs`), re-run `cargo test`, re-bundle, DAW A/B.
+
+> NOTE: P7 is the only remaining Rust change — it is intentionally NOT in this
+> branch (no trained weights yet). Everything before P7 is offline.
+
 ## Why
 
 The Rust plugin's `circuit_gain` is now a **5-position hardware switch**, not a
