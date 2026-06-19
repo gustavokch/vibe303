@@ -318,6 +318,24 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
 
         ui.add_space(16.0);
 
+        // ── DPR (Dual Phase Rotator) — output-path all-pass phase rotator. Sits after the model +
+        //    levelNorm and before the output gain; reshapes waveform asymmetry without touching the
+        //    magnitude spectrum. Grouped with the output-stage controls above. ──
+        labelled_rule(ui, "DPR — PHASE ROTATOR");
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.add_space(22.0);
+                toggle_pill(ui, setter, &p.dpr_on, "DPR");
+            });
+            ui.add_space(12.0);
+            ui.add_enabled_ui(p.dpr_on.value(), |ui| {
+                knob_cell(ui, setter, &p.dpr_amount, "AMOUNT", 60.0);
+            });
+        });
+
+        ui.add_space(16.0);
+
         // ── EQUALIZER (Neve 1073/1076) — backend-agnostic, sits ahead of the model, so OUTSIDE the
         //    WDF-only CIRCUIT panel. Gain knobs row + switched-frequency selector rows + ON/OFF. ──
         labelled_rule(ui, "EQUALIZER");

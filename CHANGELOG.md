@@ -54,10 +54,21 @@ BA283 mic-preamp output stage.
   flat defaults are a provable bit-exact no-op (the WDF golden-vector contract is
   unaffected); gain knobs are per-block glided to avoid zipper on a sweep. The mid
   proportional-Q table and shelf shapes are provisional pending a 1073-curve fit.
+- **DPR — Dual Phase Rotator** (`dpr_on` ON/OFF + `dpr_amount`): an optional
+  broadcast-style all-pass phase rotator on the output path (after levelNorm,
+  before the output gain, both backends). Four cascaded first-order all-pass
+  sections — the canonical CBS/Orban "phase asymmetry eliminator" topology —
+  redistribute waveform asymmetry about the zero axis (reshaping the attack /
+  peak symmetry) WITHOUT changing the magnitude spectrum (linear, adds no
+  harmonics). The Amount knob sweeps the shared corner frequency on a log scale
+  (~80 Hz at 0, ~200 Hz at the 0.5 default, ~500 Hz at 1). OFF (default) is a
+  bit-exact no-op; per-channel state. The effect is signal-dependent — strongest
+  on asymmetric sources, near-inaudible on symmetric ones.
 - Parameters: Backend, WDF Tier, Precision, Oversampling, Input Gain, Drive,
   Bias, Output, Mix, Level Norm, Link, Circuit Gain (5-position switch),
   Age (+ Re-roll),
-  EQ (+ HPF / Low / Mid frequency selectors and Low / Mid / High gains).
+  EQ (+ HPF / Low / Mid frequency selectors and Low / Mid / High gains),
+  DPR (+ Amount).
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
 ### Changed
@@ -72,7 +83,7 @@ BA283 mic-preamp output stage.
   - **New gain-staging controls:** **`input_gain`** (clean pre-circuit dB trim),
     **`link`** (couples input/output in opposite directions for manual net-neutral
     staging). Signal chain is now
-    `x → ×input_gain → EQ → ×drive → circuit → [levelNorm comp] → ×output → mix`,
+    `x → ×input_gain → EQ → ×drive → circuit → [levelNorm comp] → DPR → ×output → mix`,
     so `drive` pushes the **post-EQ** signal into the circuit (the saturation
     amount).
   - **`level_norm` now defaults ON** (was OFF) and governs full neutrality: at

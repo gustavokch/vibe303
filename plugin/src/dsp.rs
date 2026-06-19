@@ -17,6 +17,7 @@
 //! model/bridge/delay methods plus arithmetic.
 
 use crate::dcblock::DcBlock;
+use crate::dpr::Dpr;
 use crate::eq::Eq;
 use crate::delay::ShortDelay;
 use crate::model::Ba283Model;
@@ -153,6 +154,11 @@ pub struct ChannelDsp {
     /// Neve 1073/1076-style EQ, applied to the input signal BEFORE the model (the EQ section sits
     /// upstream of the BA283/AV card on the real strip). Bit-exact identity while disabled.
     eq: Eq,
+    /// DPR (Dual Phase Rotator): an all-pass phase rotator on the OUTPUT path, applied to the
+    /// de-normed wet between the levelNorm gain and `out_gain`. Reshapes waveform asymmetry without
+    /// touching the magnitude spectrum. Bit-exact identity while disabled. Per-channel state. See
+    /// [`crate::dpr`].
+    dpr: Dpr,
     /// De-normed wet (volts→dBFS) from the most recent `process_sample`, BEFORE the levelNorm gain,
     /// `out_gain`, and `mix` are applied. The plugin reads this to feed the stereo-linked levelNorm
     /// RMS estimator (the norm gain is computed across both channels, so it lives one level up).
@@ -221,6 +227,7 @@ impl ChannelDsp {
             resume_remain: 0,
             dcblock: DcBlock::new(),
             eq: Eq::new(),
+            dpr: Dpr::new(),
             last_wet: 0.0,
             #[cfg(feature = "adaptive-os")]
             wdf_hi: None,
@@ -278,6 +285,7 @@ impl ChannelDsp {
         self.resume_remain = self.xfade_len;
         self.dcblock.reset();
         self.eq.reset();
+        self.dpr.reset();
         self.last_wet = 0.0;
         // Adaptive-os: drop to the lo-os steady state and clear the envelope (cancels any in-flight
         // lo↔hi crossfade; the hi model goes unread until the next arm re-seeds it from the snapshot).
@@ -311,6 +319,13 @@ impl ChannelDsp {
         high_g: f32,
     ) {
         self.eq.set(on, hpf_hz, low_hz, low_g, mid_hz, mid_g, high_g);
+    }
+
+    /// Push the current DPR settings (block-rate). `amount` (0..1) sweeps the all-pass corner; the
+    /// coeffs are recomputed only when the resolved `fc` changes, and the stage is a bit-exact
+    /// identity while `on` is false.
+    pub fn dpr_set(&mut self, on: bool, amount: f32, fs: f32) {
+        self.dpr.set(on, amount, fs);
     }
 
     // --- WDF block-rate config (used by Phase D plugin wiring) ---
@@ -666,7 +681,7 @@ impl ChannelDsp {
     /// block-rate bias/gain set via `wdf_set_bias`/`wdf_set_rgain`). The host-reported latency
     /// (`Ba283Plugin::latency_samples`) is honoured for BOTH backends.
     ///
-    /// Signal chain: `x → ×input_gain → eq → ×drive → [model] → ×norm_gain → ×out_gain → mix`.
+    /// Signal chain: `x → ×input_gain → eq → ×drive → [model] → ×norm_gain → dpr → ×out_gain → mix`.
     /// `input_gain` is the clean pre-circuit trim; `drive` pushes the POST-EQ signal into the model
     /// (the saturation amount). `norm_gain` is the stereo-linked levelNorm gain (1.0 when off),
     /// applied to the de-normed wet BEFORE `out_gain` and `mix`. The pre-norm de-normed wet is stashed
@@ -713,6 +728,9 @@ impl ChannelDsp {
                 let wet = model_out * deref;
                 self.last_wet = wet;
                 let wet = wet * norm_gain;
+                // DPR phase rotator: reshapes asymmetry on the output path (after levelNorm, before
+                // out_gain). Bit-exact identity while off.
+                let wet = self.dpr.process(wet);
                 let wet = wet * out_gain;
                 // Dry path delayed to match the wet-path (bridge) latency so Mix aligns.
                 let dry_aligned = if use_bridge { self.dry_delay.push_pop(x) } else { x };
@@ -774,6 +792,9 @@ impl ChannelDsp {
                 };
                 self.last_wet = wet;
                 let wet = wet * norm_gain;
+                // DPR phase rotator: reshapes asymmetry on the output path (after levelNorm, before
+                // out_gain). Bit-exact identity while off.
+                let wet = self.dpr.process(wet);
                 let wet = wet * out_gain;
                 // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
                 let blended = wet * mix + x * (1.0 - mix);
