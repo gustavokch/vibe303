@@ -89,7 +89,7 @@ fn levelnorm_holds_unity_at_every_position() {
         for i in 0..6_000u32 {
             let x = amp * (2.0 * std::f32::consts::PI * freq * i as f32 / host).sin();
             // input_gain=1, drive=1, cond=bias 0.5, out_gain=1, mix=1 (fully wet), direct (no bridge).
-            let y = ch.process_sample(x, 1.0, 1.0, 0.5, 1.0, norm_gain, 1.0, false, InferenceBackend::Wdf);
+            let y = ch.process_sample(x, 1.0, 1.0, 0.5, 0.5, 1.0, norm_gain, 1.0, false, InferenceBackend::Wdf);
             if i >= 2_000 {
                 // skip the settle transient
                 sin_sq += (x as f64) * (x as f64);
@@ -126,7 +126,7 @@ fn manual_staging_and_link_are_level_correct() {
         let (mut out_sq, mut n) = (0.0f64, 0u32);
         for i in 0..6_000u32 {
             let x = amp * (2.0 * std::f32::consts::PI * freq * i as f32 / host).sin();
-            let y = ch.process_sample(x, in_g, 1.0, 0.5, out_g, 1.0, 1.0, false, InferenceBackend::Wdf);
+            let y = ch.process_sample(x, in_g, 1.0, 0.5, 0.5, out_g, 1.0, 1.0, false, InferenceBackend::Wdf);
             if i >= 2_000 {
                 out_sq += (y as f64) * (y as f64);
                 n += 1;

@@ -678,6 +678,7 @@ impl ChannelDsp {
         input_gain: f32,
         drive: f32,
         cond: f32,
+        input_cond: f32,
         out_gain: f32,
         norm_gain: f32,
         mix: f32,
@@ -694,18 +695,20 @@ impl ChannelDsp {
             InferenceBackend::NeuralNet => {
                 // De-norm: recover volts (`* output_ref_v`) then express in the 0 dBFS ≡ 0.5 V
                 // convention (`/ INPUT_FS_VOLTS`). The WaveNet applies its own `input_scale` to the
-                // audio internally, so it is fed `driven` directly. `cond` is the FiLM
-                // gain-conditioning value (0..1) the host sets from the circuit-gain knob.
+                // audio internally, so it is fed `driven` directly. `cond` is the circuit-gain FiLM
+                // value (0..1) from the circuit-gain knob; `input_cond` is the normalized input-gain
+                // (WS4 dual conditioning). A 2-channel model reads only `cond`; the 3-channel model
+                // reads both. Always pass both — the embedded model's width selects how many apply.
                 let deref = self.wavenet.output_ref_v() / INPUT_FS_VOLTS;
                 // Disjoint field borrows so the bridge closure can call the net.
                 let (wavenet, bridge) = (&mut self.wavenet, &mut self.bridge);
                 let model_out = if use_bridge {
                     // Host runs ~2x the model rate: decimate to ~48 kHz, run the net once per host
                     // pair, interpolate back (HostBridge is itself zero-alloc).
-                    bridge.process(driven, |lo| wavenet.process(lo, cond))
+                    bridge.process(driven, |lo| wavenet.process(lo, &[cond, input_cond]))
                 } else {
                     // Host runs at ~the model rate: evaluate the net directly.
-                    wavenet.process(driven, cond)
+                    wavenet.process(driven, &[cond, input_cond])
                 };
                 let wet = model_out * deref;
                 self.last_wet = wet;

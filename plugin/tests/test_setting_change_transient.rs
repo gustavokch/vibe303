@@ -44,7 +44,7 @@ fn resume_after_reset_ramps_in() {
     let t = tone(window);
     let (mut first, mut max_jump, mut prev) = (f32::NAN, 0.0f32, 0.0f32);
     for (i, &x) in t.iter().enumerate() {
-        let y = h.ch.process_sample(x, 1.0, 1.0, bias, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+        let y = h.ch.process_sample(x, 1.0, 1.0, bias, 0.5, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
         if i == 0 {
             first = y;
         }
@@ -77,7 +77,7 @@ fn precision_change_silent_no_click() {
     ch.wdf_set_bias(bias);
     let mut prev = 0.0f32;
     for _ in 0..settle {
-        prev = ch.process_sample(0.0, 1.0, 1.0, bias, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+        prev = ch.process_sample(0.0, 1.0, 1.0, bias, 0.5, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
     }
     // Switch to Fast+Medium (the reported click) while silent.
     ch.wdf_set_tier(QualityConfig::fast().with_precision(Precision::Medium), SR as f32, rgain, bias);
@@ -87,7 +87,7 @@ fn precision_change_silent_no_click() {
     ch.wdf_set_bias(bias);
     let (mut peak, mut max_jump) = (0.0f32, 0.0f32);
     for _ in 0..window {
-        let y = ch.process_sample(0.0, 1.0, 1.0, bias, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+        let y = ch.process_sample(0.0, 1.0, 1.0, bias, 0.5, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
         peak = peak.max(y.abs());
         max_jump = max_jump.max((y - prev).abs());
         prev = y;
@@ -130,7 +130,7 @@ impl Harness {
         for &x in &t {
             let y = self
                 .ch
-                .process_sample(x, 1.0, self.drive, self.bias, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
+                .process_sample(x, 1.0, self.drive, self.bias, 0.5, 1.0, 1.0, 1.0, false, InferenceBackend::Wdf);
             peak = peak.max(y.abs());
             max_jump = max_jump.max((y - prev).abs());
             prev = y;

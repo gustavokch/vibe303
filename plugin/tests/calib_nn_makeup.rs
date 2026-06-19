@@ -49,7 +49,7 @@ fn measure_gnn(gain_norm: f32) -> f64 {
     let (mut in_sq, mut out_sq) = (0.0f64, 0.0f64);
     for i in 0..(n_settle + n_meas) {
         let x = PROBE_AMP * (w * i as f64).sin();
-        let y = net.process(x as f32, gain_norm) as f64 * deref;
+        let y = net.process(x as f32, &[gain_norm]) as f64 * deref;
         if i >= n_settle {
             in_sq += x * x;
             out_sq += y * y;

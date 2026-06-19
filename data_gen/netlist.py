@@ -122,6 +122,37 @@ def gain_norm_to_rkj(gain_norm: float) -> float:
     g = min(1.0, max(0.0, gain_norm))
     return GAIN_RKJ_MAX * (GAIN_RKJ_MIN / GAIN_RKJ_MAX) ** g
 
+
+def rkj_to_gain_norm(rkj_ohms: float) -> float:
+    """Inverse of :func:`gain_norm_to_rkj`: map a K<->J resistor (ohms) back onto
+    the normalized gain axis ``[0, 1]`` the conditioned model is trained on.
+
+    Log-linear, clamped to ``[0, 1]``: the open-detent sentinel (``1e9 Ω``) and
+    anything above ``GAIN_RKJ_MAX`` saturate to ``0.0`` (lowest gain); anything
+    below ``GAIN_RKJ_MIN`` saturates to ``1.0``. Mirrors the Rust plugin's
+    ``rgain_to_gain_norm`` (same ``GAIN_RKJ_MAX``/``MIN`` endpoints) so the data,
+    the eval, and the plugin all feed the model ONE conditioning value per R_KJ.
+    """
+    import math
+    r = max(1.0, float(rkj_ohms))
+    g = math.log(r / GAIN_RKJ_MAX) / math.log(GAIN_RKJ_MIN / GAIN_RKJ_MAX)
+    return min(1.0, max(0.0, g))
+
+
+# Input-gain conditioning axis (WS4 dual conditioning). Mirrors the plugin's
+# ``input_gain`` FloatParam range (lib.rs: Linear -24..+24 dB). The conditioned
+# model takes a SECOND continuous channel = the pre-circuit input trim, normalized
+# to ``[0, 1]`` over this range so 0 dB (unity) maps to 0.5.
+INPUT_GAIN_DB_MIN = -24.0
+INPUT_GAIN_DB_MAX = 24.0
+
+
+def input_gain_db_to_norm(db: float) -> float:
+    """Map an input-gain in dB onto ``[0, 1]`` over ``[-24, +24] dB`` (clamped).
+    0 dB (unity / level-norm-ON default) -> 0.5."""
+    g = (float(db) - INPUT_GAIN_DB_MIN) / (INPUT_GAIN_DB_MAX - INPUT_GAIN_DB_MIN)
+    return min(1.0, max(0.0, g))
+
 # RV1 (4k7 preset) bias map. The very-low-wiper end runs TR3 idle current away
 # to saturation (output collapses), so bias_norm in [0,1] is mapped to the
 # stable class-A portion of the pot: wiper fraction = RV1_WIPER_MIN..1.0. Over

@@ -51,7 +51,9 @@ import soundfile as sf
 import soxr
 from scipy.signal import butter, csd, sosfiltfilt, welch  # type: ignore[import-untyped]
 
-from data_gen.netlist import gain_norm_to_rkj
+from data_gen.netlist import (
+    gain_norm_to_rkj, rkj_to_gain_norm, input_gain_db_to_norm,
+)
 from eval.wdf_vs_spice.compare import ONSET_SKIP, SPAN, best_lag
 from eval.acme_vs_spice.run_acme import run_acme
 from eval.nam_vs_acme.run_nam import NamModel
@@ -330,8 +332,9 @@ def _score_one_gain(model, dry, sr, gain, bias, out_dir):
 def _score_one_stepped(model, dry, sr, idx, rkj, amp, bias, out_dir):
     """STEPPED (WS4): score one (position idx, input-amplitude) point.
 
-    Renders NAM at the discrete switch position ``idx`` (the conditioning index),
-    ACME at the matching ``rkj``, and the per-position SPICE target, then scores
+    Renders NAM at this position's CONTINUOUS conditioning value
+    (``rkj_to_gain_norm(rkj)`` for circuit gain + the normalized ``amp`` for input
+    gain), ACME at the matching ``rkj``, and the per-position SPICE target, scores
     the 3-way (level-matched ESR, 20 Hz HP, lag-aligned) — the SAME contract as
     the continuous sweep. ``amp`` is a LINEAR input-gain applied to the dry to
     drive the circuit hot (hot-input-amplitude check); ``amp == 1.0`` is the
@@ -340,6 +343,12 @@ def _score_one_stepped(model, dry, sr, idx, rkj, amp, bias, out_dir):
     skip by the caller). Returns ``(summary_dict, per_position_row)``.
     """
     dry_a = dry * float(amp)
+    # `amp` is the LINEAR input-gain applied to the dry (mirrors the plugin's
+    # `input_gain` trim). The dual-conditioned model is told this drive level via
+    # its input_gain channel, so amp both scales the audio AND becomes a
+    # conditioning value: amp -> dB -> normalized over [-24,+24] dB.
+    input_gain_db = 20.0 * np.log10(max(float(amp), 1e-9))
+    input_gain_norm = input_gain_db_to_norm(input_gain_db)
     target = NAM_SWEEP / f"T3K-60s_pos{idx}_amp{amp:g}.wav"
     if not target.exists():
         raise FileNotFoundError(
@@ -352,13 +361,16 @@ def _score_one_stepped(model, dry, sr, idx, rkj, amp, bias, out_dir):
         spice = _resample(spice, sr_t, sr)
     spice = spice[: len(dry_a)]
 
-    print(f"\n--- pos {idx} (R_KJ={rkj:g}Ω) amp x{amp:g} -> {target.name} ---")
+    print(f"\n--- pos {idx} (R_KJ={rkj:g}Ω, gain_norm={rkj_to_gain_norm(rkj):.3f}) "
+          f"amp x{amp:g} (input_gain_norm={input_gain_norm:.3f}) -> {target.name} ---")
 
-    # The stepped NAM is conditioned on the DISCRETE position index, not a
-    # continuous gain. NamModel's `gain` channel carries that index for stepped
-    # models; legacy/continuous models ignore it (single operating point).
-    nam_gain = float(idx) if model._conditioned else None
-    nam_wet, thr = model.run(dry_a, gain=nam_gain)
+    # The WaveNet conditions on a CONTINUOUS circuit-gain axis (the 5 detents are
+    # 5 points on it), so feed the normalized gain for this position's R_KJ — NOT
+    # the discrete index (the model's `gain` channel needs [0,1]). Dual-
+    # conditioned models also take the normalized input_gain; 2-channel models
+    # ignore it. Legacy/unconditioned models ignore both (single operating point).
+    nam_gain = rkj_to_gain_norm(rkj) if model._conditioned else None
+    nam_wet, thr = model.run(dry_a, gain=nam_gain, input_gain=input_gain_norm)
 
     dry96 = _resample(dry_a, sr, SR_ACME)
     acme96 = run_acme(dry96, SR_ACME, rgain=rkj, bias=bias)
@@ -377,6 +389,8 @@ def _score_one_stepped(model, dry, sr, idx, rkj, amp, bias, out_dir):
 
     summary = {
         "position_idx": idx, "rkj_ohm": round(rkj, 1), "input_amp": amp,
+        "circuit_gain_norm": round(rkj_to_gain_norm(rkj), 4),
+        "input_gain_norm": round(input_gain_norm, 4),
         "target": target.name, "nam_vs_acme": _pack(m_na),
         "nam_vs_spice": _pack(m_ns), "acme_vs_spice": _pack(m_as),
     }

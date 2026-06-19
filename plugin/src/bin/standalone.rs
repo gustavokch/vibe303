@@ -337,7 +337,7 @@ fn main() {
             // Offline harness: input_gain is fixed at unity (the circuit gain is set directly via
             // --circuit-gain ohms; the staging trims are a plugin-UI concern).
             let y = chans[ch]
-                .process_sample(s, 1.0, drive, bias, out_gain, norm_gain, mix, use_bridge, backend);
+                .process_sample(s, 1.0, drive, bias, 0.5, out_gain, norm_gain, mix, use_bridge, backend);
             writer
                 .write_sample(y)
                 .unwrap_or_else(|e| die(&format!("error writing sample: {e}")));

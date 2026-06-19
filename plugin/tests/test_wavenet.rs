@@ -22,7 +22,7 @@ fn output_is_finite() {
     let mut net = WaveNet::new_from_embedded();
     for i in 0..8192 {
         let x = (i as f32 * 0.01).sin() * 0.3;
-        let y = net.process(x, 0.5);
+        let y = net.process(x, &[0.5]);
         assert!(y.is_finite(), "non-finite output at sample {i}: {y}");
     }
 }
@@ -34,16 +34,16 @@ fn reset_restores_zero_history() {
     let mut first = Vec::new();
     for i in 0..2048 {
         let x = (i as f32 * 0.013).sin() * 0.4;
-        first.push(net.process(x, 0.3));
+        first.push(net.process(x, &[0.3]));
     }
     // Disturb state, then reset and re-run — must reproduce the first pass exactly.
     for i in 0..500 {
-        net.process((i as f32).cos(), 0.9);
+        net.process((i as f32).cos(), &[0.9]);
     }
     net.reset();
     for (i, &want) in first.iter().enumerate() {
         let x = (i as f32 * 0.013).sin() * 0.4;
-        let got = net.process(x, 0.3);
+        let got = net.process(x, &[0.3]);
         assert_eq!(got, want, "reset did not restore deterministic output at {i}");
     }
 }
@@ -97,7 +97,7 @@ fn golden_parity_with_pytorch_reference() {
     let mut net = WaveNet::new_from_embedded();
     let mut max_err = 0.0f32;
     for (i, (&x, &want)) in dry.iter().zip(&wet).enumerate() {
-        let got = net.process(x, gain);
+        let got = net.process(x, &[gain]);
         if i < rf {
             continue; // warmup region — not compared (see comment above)
         }
