@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 pub mod dcblock;
 pub mod delay;
+pub mod dpr;
 pub mod dsp;
 pub mod eq;
 mod editor;
@@ -738,6 +739,17 @@ pub struct Ba283Params {
     #[cfg(feature = "trafo-core")]
     #[id = "trafo_sat"]
     pub trafo_sat: FloatParam,
+    /// DPR (Dual Phase Rotator) ON/OFF. OFF (default) = bit-exact today's sound; ON inserts an
+    /// all-pass phase rotator on the output path (ahead of the levelNorm makeup gain and the output gain) that
+    /// reshapes waveform asymmetry without changing the magnitude spectrum. Both backends. See
+    /// [`crate::dpr`].
+    #[id = "dpr_on"]
+    pub dpr_on: BoolParam,
+    /// DPR amount (0..1): sweeps the shared all-pass corner frequency on a log scale (~80 Hz at 0,
+    /// ~200 Hz at the 0.5 default, ~500 Hz at 1). Higher = the phase rotation reaches further into
+    /// the low mids, reshaping the attack more audibly. Inert while `dpr_on` is false.
+    #[id = "dpr_amount"]
+    pub dpr_amount: FloatParam,
 }
 
 impl Default for Ba283Params {
@@ -833,7 +845,7 @@ impl Default for Ba283Params {
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             age_reroll: BoolParam::new("Re-roll Unit", false),
             age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
-            editor_state: EguiState::from_size(660, 900),
+            editor_state: EguiState::from_size(660, 1010),
             #[cfg(feature = "trafo-core")]
             trafo_on: BoolParam::new("Transformer", true),
             #[cfg(feature = "trafo-core")]
@@ -844,6 +856,13 @@ impl Default for Ba283Params {
             trafo_sat: FloatParam::new("Saturation", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_value_to_string(formatters::v2s_f32_rounded(2))
                 .with_smoother(SmoothingStyle::Linear(50.0)),
+            // DPR defaults: OFF (bit-exact today) + amount 0.5 → ~200 Hz canonical rotator corner.
+            dpr_on: BoolParam::new("DPR", false),
+            // Amount is consumed block-rate (read via `.value()` in `process`, like the EQ params),
+            // NOT per-sample-smoothed: the resolved corner `fc` only recomputes the all-pass coeffs
+            // when it changes, so a per-sample smoother would defeat that cache for no benefit.
+            dpr_amount: FloatParam::new("DPR Amount", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
 }
@@ -1234,6 +1253,14 @@ impl Plugin for Ba283Plugin {
         };
         for ch in self.channels.iter_mut() {
             ch.eq_set(eq_on, eq_hpf_hz, eq_low_hz, eq_low_g, eq_mid_hz, eq_mid_g, eq_high_g);
+        }
+
+        // DPR (phase rotator) block-rate config. The all-pass coeffs recompute only when the
+        // amount-derived corner changes; the stage is a bit-exact identity while `dpr_on` is false.
+        let dpr_on = self.params.dpr_on.value();
+        let dpr_amount = self.params.dpr_amount.value();
+        for ch in self.channels.iter_mut() {
+            ch.dpr_set(dpr_on, dpr_amount, self.sample_rate);
         }
 
         // WDF gain/bias are consumed at block rate (a cheap G0 rebuild, not per-sample-smoothed). Apply
