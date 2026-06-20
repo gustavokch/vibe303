@@ -27,14 +27,14 @@ const AMBER: Color32 = Color32::from_rgb(0xD9, 0x8A, 0x3D);
 const OXBLOOD: Color32 = Color32::from_rgb(0x9E, 0x3B, 0x2E);
 
 // ── Spacing scale ───────────────────────────────────────────────────────────────────────
-// Five-step geometric scale. Every `add_space` in the layout uses one of these — no magic
-// numbers. The visual difference between adjacent steps (2×) is always perceptible.
-const SP_XS: f32 = 4.0;   // tight: inline label-to-control nudges
-const SP_SM: f32 = 8.0;   // cozy: between sibling knobs/pills
-const SP_12: f32 = 12.0;  // tight row-to-row spacing
-const SP_MD: f32 = 16.0;  // section-internal: post-hairline, between control rows
-const SP_LG: f32 = 24.0;  // major: between logical sections (header→knobs, EQ→CIRCUIT)
-const _SP_XL: f32 = 32.0; // hero: reserved for future emphasis (prefixed _ to suppress warning)
+// Hand-tuned step scale (4 / 8 / 12 / 16 / 24 — not strictly geometric). The layout's
+// `add_space` calls draw from these named steps rather than bare literals so the vertical
+// rhythm lives in one place and can be retuned without hunting through the layout.
+const SP_XS: f32 = 4.0;    // tight: inline label-to-control nudges
+const SP_SM: f32 = 8.0;    // cozy: between sibling knobs/pills
+const SP_SNUG: f32 = 12.0; // snug: asymmetric frame margin, tight inline gaps
+const SP_MD: f32 = 16.0;   // section-internal: post-rule, between control rows, pill v-align
+const SP_LG: f32 = 24.0;   // major: between logical sections (header→knobs, section→section)
 
 /// Condensed silkscreen family (labels / wordmark).
 fn display_font(size: f32) -> FontId {
@@ -329,19 +329,19 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         //    levelNorm and before the output gain; reshapes waveform asymmetry without touching the
         //    magnitude spectrum. Grouped with the output-stage controls above. ──
         labelled_rule(ui, "DPR — PHASE ROTATOR");
-        ui.add_space(10.0);
+        ui.add_space(SP_MD);
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.add_space(22.0);
+                ui.add_space(SP_MD);
                 toggle_pill(ui, setter, &p.dpr_on, "DPR");
             });
-            ui.add_space(12.0);
+            ui.add_space(SP_SNUG);
             ui.add_enabled_ui(p.dpr_on.value(), |ui| {
                 knob_cell(ui, setter, &p.dpr_amount, "AMOUNT", 60.0);
             });
         });
 
-        ui.add_space(16.0);
+        ui.add_space(SP_LG);
 
         // ── EQUALIZER (Neve 1073/1076) — backend-agnostic, sits ahead of the model, so OUTSIDE the
         //    WDF-only CIRCUIT panel. Gain knobs row + switched-frequency selector rows + ON/OFF. ──
@@ -404,12 +404,21 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         });
         ui.add_space(SP_MD);
 
-        // CHARACTER popup — Circuit Gain, Bias, Age, Re-roll.
+        // Circuit Gain — backend-AGNOSTIC: it sets the WDF R_KJ leg AND conditions the NeuralNet
+        // (FiLM gain-norm). Kept OUTSIDE the popup and the WDF-fade frame so it stays always-visible
+        // + full-opacity in NN mode (where the WDF panel is greyed). `circuit_gain_cell` forces its
+        // own enabled + opacity scope, so it needs no gating here.
+        ui.horizontal(|ui| {
+            circuit_gain_cell(ui, setter, p);
+        });
+        ui.add_space(SP_MD);
+
+        // CHARACTER popup — Bias, Age, Re-roll (all WDF-only).
         // Drawn ABOVE the CIRCUIT frame (outside the opacity/disable scope) so the popup
         // is always fully visible. The controls inside handle their own enable states.
         let char_open: bool = ui.memory(|m| m.data.get_temp(char_popup_id).unwrap_or(false));
         if char_open {
-            character_popup(ui, ctx, setter, p, wdf_on);
+            character_popup(ui, setter, p, wdf_on);
             ui.add_space(SP_MD);
         }
 
@@ -422,7 +431,7 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
             .stroke(Stroke::new(1.0, BORDER))
             .inner_margin(egui::Margin {
                 top: SP_MD as i8,
-                bottom: SP_12 as i8,
+                bottom: SP_SNUG as i8,
                 left: SP_MD as i8,
                 right: SP_MD as i8,
             })
@@ -852,12 +861,12 @@ fn reroll_button(ui: &mut egui::Ui, setter: &ParamSetter, p: &Arc<Ba283Params>) 
     }
 }
 
-/// CHARACTER popup panel — Circuit Gain, Bias, Age, Re-roll. Drawn as an inline frame (not a
+/// CHARACTER popup panel — Bias, Age, Re-roll (all WDF-only). Drawn as an inline frame (not a
 /// floating `egui::Window`) so it participates in the top-down layout flow and doesn't clip at
 /// viewport edges. The popup is toggled by the CHARACTER button in the CIRCUIT section header.
+/// (Circuit Gain lives outside the popup — it is backend-agnostic and stays always-visible.)
 fn character_popup(
     ui: &mut egui::Ui,
-    _ctx: &egui::Context,
     setter: &ParamSetter,
     p: &Arc<Ba283Params>,
     wdf_on: bool,
@@ -869,10 +878,6 @@ fn character_popup(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                // Circuit Gain — backend-AGNOSTIC (conditions the NN via FiLM gain-norm), so it
-                // stays live + full-opacity even when the rest of the WDF-only panel is greyed.
-                circuit_gain_cell(ui, setter, p);
-                ui.add_space(SP_SM);
                 // Bias — WDF-only.
                 ui.add_enabled_ui(wdf_on, |ui| {
                     knob_cell(ui, setter, &p.bias, "BIAS", 64.0);
