@@ -266,8 +266,10 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         hairline(ui);
         ui.add_space(18.0);
 
-        // levelNorm ON = neutral auto-staging: the manual INPUT/OUTPUT/LINK controls are forced
-        // neutral (the DSP ignores them) and grayed. OFF = faithful manual staging.
+        // levelNorm ON = neutral auto-staging: INPUT and LINK are forced neutral (the DSP ignores
+        // them) and grayed; OUTPUT stays LIVE as the post-normalization level trim (DRIVE now colours
+        // at constant loudness, so OUTPUT is the user's final level control). OFF = faithful manual
+        // staging (INPUT/OUTPUT/LINK all active).
         let staging_on = !p.level_norm.value();
 
         // LINK (levelNorm OFF only): slave OUTPUT to the opposite of INPUT (+X in ⇒ −X out) so the
@@ -284,8 +286,9 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         }
 
         // ── Core knob row ─────────────────────────────────────────────────────────────
-        // INPUT · DRIVE · BIAS · OUTPUT · MIX. INPUT/OUTPUT gray under levelNorm; OUTPUT also grays
-        // when LINK slaves it; BIAS grays for the NeuralNet backend (it is WDF-only).
+        // INPUT · DRIVE · BIAS · OUTPUT · MIX. INPUT grays under levelNorm; OUTPUT stays live under
+        // levelNorm (post-normalization trim) and only grays when LINK slaves it; BIAS grays for the
+        // NeuralNet backend (it is WDF-only).
         ui.columns(5, |cols| {
             cols[0].add_enabled_ui(staging_on, |ui| {
                 knob(ui, setter, &p.input_gain, "INPUT", 60.0);
@@ -294,7 +297,9 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
             cols[2].add_enabled_ui(wdf_on, |ui| {
                 knob(ui, setter, &p.bias, "BIAS", 60.0);
             });
-            cols[3].add_enabled_ui(staging_on && !p.link.value(), |ui| {
+            // Live under levelNorm (post-normalization trim); when levelNorm is OFF it only grays
+            // while LINK slaves it. (`!staging_on` ⇒ levelNorm ON ⇒ always live, ignoring a stale LINK.)
+            cols[3].add_enabled_ui(!staging_on || !p.link.value(), |ui| {
                 knob(ui, setter, &p.output_db, "OUTPUT", 60.0);
             });
             knob(&mut cols[4], setter, &p.mix, "MIX", 60.0);

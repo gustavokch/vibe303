@@ -1,16 +1,24 @@
-//! Offline measurement of the WDF small-signal voltage gain `G_i` at each of the 5 hardware
-//! gain-switch positions, used to embed the static levelNorm circuit-makeup table `1/G_i` in
-//! `lib.rs` (replacing the old runtime off-thread gain probe — positions are now fixed, so the
-//! makeup is a deterministic compile-time constant).
+//! Offline measurement of the WDF voltage gain at each of the 5 hardware gain-switch positions,
+//! across a grid of DRIVE settings, used to embed the static Drive-swept levelNorm circuit-makeup
+//! table `1/G_sat(pos, drive)` in `lib.rs`.
 //!
 //! Run: `cargo run --release --bin measure_gi`
 //!
-//! Measures the SAME small-signal gain the live levelNorm path used (`ChannelDsp::wdf_measure_gain`,
-//! warmed at the realtime tier, default bias/age/trafo). The drift-guard test
-//! `tests/test_stepped_gain.rs` re-measures these and asserts they match the embedded constants, so
-//! a silent solver/circuit change can never desync the table.
+//! WHY drive-swept (not a single small-signal `1/G_v`): the live levelNorm makeup is
+//! `trim / drive`. With a constant small-signal `trim = 1/G_v` this assumes the circuit is LINEAR,
+//! so it divides out the FULL linear Drive — but a saturating circuit's output grows sublinearly,
+//! so the output sags hard (~−27 dBFS at +24 dB Drive) and the DRIVE knob sounds weak. Measuring
+//! the LARGE-SIGNAL gain `G_sat` at each Drive (the circuit driven by a `A0 * 10^(drive/20)` sine)
+//! and storing `trim = 1/G_sat` makes `trim / drive` level the output to constant loudness while
+//! the saturation colour stays audible. (`G_sat → G_v` as Drive → small, but A0 = 0 dBFS already
+//! sits in light nonlinearity, so even the Drive-0 column is the large-signal value at A0.)
+//!
+//! A live large-signal probe is deliberately NOT used — `WdfModel::measure_gain`'s comment
+//! documents that probing the saturated operating point on the audio thread jitters 22×→250× and
+//! peaks loudly. This is offline + deterministic; the drift-guard test `tests/test_stepped_gain.rs`
+//! re-measures the table and asserts it matches the embedded constants.
 
-use ba283::dsp::ChannelDsp;
+use ba283::dsp::{ChannelDsp, INPUT_FS_VOLTS};
 use ba283::wdf::QualityConfig;
 
 /// Reference operating point for the makeup measurement (must match the embedded-table contract and
@@ -22,19 +30,62 @@ const BIAS: f32 = 0.5;
 const STEP_R_KJ: [f32; 5] = [1.0e9, 1_200.0, 470.0, 220.0, 110.0];
 const LABELS: [&str; 5] = ["15 dB", "20 dB", "25 dB", "30 dB", "35 dB"];
 
+/// DRIVE grid (dB), spanning the `drive_db` param range (−12..+24) every 3 dB. The live makeup
+/// lookup linearly interpolates `1/G_sat` over this grid in dB; 3 dB steps are dense enough for the
+/// smooth saturation curve. MUST match `DRIVE_GRID_DB` in `lib.rs`.
+const DRIVE_GRID_DB: [f32; 13] = [
+    -12.0, -9.0, -6.0, -3.0, 0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0, 24.0,
+];
+
+/// Calibration reference INPUT level (volts). The circuit is probed with a sine of amplitude
+/// `A0 * 10^(drive/20)`, i.e. a 0 dBFS-peak signal scaled by Drive (`0 dBFS ≡ INPUT_FS_VOLTS`).
+/// Leveling is exact only at this input level; lower-level program saturates less, leaving a
+/// bounded residual. Tune by listening if 0 dBFS over-represents typical program saturation.
+const A0_VOLTS: f64 = INPUT_FS_VOLTS as f64;
+
+fn db_to_gain(db: f32) -> f64 {
+    10.0f64.powf(db as f64 * 0.05)
+}
+
 fn main() {
-    let mut makeup = [0f32; 5];
-    println!("// idx  label   R_KJ(Ω)        G_v        1/G_v");
+    let mut makeup = [[0f32; DRIVE_GRID_DB.len()]; 5];
+    println!("// DRIVE-swept WDF makeup `1/G_sat`. Rows = gain positions, cols = DRIVE grid (dB).");
+    println!(
+        "// A0 = {:.4} V (0 dBFS), SR = {} Hz, bias = {}, age 0, default trafo, realtime tier.",
+        A0_VOLTS, SR, BIAS
+    );
+    print!("// pos \\ drive_dB ");
+    for d in DRIVE_GRID_DB {
+        print!("{:>9.0}", d);
+    }
+    println!();
     for (i, &r) in STEP_R_KJ.iter().enumerate() {
         let mut ch = ChannelDsp::new();
         ch.wdf_rebuild_with(QualityConfig::realtime(), SR, r, BIAS);
         ch.wdf_warmup();
-        let g = ch.wdf_measure_gain();
-        makeup[i] = 1.0 / g;
-        println!("//  {}   {}  {:>12.1}  {:>9.4}  {:.6}", i, LABELS[i], r, g, 1.0 / g);
+        print!("//  {} {:<6}     ", i, LABELS[i]);
+        for (j, &d) in DRIVE_GRID_DB.iter().enumerate() {
+            let amp = A0_VOLTS * db_to_gain(d);
+            let g_sat = ch.wdf_measure_gain_at(amp);
+            makeup[i][j] = 1.0 / g_sat;
+            print!("{:>9.6}", makeup[i][j]);
+        }
+        println!();
     }
-    println!(
-        "static WDF_MAKEUP: [f32; 5] = [{:.6}, {:.6}, {:.6}, {:.6}, {:.6}];",
-        makeup[0], makeup[1], makeup[2], makeup[3], makeup[4]
-    );
+
+    // Emit paste-ready table for `lib.rs`.
+    println!("\nconst DRIVE_GRID_DB: &[f32] = &[");
+    print!("    ");
+    for d in DRIVE_GRID_DB {
+        print!("{:.1}, ", d);
+    }
+    println!("\n];");
+    println!("// Rows align with GAIN_STEPS order (15/20/25/30/35 dB); paste into each `wdf_makeup`.");
+    for (i, row) in makeup.iter().enumerate() {
+        print!("// {} ({}): &[", i, LABELS[i]);
+        for (j, m) in row.iter().enumerate() {
+            print!("{:.6}{}", m, if j + 1 < row.len() { ", " } else { "" });
+        }
+        println!("],");
+    }
 }

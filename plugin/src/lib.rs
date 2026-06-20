@@ -354,27 +354,62 @@ impl WdfTier {
 
 /// One position of the BA283 hardware gain switch. `r_kj_ohm` is the value stamped into the WDF R_KJ
 /// leg (the open position uses a large sentinel — resistor removed → leg conductance ≈ 0). `label`
-/// is the (balanced) dB reading on the rotary. `wdf_makeup` is the static levelNorm circuit-makeup
-/// `1/G_i` — the reciprocal of the position's measured small-signal voltage gain — applied (with the
-/// Drive scalar) so levelNorm holds output at unity. Measured offline by `bin/measure_gi` at the
-/// realtime tier with default bias/age/trafo; the drift-guard test in `tests/test_stepped_gain.rs`
-/// re-measures these and asserts they match, so a silent solver/circuit change cannot desync them.
+/// is the (balanced) dB reading on the rotary. `wdf_makeup` is the DRIVE-swept static levelNorm
+/// circuit-makeup `1/G_sat(drive)` — one entry per [`DRIVE_GRID_DB`] point — the reciprocal of the
+/// position's measured LARGE-SIGNAL voltage gain at each Drive. levelNorm applies
+/// `wdf_makeup_at(drive) / drive`: storing the saturated gain (not a single small-signal `1/G_v`)
+/// stops the `/drive` from over-attenuating once Drive pushes the circuit into saturation, so the
+/// DRIVE knob colours at constant loudness instead of sagging. Measured offline by `bin/measure_gi`
+/// at the realtime tier with default bias/age/trafo; the drift-guard test in
+/// `tests/test_stepped_gain.rs` re-measures these and asserts they match, so a silent solver/circuit
+/// change cannot desync them.
 struct GainStep {
     label: &'static str,
     r_kj_ohm: f32,
-    wdf_makeup: f32,
+    wdf_makeup: &'static [f32],
 }
+
+/// DRIVE grid (dB) the [`GainStep::wdf_makeup`] curves are sampled at, spanning the `drive_db` range
+/// (−12..+24) every 3 dB. [`wdf_makeup_at`] linearly interpolates over this grid in dB. MUST match
+/// `DRIVE_GRID_DB` in `bin/measure_gi` (the drift-guard test pins this).
+const DRIVE_GRID_DB: &[f32] = &[
+    -12.0, -9.0, -6.0, -3.0, 0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0, 24.0,
+];
 
 /// Real BA283 gain-switch wafer positions (5). Lower R ⇒ more gain. Position 0 is the open contact
 /// (no R_KJ): faithful min gain, modelled by a large sentinel resistance. The `circuit_gain` param is
-/// an `IntParam(0..4)` indexing this table — a faithful rotary detent, never continuous.
+/// an `IntParam(0..4)` indexing this table — a faithful rotary detent, never continuous. Each
+/// `wdf_makeup` row is `1/G_sat` across `DRIVE_GRID_DB` (the Drive-0 column matches the historical
+/// small-signal `1/G_v` to ~5 sig figs; later columns rise as the circuit saturates). From
+/// `bin/measure_gi`.
 static GAIN_STEPS: &[GainStep] = &[
-    GainStep { label: "15 dB", r_kj_ohm: 1.0e9, wdf_makeup: 0.202892 },
-    GainStep { label: "20 dB", r_kj_ohm: 1_200.0, wdf_makeup: 0.118732 },
-    GainStep { label: "25 dB", r_kj_ohm: 470.0, wdf_makeup: 0.073245 },
-    GainStep { label: "30 dB", r_kj_ohm: 220.0, wdf_makeup: 0.043799 },
-    GainStep { label: "35 dB", r_kj_ohm: 110.0, wdf_makeup: 0.026136 },
+    GainStep { label: "15 dB", r_kj_ohm: 1.0e9, wdf_makeup: &[0.202893, 0.202893, 0.202893, 0.202893, 0.202893, 0.202893, 0.202894, 0.202895, 0.202897, 0.204302, 0.213085, 0.257231, 0.343651] },
+    GainStep { label: "20 dB", r_kj_ohm: 1_200.0, wdf_makeup: &[0.118732, 0.118732, 0.118732, 0.118732, 0.118733, 0.118733, 0.118734, 0.118737, 0.118757, 0.127161, 0.160859, 0.214971, 0.295261] },
+    GainStep { label: "25 dB", r_kj_ohm: 470.0, wdf_makeup: &[0.073245, 0.073245, 0.073245, 0.073245, 0.073246, 0.073247, 0.073250, 0.073255, 0.081828, 0.105094, 0.140683, 0.192686, 0.269547] },
+    GainStep { label: "30 dB", r_kj_ohm: 220.0, wdf_makeup: &[0.043796, 0.043797, 0.043797, 0.043798, 0.043799, 0.043802, 0.044009, 0.053177, 0.069519, 0.093665, 0.128705, 0.180198, 0.255104] },
+    GainStep { label: "35 dB", r_kj_ohm: 110.0, wdf_makeup: &[0.026130, 0.026131, 0.026131, 0.026133, 0.026137, 0.027833, 0.035305, 0.046863, 0.063611, 0.087916, 0.123313, 0.174285, 0.247381] },
 ];
+
+/// Linear-interpolate a [`GainStep`]'s `wdf_makeup` curve (`1/G_sat`) at `drive_db` over
+/// [`DRIVE_GRID_DB`], flat-holding past either end. Mirrors [`nn_calib_lookup`]'s interp style.
+fn wdf_makeup_at(step: &GainStep, drive_db: f32) -> f32 {
+    let g = DRIVE_GRID_DB;
+    let m = step.wdf_makeup;
+    if drive_db <= g[0] {
+        return m[0];
+    }
+    let n = g.len();
+    if drive_db >= g[n - 1] {
+        return m[n - 1];
+    }
+    for i in 1..n {
+        if drive_db <= g[i] {
+            let f = (drive_db - g[i - 1]) / (g[i] - g[i - 1]);
+            return m[i - 1] + f * (m[i] - m[i - 1]);
+        }
+    }
+    m[n - 1]
+}
 
 /// Number of hardware gain-switch positions (the `circuit_gain` IntParam range is `0..=GAIN_STEPS-1`).
 const GAIN_STEPS_LEN: i32 = 5;
@@ -925,10 +960,11 @@ impl Ba283Plugin {
         }
     }
 
-    /// Static levelNorm trim (`1 / G_v`) for a `circuit_gain` position. Test/diagnostic accessor.
+    /// Drive-swept levelNorm trim (`1 / G_sat(drive)`) for a `circuit_gain` position at `drive_db`.
+    /// Test/diagnostic accessor. `drive_db = 0` returns the unity-Drive column.
     #[doc(hidden)]
-    pub fn pos_makeup(pos: i32) -> f32 {
-        GAIN_STEPS[gain_pos(pos)].wdf_makeup
+    pub fn pos_makeup(pos: i32, drive_db: f32) -> f32 {
+        wdf_makeup_at(&GAIN_STEPS[gain_pos(pos)], drive_db)
     }
 
     /// Park a retired model box for an off-thread drop (the worker drains the ring). Alloc-free
@@ -1478,16 +1514,18 @@ impl Plugin for Ba283Plugin {
             let _ = changed;
         }
 
-        // levelNorm trim TARGET: the static per-position circuit makeup `1/G_v` for the current gain
-        // switch position (measured offline; see `GAIN_STEPS`). No runtime probe — positions are
-        // fixed, so this is a deterministic constant. The per-sample ramp below smooths a position
-        // change in. Inert for the NeuralNet backend (which uses its own static `nn_norm_trim`).
-        self.norm_trim_target = GAIN_STEPS[gain_pos_idx].wdf_makeup;
+        // levelNorm trim TARGET: the DRIVE-swept per-position circuit makeup `1/G_sat(drive)` for the
+        // current gain switch position and the current block-rate Drive (measured offline; see
+        // `GAIN_STEPS` / `wdf_makeup_at`). No runtime probe — positions and the curve are fixed, so
+        // this is deterministic. The per-sample ramp below smooths a position/Drive change in. Inert
+        // for the NeuralNet backend (which uses its own static `nn_norm_trim`).
+        let drive_db_block = self.params.drive_db.value();
+        self.norm_trim_target = wdf_makeup_at(&GAIN_STEPS[gain_pos_idx], drive_db_block);
 
         // levelNorm + NN loudness makeup. Two backends, two mechanisms, both folded into `target_gain`
         // (the per-sample ramp below smooths every transition click-free):
-        //   • WDF: the operating-point-tracking trim (probed circuit-gain reciprocal), applied only
-        //     when the param is on; off → unity (faithful circuit gain).
+        //   • WDF: the Drive-swept circuit-makeup trim (`1/G_sat(drive)`), applied only when the
+        //     param is on; off → unity (faithful circuit gain).
         //   • NeuralNet: Level Norm controls loudness as a single switch. OFF leaves the NN at its
         //     natural FiLM-conditioned level (unity makeup), symmetric with the WDF "faithful circuit
         //     gain" OFF arm; ON levels to unity via `1/G_nn` (Drive-cancelled, same shape as the WDF
@@ -1497,24 +1535,24 @@ impl Plugin for Ba283Plugin {
         // Ramp the APPLIED gain per-sample from this block's start value (`norm_trim`) to the latest
         // target across the block, then carry the end value to the next block — so a moving operating
         // point fades click-free instead of stepping. On a level-norm on/off toggle the target jumps
-        // unity<->trim and the same one-block ramp fades it. The trim itself comes from the off-thread
-        // probe (read above), which lags the operating point by the probe latency; that lag is
-        // inaudible for a level trim and the ramp smooths each stepped target in.
-        // Drive must also be cancelled: the probed `norm_trim_target` (= 1/G_v) only inverts the
-        // circuit's intrinsic small-signal gain, but the signal is fed `x * drive` into the circuit,
-        // so without this the output runs hot by the full Drive amount (e.g. +12 dB at Drive +12 dB).
-        // Drive is a known scalar, so divide it out analytically: target = 1/(G_v * drive). In the
-        // linear region this levels exactly; once Drive pushes the circuit into saturation the
-        // effective gain drops below G_v so the output sits slightly *under* unity — safe (no peak),
-        // and it preserves the drive-induced colour. Output gain is intentionally NOT cancelled (it is
-        // the user's final post-normalization trim, matching the old levelNorm's pre-output position).
+        // unity<->trim and the same one-block ramp fades it.
+        // Drive levelling: the signal is fed `x * drive` into the circuit, so without compensation
+        // the output runs hot by the full Drive. levelNorm applies `target = (1/G_sat(drive)) / drive`
+        // — `norm_trim_target` is now the reciprocal of the position's LARGE-SIGNAL gain at this Drive
+        // (the Drive-swept `GAIN_STEPS` curve), NOT a single small-signal `1/G_v`. So once Drive pushes
+        // the circuit into saturation (`G_sat < G_v`) the larger trim cancels exactly what the `/drive`
+        // would otherwise over-attenuate, holding the output at ~constant loudness (calibrated at the
+        // A0 = 0 dBFS reference; see `bin/measure_gi`) while the drive-induced colour stays. This fixes
+        // the regression where the analytic linear `1/(G_v·drive)` sagged the output ~20 dB at +24 dB
+        // Drive (the circuit was driven hard but the makeup buried it). Output gain is intentionally
+        // NOT cancelled (it is the user's final post-normalization trim).
         // NOTE: the target uses the block-rate Drive (`.value()`), while the audio loop below applies
         // the per-sample SMOOTHED Drive — so during a fast Drive automation the cancellation lags
         // within the block by the smoother's residual. Bounded (≤ the 20 ms Drive smoother span) and
         // transient; matching them sample-accurately would require folding the trim into the smoothed
         // Drive per sample, not worth the cost for a level trim.
         let level_norm_on = self.params.level_norm.value();
-        let drive_block = db_to_gain(self.params.drive_db.value());
+        let drive_block = db_to_gain(drive_db_block);
         let target_gain = match backend {
             InferenceBackend::Wdf => {
                 if level_norm_on {
@@ -1528,6 +1566,14 @@ impl Plugin for Ba283Plugin {
                 // via the `1/G_nn` trim, keyed by the discrete position's hardware R_KJ. (STAGED: the
                 // retrain will level-normalize the NN targets, collapsing this toward a single
                 // constant; the 5-entry table absorbs the residual per-position correction.)
+                //
+                // TODO(drive-swept NN parity): this still uses the small-signal `1/G_nn` with the
+                // analytic `/drive`, so under heavy Drive the NN output sags the same way the WDF path
+                // did before the Drive-swept `wdf_makeup` fix. The WDF backend is the shipped default
+                // and the embedded NN weights are still placeholder, so a Drive-swept `nn_norm_trim_at`
+                // table is deferred until real weights land (it would otherwise bake throwaway values).
+                // Mirror the WDF recipe then: sweep Drive in `tests/calib_nn_makeup.rs`, store
+                // `1/G_nn_sat(drive)`, and interpolate here.
                 if level_norm_on {
                     norm_apply_gain(nn_norm_trim(GAIN_STEPS[gain_pos_idx].r_kj_ohm), drive_block)
                 } else {
@@ -1551,13 +1597,15 @@ impl Plugin for Ba283Plugin {
             let drive = db_to_gain(self.params.drive_db.smoothed.next());
             let bias = self.params.bias.smoothed.next();
             // Advance the input/output smoothers every sample (keeps them coherent across a levelNorm
-            // toggle), then FORCE them neutral when levelNorm is on — the auto-comp (`norm_gain`) owns
-            // the level, and the editor grays these knobs. levelNorm OFF → the user's manual trims
-            // (with `link` already mirroring output↔input in the editor).
+            // toggle). When levelNorm is ON, force INPUT neutral — the auto-comp (`norm_gain`) owns
+            // the staging into the circuit, and the editor grays INPUT — but keep OUTPUT live so the
+            // user can trim the final level even under levelNorm (the DRIVE knob now colours at
+            // constant loudness; OUTPUT is the post-normalization level control). levelNorm OFF → both
+            // are the user's manual trims (with `link` mirroring output↔input in the editor).
             let in_gain_db = self.params.input_gain.smoothed.next();
             let in_smooth = db_to_gain(in_gain_db);
             let out_smooth = db_to_gain(self.params.output_db.smoothed.next());
-            let (in_g, out_g) = if level_norm_on { (1.0, 1.0) } else { (in_smooth, out_smooth) };
+            let (in_g, out_g) = if level_norm_on { (1.0, out_smooth) } else { (in_smooth, out_smooth) };
             // WS4 input-gain FiLM conditioning (NeuralNet 3-channel model). When levelNorm is ON the
             // input trim is forced neutral (0 dB), so condition the model at unity drive too; OFF →
             // the user's actual input_gain. Inert for the WDF backend and for a 2-channel model.

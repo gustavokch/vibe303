@@ -437,6 +437,13 @@ impl ChannelDsp {
         self.wdf.measure_gain()
     }
 
+    /// Measure the circuit's LARGE-SIGNAL voltage gain at a 1 kHz stimulus of amplitude `amp` volts
+    /// (full solver, scratch clone). OFFLINE only (`bin/measure_gi`) — captures the gain compression
+    /// under Drive that the Drive-swept levelNorm makeup table needs. Not for the audio thread.
+    pub fn wdf_measure_gain_at(&self, amp: f64) -> f32 {
+        self.wdf.measure_gain_at(amp)
+    }
+
     /// Warm the WDF model in place and make the settled state the reset target. Off the audio thread.
     pub fn wdf_warmup(&mut self) {
         self.wdf.warmup();
