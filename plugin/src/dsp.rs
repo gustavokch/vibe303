@@ -5,13 +5,13 @@
 //! what the plugin does. That chain lives here, in `ChannelDsp`, and is used by
 //! both — never duplicated.
 //!
-//! Chain: `driven = x * drive` -> model (directly when the host runs near the
-//! model's native 48 kHz, else via the [`HostBridge`] that decimates the host to
-//! ~48 kHz and interpolates back) -> `* out_gain` = wet. The dry path is delayed
-//! by the wet-path latency so the Mix blend stays phase-aligned: the bridge
-//! latency is `HOST_BRIDGE_LATENCY` host-rate samples when bridging (see
-//! `Ba283Plugin::latency_samples`, the single source of truth) and 0 when the
-//! model runs directly at the host rate.
+//! Chain: `driven = x * drive` -> model (directly when the host already runs at
+//! the model's native 48 kHz, else via the [`SrcBridge`] exact-rational resampler
+//! that pins the net to its native rate for any host SR) -> `* out_gain` = wet. The
+//! dry path is delayed by the wet-path latency so the Mix blend stays phase-aligned:
+//! the bridge latency is the per-SR measured `SrcBridge` group delay in host-rate
+//! samples when bridging (see `Ba283Plugin::latency_samples`, the single source of
+//! truth) and 0 when the model runs directly at the host rate.
 //!
 //! `process_sample` is zero-alloc: it only calls the existing zero-alloc
 //! model/bridge/delay methods plus arithmetic.
@@ -19,9 +19,9 @@
 use crate::dcblock::DcBlock;
 use crate::dpr::Dpr;
 use crate::eq::Eq;
-use crate::delay::ShortDelay;
+use crate::delay::RuntimeDelay;
 use crate::model::Ba283Model;
-use crate::oversample::{HostBridge, HOST_BRIDGE_LATENCY};
+use crate::oversample::SrcBridge;
 use crate::wavenet::WaveNet;
 use crate::wdf::{QualityConfig, WdfModel, WdfSnapshot};
 use crate::InferenceBackend;
@@ -73,33 +73,29 @@ enum OsPhase {
     ToLo,
 }
 
-/// Dry-path delay depth on the bridged path. MUST equal `Ba283Plugin::latency_samples()` when the
-/// host bridge is active (`HOST_BRIDGE_LATENCY`) so the Mix blend stays phase-aligned. When the model
-/// runs directly at the host rate the dry delay is bypassed entirely.
-pub const OS_LATENCY_SAMPLES: usize = HOST_BRIDGE_LATENCY;
+/// Maximum (capacity) dry/WDF-out delay depth, in host samples. The active depth is
+/// the `SrcBridge` latency for the running host SR (set at `bridge_prepare`), which is
+/// always `<= OS_LATENCY_SAMPLES`. The dry path and the WDF output are both delayed by
+/// this so the Mix blend stays phase-aligned and switching backends needs no latency
+/// renegotiation. At host == model rate the bridge is bypassed and the delay is 0.
+pub const OS_LATENCY_SAMPLES: usize = 256;
 
-/// Host sample rate at or above which the model runs through the single 2x [`HostBridge`] (decimate
-/// to host/2, interpolate back) instead of directly at the host rate. This is the single threshold
-/// the latency report, dry delay, and process path all read.
+/// The [`SrcBridge`] pins the WaveNet to its native rate (`wavenet.sample_rate()`) for
+/// ANY host SR via an exact rational resampler, so the model is always evaluated at the
+/// rate it was trained at — no fixed threshold and no per-rate degradation:
 ///
-/// The model is trained at 48 kHz and its LSTM time constants are rate-specific, so the effective
-/// model rate matters for fidelity. The bridge is a *single* 2x stage, so the model always runs at
-/// `host_rate / 2` when bridging:
+/// | host rate | model runs at | note                                              |
+/// |-----------|---------------|---------------------------------------------------|
+/// | 44.1 kHz  | 48 kHz        | exact (rational 160/147)                          |
+/// | 48 kHz    | 48 kHz        | exact — bridge bypassed, bit-exact direct path    |
+/// | 64 kHz    | 48 kHz        | exact (rational 3/4)                              |
+/// | 88.2 kHz  | 48 kHz        | exact (rational 80/147)                           |
+/// | 96 kHz    | 48 kHz        | exact (rational 1/2)                              |
+/// | 176.4 kHz | 48 kHz        | exact (rational 40/147)                           |
+/// | 192 kHz   | 48 kHz        | exact (rational 1/4)                              |
 ///
-/// | host rate | path     | model runs at | note                                              |
-/// |-----------|----------|---------------|---------------------------------------------------|
-/// | 44.1 kHz  | direct   | 44.1 kHz      | ~8% below 48k training rate (negligible)          |
-/// | 48 kHz    | direct   | 48 kHz        | exact                                             |
-/// | 64 kHz    | direct   | 64 kHz        | ~33% above 48k — notable SR mismatch (rare host)  |
-/// | 88.2 kHz  | bridged  | 44.1 kHz      | ~8% below 48k (good)                              |
-/// | 96 kHz    | bridged  | 48 kHz        | exact (the design target)                         |
-/// | 176.4 kHz | bridged  | 88.2 kHz      | ~2x the training rate — degraded; one 2x stage    |
-/// | 192 kHz   | bridged  | 96 kHz        | ~2x the training rate — degraded; one 2x stage    |
-///
-/// KNOWN LIMITATION: 176.4/192 kHz hosts land the model at 88.2/96 kHz (double the 48 kHz training
-/// rate), and 64 kHz hosts run it ~33% fast. A second (4x) bridge stage would fix the top two rates
-/// (176.4/192 -> 44.1/48) — deferred; documented rather than implemented.
-pub const HOST_BRIDGE_THRESHOLD_HZ: f32 = 72_000.0;
+/// Only host == model rate is a true passthrough (latency 0); every other rate routes
+/// through the resampler at its measured fixed integer latency.
 
 /// Full-scale input voltage convention from the training data: 0 dBFS (a host sample of 1.0) maps to
 /// 0.5 V at the circuit input (`data_gen/stimulus.py`: "0 dBFS == 0.5 V"; dry block peak-normalized
@@ -123,16 +119,17 @@ pub struct ChannelDsp {
     /// cdylib build.
     #[allow(dead_code)]
     model: Option<Ba283Model>,
-    bridge: HostBridge,
-    dry_delay: ShortDelay<OS_LATENCY_SAMPLES>,
+    bridge: SrcBridge,
+    dry_delay: RuntimeDelay<OS_LATENCY_SAMPLES>,
     /// Circuit-faithful backend. Self-oversamples internally (OS=2) and decimates with IIR
     /// biquads, so its wet path has ~0 integer latency. Boxed so a live tier/OS switch installs a
     /// worker-prebuilt model by a single pointer move (`install_prebuilt`) — no struct memcpy and
     /// no audio-thread alloc.
     wdf: Box<WdfModel>,
-    /// Delays the WDF blended output by `OS_LATENCY_SAMPLES` when the host bridge is active so the
-    /// host-reported latency stays valid for BOTH backends (no renegotiation when switching).
-    wdf_out_delay: ShortDelay<OS_LATENCY_SAMPLES>,
+    /// Delays the WDF blended output by the active `SrcBridge` latency (set at `bridge_prepare`,
+    /// `<= OS_LATENCY_SAMPLES` capacity) when the host bridge is active so the host-reported latency
+    /// stays valid for BOTH backends (no renegotiation when switching).
+    wdf_out_delay: RuntimeDelay<OS_LATENCY_SAMPLES>,
     /// Last settled snapshot installed into `wdf` (from the shared warmup). Carried across a tier
     /// rebuild so switching tiers does not require a fresh (expensive) warmup.
     wdf_snap: Option<WdfSnapshot>,
@@ -213,11 +210,11 @@ impl ChannelDsp {
             // Dormant LSTM: not constructed in the plugin path (saves the 153 KB parse per channel).
             // The offline `standalone --weights` tool installs one via `set_model`.
             model: None,
-            bridge: HostBridge::new(),
-            dry_delay: ShortDelay::new(),
+            bridge: SrcBridge::new(),
+            dry_delay: RuntimeDelay::new(),
             // Placeholder SR/bias; rebuilt + restored with the real settings in `initialize`.
             wdf: Box::new(WdfModel::new(48_000.0, 220.0, 0.5)),
-            wdf_out_delay: ShortDelay::new(),
+            wdf_out_delay: RuntimeDelay::new(),
             wdf_snap: None,
             // Pre-allocate the crossfade scratch model once (off the audio thread, at construction)
             // so a live tier switch reuses it instead of `Box::new`-ing on the audio thread.
@@ -303,6 +300,27 @@ impl ChannelDsp {
     /// runs at host rate ahead of the model.
     pub fn eq_prepare(&mut self, host_sr: f32) {
         self.eq.prepare(host_sr);
+    }
+
+    /// The WaveNet's native (training) sample rate — the single source of truth the bridge resamples
+    /// the host stream to. Read from the embedded model, never hard-coded.
+    pub fn model_sample_rate(&self) -> u32 {
+        self.wavenet.sample_rate()
+    }
+
+    /// Reported `SrcBridge` latency in host samples (0 when host == model rate / bridge bypassed).
+    pub fn bridge_latency(&self) -> usize {
+        self.bridge.latency_host()
+    }
+
+    /// Configure the SRC bridge for the host SR (called from `initialize`, off the audio thread).
+    /// Builds the exact-rational polyphase banks so the WaveNet always runs at `model_sr`, and sizes
+    /// the dry / WDF-out alignment delays to the resulting bridge latency.
+    pub fn bridge_prepare(&mut self, host_sr: u32, model_sr: u32) {
+        self.bridge.prepare(host_sr, model_sr);
+        let lat = self.bridge.latency_host();
+        self.dry_delay.set_len(lat);
+        self.wdf_out_delay.set_len(lat);
     }
 
     /// Push the current EQ settings (block-rate). `hpf_hz <= 0` bypasses the high-pass. Coeffs are
@@ -718,8 +736,9 @@ impl ChannelDsp {
                 // Disjoint field borrows so the bridge closure can call the net.
                 let (wavenet, bridge) = (&mut self.wavenet, &mut self.bridge);
                 let model_out = if use_bridge {
-                    // Host runs ~2x the model rate: decimate to ~48 kHz, run the net once per host
-                    // pair, interpolate back (HostBridge is itself zero-alloc).
+                    // Host SR differs from the model rate: the SrcBridge resamples host->model->host
+                    // by an exact rational ratio, firing the net exactly once per model sample it
+                    // emits so the net always runs at its native 48 kHz (zero-alloc in `process`).
                     bridge.process(driven, |lo| wavenet.process(lo, &[cond, input_cond]))
                 } else {
                     // Host runs at ~the model rate: evaluate the net directly.
@@ -805,7 +824,7 @@ impl ChannelDsp {
                 // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
                 let blended = wet * mix + x * (1.0 - mix);
                 // Keep the host-reported latency honest: when the NeuralNet path would be bridged
-                // (and report HOST_BRIDGE_LATENCY), delay the blended WDF output by the same amount
+                // (and report the SrcBridge latency), delay the blended WDF output by the same amount
                 // so switching backends needs no latency renegotiation. When the model runs direct
                 // (NN latency 0) the WDF output is undelayed too.
                 if use_bridge {
