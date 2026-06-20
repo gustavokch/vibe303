@@ -386,7 +386,9 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Click-to-toggle: read current open state, flip on click.
                 let is_open: bool = ui.memory(|m| m.data.get_temp(char_popup_id).unwrap_or(false));
-                let chevron = if is_open { "CHARACTER ▴" } else { "CHARACTER ▾" };
+                // ASCII caret (^ / v) not a Unicode triangle: the condensed display font has no
+                // ▴/▾ glyph, so the triangle rendered as a tofu "?".
+                let chevron = if is_open { "CHARACTER ^" } else { "CHARACTER v" };
                 let btn = ui.add(
                     egui::Button::new(
                         RichText::new(chevron)
