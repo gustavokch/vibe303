@@ -5,13 +5,13 @@
 //! what the plugin does. That chain lives here, in `ChannelDsp`, and is used by
 //! both — never duplicated.
 //!
-//! Chain: `driven = x * drive` -> model (directly when the host runs near the
-//! model's native 48 kHz, else via the [`HostBridge`] that decimates the host to
-//! ~48 kHz and interpolates back) -> `* out_gain` = wet. The dry path is delayed
-//! by the wet-path latency so the Mix blend stays phase-aligned: the bridge
-//! latency is `HOST_BRIDGE_LATENCY` host-rate samples when bridging (see
-//! `Ba283Plugin::latency_samples`, the single source of truth) and 0 when the
-//! model runs directly at the host rate.
+//! Chain: `driven = x * drive` -> model (directly when the host already runs at
+//! the model's native 48 kHz, else via the [`SrcBridge`] exact-rational resampler
+//! that pins the net to its native rate for any host SR) -> `* out_gain` = wet. The
+//! dry path is delayed by the wet-path latency so the Mix blend stays phase-aligned:
+//! the bridge latency is the per-SR measured `SrcBridge` group delay in host-rate
+//! samples when bridging (see `Ba283Plugin::latency_samples`, the single source of
+//! truth) and 0 when the model runs directly at the host rate.
 //!
 //! `process_sample` is zero-alloc: it only calls the existing zero-alloc
 //! model/bridge/delay methods plus arithmetic.
@@ -125,8 +125,9 @@ pub struct ChannelDsp {
     /// worker-prebuilt model by a single pointer move (`install_prebuilt`) — no struct memcpy and
     /// no audio-thread alloc.
     wdf: Box<WdfModel>,
-    /// Delays the WDF blended output by `OS_LATENCY_SAMPLES` when the host bridge is active so the
-    /// host-reported latency stays valid for BOTH backends (no renegotiation when switching).
+    /// Delays the WDF blended output by the active `SrcBridge` latency (set at `bridge_prepare`,
+    /// `<= OS_LATENCY_SAMPLES` capacity) when the host bridge is active so the host-reported latency
+    /// stays valid for BOTH backends (no renegotiation when switching).
     wdf_out_delay: RuntimeDelay<OS_LATENCY_SAMPLES>,
     /// Last settled snapshot installed into `wdf` (from the shared warmup). Carried across a tier
     /// rebuild so switching tiers does not require a fresh (expensive) warmup.
@@ -720,8 +721,9 @@ impl ChannelDsp {
                 // Disjoint field borrows so the bridge closure can call the net.
                 let (wavenet, bridge) = (&mut self.wavenet, &mut self.bridge);
                 let model_out = if use_bridge {
-                    // Host runs ~2x the model rate: decimate to ~48 kHz, run the net once per host
-                    // pair, interpolate back (HostBridge is itself zero-alloc).
+                    // Host SR differs from the model rate: the SrcBridge resamples host->model->host
+                    // by an exact rational ratio, firing the net exactly once per model sample it
+                    // emits so the net always runs at its native 48 kHz (zero-alloc in `process`).
                     bridge.process(driven, |lo| wavenet.process(lo, &[cond, input_cond]))
                 } else {
                     // Host runs at ~the model rate: evaluate the net directly.
@@ -795,7 +797,7 @@ impl ChannelDsp {
                 // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
                 let blended = wet * mix + x * (1.0 - mix);
                 // Keep the host-reported latency honest: when the NeuralNet path would be bridged
-                // (and report HOST_BRIDGE_LATENCY), delay the blended WDF output by the same amount
+                // (and report the SrcBridge latency), delay the blended WDF output by the same amount
                 // so switching backends needs no latency renegotiation. When the model runs direct
                 // (NN latency 0) the WDF output is undelayed too.
                 if use_bridge {

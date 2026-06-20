@@ -50,8 +50,12 @@ impl<const MAX: usize> RuntimeDelay<MAX> {
         }
     }
 
-    /// Set the active delay (host samples). Clamped to `MAX`; clears state.
+    /// Set the active delay (host samples). Clamped to `MAX`; clears state. A `len > MAX` would
+    /// silently under-delay the dry/WDF-out path while the host still reports the unclamped
+    /// `bridge_latency()` (PDC vs internal alignment diverge), so assert the capacity holds in debug
+    /// — `MAX` (`OS_LATENCY_SAMPLES`) is sized above every standard-rate bridge latency.
     pub fn set_len(&mut self, len: usize) {
+        debug_assert!(len <= MAX, "RuntimeDelay len {len} exceeds capacity {MAX}");
         self.len = len.min(MAX);
         self.reset();
     }

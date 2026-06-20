@@ -204,6 +204,10 @@ impl Default for Oversample2x {
 /// in the opposite order to [`Oversample2x`]: each host sample PAIR is anti-alias-decimated to ONE
 /// model sample, the model runs once, and the result is interpolated back to a host PAIR.
 ///
+/// SUPERSEDED on the production path by [`SrcBridge`] (general rational, any host SR). Kept `pub` +
+/// tested (`test_oversample.rs`) as the fixed-ratio A/B reference the rational bridge is validated
+/// against; not wired into `ChannelDsp`.
+///
 /// The per-sample contract is 1-in-1-out: `process` takes one host sample and returns one host
 /// sample, buffering internally so the model runs once per two calls. The first output of a pair is
 /// returned on the odd call; the second is held and returned on the following even call (one extra
@@ -402,9 +406,11 @@ impl PolyStage {
         Self { l: 1, m: 1, taps: 0, half: 0, bank: Vec::new(), out_k: 0 }
     }
 
-    /// Build the `L`-phase windowed-sinc bank for converting `fin → fout`.
-    fn prepare(&mut self, fin: u32, fout: u32) {
-        let (l, m) = rational_approx(fout, fin, SRC_L_MAX);
+    /// Build the `L`-phase windowed-sinc bank for the exact rational ratio `l/m`
+    /// (output samples per input sample). The caller picks `(l, m)` so the two
+    /// cascade stages can be exact reciprocals; only the ratio (not the absolute
+    /// rates) drives the kernel design.
+    fn prepare(&mut self, l: u32, m: u32) {
         self.l = l as i64;
         self.m = m as i64;
         // Decimation (fin > fout) widens the kernel: scale the tap count by ⌈M/L⌉.
@@ -530,8 +536,14 @@ impl SrcBridge {
             return;
         }
         self.bypass = false;
-        self.in_stage.prepare(host_sr, model_sr);
-        self.out_stage.prepare(model_sr, host_sr);
+        // One rational for the whole cascade: `l/m = model_sr/host_sr`. The output stage uses the
+        // EXACT reciprocal `m/l`, so model-sample production (in) and consumption (out) rates are
+        // perfectly matched at every host SR — including the continued-fraction fallback for exotic
+        // rates (`L > SRC_L_MAX`), where two independent approximations could otherwise drift apart
+        // and starve the consumer. Standard rates reduce exactly, so this is identical there.
+        let (l, m) = rational_approx(model_sr, host_sr, SRC_L_MAX);
+        self.in_stage.prepare(l, m); // host → model (emit l model samples per m host samples)
+        self.out_stage.prepare(m, l); // model → host (reciprocal)
         self.hbuf = vec![0.0; SRC_RING];
         self.mbuf = vec![0.0; SRC_RING];
         self.prime();
