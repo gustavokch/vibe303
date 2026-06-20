@@ -26,6 +26,16 @@ const DIM: Color32 = Color32::from_rgb(0x8A, 0x82, 0x7A);
 const AMBER: Color32 = Color32::from_rgb(0xD9, 0x8A, 0x3D);
 const OXBLOOD: Color32 = Color32::from_rgb(0x9E, 0x3B, 0x2E);
 
+// ── Spacing scale ───────────────────────────────────────────────────────────────────────
+// Hand-tuned step scale (4 / 8 / 12 / 16 / 24 — not strictly geometric). The layout's
+// `add_space` calls draw from these named steps rather than bare literals so the vertical
+// rhythm lives in one place and can be retuned without hunting through the layout.
+const SP_XS: f32 = 4.0;    // tight: inline label-to-control nudges
+const SP_SM: f32 = 8.0;    // cozy: between sibling knobs/pills
+const SP_SNUG: f32 = 12.0; // snug: asymmetric frame margin, tight inline gaps
+const SP_MD: f32 = 16.0;   // section-internal: post-rule, between control rows, pill v-align
+const SP_LG: f32 = 24.0;   // major: between logical sections (header→knobs, section→section)
+
 /// Condensed silkscreen family (labels / wordmark).
 fn display_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("display".into()))
@@ -250,7 +260,7 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                     .color(TEXT)
                     .extra_letter_spacing(2.0),
             );
-            ui.add_space(8.0);
+            ui.add_space(SP_SM);
             ui.label(
                 RichText::new("preamp")
                     .font(display_font(14.0))
@@ -262,9 +272,9 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
             });
         });
 
-        ui.add_space(6.0);
+        ui.add_space(SP_SM);
         hairline(ui);
-        ui.add_space(18.0);
+        ui.add_space(SP_MD);
 
         // levelNorm ON = neutral auto-staging: the manual INPUT/OUTPUT/LINK controls are forced
         // neutral (the DSP ignores them) and grayed. OFF = faithful manual staging.
@@ -284,23 +294,20 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         }
 
         // ── Core knob row ─────────────────────────────────────────────────────────────
-        // INPUT · DRIVE · BIAS · OUTPUT · MIX. INPUT/OUTPUT gray under levelNorm; OUTPUT also grays
-        // when LINK slaves it; BIAS grays for the NeuralNet backend (it is WDF-only).
-        ui.columns(5, |cols| {
+        // Signal-flow order: INPUT → DRIVE → OUTPUT → MIX. BIAS moves to the CHARACTER popup.
+        // INPUT/OUTPUT gray under levelNorm; OUTPUT also grays when LINK slaves it.
+        ui.columns(4, |cols| {
             cols[0].add_enabled_ui(staging_on, |ui| {
                 knob(ui, setter, &p.input_gain, "INPUT", 60.0);
             });
             knob(&mut cols[1], setter, &p.drive_db, "DRIVE", 60.0);
-            cols[2].add_enabled_ui(wdf_on, |ui| {
-                knob(ui, setter, &p.bias, "BIAS", 60.0);
-            });
-            cols[3].add_enabled_ui(staging_on && !p.link.value(), |ui| {
+            cols[2].add_enabled_ui(staging_on && !p.link.value(), |ui| {
                 knob(ui, setter, &p.output_db, "OUTPUT", 60.0);
             });
-            knob(&mut cols[4], setter, &p.mix, "MIX", 60.0);
+            knob(&mut cols[3], setter, &p.mix, "MIX", 60.0);
         });
 
-        ui.add_space(10.0);
+        ui.add_space(SP_SM);
 
         // Level-norm + link pills, right-aligned under the knob row. The `right_to_left` layout MUST
         // be nested in a `ui.horizontal` (as the header is): placed directly in the top-down panel it
@@ -309,71 +316,113 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 toggle_pill(ui, setter, &p.level_norm, "LEVEL NORM");
-                ui.add_space(8.0);
+                ui.add_space(SP_SM);
                 ui.add_enabled_ui(staging_on, |ui| {
                     toggle_pill(ui, setter, &p.link, "LINK");
                 });
             });
         });
 
-        ui.add_space(16.0);
+        ui.add_space(SP_LG);
 
         // ── DPR (Dual Phase Rotator) — output-path all-pass phase rotator. Sits after the model +
         //    levelNorm and before the output gain; reshapes waveform asymmetry without touching the
         //    magnitude spectrum. Grouped with the output-stage controls above. ──
         labelled_rule(ui, "DPR — PHASE ROTATOR");
-        ui.add_space(10.0);
+        ui.add_space(SP_MD);
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.add_space(22.0);
+                ui.add_space(SP_MD);
                 toggle_pill(ui, setter, &p.dpr_on, "DPR");
             });
-            ui.add_space(12.0);
+            ui.add_space(SP_SNUG);
             ui.add_enabled_ui(p.dpr_on.value(), |ui| {
                 knob_cell(ui, setter, &p.dpr_amount, "AMOUNT", 60.0);
             });
         });
 
-        ui.add_space(16.0);
+        ui.add_space(SP_LG);
 
         // ── EQUALIZER (Neve 1073/1076) — backend-agnostic, sits ahead of the model, so OUTSIDE the
         //    WDF-only CIRCUIT panel. Gain knobs row + switched-frequency selector rows + ON/OFF. ──
         labelled_rule(ui, "EQUALIZER");
-        ui.add_space(10.0);
+        ui.add_space(SP_MD);
         ui.horizontal(|ui| {
             knob_cell(ui, setter, &p.eq_low_gain, "LOW", 60.0);
-            ui.add_space(6.0);
+            ui.add_space(SP_SM);
             knob_cell(ui, setter, &p.eq_mid_gain, "MID", 60.0);
-            ui.add_space(6.0);
+            ui.add_space(SP_SM);
             knob_cell(ui, setter, &p.eq_high_gain, "HIGH", 60.0);
-            ui.add_space(12.0);
+            ui.add_space(SP_SM);
             ui.vertical(|ui| {
-                ui.add_space(22.0);
+                ui.add_space(SP_MD);
                 toggle_pill(ui, setter, &p.eq_on, "EQ");
             });
         });
-        ui.add_space(8.0);
+        ui.add_space(SP_SM);
         ui.horizontal(|ui| {
             ui.label(RichText::new("HPF").font(display_font(12.0)).color(DIM));
-            ui.add_space(6.0);
+            ui.add_space(SP_XS);
             segmented(ui, setter, &p.eq_hpf_freq);
-            ui.add_space(16.0);
+            ui.add_space(SP_MD);
             ui.label(RichText::new("LOW").font(display_font(12.0)).color(DIM));
-            ui.add_space(6.0);
+            ui.add_space(SP_XS);
             segmented(ui, setter, &p.eq_low_freq);
         });
-        ui.add_space(6.0);
+        ui.add_space(SP_XS);
         ui.horizontal(|ui| {
             ui.label(RichText::new("MID").font(display_font(12.0)).color(DIM));
-            ui.add_space(6.0);
+            ui.add_space(SP_XS);
             segmented(ui, setter, &p.eq_mid_freq);
         });
 
-        ui.add_space(16.0);
+        ui.add_space(SP_LG);
 
         // ── CIRCUIT (WDF) sub-panel ───────────────────────────────────────────────────
-        labelled_rule(ui, "CIRCUIT (WDF)");
-        ui.add_space(10.0);
+        // Section header with CHARACTER popup trigger on the right.
+        let char_popup_id = ui.make_persistent_id("ba283_character_popup");
+        ui.horizontal(|ui| {
+            labelled_rule_inline(ui, "CIRCUIT (WDF)");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Click-to-toggle: read current open state, flip on click.
+                let is_open: bool = ui.memory(|m| m.data.get_temp(char_popup_id).unwrap_or(false));
+                // ASCII caret (^ / v) not a Unicode triangle: the condensed display font has no
+                // ▴/▾ glyph, so the triangle rendered as a tofu "?".
+                let chevron = if is_open { "CHARACTER ^" } else { "CHARACTER v" };
+                let btn = ui.add(
+                    egui::Button::new(
+                        RichText::new(chevron)
+                            .font(display_font(12.0))
+                            .color(if is_open { TEXT } else { DIM })
+                            .extra_letter_spacing(1.0),
+                    )
+                    .fill(if is_open { RAISED } else { egui::Color32::TRANSPARENT })
+                    .stroke(Stroke::new(1.0, if is_open { BORDER } else { egui::Color32::TRANSPARENT })),
+                );
+                if btn.clicked() {
+                    ui.memory_mut(|m| m.data.insert_temp(char_popup_id, !is_open));
+                }
+            });
+        });
+        ui.add_space(SP_MD);
+
+        // Circuit Gain — backend-AGNOSTIC: it sets the WDF R_KJ leg AND conditions the NeuralNet
+        // (FiLM gain-norm). Kept OUTSIDE the popup and the WDF-fade frame so it stays always-visible
+        // + full-opacity in NN mode (where the WDF panel is greyed). `circuit_gain_cell` forces its
+        // own enabled + opacity scope, so it needs no gating here.
+        ui.horizontal(|ui| {
+            circuit_gain_cell(ui, setter, p);
+        });
+        ui.add_space(SP_MD);
+
+        // CHARACTER popup — Bias, Age, Re-roll (all WDF-only).
+        // Drawn ABOVE the CIRCUIT frame (outside the opacity/disable scope) so the popup
+        // is always fully visible. The controls inside handle their own enable states.
+        let char_open: bool = ui.memory(|m| m.data.get_temp(char_popup_id).unwrap_or(false));
+        if char_open {
+            character_popup(ui, setter, p, wdf_on);
+            ui.add_space(SP_MD);
+        }
 
         // Cross-fade + disable when the Neural Net backend is active.
         let t = ctx.animate_bool_with_time(egui::Id::new("wdf_fade"), wdf_on, 0.15);
@@ -382,68 +431,46 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         egui::Frame::NONE
             .fill(RAISED)
             .stroke(Stroke::new(1.0, BORDER))
-            .inner_margin(egui::Margin::same(14))
+            .inner_margin(egui::Margin {
+                top: SP_MD as i8,
+                bottom: SP_SNUG as i8,
+                left: SP_MD as i8,
+                right: SP_MD as i8,
+            })
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.set_opacity(opacity);
                 ui.add_enabled_ui(wdf_on, |ui| {
-                    ui.horizontal(|ui| {
-                        // Use `knob_cell` (NOT bare `knob`) here: `knob` centers via
-                        // `vertical_centered`, which claims the full available width. That is
-                        // bounded inside the core row's `ui.columns`, but in this free
-                        // `ui.horizontal` the first knob would eat all the width and shove the
-                        // rest off the right edge. `knob_cell` pins each to its own cell width.
-                        circuit_gain_cell(ui, setter, p);
-                        ui.add_space(8.0);
-                        knob_cell(ui, setter, &p.age, "AGE", 64.0);
-                        ui.add_space(10.0);
-                        ui.vertical(|ui| {
-                            ui.add_space(22.0);
-                            reroll_button(ui, setter, p);
-                            ui.add_space(6.0);
-                            let seed = p.age_seed.load(Ordering::Relaxed);
-                            ui.label(
-                                RichText::new(format!("UNIT {:04X}", seed & 0xFFFF))
-                                    .font(value_font(12.0))
-                                    .color(DIM),
-                            );
-                        });
-                    });
-
-                    ui.add_space(12.0);
-                    hairline(ui);
-                    ui.add_space(12.0);
-
-                    // ── TRANSFORMER (Jiles-Atherton core) — its own row so the pill + two dials
-                    //    never crowd the gain/age row off the right edge on HiDPI. ──
+                    // ── TRANSFORMER (Jiles-Atherton core) ─────────────────────────────
                     #[cfg(feature = "trafo-core")]
                     {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.add_space(22.0);
+                                ui.add_space(SP_LG);
                                 toggle_pill(ui, setter, &p.trafo_on, "TRANSFORMER");
                             });
-                            ui.add_space(12.0);
+                            ui.add_space(SP_SM);
                             knob_cell(ui, setter, &p.trafo_hyst, "HYSTERESIS", 64.0);
-                            ui.add_space(8.0);
+                            ui.add_space(SP_SM);
                             knob_cell(ui, setter, &p.trafo_sat, "SATURATION", 64.0);
                         });
-                        ui.add_space(12.0);
+                        ui.add_space(SP_MD);
                         hairline(ui);
-                        ui.add_space(12.0);
+                        ui.add_space(SP_MD);
                     }
 
+                    // ── Quality selectors ──────────────────────────────────────────────
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("TIER").font(display_font(12.0)).color(DIM));
-                        ui.add_space(6.0);
+                        ui.add_space(SP_XS);
                         segmented(ui, setter, &p.wdf_tier);
-                        ui.add_space(20.0);
+                        ui.add_space(SP_MD);
                         ui.label(RichText::new("PRECISION").font(display_font(12.0)).color(DIM));
-                        ui.add_space(6.0);
+                        ui.add_space(SP_XS);
                         segmented(ui, setter, &p.precision);
-                        ui.add_space(20.0);
+                        ui.add_space(SP_MD);
                         ui.label(RichText::new("OVERSAMPLING").font(display_font(12.0)).color(DIM));
-                        ui.add_space(6.0);
+                        ui.add_space(SP_XS);
                         segmented(ui, setter, &p.oversampling);
                         // Adaptive level-gated oversampling: only meaningful on the lossy tiers
                         // (UltraFast/Warp) under Oversampling = Auto. Greyed out elsewhere.
@@ -453,7 +480,7 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                                 p.wdf_tier.value(),
                                 WdfTier::UltraFast | WdfTier::Warp
                             ) && p.oversampling.value() == Oversampling::Auto;
-                            ui.add_space(20.0);
+                            ui.add_space(SP_MD);
                             ui.add_enabled_ui(adaptive_scope, |ui| {
                                 toggle_pill(ui, setter, &p.adaptive_os, "ADAPTIVE OS");
                             });
@@ -463,7 +490,7 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
             });
 
         if !wdf_on {
-            ui.add_space(6.0);
+            ui.add_space(SP_XS);
             ui.label(
                 RichText::new("Circuit controls active in WDF mode")
                     .font(display_font(11.0))
@@ -487,19 +514,25 @@ fn hairline(ui: &mut egui::Ui) {
 /// A section rule with a left-aligned condensed caps label sitting on the line.
 fn labelled_rule(ui: &mut egui::Ui, label: &str) {
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(label)
-                .font(display_font(12.0))
-                .color(DIM)
-                .extra_letter_spacing(2.0),
-        );
-        let w = ui.available_width();
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), Sense::hover());
-        ui.painter().line_segment(
-            [rect.left_center(), rect.right_center()],
-            Stroke::new(1.0, BORDER),
-        );
+        labelled_rule_inline(ui, label);
     });
+}
+
+/// The inner painting logic of `labelled_rule`, usable inside an existing `ui.horizontal` when the
+/// caller needs to append extra widgets (e.g. the CHARACTER button) on the same line.
+fn labelled_rule_inline(ui: &mut egui::Ui, label: &str) {
+    ui.label(
+        RichText::new(label)
+            .font(display_font(12.0))
+            .color(DIM)
+            .extra_letter_spacing(2.0),
+    );
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), Sense::hover());
+    ui.painter().line_segment(
+        [rect.left_center(), rect.right_center()],
+        Stroke::new(1.0, BORDER),
+    );
 }
 
 // ── Custom arc-knob widget ──────────────────────────────────────────────────────────────
@@ -824,9 +857,55 @@ fn reroll_button(ui: &mut egui::Ui, setter: &ParamSetter, p: &Arc<Ba283Params>) 
     let cur = p.age_reroll.modulated_normalized_value() > 0.5;
     if held != cur {
         setter.begin_set_parameter(&p.age_reroll);
+
         setter.set_parameter(&p.age_reroll, held);
         setter.end_set_parameter(&p.age_reroll);
     }
+}
+
+/// CHARACTER popup panel — Bias, Age, Re-roll (all WDF-only). Drawn as an inline frame (not a
+/// floating `egui::Window`) so it participates in the top-down layout flow and doesn't clip at
+/// viewport edges. The popup is toggled by the CHARACTER button in the CIRCUIT section header.
+/// (Circuit Gain lives outside the popup — it is backend-agnostic and stays always-visible.)
+fn character_popup(
+    ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    p: &Arc<Ba283Params>,
+    wdf_on: bool,
+) {
+    egui::Frame::NONE
+        .fill(RAISED)
+        .stroke(Stroke::new(1.0, BORDER))
+        .inner_margin(egui::Margin::same(SP_MD as i8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                // Bias — WDF-only.
+                ui.add_enabled_ui(wdf_on, |ui| {
+                    knob_cell(ui, setter, &p.bias, "BIAS", 64.0);
+                });
+                ui.add_space(SP_SM);
+                // Age — WDF-only.
+                ui.add_enabled_ui(wdf_on, |ui| {
+                    knob_cell(ui, setter, &p.age, "AGE", 64.0);
+                });
+                ui.add_space(SP_SM);
+                // Re-roll + unit seed — WDF-only.
+                ui.add_enabled_ui(wdf_on, |ui| {
+                    ui.vertical(|ui| {
+                        ui.add_space(SP_LG);
+                        reroll_button(ui, setter, p);
+                        ui.add_space(SP_XS);
+                        let seed = p.age_seed.load(Ordering::Relaxed);
+                        ui.label(
+                            RichText::new(format!("UNIT {:04X}", seed & 0xFFFF))
+                                .font(value_font(12.0))
+                                .color(DIM),
+                        );
+                    });
+                });
+            });
+        });
 }
 
 #[cfg(test)]
