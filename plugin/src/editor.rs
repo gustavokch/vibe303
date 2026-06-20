@@ -237,6 +237,17 @@ fn apply_theme(ctx: &egui::Context) {
 
 // ── Layout ──────────────────────────────────────────────────────────────────────────────
 
+/// Default editor canvas size, in logical points (egui zoom scales the whole canvas uniformly,
+/// so these are the layout budget regardless of host DPI). Single source of truth: `lib.rs`
+/// passes these to `EguiState::from_size`, and `columns_fit_window` (tests) asserts the
+/// signal-flow columns fit inside `EDITOR_W`. Change the width here and the test catches drift.
+pub(crate) const EDITOR_W: u32 = 1040;
+pub(crate) const EDITOR_H: u32 = 660;
+
+/// Fixed logical widths of the four signal-flow columns: INPUT · EQUALIZER · MODEL · OUTPUT.
+/// Hoisted to a const so the layout and the fit-test (`columns_fit_window`) share one budget.
+const COL_W: [f32; 4] = [92.0, 360.0, 320.0, 140.0];
+
 fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
     // Variant 0 = NeuralNet, 1 = Wdf. Avoid importing the enum: read the normalized value.
     let wdf_on = p.backend.modulated_normalized_value() > 0.5;
@@ -297,9 +308,15 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         // ── Signal-flow columns, left→right: INPUT · EQUALIZER · MODEL · OUTPUT. Each column is a
         //    fixed-width top-down cell; the `ui.separator()` between them renders a full-height
         //    vertical rule (bounded by this outer horizontal, so NOT the right_to_left trap). ──
+        // Wrapped in a `ScrollArea` so the layout is structurally clip-proof: the default
+        // `1040×660` window fits everything (no scrollbars appear), but a future control row, a
+        // longer localized label, or a host that renders the hole slightly smaller scrolls instead
+        // of clipping off-screen — the failure mode this layout originally hit. `auto_shrink=false`
+        // keeps the body filling the viewport so the full-height column separators still span it.
+        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         ui.horizontal(|ui| {
             // ── Col 1 — INPUT stage ──
-            sized_column(ui, 92.0, |ui| {
+            sized_column(ui, COL_W[0], |ui| {
                 labelled_rule(ui, "INPUT");
                 ui.add_space(12.0);
                 ui.add_enabled_ui(staging_on, |ui| {
@@ -311,7 +328,7 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
             // ── Col 2 — EQUALIZER (Neve 1073/1076): backend-agnostic, ahead of the model ──
             // Width is set by the 6-option MID frequency selector (the widest row); it also gives
             // the EQ on/off pill enough room beside the gain knobs so its label never wraps.
-            sized_column(ui, 360.0, |ui| {
+            sized_column(ui, COL_W[1], |ui| {
                 labelled_rule(ui, "EQUALIZER");
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -353,8 +370,11 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
             // ── Col 3 — MODEL / CIRCUIT (the heart): circuit_gain · DRIVE · BIAS · AGE · TRANSFORMER
             //    · quality. circuit_gain + DRIVE are backend-agnostic (stay live for NN); the rest is
             //    WDF-only and fades/disables under the Neural Net backend. ──
-            sized_column(ui, 320.0, |ui| {
-                labelled_rule(ui, "MODEL (WDF)");
+            sized_column(ui, COL_W[2], |ui| {
+                // Header is "MODEL" (not "MODEL (WDF)"): the column leads with circuit_gain + DRIVE,
+                // which are backend-agnostic and stay live under the Neural Net backend. The WDF-only
+                // scope is conveyed by the faded/disabled sub-frame and its "active in WDF mode" hint.
+                labelled_rule(ui, "MODEL");
                 ui.add_space(8.0);
                 // Always-live row (full-opacity under NN): circuit_gain self-scopes past the frame
                 // fade; DRIVE is applied in both backends.
@@ -466,7 +486,7 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
             ui.separator();
 
             // ── Col 4 — OUTPUT stage: DPR (output-path phase rotator) → OUTPUT gain → MIX ──
-            sized_column(ui, 140.0, |ui| {
+            sized_column(ui, COL_W[3], |ui| {
                 labelled_rule(ui, "OUTPUT");
                 ui.add_space(12.0);
                 // DPR (Dual Phase Rotator) — all-pass phase rotator after the model + levelNorm,
@@ -489,6 +509,7 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                 knob_cell(ui, setter, &p.mix, "MIX", 60.0);
             });
         });
+        });
     });
 }
 
@@ -507,6 +528,11 @@ fn hairline(ui: &mut egui::Ui) {
 /// ragged. Height claims the panel's remaining height so the inter-column `ui.separator()` rules
 /// span the full body. This full-height claim is bounded by the outer `ui.horizontal`, so unlike a
 /// bare `right_to_left` it does NOT shove content off the bottom.
+///
+/// INVARIANT: this relies on being called as a direct child of a `ui.horizontal` — there every
+/// sibling sees the same `available_height` (a horizontal layout consumes width, not height), so
+/// all columns claim equal full height and the inter-column separators line up. Nest `sized_column`
+/// inside a vertical/top-down layout and that no longer holds — the separators would ragged.
 fn sized_column(ui: &mut egui::Ui, w: f32, add: impl FnOnce(&mut egui::Ui)) {
     let h = ui.available_height();
     ui.allocate_ui_with_layout(
@@ -899,5 +925,23 @@ mod tests {
         assert_eq!(effective_zoom(99.0, UiScale::X150), 1.5);
         assert_eq!(effective_zoom(99.0, UiScale::X175), 1.75);
         assert_eq!(effective_zoom(99.0, UiScale::X200), 2.0);
+    }
+
+    /// Guards the hardcoded width budget: the four signal-flow columns + their separators + the
+    /// item-spacing gaps must fit inside the editor canvas. Catches drift when a column width grows
+    /// or the window shrinks (the silent right-clip failure mode). Generous estimates for the
+    /// non-column costs so the test only fires on real overflow, never on egui spacing tweaks.
+    #[test]
+    fn columns_fit_window() {
+        const SEP_W: f32 = 6.0; // egui Separator main-axis size
+        const GAP: f32 = 8.0; // s.spacing.item_spacing.x set in apply_theme
+        const PANEL_MARGIN: f32 = 16.0; // CentralPanel inner margin, both sides combined
+        let cols: f32 = COL_W.iter().sum();
+        // Layout: col sep col sep col sep col → 3 separators, 6 inter-widget gaps.
+        let budget = cols + 3.0 * SEP_W + 6.0 * GAP + PANEL_MARGIN;
+        assert!(
+            budget <= EDITOR_W as f32,
+            "signal-flow columns need {budget}px but the window is only {EDITOR_W}px wide",
+        );
     }
 }
