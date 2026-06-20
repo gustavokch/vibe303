@@ -267,11 +267,6 @@ fn main() {
     let mut writer = hound::WavWriter::create(&output, out_spec)
         .unwrap_or_else(|e| die(&format!("cannot create output WAV {output}: {e}")));
 
-    // The offline "host SR" is the input WAV's sample rate: a 48k input runs the model directly, a
-    // 96k input exercises the 2x HostBridge (decimate to ~48k, interpolate back). Reuse the plugin's
-    // threshold const so the offline harness can't silently diverge from the plugin path.
-    let use_bridge = spec.sample_rate as f32 >= ba283::dsp::HOST_BRIDGE_THRESHOLD_HZ;
-
     if raw {
         // Pure model per channel — the round-trip path (no Drive/Output/Mix/OS).
         let mut models: Vec<Ba283Model> = (0..channels)
@@ -308,6 +303,15 @@ fn main() {
             ch.set_model(Ba283Model::from_json_path(p));
         }
     }
+    // The offline "host SR" is the input WAV's sample rate. Build the SRC bridge so the NeuralNet
+    // runs at its native rate (and the WDF-out delay matches), exactly as the plugin's `initialize`
+    // does — so the offline harness can't silently diverge from the plugin path. `use_bridge` is true
+    // whenever the input SR differs from the model rate.
+    let model_sr = chans[0].model_sample_rate();
+    for ch in chans.iter_mut() {
+        ch.bridge_prepare(spec.sample_rate, model_sr);
+    }
+    let use_bridge = spec.sample_rate != model_sr;
     // WDF backend: rebuild each channel at the input SR / circuit-gain / bias and warm it (off the
     // audio thread here) so the offline render mirrors the warmed plugin. NeuralNet needs no setup.
     if backend == InferenceBackend::Wdf {

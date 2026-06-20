@@ -269,3 +269,362 @@ impl Default for HostBridge {
         Self::new()
     }
 }
+
+// ===========================================================================
+// General rational sample-rate-conversion bridge (`SrcBridge`)
+// ===========================================================================
+//
+// `HostBridge` above only pins the model to its native rate at the exact 2:1
+// ratio (88.2/96 kHz hosts). `SrcBridge` generalises that to an EXACT rational
+// resampler so the model is evaluated at its native rate `model_sr` for ANY host
+// rate: 44.1, 64, 176.4, 192 kHz, etc. Real hosts only ever report rates that are
+// exact rationals of 48 kHz, so a rational `L/M` polyphase has zero
+// fractional-interpolation error (strictly better than a fractional-sinc design).
+//
+// Architecture (per host sample, side-effecting `model()` clocked in the middle):
+//
+//   host_in (host_sr) → [in_stage: host→model] → model() → [out_stage: model→host] → host_out
+//
+// `in_stage` emits exactly `L_in` model samples per `M_in` host samples
+// (`L_in/M_in = model_sr/host_sr`); `out_stage` emits exactly one host sample per
+// `process` call (the 1-in-1-out contract the per-sample driver in `lib.rs` needs),
+// pulling model samples from `mbuf` as its own polyphase phase advances. A fixed
+// priming offset (run the input side forward on leading zeros at `prepare`) keeps
+// the consumer from ever starving and makes the latency a fixed integer, measured
+// empirically from the cascade's impulse response.
+//
+// All rings/banks are `Vec` allocated ONCE in `prepare` (init-time); `process` only
+// indexes them — zero heap allocation on the audio thread.
+
+/// Base taps-per-output for each polyphase phase in the non-decimating direction.
+const SRC_Q: usize = 16;
+/// Hard cap on the polyphase phase count `L` (= `model_sr / gcd`). 256 covers the
+/// worst common case 44.1↔48 kHz (`L = 160`). Exotic host rates whose reduced `L`
+/// exceeds this are approximated by the nearest rational with `L ≤ SRC_L_MAX`.
+const SRC_L_MAX: u32 = 256;
+/// Cap on taps-per-phase after the decimation scale-up (`Q * ceil(Fin/Fout)`).
+/// 4× (192→48) is the worst common decimation; 128 leaves headroom.
+const SRC_MAX_TAPS: usize = 128;
+/// Power-of-two ring capacity for the host-input and model history buffers. Must
+/// exceed `SRC_MAX_TAPS` plus the priming lead.
+const SRC_RING: usize = 512;
+const SRC_RING_MASK: usize = SRC_RING - 1;
+
+#[inline]
+fn gcd_u32(a: u32, b: u32) -> u32 {
+    let (mut a, mut b) = (a, b);
+    while b != 0 {
+        let t = a % b;
+        a = b;
+        b = t;
+    }
+    a
+}
+
+/// Zeroth-order modified Bessel function I0, series form (enough terms for β≈8.6).
+fn bessel_i0(x: f64) -> f64 {
+    let mut sum = 1.0;
+    let mut term = 1.0;
+    let half_x = x * 0.5;
+    let mut k = 1.0;
+    // ~30 terms is plenty for the argument range here.
+    while k < 30.0 {
+        term *= (half_x / k) * (half_x / k);
+        sum += term;
+        if term < 1e-12 * sum {
+            break;
+        }
+        k += 1.0;
+    }
+    sum
+}
+
+#[inline]
+fn sinc(x: f64) -> f64 {
+    if x.abs() < 1e-9 {
+        1.0
+    } else {
+        let p = std::f64::consts::PI * x;
+        p.sin() / p
+    }
+}
+
+/// Best rational approximation `L/M` of `num/den` with `L ≤ max_l`, via a bounded
+/// continued-fraction (Stern–Brocot) expansion. Returns the reduced `(L, M)`.
+/// Exact when `den/gcd ≤ max_l` (every standard host rate vs 48 kHz).
+fn rational_approx(num: u32, den: u32, max_l: u32) -> (u32, u32) {
+    let g = gcd_u32(num, den);
+    let (l0, m0) = (num / g, den / g);
+    if l0 <= max_l {
+        return (l0, m0);
+    }
+    // Continued-fraction convergents of l0/m0, keep the last with L ≤ max_l.
+    let (mut a, mut b) = (l0 as u64, m0 as u64);
+    let (mut h0, mut h1) = (0u64, 1u64); // numerators (→ L)
+    let (mut k0, mut k1) = (1u64, 0u64); // denominators (→ M)
+    let (mut best_l, mut best_m) = (1u32, 1u32);
+    while b != 0 {
+        let q = a / b;
+        let h2 = q * h1 + h0;
+        let k2 = q * k1 + k0;
+        if h2 > max_l as u64 {
+            break;
+        }
+        best_l = h2 as u32;
+        best_m = k2.max(1) as u32;
+        h0 = h1;
+        h1 = h2;
+        k0 = k1;
+        k1 = k2;
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    (best_l.max(1), best_m.max(1))
+}
+
+/// One exact-rational polyphase stage. Pure resampling math + an output counter;
+/// the history ring it convolves is owned by [`SrcBridge`] and passed in, so the
+/// same type serves both the host→model and model→host directions.
+struct PolyStage {
+    l: i64,
+    m: i64,
+    taps: usize,
+    half: i64,
+    /// `l * taps`, phase-major: `bank[phase*taps + t]`.
+    bank: Vec<f32>,
+    /// Next output index to produce.
+    out_k: i64,
+}
+
+impl PolyStage {
+    fn empty() -> Self {
+        Self { l: 1, m: 1, taps: 0, half: 0, bank: Vec::new(), out_k: 0 }
+    }
+
+    /// Build the `L`-phase windowed-sinc bank for converting `fin → fout`.
+    fn prepare(&mut self, fin: u32, fout: u32) {
+        let (l, m) = rational_approx(fout, fin, SRC_L_MAX);
+        self.l = l as i64;
+        self.m = m as i64;
+        // Decimation (fin > fout) widens the kernel: scale the tap count by ⌈M/L⌉.
+        let scale = if m > l { m.div_ceil(l) as usize } else { 1 };
+        let mut taps = (SRC_Q * scale).min(SRC_MAX_TAPS);
+        if taps % 2 != 0 {
+            taps += 1;
+        }
+        self.taps = taps;
+        self.half = (taps / 2) as i64;
+        // Low-pass cutoff at the LOWER Nyquist (cycles per input sample). For
+        // upsampling (L>M) this caps at the input Nyquist (0.5); for decimation it
+        // is 0.5·L/M. A 0.90 rolloff leaves a transition band inside Nyquist.
+        let lp = (l as f64 / m as f64).min(1.0);
+        let fc = 0.5 * lp * 0.90;
+        let beta = 8.6_f64;
+        let i0_beta = bessel_i0(beta);
+        let half_f = self.half as f64;
+        let mut bank = vec![0.0f32; l as usize * taps];
+        for phase in 0..l as usize {
+            let frac = phase as f64 / l as f64;
+            // First pass: raw windowed-sinc; second: normalise the phase to unity DC.
+            let mut sum = 0.0f64;
+            let base = phase * taps;
+            for t in 0..taps {
+                // Continuous filter argument: distance (in input samples) from the
+                // output position (base+frac) to input index (base-half+1+t).
+                let x = frac + half_f - 1.0 - t as f64;
+                let w = if x.abs() >= half_f {
+                    0.0
+                } else {
+                    bessel_i0(beta * (1.0 - (x / half_f).powi(2)).max(0.0).sqrt()) / i0_beta
+                };
+                let h = 2.0 * fc * sinc(2.0 * fc * x) * w;
+                bank[base + t] = h as f32;
+                sum += h;
+            }
+            if sum.abs() > 1e-12 {
+                let inv = 1.0 / sum;
+                for t in 0..taps {
+                    bank[base + t] = (bank[base + t] as f64 * inv) as f32;
+                }
+            }
+        }
+        self.bank = bank;
+        self.out_k = 0;
+    }
+
+    /// Integer base position (in input samples) of output `out_k`.
+    #[inline]
+    fn base(&self, k: i64) -> i64 {
+        (k * self.m).div_euclid(self.l)
+    }
+
+    /// Can output `self.out_k` be computed given `in_count` inputs have been written?
+    /// (The kernel reads input indices up to `base + half`.)
+    #[inline]
+    fn can_emit(&self, in_count: i64) -> bool {
+        self.base(self.out_k) + self.half < in_count
+    }
+
+    /// Compute the next output sample from `ring` (absolute-index, power-of-two
+    /// masked). Negative indices read as 0 (pre-history silence). Advances `out_k`.
+    #[inline]
+    fn compute(&mut self, ring: &[f32], mask: usize) -> f32 {
+        let k = self.out_k;
+        let base = self.base(k);
+        let phase = (k * self.m).rem_euclid(self.l) as usize;
+        let row = phase * self.taps;
+        let mut acc = 0.0f32;
+        for t in 0..self.taps {
+            let j = base - self.half + 1 + t as i64;
+            let s = if j < 0 { 0.0 } else { ring[(j as usize) & mask] };
+            acc += self.bank[row + t] * s;
+        }
+        self.out_k += 1;
+        acc
+    }
+}
+
+/// General rational SRC bridge. Pins the model to its native rate for any host SR.
+pub struct SrcBridge {
+    bypass: bool,
+    in_stage: PolyStage,  // host → model
+    out_stage: PolyStage, // model → host
+    /// Host-input history ring (absolute index `hcount`, masked).
+    hbuf: Vec<f32>,
+    hcount: i64,
+    /// Model-output history ring (absolute index `mcount`, masked).
+    mbuf: Vec<f32>,
+    mcount: i64,
+    latency_host: usize,
+}
+
+impl SrcBridge {
+    pub fn new() -> Self {
+        Self {
+            bypass: true,
+            in_stage: PolyStage::empty(),
+            out_stage: PolyStage::empty(),
+            hbuf: Vec::new(),
+            mbuf: Vec::new(),
+            hcount: 0,
+            mcount: 0,
+            latency_host: 0,
+        }
+    }
+
+    /// Configure for a `host_sr → model_sr → host_sr` round trip. Allocates the
+    /// polyphase banks + history rings (init-time only). When `host_sr == model_sr`
+    /// the bridge is a bit-exact passthrough (latency 0).
+    pub fn prepare(&mut self, host_sr: u32, model_sr: u32) {
+        if host_sr == model_sr || host_sr == 0 || model_sr == 0 {
+            self.bypass = true;
+            self.latency_host = 0;
+            // Keep buffers sized so `reset` never allocates even in the bypass case.
+            if self.hbuf.is_empty() {
+                self.hbuf = vec![0.0; SRC_RING];
+                self.mbuf = vec![0.0; SRC_RING];
+            }
+            self.hcount = 0;
+            self.mcount = 0;
+            return;
+        }
+        self.bypass = false;
+        self.in_stage.prepare(host_sr, model_sr);
+        self.out_stage.prepare(model_sr, host_sr);
+        self.hbuf = vec![0.0; SRC_RING];
+        self.mbuf = vec![0.0; SRC_RING];
+        self.prime();
+        self.latency_host = self.measure_latency();
+        self.prime(); // clear the measurement impulse; leave primed/steady for real use
+    }
+
+    /// Run the input side forward on leading zeros until the model ring holds enough
+    /// samples for `out_stage`'s first output, without advancing `out_stage`. Leaves
+    /// the cascade in the primed steady state (output counter at 0).
+    fn prime(&mut self) {
+        self.hbuf.iter_mut().for_each(|s| *s = 0.0);
+        self.mbuf.iter_mut().for_each(|s| *s = 0.0);
+        self.hcount = 0;
+        self.mcount = 0;
+        self.in_stage.out_k = 0;
+        self.out_stage.out_k = 0;
+        // Target: enough model samples that out_stage k=0 (base 0) can read up to
+        // `half`, plus a margin covering the per-output model consumption.
+        let per_out = self.out_stage.m.div_euclid(self.out_stage.l).max(0);
+        let target = self.out_stage.half + per_out + 4;
+        let mut guard = 0;
+        while self.mcount <= target && guard < SRC_RING as i64 {
+            self.hbuf[(self.hcount as usize) & SRC_RING_MASK] = 0.0;
+            self.hcount += 1;
+            while self.in_stage.can_emit(self.hcount) {
+                let lo = self.in_stage.compute(&self.hbuf, SRC_RING_MASK);
+                self.mbuf[(self.mcount as usize) & SRC_RING_MASK] = lo;
+                self.mcount += 1;
+            }
+            guard += 1;
+        }
+    }
+
+    /// Measure the cascade group delay (host samples) from its impulse response:
+    /// the argmax of |output| after a unit impulse, with an identity model.
+    fn measure_latency(&mut self) -> usize {
+        let n = SRC_MAX_TAPS * 4;
+        let mut peak = 0.0f32;
+        let mut peak_i = 0usize;
+        for i in 0..n {
+            let x = if i == 0 { 1.0 } else { 0.0 };
+            let y = self.process(x, |lo| lo);
+            if y.abs() > peak {
+                peak = y.abs();
+                peak_i = i;
+            }
+        }
+        peak_i
+    }
+
+    #[inline]
+    pub fn latency_host(&self) -> usize {
+        self.latency_host
+    }
+
+    /// One host sample in, one host sample out. `model` is evaluated once per model
+    /// sample the input side produces (0, 1, or more per call); its side effects
+    /// (the net advancing its state) fire exactly the right number of times.
+    #[inline]
+    pub fn process<F: FnMut(f32) -> f32>(&mut self, x: f32, mut model: F) -> f32 {
+        if self.bypass {
+            return model(x);
+        }
+        self.hbuf[(self.hcount as usize) & SRC_RING_MASK] = x;
+        self.hcount += 1;
+        while self.in_stage.can_emit(self.hcount) {
+            let lo = self.in_stage.compute(&self.hbuf, SRC_RING_MASK);
+            let mo = model(lo);
+            self.mbuf[(self.mcount as usize) & SRC_RING_MASK] = mo;
+            self.mcount += 1;
+        }
+        debug_assert!(
+            self.out_stage.can_emit(self.mcount),
+            "SrcBridge consumer starved: mcount={} need>{}",
+            self.mcount,
+            self.out_stage.base(self.out_stage.out_k) + self.out_stage.half
+        );
+        self.out_stage.compute(&self.mbuf, SRC_RING_MASK)
+    }
+
+    pub fn reset(&mut self) {
+        if self.bypass {
+            self.hcount = 0;
+            self.mcount = 0;
+            return;
+        }
+        self.prime();
+    }
+}
+
+impl Default for SrcBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
