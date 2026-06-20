@@ -83,16 +83,16 @@ fn embedded_makeup_matches_remeasured_gain() {
 /// REGRESSION GUARD (the bug this fix targets): with the old analytic `1/(G_v·drive)` makeup, a hot
 /// input SAGGED ~20 dB at +24 dB Drive because the saturating circuit's gain fell below `G_v` while
 /// the makeup still divided out the full linear Drive — the DRIVE knob sounded weak. The Drive-swept
-/// `1/G_sat(drive)` makeup must hold output RMS ~constant from Drive 0 → +24 at a 0 dBFS input.
+/// `1/G_sat(drive)` makeup must hold output RMS ~constant across the WHOLE Drive sweep (not just the
+/// endpoints — the curve bends most mid-sweep) at a 0 dBFS input, at multiple gain positions.
 #[test]
 fn levelnorm_holds_loudness_across_drive() {
     use std::f32::consts::PI;
     let host = 48_000.0_f32;
     let freq = 1_000.0_f32;
     let amp = 1.0_f32; // 0 dBFS peak → in_v = 0.5 V at unity Drive (the A0 calibration level)
-    let pos = 3usize; // 220 Ω default position
-    let r = STEP_R_KJ[pos] as f32;
-    let measure = |drive_db: f32| -> f64 {
+    let measure = |pos: usize, drive_db: f32| -> f64 {
+        let r = STEP_R_KJ[pos] as f32;
         let drive = 10f32.powf(drive_db * 0.05);
         // Exactly the plugin's levelNorm makeup: Drive-swept trim divided by the Drive scalar.
         let norm = norm_apply_gain(Ba283Plugin::pos_makeup(pos as i32, drive_db), drive);
@@ -110,14 +110,20 @@ fn levelnorm_holds_loudness_across_drive() {
         }
         (out_sq / n as f64).sqrt()
     };
-    let lo = measure(0.0);
-    let hi = measure(24.0);
-    let ratio_db = 20.0 * (hi / lo).log10();
-    assert!(
-        ratio_db.abs() < 1.5,
-        "DRIVE 0→+24 dB loudness must stay within ±1.5 dB (no sag); got {ratio_db:+.2} dB \
-         (lo_rms {lo:.4}, hi_rms {hi:.4})"
-    );
+    // pos 3 (220 Ω, default) and pos 4 (110 Ω, hottest — saturates earliest). Sweep the whole grid
+    // span incl. the mid-curve bend (+12 dB), each compared to that position's own Drive-0 loudness.
+    for &pos in &[3usize, 4usize] {
+        let baseline = measure(pos, 0.0);
+        for &drive_db in &[6.0_f32, 12.0, 18.0, 24.0] {
+            let rms = measure(pos, drive_db);
+            let ratio_db = 20.0 * (rms / baseline).log10();
+            assert!(
+                ratio_db.abs() < 1.5,
+                "pos {pos} DRIVE 0→{drive_db:+} dB loudness must stay within ±1.5 dB (no sag); got \
+                 {ratio_db:+.2} dB (baseline_rms {baseline:.4}, rms {rms:.4})"
+            );
+        }
+    }
 }
 
 /// END-TO-END levelNorm neutrality (the loud-insert bug fix): at EVERY gain position, feeding a

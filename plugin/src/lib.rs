@@ -395,6 +395,9 @@ static GAIN_STEPS: &[GainStep] = &[
 fn wdf_makeup_at(step: &GainStep, drive_db: f32) -> f32 {
     let g = DRIVE_GRID_DB;
     let m = step.wdf_makeup;
+    // The interp indexes `m` by `g`'s length; a row shorter than the grid would read OOB. Pin the
+    // structural invariant here (the drift guard pins the values, not the row length).
+    debug_assert_eq!(m.len(), g.len(), "wdf_makeup row must match DRIVE_GRID_DB length");
     if drive_db <= g[0] {
         return m[0];
     }
