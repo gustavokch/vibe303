@@ -55,15 +55,18 @@ BA283 mic-preamp output stage.
   unaffected); gain knobs are per-block glided to avoid zipper on a sweep. The mid
   proportional-Q table and shelf shapes are provisional pending a 1073-curve fit.
 - **DPR — Dual Phase Rotator** (`dpr_on` ON/OFF + `dpr_amount`): an optional
-  broadcast-style all-pass phase rotator on the output path (after levelNorm,
-  before the output gain, both backends). Four cascaded first-order all-pass
+  broadcast-style all-pass phase rotator on the output path (ahead of the
+  levelNorm makeup gain and the output gain, both backends). Four cascaded first-order all-pass
   sections — the canonical CBS/Orban "phase asymmetry eliminator" topology —
   redistribute waveform asymmetry about the zero axis (reshaping the attack /
   peak symmetry) WITHOUT changing the magnitude spectrum (linear, adds no
   harmonics). The Amount knob sweeps the shared corner frequency on a log scale
   (~80 Hz at 0, ~200 Hz at the 0.5 default, ~500 Hz at 1). OFF (default) is a
   bit-exact no-op; per-channel state. The effect is signal-dependent — strongest
-  on asymmetric sources, near-inaudible on symmetric ones.
+  on asymmetric sources, near-inaudible on symmetric ones. Note: the cascade is
+  RMS-flat but phase redistribution can RAISE the peak level (inherent to phase
+  rotation, independent of where it sits relative to the linear levelNorm/output
+  scalars), so a hot input at unity output may clip — trim Output if so.
 - Parameters: Backend, WDF Tier, Precision, Oversampling, Input Gain, Drive,
   Bias, Output, Mix, Level Norm, Link, Circuit Gain (5-position switch),
   Age (+ Re-roll),
@@ -83,7 +86,7 @@ BA283 mic-preamp output stage.
   - **New gain-staging controls:** **`input_gain`** (clean pre-circuit dB trim),
     **`link`** (couples input/output in opposite directions for manual net-neutral
     staging). Signal chain is now
-    `x → ×input_gain → EQ → ×drive → circuit → [levelNorm comp] → DPR → ×output → mix`,
+    `x → ×input_gain → EQ → ×drive → circuit → DPR → [levelNorm comp] → ×output → mix`,
     so `drive` pushes the **post-EQ** signal into the circuit (the saturation
     amount).
   - **`level_norm` now defaults ON** (was OFF) and governs full neutrality: at

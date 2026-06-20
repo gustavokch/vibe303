@@ -155,7 +155,7 @@ pub struct ChannelDsp {
     /// upstream of the BA283/AV card on the real strip). Bit-exact identity while disabled.
     eq: Eq,
     /// DPR (Dual Phase Rotator): an all-pass phase rotator on the OUTPUT path, applied to the
-    /// de-normed wet between the levelNorm gain and `out_gain`. Reshapes waveform asymmetry without
+    /// de-normed wet AHEAD of the levelNorm makeup gain and `out_gain`. Reshapes waveform asymmetry without
     /// touching the magnitude spectrum. Bit-exact identity while disabled. Per-channel state. See
     /// [`crate::dpr`].
     dpr: Dpr,
@@ -681,7 +681,7 @@ impl ChannelDsp {
     /// block-rate bias/gain set via `wdf_set_bias`/`wdf_set_rgain`). The host-reported latency
     /// (`Ba283Plugin::latency_samples`) is honoured for BOTH backends.
     ///
-    /// Signal chain: `x → ×input_gain → eq → ×drive → [model] → ×norm_gain → dpr → ×out_gain → mix`.
+    /// Signal chain: `x → ×input_gain → eq → ×drive → [model] → dpr → ×norm_gain → ×out_gain → mix`.
     /// `input_gain` is the clean pre-circuit trim; `drive` pushes the POST-EQ signal into the model
     /// (the saturation amount). `norm_gain` is the stereo-linked levelNorm gain (1.0 when off),
     /// applied to the de-normed wet BEFORE `out_gain` and `mix`. The pre-norm de-normed wet is stashed
@@ -727,10 +727,13 @@ impl ChannelDsp {
                 };
                 let wet = model_out * deref;
                 self.last_wet = wet;
-                let wet = wet * norm_gain;
-                // DPR phase rotator: reshapes asymmetry on the output path (after levelNorm, before
-                // out_gain). Bit-exact identity while off.
+                // DPR phase rotator: reshapes asymmetry on the output path, AHEAD of the levelNorm
+                // makeup gain (so the normalized output already includes it) and the output gain.
+                // Bit-exact identity while off. Note: both the levelNorm makeup and the all-pass are
+                // linear, so the scalar and the cascade commute — placement relative to `norm_gain`
+                // is output-neutral; this order is chosen for signal-flow intent, not level.
                 let wet = self.dpr.process(wet);
+                let wet = wet * norm_gain;
                 let wet = wet * out_gain;
                 // Dry path delayed to match the wet-path (bridge) latency so Mix aligns.
                 let dry_aligned = if use_bridge { self.dry_delay.push_pop(x) } else { x };
@@ -791,10 +794,13 @@ impl ChannelDsp {
                     wet
                 };
                 self.last_wet = wet;
-                let wet = wet * norm_gain;
-                // DPR phase rotator: reshapes asymmetry on the output path (after levelNorm, before
-                // out_gain). Bit-exact identity while off.
+                // DPR phase rotator: reshapes asymmetry on the output path, AHEAD of the levelNorm
+                // makeup gain (so the normalized output already includes it) and the output gain.
+                // Bit-exact identity while off. Note: both the levelNorm makeup and the all-pass are
+                // linear, so the scalar and the cascade commute — placement relative to `norm_gain`
+                // is output-neutral; this order is chosen for signal-flow intent, not level.
                 let wet = self.dpr.process(wet);
+                let wet = wet * norm_gain;
                 let wet = wet * out_gain;
                 // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
                 let blended = wet * mix + x * (1.0 - mix);

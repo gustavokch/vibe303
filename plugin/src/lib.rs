@@ -740,7 +740,7 @@ pub struct Ba283Params {
     #[id = "trafo_sat"]
     pub trafo_sat: FloatParam,
     /// DPR (Dual Phase Rotator) ON/OFF. OFF (default) = bit-exact today's sound; ON inserts an
-    /// all-pass phase rotator on the output path (after levelNorm, before the output gain) that
+    /// all-pass phase rotator on the output path (ahead of the levelNorm makeup gain and the output gain) that
     /// reshapes waveform asymmetry without changing the magnitude spectrum. Both backends. See
     /// [`crate::dpr`].
     #[id = "dpr_on"]
@@ -858,9 +858,11 @@ impl Default for Ba283Params {
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             // DPR defaults: OFF (bit-exact today) + amount 0.5 → ~200 Hz canonical rotator corner.
             dpr_on: BoolParam::new("DPR", false),
+            // Amount is consumed block-rate (read via `.value()` in `process`, like the EQ params),
+            // NOT per-sample-smoothed: the resolved corner `fc` only recomputes the all-pass coeffs
+            // when it changes, so a per-sample smoother would defeat that cache for no benefit.
             dpr_amount: FloatParam::new("DPR Amount", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_value_to_string(formatters::v2s_f32_rounded(2))
-                .with_smoother(SmoothingStyle::Linear(20.0)),
+                .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
 }

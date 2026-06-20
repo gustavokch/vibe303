@@ -6,13 +6,20 @@
 //! topology is four cascaded 1st-order all-pass stages tuned to the low mids (~200 Hz); the effect
 //! is linear (adds no harmonics) so it is a near "free lunch" reshaping of the time-domain envelope.
 //!
-//! It sits on the output path between the levelNorm gain and the output gain, and is a bit-exact
-//! pass-through while `on` is false. The amount knob sweeps the shared corner frequency `fc` on a
+//! It sits on the output path ahead of the levelNorm makeup gain and the output gain, and is a
+//! bit-exact pass-through while `on` is false. The amount knob sweeps the shared corner frequency `fc` on a
 //! log scale (≈80 Hz → ≈500 Hz, default 0.5 → ≈200 Hz): low amount keeps the rotation toward the
 //! sub-bass (subtle), high amount lifts it into the low mids for a stronger, more audible reshaping.
 //!
 //! The effect is intrinsically signal-dependent — asymmetric inputs reshape the most; a perfectly
 //! symmetric input (no even-harmonic content) is barely changed (and can even gain peak-to-peak).
+//!
+//! Level note: although the cascade is RMS-flat, redistributing phase can RAISE the peak (and
+//! peak-to-peak) level. The rotator sits ahead of the levelNorm makeup gain and `out_gain`; since
+//! both are linear scalars they commute with the all-pass, so this placement is output-neutral and
+//! the peak growth is inherent to phase rotation (not a function of order). With a hot input at
+//! unity `out_gain`, turning DPR on can push the output peak past its pre-DPR ceiling and clip
+//! downstream — trim `out_gain` (Output) if it does.
 
 /// Number of cascaded all-pass stages — the canonical broadcast phase-rotator count.
 const STAGES: usize = 4;
@@ -59,6 +66,9 @@ pub struct Dpr {
     on: bool,
     /// Cached corner frequency so coefficients are recomputed only when it actually changes.
     fc: f32,
+    /// Test-only: counts how many times the coeffs were actually recomputed, to assert the cache.
+    #[cfg(test)]
+    recompute_count: u32,
 }
 
 impl Default for Dpr {
@@ -73,6 +83,8 @@ impl Dpr {
             stages: [Allpass1::default(); STAGES],
             on: false,
             fc: f32::NAN, // force a coeff recompute on the first `set`
+            #[cfg(test)]
+            recompute_count: 0,
         }
     }
 
@@ -93,6 +105,10 @@ impl Dpr {
                 st.set_fc(fc, fs);
             }
             self.fc = fc;
+            #[cfg(test)]
+            {
+                self.recompute_count += 1;
+            }
         }
     }
 
@@ -130,6 +146,20 @@ mod tests {
             let x = (i as f32 * 0.013).sin() * 0.7;
             assert_eq!(dpr.process(x), x);
         }
+    }
+
+    /// Coeffs recompute only when the resolved corner `fc` changes — a static amount (even across
+    /// `on`/`fs`-unchanged calls) must not re-run the per-stage `set_fc`.
+    #[test]
+    fn coeffs_recompute_only_on_fc_change() {
+        let mut dpr = Dpr::new();
+        dpr.set(true, 0.5, 48_000.0); // first call: NaN -> fc, one recompute
+        assert_eq!(dpr.recompute_count, 1);
+        dpr.set(false, 0.5, 48_000.0); // same amount, toggle off: no recompute
+        dpr.set(true, 0.5, 48_000.0); // same amount again: still no recompute
+        assert_eq!(dpr.recompute_count, 1);
+        dpr.set(true, 0.8, 48_000.0); // amount changed -> new fc -> exactly one more
+        assert_eq!(dpr.recompute_count, 2);
     }
 
     /// An all-pass cascade preserves signal energy (magnitude-flat): output RMS ≈ input RMS over a
