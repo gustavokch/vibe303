@@ -4,6 +4,21 @@ Date: 2026-06-19
 Status: pipeline STAGED (code/config only). No training, SPICE, or data-gen run
 in this branch. This doc is the runbook for the offline retrain.
 
+> **SUPERSEDED (2026-06-19, see `~/.claude/plans/context-expansion-second-opinion-second-temporal-wall.md`).**
+> Two corrections to the plan below, after review (codex-confirmed):
+> 1. **Wrong backend.** The `train/` LSTM `film_codebook` stack staged here trains
+>    the *dormant* `plugin/src/model.rs`, NOT the shipped model. The active
+>    backend is the **WaveNet** (`plugin/src/wavenet.rs` ← `model.cond.nam`,
+>    trained by `scratch/nam_sweep/` in the sibling repo `~/Git/ba283-nam-lstm`).
+>    The retrain ships on the WaveNet and **drops the codebook** — "P7"
+>    (edit wavenet.rs for a codebook) was wrong; wavenet.rs has no codebook.
+> 2. **Dual conditioning + ACME.** The WaveNet cond is widened to **3 channels**
+>    `[audio, circuit_gain, input_gain]` (continuous FiLM, no codebook). Data is
+>    rendered by **ACME @ 4× oversampling** (SPICE os=2 fallback), not SPICE-only.
+>
+> The sections below are kept for context but the backend/codebook framing is
+> obsolete. Use the superseding plan as the runbook.
+
 ## Decisions needed BEFORE starting (resolve open items 1–4 below)
 
 1. **Where to apply `wet /= G_i`** (resample-time hook) — item 1.
