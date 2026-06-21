@@ -114,6 +114,19 @@ BA283 mic-preamp output stage.
   `tests/calib_nn_makeup.rs` (no live probe — the model is a fixed black box).
   (Level Norm now defaults **ON** for a unity insert — see the stepped-gain entry
   above; the WDF backend reads the static per-position makeup table.)
+- **Editor reflowed into a left→right signal-flow column layout.** The window is
+  now **1040×660** (was a tall top-down stack that overran its fixed viewport and
+  clipped at the bottom). Controls are grouped into four vertical columns ordered
+  by signal flow — **INPUT · EQUALIZER · MODEL · OUTPUT** — separated by
+  full-height rules, with a top bar carrying the wordmark, backend toggle, and the
+  global **Level Norm** / **Link** modes (they gate controls now split across
+  columns). The MODEL column leads with the backend-agnostic **Circuit Gain** +
+  **Drive** (full-opacity under the Neural Net backend); the WDF-only character and
+  quality controls live in a sub-frame below that fades/disables under NN. The
+  body is wrapped in a scroll area so it is structurally clip-proof — the default
+  size fits everything (no scrollbars), but any future control or a smaller host
+  hole scrolls instead of clipping. Presentation only: no DSP, params, palette, or
+  feature-gate changes; all enable/grey logic and widget helpers are reused.
 
 ### Internal (off by default, not shipped in the default build)
 - `adaptive-os` feature: adaptive level-gated oversampling for the lossy
