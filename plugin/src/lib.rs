@@ -395,13 +395,19 @@ static GAIN_STEPS: &[GainStep] = &[
 fn wdf_makeup_at(step: &GainStep, drive_db: f32) -> f32 {
     let g = DRIVE_GRID_DB;
     let m = step.wdf_makeup;
-    // The interp indexes `m` by `g`'s length; a row shorter than the grid would read OOB. Pin the
-    // structural invariant here (the drift guard pins the values, not the row length).
+    // The interp indexes `m` by `g`'s length; a row shorter than the grid would read OOB. The
+    // structural invariant is `m.len() == g.len()` (the drift guard pins the values, not the row
+    // length). `debug_assert` catches a mismatch loudly in dev; in release, bounding the walk by the
+    // SHORTER length makes a malformed short row flat-hold over its valid prefix instead of reading
+    // OOB — graceful, never UB on the audio thread.
     debug_assert_eq!(m.len(), g.len(), "wdf_makeup row must match DRIVE_GRID_DB length");
+    let n = g.len().min(m.len());
+    if n == 0 {
+        return 1.0; // empty row → unity makeup (faithful circuit gain); cannot happen with the table
+    }
     if drive_db <= g[0] {
         return m[0];
     }
-    let n = g.len();
     if drive_db >= g[n - 1] {
         return m[n - 1];
     }
