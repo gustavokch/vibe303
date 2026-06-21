@@ -1,0 +1,98 @@
+name: release-linux
+
+# Release workflow that builds only the Linux bundles and runs on self-hosted runners.
+# Trigger from the Actions tab (Run workflow), supplying the version. It must
+# match `version` in plugin/Cargo.toml or the run fails fast.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 0.1.0 (tag becomes v<version>)"
+        type: string
+        required: true
+      prerelease:
+        description: "Mark the GitHub Release as a pre-release"
+        type: boolean
+        default: true
+
+jobs:
+  guard:
+    name: version-guard
+    runs-on: self-hosted
+    env:
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert input version is not lower than plugin/Cargo.toml
+        run: |
+          crate_version="$(grep -m1 '^version' plugin/Cargo.toml | sed -E 's/.*\"([^\"]+)\".*/\1/')"
+          echo "Cargo.toml version: $crate_version, input: $INPUT_VERSION"
+          lowest="$(printf '%s\n' "$crate_version" "$INPUT_VERSION" | sort -V | head -n1)"
+          if [ "$lowest" != "$crate_version" ]; then
+            echo "::error::input version '$INPUT_VERSION' is lower than plugin/Cargo.toml '$crate_version'"
+            exit 1
+          fi
+
+  linux:
+    name: linux-x86_64 (self-hosted)
+    needs: guard
+    runs-on: self-hosted
+    env:
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build deps (if apt available)
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              libasound2-dev libgl-dev libjack-dev libx11-xcb-dev libxcb1-dev \
+              libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev libxkbcommon-dev \
+              libxcb-shape0-dev libxcb-xfixes0-dev
+          else
+            echo "apt-get not found; assuming dependencies are already installed on this self-hosted runner"
+          fi
+      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Bundle (VST3 + CLAP)
+        run: cargo xtask bundle ba283 --release
+      - name: Zip bundles
+        run: |
+          cd target/bundled
+          zip -r "$GITHUB_WORKSPACE/BA283-v${INPUT_VERSION}-linux-x86_64.zip" BA283.vst3 BA283.clap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BA283-linux-x86_64
+          path: BA283-v${{ inputs.version }}-linux-x86_64.zip
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: linux
+    runs-on: self-hosted
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.zip > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: BA283 v${{ inputs.version }}
+          prerelease: ${{ inputs.prerelease }}
+          body_path: CHANGELOG.md
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
