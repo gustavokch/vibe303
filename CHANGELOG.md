@@ -75,6 +75,20 @@ BA283 mic-preamp output stage.
 - egui-based editor with Linux/X11 HiDPI scaling handling.
 
 ### Changed
+- **WDF circuit backend: steep linear-phase FIR resampler (high-frequency fidelity).**
+  The os=2 host path previously upsampled with linear interpolation and decimated
+  with a 4th-order Butterworth — both gentle filters that quietly rolled off the top
+  octave *on top of* the faithful circuit response: ≈6 dB @20 kHz at 48 kHz host and
+  ≈9 dB at 44.1 kHz (measured, clean signal — `plugin/tests/fr_probe.rs`). These are
+  now replaced by a windowed-sinc (Kaiser) polyphase upsampler + steep decimator with
+  a passband flat to ~20 kHz, removing the numerical rolloff (to **0.0 dB @20 kHz**
+  at 48 kHz, **−0.6 dB** at 44.1 kHz) while leaving the **real circuit FR untouched**
+  (still −0.6 dB vs ngspice across 20 Hz–20 kHz, coherence 1.000). Cost: a reported
+  group-delay **latency of ~80 host samples** (the WDF path was 0-PDC before), folded
+  into the host PDC report and the dry/wet alignment so Mix stays phase-locked and a
+  live backend switch needs no renegotiation. The legacy resampler remains available
+  (`--legacy-resample`; used by the C++ golden-parity test) and the os=1 tiers
+  (UltraFast/Warp at High) are unchanged.
 - **Stepped circuit gain + level-neutral gain-staging paradigm (BREAKING param
   changes).** The BA283 has a *stepped* 5-position gain switch and no continuous
   "drive" of the circuit; the plugin now matches that:

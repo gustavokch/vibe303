@@ -217,6 +217,7 @@ impl WdfModel {
             s_s: [0.0; NUM_NODES * NUM_NODES],
             dec1: Biquad::default(),
             dec2: Biquad::default(),
+            fir: None, // set in `new_with` (the only place host_sr/os are known together)
             sec_in_dc: 0.0,
             prev_in: 0.0,
             last_snapshot: None,
@@ -264,12 +265,16 @@ impl WdfModel {
         // subsample count.
         let internal_sr = host_sr * cfg.solve_os() as f64;
         let mut m = Self::build_with(cfg, internal_sr, rgain, bias);
-        // Decimation biquads are always configured, used when `cfg.decimate` (see
-        // `process_host_sample`). At os=2 they are the antialiasing decimator and stay on; configuring
-        // them unconditionally keeps the path branch-free.
+        // Legacy decimator biquads: 4th-order Butterworth at fc=0.45·host_sr (the C++ golden path).
+        // Used only when `legacy_resample`; configured unconditionally so that path stays branch-free.
         let fc = 0.45 * host_sr;
         m.dec1.set_lowpass(fc, internal_sr, 0.54119610);
         m.dec2.set_lowpass(fc, internal_sr, 1.30656296);
+        // Shipped path: steep linear-phase FIR up/down, built only when there is something to
+        // resample (`os > 1`) and we are not in the golden-parity legacy mode.
+        if !cfg.legacy_resample && cfg.solve_os() > 1 {
+            m.fir = Some(FirResampler::new(cfg.solve_os()));
+        }
         m
     }
 

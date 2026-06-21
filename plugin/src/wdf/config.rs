@@ -56,6 +56,13 @@ pub struct QualityConfig {
     /// MUST stay on; at `os == 1` there is nothing to decimate, so they only add phase/group delay
     /// — bypassing (`--no-decimate`) can recover some of the os=1 fidelity cost. Default on.
     pub decimate: bool,
+    /// Legacy resampler: linear-interpolation upsample + 4th-order Butterworth decimator (`fc =
+    /// 0.45·host_sr`) — the path the C++ golden was captured from. Default `false`: the shipped path
+    /// uses a causal cubic-Hermite upsample + 6th-order decimator (`fc = 0.47·host_sr`), which is
+    /// much flatter in the audio passband (the linear-interp upsample alone cost ≈4 dB @20k; see
+    /// `tests/fr_probe.rs`). Zero added latency either way. Only `tests/test_wdf.rs` sets this true,
+    /// to compare bit-for-bit against the legacy C++ `OUTPUT_256`.
+    pub legacy_resample: bool,
     /// FMA (fused multiply-add) contraction in the batched device kernels (`compute_bjt_preexp_batch`,
     /// `exp_bl`/`log_bl`, depletion charge). Single-rounding `vfmadd` instead of `a*b+c`; ~1 ULP/op
     /// numeric change → measured +2.3% (fast) / +3.8% (ultra), ~half the fp-contract=fast ceiling.
@@ -145,6 +152,7 @@ impl QualityConfig {
             cheap_exp: false,
             os: OS,
             decimate: true,
+            legacy_resample: false,
             fma: false,
             fixed_step: false,
             dep_lut: false, // realtime stays bit-exact (golden) — pow path, no table

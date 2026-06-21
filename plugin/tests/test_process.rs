@@ -49,7 +49,7 @@ fn mix_zero_is_dry_passthrough_direct() {
 #[test]
 fn mix_zero_dry_is_latency_aligned_bridged() {
     // Bridged path (use_bridge=true) with mix=0: output is the dry path delayed by exactly the
-    // SrcBridge latency. After the latency, output[i] == input[i - bridge_latency()].
+    // REPORTED latency (SrcBridge + WDF steep-FIR group delay). After it, output[i] == input[i - lat].
     let mut dsp = ChannelDsp::new();
     // Pick a host SR that differs from the model rate so the bridge actually engages, and size the
     // dry/WDF-out alignment delays to its measured latency (mirrors the plugin's `initialize`).
@@ -61,7 +61,7 @@ fn mix_zero_dry_is_latency_aligned_bridged() {
     for i in 0..n {
         out[i] = dsp.process_sample(input[i], 1.0, 1.0, 0.5, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::NeuralNet);
     }
-    let lat = dsp.bridge_latency();
+    let lat = dsp.reported_latency();
     let mut max_err = 0.0f32;
     for i in lat..n {
         let e = (out[i] - input[i - lat]).abs();
@@ -144,21 +144,21 @@ fn wdf_aged_output_finite_and_coherent() {
 
 #[test]
 fn wdf_backend_latency_aligned_bridged() {
-    // Bridged path (use_bridge=true), mix=0 (fully dry): the WDF blended output is delayed by exactly
-    // the SrcBridge latency so the single host latency report stays valid for both backends. With
-    // drive=out=1 and mix=0 the output is the dry input delayed -> output[i] == input[i - lat].
+    // Bridged path (use_bridge=true), mix=0 (fully dry): the dry path is delayed by the REPORTED
+    // latency (SrcBridge + WDF steep-FIR group delay) so the single host latency report stays valid
+    // for both backends. With drive=out=1 and mix=0 the output is the dry input delayed by `lat`.
     let mut dsp = ChannelDsp::new();
     dsp.wdf_warmup();
     // Engage the bridge at a non-model host SR and size the WDF-out alignment delay to its latency.
     let model_sr = dsp.model_sample_rate();
     dsp.bridge_prepare(96_000, model_sr);
-    let n = 256;
+    let n = 512;
     let input: Vec<f32> = (0..n).map(|i| (i as f32 * 0.03).sin()).collect();
     let mut out = vec![0.0f32; n];
     for i in 0..n {
         out[i] = dsp.process_sample(input[i], 1.0, 1.0, 0.5, 0.5, 1.0, 1.0, 0.0, true, InferenceBackend::Wdf);
     }
-    let lat = dsp.bridge_latency();
+    let lat = dsp.reported_latency();
     let mut max_err = 0.0f32;
     for i in lat..n {
         max_err = max_err.max((out[i] - input[i - lat]).abs());

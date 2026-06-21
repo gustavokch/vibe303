@@ -149,6 +149,13 @@ pub struct ChannelDsp {
     /// `<= OS_LATENCY_SAMPLES` capacity) when the host bridge is active so the host-reported latency
     /// stays valid for BOTH backends (no renegotiation when switching).
     wdf_out_delay: RuntimeDelay<OS_LATENCY_SAMPLES>,
+    /// Delays the NeuralNet wet output by the WDF FIR resampler's group delay (`wdf_fir_lat`) so the
+    /// two backends share ONE host-reported latency (`bridge_lat + wdf_fir_lat`) and switching needs
+    /// no renegotiation. 0 (passthrough) when the WDF path is on the legacy resampler / os==1.
+    nn_out_delay: RuntimeDelay<OS_LATENCY_SAMPLES>,
+    /// Group-delay latency (host samples) of the WDF steep-FIR resampler on the live model; 0 for the
+    /// legacy resampler. Folded into the reported latency and the dry/wet alignment (`resize_delays`).
+    wdf_fir_lat: usize,
     /// Last settled snapshot installed into `wdf` (from the shared warmup). Carried across a tier
     /// rebuild so switching tiers does not require a fresh (expensive) warmup.
     wdf_snap: Option<WdfSnapshot>,
@@ -234,6 +241,8 @@ impl ChannelDsp {
             // Placeholder SR/bias; rebuilt + restored with the real settings in `initialize`.
             wdf: Box::new(WdfModel::new(48_000.0, 220.0, 0.5)),
             wdf_out_delay: RuntimeDelay::new(),
+            nn_out_delay: RuntimeDelay::new(),
+            wdf_fir_lat: 0, // set in `bridge_prepare`/`install_prebuilt` from the live model
             wdf_snap: None,
             // Pre-allocate the crossfade scratch model once (off the audio thread, at construction)
             // so a live tier switch reuses it instead of `Box::new`-ing on the audio thread.
@@ -294,6 +303,7 @@ impl ChannelDsp {
         self.dry_delay.reset();
         self.wdf.reset(); // restore the settled snapshot installed in initialize
         self.wdf_out_delay.reset();
+        self.nn_out_delay.reset();
         self.xfade_remain = 0; // cancels any in-flight crossfade (wdf_prev goes unread)
         // Arm the resume fade-in so re-enabling the plugin ramps the wet up instead of snapping the
         // full-gain circuit output on (a loud click). Falls back to NO fade if no SR is known yet
@@ -337,9 +347,26 @@ impl ChannelDsp {
     /// the dry / WDF-out alignment delays to the resulting bridge latency.
     pub fn bridge_prepare(&mut self, host_sr: u32, model_sr: u32) {
         self.bridge.prepare(host_sr, model_sr);
-        let lat = self.bridge.latency_host();
-        self.dry_delay.set_len(lat);
-        self.wdf_out_delay.set_len(lat);
+        self.wdf_fir_lat = self.wdf.fir_latency_host();
+        self.resize_delays();
+    }
+
+    /// (Re)size the alignment delays from the current bridge + WDF-FIR latencies. Reported latency =
+    /// `bridge_lat + wdf_fir_lat`; both backends are delayed to it before the dry/wet blend so Mix
+    /// stays phase-aligned and a live backend switch needs no PDC renegotiation:
+    ///   - dry path:      `bridge_lat + wdf_fir_lat` (the full reported latency)
+    ///   - WDF wet:       `bridge_lat`   (its intrinsic FIR latency already covers `wdf_fir_lat`)
+    ///   - NeuralNet wet: `wdf_fir_lat`  (its intrinsic bridge latency already covers `bridge_lat`)
+    fn resize_delays(&mut self) {
+        let blat = self.bridge.latency_host();
+        self.dry_delay.set_len(blat + self.wdf_fir_lat);
+        self.wdf_out_delay.set_len(blat);
+        self.nn_out_delay.set_len(self.wdf_fir_lat);
+    }
+
+    /// Reported host latency in host samples: `bridge_lat + wdf_fir_lat`.
+    pub fn reported_latency(&self) -> usize {
+        self.bridge.latency_host() + self.wdf_fir_lat
     }
 
     /// Push the current EQ settings (block-rate). `hpf_hz <= 0` bypasses the high-pass. Coeffs are
@@ -426,6 +453,14 @@ impl ChannelDsp {
         }
         // old live → crossfade scratch; the stale 2-switches-ago scratch is returned for off-thread drop.
         let retired = std::mem::replace(&mut self.wdf_prev, old_live);
+        // Keep the reported latency / alignment in sync with the newly-installed model's resampler.
+        // Guarded so an unchanged latency does not needlessly clear the delay rings (avoids a glitch
+        // on a same-latency tier switch; the FIR latency is constant across tiers in practice).
+        let new_lat = self.wdf.fir_latency_host();
+        if new_lat != self.wdf_fir_lat {
+            self.wdf_fir_lat = new_lat;
+            self.resize_delays();
+        }
         self.xfade_remain = self.xfade_len;
         retired
     }
@@ -791,8 +826,11 @@ impl ChannelDsp {
                 let wet = self.dpr.process(wet);
                 let wet = wet * norm_gain;
                 let wet = wet * out_gain;
-                // Dry path delayed to match the wet-path (bridge) latency so Mix aligns.
-                let dry_aligned = if use_bridge { self.dry_delay.push_pop(x) } else { x };
+                // Align both paths to the reported latency (`bridge_lat + wdf_fir_lat`) before Mix.
+                // The NN wet carries its intrinsic bridge latency; delay it by `wdf_fir_lat` so it
+                // matches the WDF backend. The dry is delayed by the full reported latency.
+                let wet = self.nn_out_delay.push_pop(wet);
+                let dry_aligned = self.dry_delay.push_pop(x);
                 let out = wet * mix + dry_aligned * (1.0 - mix);
                 // FINAL output safety ceiling (speaker domain, 1.0 ≡ 0 dBFS): a hard backstop so the
                 // NN backend can never emit a damaging blow-up even with levelNorm OFF + extreme Drive
@@ -864,17 +902,15 @@ impl ChannelDsp {
                 let wet = self.dpr.process(wet);
                 let wet = wet * norm_gain;
                 let wet = wet * out_gain;
-                // WDF decimation is IIR -> ~0 integer latency; dry is undelayed here.
-                let blended = wet * mix + x * (1.0 - mix);
-                // Keep the host-reported latency honest: when the NeuralNet path would be bridged
-                // (and report the SrcBridge latency), delay the blended WDF output by the same amount
-                // so switching backends needs no latency renegotiation. When the model runs direct
-                // (NN latency 0) the WDF output is undelayed too.
-                if use_bridge {
-                    self.wdf_out_delay.push_pop(blended)
-                } else {
-                    blended
-                }
+                // Align both paths to the reported latency (`bridge_lat + wdf_fir_lat`) before Mix.
+                // The WDF wet carries its intrinsic steep-FIR group delay (`wdf_fir_lat`); delay it
+                // by the bridge latency so it matches the bridged NeuralNet backend (no PDC change on
+                // a live switch). The dry is delayed by the full reported latency. With the legacy
+                // resampler `wdf_fir_lat==0` and (at host==model rate) `bridge_lat==0`, both delays
+                // are passthrough — bit-exact with the old ~0-latency path.
+                let wet = self.wdf_out_delay.push_pop(wet);
+                let dry_aligned = self.dry_delay.push_pop(x);
+                wet * mix + dry_aligned * (1.0 - mix)
             }
         }
     }

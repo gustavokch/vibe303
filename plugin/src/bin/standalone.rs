@@ -191,6 +191,12 @@ fn main() {
             }
             "--decimate" => wdf_cfg.decimate = true,
             "--no-decimate" => wdf_cfg.decimate = false,
+            // Legacy resampler (linear-interp upsample + 4th-order Butterworth decimator, ~0 latency)
+            // vs the shipped steep linear-phase FIR (flat to ~20 kHz, group-delay latency). The FIR
+            // delay exceeds the eval harness's lag-search window, so the SPICE-comparison harness
+            // passes `--legacy-resample` for an apples-to-apples (aligned) faithfulness check.
+            "--legacy-resample" => wdf_cfg.legacy_resample = true,
+            "--no-legacy-resample" => wdf_cfg.legacy_resample = false,
             #[cfg(feature = "subrate-spike")]
             "--subrate" => {
                 let v = args.next().unwrap_or_else(|| die("--subrate needs a value"));
@@ -335,18 +341,36 @@ fn main() {
         1.0
     };
 
+    // Latency-compensate the output (PDC): the wet path carries `reported_latency()` host samples of
+    // group delay (`SrcBridge` + the WDF steep-FIR resampler). A real host shifts the track by the
+    // reported latency; offline we emulate that by discarding the first `lat` output frames and
+    // flushing the tail with `lat` zero-input frames, so the written WAV is time-aligned to the input
+    // (every eval harness gets lag≈0 regardless of the resampler/bridge). 0 with the legacy resampler
+    // at host==model rate → bit-exact with the pre-PDC behaviour.
+    let lat = chans[0].reported_latency();
+    let n_in = samples.len() / channels;
     let mut n_frames = 0usize;
-    for frame in samples.chunks(channels) {
+    let zero_frame = vec![0.0f32; channels];
+    for fi in 0..(n_in + lat) {
+        let frame: &[f32] = if fi < n_in {
+            &samples[fi * channels..fi * channels + channels]
+        } else {
+            &zero_frame
+        };
         for (ch, &s) in frame.iter().enumerate() {
             // Offline harness: input_gain is fixed at unity (the circuit gain is set directly via
             // --circuit-gain ohms; the staging trims are a plugin-UI concern).
             let y = chans[ch]
                 .process_sample(s, 1.0, drive, bias, 0.5, out_gain, norm_gain, mix, use_bridge, backend);
-            writer
-                .write_sample(y)
-                .unwrap_or_else(|e| die(&format!("error writing sample: {e}")));
+            if fi >= lat {
+                writer
+                    .write_sample(y)
+                    .unwrap_or_else(|e| die(&format!("error writing sample: {e}")));
+            }
         }
-        n_frames += 1;
+        if fi >= lat {
+            n_frames += 1;
+        }
     }
 
     writer

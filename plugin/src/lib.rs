@@ -954,18 +954,14 @@ impl Default for Ba283Plugin {
 }
 
 impl Ba283Plugin {
-    /// Host-rate latency introduced by the `SrcBridge`. The bridge pins the WaveNet to its native
-    /// rate (`model_sample_rate()`) for ANY host SR via an exact rational resampler; its latency is
-    /// the cascade group delay (a fixed integer measured at `bridge_prepare`) and is 0 only when the
-    /// host already runs at the model rate (bridge bypassed, bit-exact). This is the single source of
-    /// truth for the host report, the dry-path delay, and the WDF-out alignment delay.
+    /// Host-rate latency = `SrcBridge` cascade delay (NeuralNet path, 0 when host==model rate) PLUS
+    /// the WDF steep-FIR resampler group delay (`wdf_fir_lat`, 0 for the legacy resampler / os==1).
+    /// Both backends are aligned to this single figure (`ChannelDsp::resize_delays`), so it is the
+    /// one source of truth for the host report, the dry-path delay, and the per-backend wet delays —
+    /// and a live backend switch never renegotiates PDC. The bridge component is still gated on
+    /// host!=model rate; the FIR component applies at every SR the WDF path runs.
     fn latency_samples(&self) -> u32 {
-        let model_sr = self.channels[0].model_sample_rate();
-        if (self.sample_rate.round() as u32) != model_sr {
-            self.channels[0].bridge_latency() as u32
-        } else {
-            0
-        }
+        self.channels[0].reported_latency() as u32
     }
 
     /// Drive-swept levelNorm trim (`1 / G_sat(drive)`) for a `circuit_gain` position at `drive_db`.

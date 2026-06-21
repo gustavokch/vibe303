@@ -191,10 +191,15 @@ pub struct WdfModel {
     s_s: [f64; NUM_NODES * NUM_NODES], // per-iter Schur complement
 
     // oversampling / decimation driver (set by `new`; unused when `build` is called directly)
-    dec1: Biquad,
-    dec2: Biquad,
+    dec1: Biquad, // legacy decimator section 1 (4th-order Butterworth); used only when legacy_resample
+    dec2: Biquad, // legacy decimator section 2
+    /// Steep linear-phase FIR resampler (windowed-sinc polyphase up + decimate). `Some` on the
+    /// shipped path (`!legacy_resample` and `os > 1`); replaces the lerp upsample + Butterworth
+    /// decimator with a flat-to-20kHz response at the cost of a reported group-delay latency
+    /// (`fir_latency_host`). `None` for legacy (golden parity) and os==1 (nothing to resample).
+    fir: Option<FirResampler>,
     sec_in_dc: f64, // output DC offset captured at warmup; subtracted from the tap
-    prev_in: f64,   // previous host input sample (linear-interpolation upsampling state)
+    prev_in: f64,   // previous host input sample (legacy linear-interpolation upsampling state)
     last_snapshot: Option<WdfSnapshot>,
 
     // Newton-iteration instrumentation (write-only side state; never read on the audio path, so it
@@ -254,6 +259,7 @@ mod schur;
 mod newton;
 mod frozen;
 mod process;
+mod resample;
 mod snapshot;
 
 // Internal re-imports: bring submodule `pub(in crate::wdf)` helpers (e.g. `exp_bl`,
@@ -262,6 +268,7 @@ mod snapshot;
 use bjt::*;
 use config::*;
 use math::*;
+use resample::FirResampler;
 use std::sync::Arc;
 
 // Public API surface — explicit re-exports reproduce the pre-split `crate::wdf::*`

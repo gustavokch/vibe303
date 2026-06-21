@@ -48,6 +48,13 @@ impl WdfModel {
         self.ur(id)
     }
 
+    /// Group-delay latency (HOST samples) introduced by the steep linear-phase FIR resampler on the
+    /// shipped path. 0 for the legacy resampler (golden parity) and the os==1 tiers. The plugin adds
+    /// this to the host-reported latency and to the dry/wet alignment delays (`dsp.rs`).
+    pub fn fir_latency_host(&self) -> usize {
+        self.fir.as_ref().map_or(0, |f| f.latency_host())
+    }
+
     /// Flat row-major copy of the constant conductance matrix `g0` (first `u*u`
     /// entries). Diagnostic/test use only.
     pub fn g0_snapshot(&self) -> Vec<f64> {
