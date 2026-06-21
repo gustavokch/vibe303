@@ -1,4 +1,4 @@
-name: ci
+name: ci-self-hosted
 
 # Test gate. Runs the BA283 test suite on every push to main and every pull
 # request — the only workflow that runs `cargo test` (mac.yml/release.yml only
