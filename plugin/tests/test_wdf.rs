@@ -172,7 +172,11 @@ fn warmup_reaches_golden_operating_point() {
 
 #[test]
 fn decimated_output_matches_cpp() {
-    let mut m = wdf::WdfModel::new(wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
+    // The C++ golden was captured with the legacy resampler (linear-interp upsample + 4th-order
+    // Butterworth decimator). The shipped path now uses the steep linear-phase FIR (different output
+    // + group-delay latency), so pin the legacy mode here to keep the bit-for-bit C++ parity check.
+    let cfg = QualityConfig { legacy_resample: true, ..QualityConfig::realtime() };
+    let mut m = wdf::WdfModel::new_with(cfg, wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
     m.warmup();
     for (i, &x) in wdf_golden::INPUT_256.iter().enumerate() {
         let y = m.process_host_sample(x as f32);
@@ -256,7 +260,10 @@ fn fma_preset_wiring() {
 
 #[test]
 fn snapshot_restore_round_trips() {
-    let mut m = wdf::WdfModel::new(wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
+    // Legacy resampler: this test replays the golden C++ onset (OUTPUT_256), which the steep FIR
+    // path would not reproduce (different output + group-delay latency).
+    let cfg = QualityConfig { legacy_resample: true, ..QualityConfig::realtime() };
+    let mut m = wdf::WdfModel::new_with(cfg, wdf_golden::HOST_SR, 220.0, wdf_golden::BIAS);
     m.warmup();
     m.save_snapshot();
     // run some audio, then reset → should return to the settled operating point

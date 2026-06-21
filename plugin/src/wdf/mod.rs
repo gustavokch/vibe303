@@ -191,10 +191,20 @@ pub struct WdfModel {
     s_s: [f64; NUM_NODES * NUM_NODES], // per-iter Schur complement
 
     // oversampling / decimation driver (set by `new`; unused when `build` is called directly)
-    dec1: Biquad,
-    dec2: Biquad,
+    dec1: Biquad, // legacy decimator section 1 (4th-order Butterworth); used only when legacy_resample
+    dec2: Biquad, // legacy decimator section 2
+    /// Steep linear-phase FIR resampler (windowed-sinc polyphase up + decimate). `Some` on the
+    /// shipped path (`!legacy_resample` and `os > 1`); replaces the lerp upsample + Butterworth
+    /// decimator with a flat-to-20kHz response at the cost of a reported group-delay latency
+    /// (`fir_latency_host`). `None` for legacy (golden parity) and os==1 (nothing to resample).
+    fir: Option<FirResampler>,
+    /// Mirrors `cfg.legacy_resample`. Retained so the model can report a TIER-INVARIANT FIR latency
+    /// (`fir_reported_latency_host`): non-legacy tiers all report `FIR_LATENCY_HOST` regardless of
+    /// `os` (the os==1 tiers have `fir == None` but still report the constant so the host PDC never
+    /// changes on a live tier switch), while the legacy path reports 0 (golden-parity, 0-PDC).
+    legacy_resample: bool,
     sec_in_dc: f64, // output DC offset captured at warmup; subtracted from the tap
-    prev_in: f64,   // previous host input sample (linear-interpolation upsampling state)
+    prev_in: f64,   // previous host input sample (legacy linear-interpolation upsampling state)
     last_snapshot: Option<WdfSnapshot>,
 
     // Newton-iteration instrumentation (write-only side state; never read on the audio path, so it
@@ -254,6 +264,7 @@ mod schur;
 mod newton;
 mod frozen;
 mod process;
+mod resample;
 mod snapshot;
 
 // Internal re-imports: bring submodule `pub(in crate::wdf)` helpers (e.g. `exp_bl`,
@@ -262,6 +273,7 @@ mod snapshot;
 use bjt::*;
 use config::*;
 use math::*;
+use resample::FirResampler;
 use std::sync::Arc;
 
 // Public API surface — explicit re-exports reproduce the pre-split `crate::wdf::*`
@@ -276,6 +288,7 @@ pub use components::{
     bc184c, dep_sat_consts, q2n3055, Bjt, BjtParams, Biquad, Cap, DepLut, DepLutSet, Res,
 };
 pub use config::{CapTier, Oversampling, Precision, QualityConfig, Solver, OS};
+pub use resample::FIR_LATENCY_HOST;
 pub use math::{
     depletion_charge, depletion_charge_pre, diode_branch, exp_, fast_exp, fast_log,
     fast_pow_pos, pow_, ultra_exp, EXACT,

@@ -288,9 +288,12 @@ fn gain_probe_os1_tiers_track_high() {
 fn decimate_flag_changes_output() {
     // Guards against the `decimate` lever silently no-op'ing: at os=2 the decimation biquads are
     // the antialiasing decimator, so toggling them MUST change the output. (Same input, same
-    // circuit, same seed — only `decimate` toggled.)
+    // circuit, same seed — only `decimate` toggled.) The `decimate` flag gates the LEGACY Butterworth
+    // decimator; the shipped FIR resampler (default) ignores it (it always resamples), so pin
+    // `legacy_resample` here to exercise the lever this test is about.
     let host = 48_000.0;
     let mut base = QualityConfig::fast(); // os=2 tier; toggle the decimator only
+    base.legacy_resample = true;
     base.decimate = false;
     let mut filt = base; // os=2, decimate=true
     filt.decimate = true;

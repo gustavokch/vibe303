@@ -64,6 +64,9 @@ impl WdfModel {
             bq.y1 = 0.0;
             bq.y2 = 0.0;
         }
+        if let Some(fir) = self.fir.as_mut() {
+            fir.reset();
+        }
     }
 
     /// Restore to the last snapshot if present, else zero all state. Clears the decimation filters.

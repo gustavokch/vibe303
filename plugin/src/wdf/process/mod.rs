@@ -312,15 +312,35 @@ impl WdfModel {
         }
         self.in_audio_pass = true;
         let cur_in = x as f64;
+
+        // Shipped path: steep linear-phase FIR resampler (flat to ~20 kHz, group-delay latency
+        // reported to the host). Polyphase-upsample to `os` internal inputs, Newton-solve each,
+        // FIR-decimate the DC-corrected taps back to one host sample.
+        if let Some(mut fir) = self.fir.take() {
+            let mut ups = [0.0f64; super::resample::MAX_OS];
+            let mut taps = [0.0f64; super::resample::MAX_OS];
+            fir.upsample(cur_in, &mut ups);
+            for j in 0..self.os {
+                self.v[node::N_INPUT as usize] = ups[j];
+                self.process();
+                taps[j] = self.v[node::N_SEC_IN as usize] - self.sec_in_dc;
+            }
+            let y = fir.decimate(&taps[..self.os]);
+            self.fir = Some(fir);
+            self.prev_in = cur_in;
+            return y as f32;
+        }
+
+        // Legacy path: linear-interpolation upsample + Butterworth decimator (C++ golden parity,
+        // and the os==1 tiers where there is nothing to resample).
         let mut decimated = 0.0;
         for j in 0..self.os {
             let frac = (j + 1) as f64 / self.os as f64; // linear-interpolate upsample
             self.v[node::N_INPUT as usize] = self.prev_in + (cur_in - self.prev_in) * frac;
             self.process();
             let tap = self.v[node::N_SEC_IN as usize] - self.sec_in_dc;
-            // At os>1 (Realtime, and UltraFast/Warp floored to os=2 under Med/Low fixed-step) the
-            // biquads are the antialiasing decimator. At os=1 (UltraFast/Warp at High) there is
-            // nothing to decimate and `decimate=false` is the live bypass, not just an A/B knob.
+            // At os>1 the biquads are the antialiasing decimator. At os=1 (UltraFast/Warp at High)
+            // there is nothing to decimate and `decimate=false` is the live bypass.
             decimated = if self.decimate {
                 self.dec2.process(self.dec1.process(tap))
             } else {

@@ -48,6 +48,27 @@ impl WdfModel {
         self.ur(id)
     }
 
+    /// ACTUAL group-delay latency (HOST samples) of the steep linear-phase FIR resampler on THIS
+    /// tier: `FIR_LATENCY_HOST` when the FIR is live (`!legacy_resample` and `os > 1`), else 0
+    /// (legacy resampler, or the os==1 tiers where `fir == None`). Drives the per-backend wet-path
+    /// padding (`dsp.rs::resize_delays`) — the WDF wet already carries this much intrinsic delay.
+    pub fn fir_latency_host(&self) -> usize {
+        self.fir.as_ref().map_or(0, |f| f.latency_host())
+    }
+
+    /// TIER-INVARIANT FIR latency (HOST samples) the plugin REPORTS to the host: `FIR_LATENCY_HOST`
+    /// for every non-legacy tier (including the os==1 tiers, whose `fir == None` actual latency is 0
+    /// but which are padded up to this constant so the reported PDC never changes on a live tier
+    /// switch), and 0 for the legacy resampler (golden-parity, genuine 0-PDC). The padding amount on
+    /// the os==1 WDF wet path is exactly `fir_reported_latency_host() - fir_latency_host()`.
+    pub fn fir_reported_latency_host(&self) -> usize {
+        if self.legacy_resample {
+            0
+        } else {
+            super::resample::FIR_LATENCY_HOST
+        }
+    }
+
     /// Flat row-major copy of the constant conductance matrix `g0` (first `u*u`
     /// entries). Diagnostic/test use only.
     pub fn g0_snapshot(&self) -> Vec<f64> {
