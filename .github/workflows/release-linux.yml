@@ -45,8 +45,8 @@ jobs:
       - name: Install Linux build deps (if apt available)
         run: |
           if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends \
+            apt-get update
+            apt-get install -y --no-install-recommends \
               libasound2-dev libgl-dev libjack-dev libx11-xcb-dev libxcb1-dev \
               libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev libxkbcommon-dev \
               libxcb-shape0-dev libxcb-xfixes0-dev
