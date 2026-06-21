@@ -422,21 +422,30 @@ impl WdfModel {
         m.fixed_step = true;
         m.predict = false;
         m.max_iters = m.max_iters.min(2);
-        let host_sr = self.internal_sr() / self.os as f64;
-        let f = 1000.0_f64;
-        let amp = 0.05_f64; // small-signal probe level (volts); stays in the near-linear region
-        let cycle = (host_sr / f).max(1.0);
         // Settle: the restored snapshot is the settled DC operating point and G0 is current, so the
         // 1 kHz AC steady-state (well above the coupling-cap corner) re-establishes within a few
         // cycles. Kept short to bound the audio-thread cost; `probe_is_deterministic_and_pure` and
         // `probe_jitter_under_drive` pin that this stays stable and the sweep tests pin accuracy.
-        let n_settle = (cycle * 4.0) as usize; // let the AC steady-state re-establish
-        let n_meas = (cycle * 4.0) as usize; // integrate several cycles for a clean RMS
+        m.rms_gain_at(0.05, 4.0, 4.0) // small-signal probe level (volts); stays near-linear
+    }
+
+    /// Shared 1 kHz RMS voltage-gain measurement (output/input): drive a sine of amplitude `amp`
+    /// (volts) into `self` for `n_settle_cyc` settle cycles, then integrate output/input RMS over
+    /// `n_meas_cyc` cycles. The caller configures the solver fidelity (`fixed_step`/`max_iters`)
+    /// and the operating-point snapshot on `self` first; this only runs the stimulus. Used by both
+    /// `measure_gain` (cheap near-linear audio-thread probe) and `measure_gain_at` (full-solver
+    /// offline calibration) so the two can never drift in how they integrate the RMS.
+    fn rms_gain_at(&mut self, amp: f64, n_settle_cyc: f64, n_meas_cyc: f64) -> f32 {
+        let host_sr = self.internal_sr() / self.os as f64;
+        let f = 1000.0_f64;
+        let cycle = (host_sr / f).max(1.0);
+        let n_settle = (cycle * n_settle_cyc) as usize;
+        let n_meas = (cycle * n_meas_cyc) as usize;
         let w = 2.0 * std::f64::consts::PI * f / host_sr;
         let (mut in_sq, mut out_sq) = (0.0f64, 0.0f64);
         for i in 0..(n_settle + n_meas) {
             let x = amp * (w * i as f64).sin();
-            let y = m.process_host_sample(x as f32) as f64;
+            let y = self.process_host_sample(x as f32) as f64;
             if i >= n_settle {
                 in_sq += x * x;
                 out_sq += y * y;
@@ -446,6 +455,32 @@ impl WdfModel {
             return 1.0;
         }
         (out_sq / in_sq).sqrt() as f32
+    }
+
+    /// Measure the circuit's LARGE-SIGNAL voltage gain (output/input RMS) at a 1 kHz reference of
+    /// arbitrary amplitude `amp` (volts), on a scratch clone, using the FULL solver. Unlike
+    /// `measure_gain` (a cheap near-linear audio-thread probe), this is an OFFLINE calibration
+    /// helper (`bin/measure_gi`): it lets the saturating operating point settle and integrates the
+    /// saturated steady-state RMS, so it captures the gain compression the Drive-swept levelNorm
+    /// table needs (`G_sat(drive) < G_v` once Drive pushes the BJTs into saturation). Never call on
+    /// the audio thread — the full solver at a saturated operating point is far over a block budget,
+    /// and `measure_gain`'s comment documents why a live large-signal probe is unsafe (it jitters).
+    pub fn measure_gain_at(&self, amp: f64) -> f32 {
+        let mut m = self.clone();
+        // Start from the clean settled DC operating point, then drive the AC stimulus in — exactly
+        // what the live audio path does, but here with the FULL solver (no `fixed_step`/iter-cap
+        // cheapening): accuracy over speed, this is offline.
+        m.reset();
+        // Force the full solver regardless of the caller's tier: `measure_gain` cheapens its clone
+        // (`fixed_step`/iter-cap) for the audio thread, and a non-realtime caller would clone an
+        // already-cheapened model. Saturated large-signal gain needs the full Newton solve, so pin
+        // `fixed_step = false` and keep the model's full `max_iters` (the predictor re-enables itself
+        // in `process_host_sample`).
+        m.fixed_step = false;
+        // Longer settle than the small-signal probe: under drive the coupling-cap network and the
+        // saturating operating point take many more cycles to reach a stable steady state. Integrate
+        // several cycles for a clean saturated RMS.
+        m.rms_gain_at(amp, 32.0, 16.0)
     }
 
     /// Re-converge the DC operating point in place after a cheap G0 re-stamp (rgain/bias/age/trafo

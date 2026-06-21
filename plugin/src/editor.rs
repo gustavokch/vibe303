@@ -276,8 +276,10 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         hairline(ui);
         ui.add_space(SP_MD);
 
-        // levelNorm ON = neutral auto-staging: the manual INPUT/OUTPUT/LINK controls are forced
-        // neutral (the DSP ignores them) and grayed. OFF = faithful manual staging.
+        // levelNorm ON = neutral auto-staging: INPUT and LINK are forced neutral (the DSP ignores
+        // them) and grayed; OUTPUT stays LIVE as the post-normalization level trim (DRIVE now colours
+        // at constant loudness, so OUTPUT is the user's final level control). OFF = faithful manual
+        // staging (INPUT/OUTPUT/LINK all active).
         let staging_on = !p.level_norm.value();
 
         // LINK (levelNorm OFF only): slave OUTPUT to the opposite of INPUT (+X in ⇒ −X out) so the
@@ -294,14 +296,17 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         }
 
         // ── Core knob row ─────────────────────────────────────────────────────────────
-        // Signal-flow order: INPUT → DRIVE → OUTPUT → MIX. BIAS moves to the CHARACTER popup.
-        // INPUT/OUTPUT gray under levelNorm; OUTPUT also grays when LINK slaves it.
+        // Signal-flow order: INPUT → DRIVE → OUTPUT → MIX. BIAS lives in the CHARACTER popup.
+        // INPUT grays under levelNorm; OUTPUT stays live under levelNorm (post-normalization trim)
+        // and only grays when LINK slaves it.
         ui.columns(4, |cols| {
             cols[0].add_enabled_ui(staging_on, |ui| {
                 knob(ui, setter, &p.input_gain, "INPUT", 60.0);
             });
             knob(&mut cols[1], setter, &p.drive_db, "DRIVE", 60.0);
-            cols[2].add_enabled_ui(staging_on && !p.link.value(), |ui| {
+            // OUTPUT is live under levelNorm (post-normalization trim); when levelNorm is OFF it only
+            // grays while LINK slaves it. (`!staging_on` ⇒ levelNorm ON ⇒ always live, ignoring a stale LINK.)
+            cols[2].add_enabled_ui(!staging_on || !p.link.value(), |ui| {
                 knob(ui, setter, &p.output_db, "OUTPUT", 60.0);
             });
             knob(&mut cols[3], setter, &p.mix, "MIX", 60.0);
