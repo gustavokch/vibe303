@@ -313,202 +313,214 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
         // longer localized label, or a host that renders the hole slightly smaller scrolls instead
         // of clipping off-screen — the failure mode this layout originally hit. `auto_shrink=false`
         // keeps the body filling the viewport so the full-height column separators still span it.
-        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            // ── Col 1 — INPUT stage ──
-            sized_column(ui, COL_W[0], |ui| {
-                labelled_rule(ui, "INPUT");
-                ui.add_space(12.0);
-                ui.add_enabled_ui(staging_on, |ui| {
-                    knob_cell(ui, setter, &p.input_gain, "INPUT", 60.0);
-                });
-            });
-            ui.separator();
-
-            // ── Col 2 — EQUALIZER (Neve 1073/1076): backend-agnostic, ahead of the model ──
-            // Width is set by the 6-option MID frequency selector (the widest row); it also gives
-            // the EQ on/off pill enough room beside the gain knobs so its label never wraps.
-            sized_column(ui, COL_W[1], |ui| {
-                labelled_rule(ui, "EQUALIZER");
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    knob_cell(ui, setter, &p.eq_low_gain, "LOW", 60.0);
-                    ui.add_space(6.0);
-                    knob_cell(ui, setter, &p.eq_mid_gain, "MID", 60.0);
-                    ui.add_space(6.0);
-                    knob_cell(ui, setter, &p.eq_high_gain, "HIGH", 60.0);
+        let scroll = egui::ScrollArea::both().auto_shrink([false, false]);
+        scroll.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                // ── Col 1 — INPUT stage ──
+                sized_column(ui, COL_W[0], |ui| {
+                    labelled_rule(ui, "INPUT");
                     ui.add_space(12.0);
-                    ui.vertical(|ui| {
-                        ui.add_space(22.0);
-                        toggle_pill(ui, setter, &p.eq_on, "EQ");
+                    ui.add_enabled_ui(staging_on, |ui| {
+                        knob_cell(ui, setter, &p.input_gain, "INPUT", 60.0);
                     });
                 });
-                ui.add_space(8.0);
-                // Switched-frequency selectors stacked one-per-row: keeping HPF + LOW on a single
-                // row makes that row ~530px wide and balloons the whole column. Stacked, the column
-                // width is set by the 6-option MID row (~340px) and the dead space disappears.
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("HPF").font(display_font(12.0)).color(DIM));
-                    ui.add_space(6.0);
-                    segmented(ui, setter, &p.eq_hpf_freq);
-                });
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("LOW").font(display_font(12.0)).color(DIM));
-                    ui.add_space(6.0);
-                    segmented(ui, setter, &p.eq_low_freq);
-                });
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("MID").font(display_font(12.0)).color(DIM));
-                    ui.add_space(6.0);
-                    segmented(ui, setter, &p.eq_mid_freq);
-                });
-            });
-            ui.separator();
+                ui.separator();
 
-            // ── Col 3 — MODEL / CIRCUIT (the heart): circuit_gain · DRIVE · BIAS · AGE · TRANSFORMER
-            //    · quality. circuit_gain + DRIVE are backend-agnostic (stay live for NN); the rest is
-            //    WDF-only and fades/disables under the Neural Net backend. ──
-            sized_column(ui, COL_W[2], |ui| {
-                // Header is "MODEL" (not "MODEL (WDF)"): the column leads with circuit_gain + DRIVE,
-                // which are backend-agnostic and stay live under the Neural Net backend. The WDF-only
-                // scope is conveyed by the faded/disabled sub-frame and its "active in WDF mode" hint.
-                labelled_rule(ui, "MODEL");
-                ui.add_space(8.0);
-                // Always-live row (full-opacity under NN): circuit_gain self-scopes past the frame
-                // fade; DRIVE is applied in both backends.
-                ui.horizontal(|ui| {
-                    circuit_gain_cell(ui, setter, p);
+                // ── Col 2 — EQUALIZER (Neve 1073/1076): backend-agnostic, ahead of the model ──
+                // Width is set by the 6-option MID frequency selector (the widest row); it also gives
+                // the EQ on/off pill enough room beside the gain knobs so its label never wraps.
+                sized_column(ui, COL_W[1], |ui| {
+                    labelled_rule(ui, "EQUALIZER");
                     ui.add_space(8.0);
-                    knob_cell(ui, setter, &p.drive_db, "DRIVE", 60.0);
+                    ui.horizontal(|ui| {
+                        knob_cell(ui, setter, &p.eq_low_gain, "LOW", 60.0);
+                        ui.add_space(6.0);
+                        knob_cell(ui, setter, &p.eq_mid_gain, "MID", 60.0);
+                        ui.add_space(6.0);
+                        knob_cell(ui, setter, &p.eq_high_gain, "HIGH", 60.0);
+                        ui.add_space(12.0);
+                        ui.vertical(|ui| {
+                            ui.add_space(22.0);
+                            toggle_pill(ui, setter, &p.eq_on, "EQ");
+                        });
+                    });
+                    ui.add_space(8.0);
+                    // Switched-frequency selectors stacked one-per-row: keeping HPF + LOW on a single
+                    // row makes that row ~530px wide and balloons the whole column. Stacked, the column
+                    // width is set by the 6-option MID row (~340px) and the dead space disappears.
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("HPF").font(display_font(12.0)).color(DIM));
+                        ui.add_space(6.0);
+                        segmented(ui, setter, &p.eq_hpf_freq);
+                    });
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("LOW").font(display_font(12.0)).color(DIM));
+                        ui.add_space(6.0);
+                        segmented(ui, setter, &p.eq_low_freq);
+                    });
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("MID").font(display_font(12.0)).color(DIM));
+                        ui.add_space(6.0);
+                        segmented(ui, setter, &p.eq_mid_freq);
+                    });
                 });
-                ui.add_space(12.0);
+                ui.separator();
 
-                // Cross-fade + disable when the Neural Net backend is active.
-                let t = ctx.animate_bool_with_time(egui::Id::new("wdf_fade"), wdf_on, 0.15);
-                let opacity = 0.4 + 0.6 * t;
-                egui::Frame::NONE
-                    .fill(RAISED)
-                    .stroke(Stroke::new(1.0, BORDER))
-                    .inner_margin(egui::Margin::same(14))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.set_opacity(opacity);
-                        ui.add_enabled_ui(wdf_on, |ui| {
-                            // BIAS · AGE · RE-ROLL — WDF-only character controls.
-                            ui.horizontal(|ui| {
-                                knob_cell(ui, setter, &p.bias, "BIAS", 64.0);
-                                ui.add_space(8.0);
-                                knob_cell(ui, setter, &p.age, "AGE", 64.0);
-                                ui.add_space(10.0);
-                                ui.vertical(|ui| {
-                                    ui.add_space(22.0);
-                                    reroll_button(ui, setter, p);
-                                    ui.add_space(6.0);
-                                    let seed = p.age_seed.load(Ordering::Relaxed);
-                                    ui.label(
-                                        RichText::new(format!("UNIT {:04X}", seed & 0xFFFF))
-                                            .font(value_font(12.0))
-                                            .color(DIM),
-                                    );
-                                });
-                            });
+                // ── Col 3 — MODEL / CIRCUIT (the heart): circuit_gain · DRIVE · BIAS · AGE · TRANSFORMER
+                //    · quality. circuit_gain + DRIVE are backend-agnostic (stay live for NN); the rest is
+                //    WDF-only and fades/disables under the Neural Net backend. ──
+                sized_column(ui, COL_W[2], |ui| {
+                    // Header is "MODEL" (not "MODEL (WDF)"): the column leads with circuit_gain + DRIVE,
+                    // which are backend-agnostic and stay live under the Neural Net backend. The WDF-only
+                    // scope is conveyed by the faded/disabled sub-frame and its "active in WDF mode" hint.
+                    labelled_rule(ui, "MODEL");
+                    ui.add_space(8.0);
+                    // Always-live row (full-opacity under NN): circuit_gain self-scopes past the frame
+                    // fade; DRIVE is applied in both backends.
+                    ui.horizontal(|ui| {
+                        circuit_gain_cell(ui, setter, p);
+                        ui.add_space(8.0);
+                        knob_cell(ui, setter, &p.drive_db, "DRIVE", 60.0);
+                    });
+                    ui.add_space(12.0);
 
-                            ui.add_space(12.0);
-                            hairline(ui);
-                            ui.add_space(12.0);
-
-                            // ── TRANSFORMER (Jiles-Atherton core): pill on its own line above the
-                            //    two dials so it never crowds them off the column's right edge. ──
-                            #[cfg(feature = "trafo-core")]
-                            {
+                    // Cross-fade + disable when the Neural Net backend is active.
+                    let t = ctx.animate_bool_with_time(egui::Id::new("wdf_fade"), wdf_on, 0.15);
+                    let opacity = 0.4 + 0.6 * t;
+                    egui::Frame::NONE
+                        .fill(RAISED)
+                        .stroke(Stroke::new(1.0, BORDER))
+                        .inner_margin(egui::Margin::same(14))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.set_opacity(opacity);
+                            ui.add_enabled_ui(wdf_on, |ui| {
+                                // BIAS · AGE · RE-ROLL — WDF-only character controls.
                                 ui.horizontal(|ui| {
+                                    knob_cell(ui, setter, &p.bias, "BIAS", 64.0);
+                                    ui.add_space(8.0);
+                                    knob_cell(ui, setter, &p.age, "AGE", 64.0);
+                                    ui.add_space(10.0);
                                     ui.vertical(|ui| {
                                         ui.add_space(22.0);
-                                        toggle_pill(ui, setter, &p.trafo_on, "TRANSFORMER");
+                                        reroll_button(ui, setter, p);
+                                        ui.add_space(6.0);
+                                        let seed = p.age_seed.load(Ordering::Relaxed);
+                                        ui.label(
+                                            RichText::new(format!("UNIT {:04X}", seed & 0xFFFF))
+                                                .font(value_font(12.0))
+                                                .color(DIM),
+                                        );
                                     });
-                                    ui.add_space(12.0);
-                                    knob_cell(ui, setter, &p.trafo_hyst, "HYSTERESIS", 64.0);
-                                    ui.add_space(8.0);
-                                    knob_cell(ui, setter, &p.trafo_sat, "SATURATION", 64.0);
                                 });
+
                                 ui.add_space(12.0);
                                 hairline(ui);
                                 ui.add_space(12.0);
-                            }
 
-                            // Quality selectors — stacked rows (each fits the column width; the
-                            // original single wide row would overflow a 300px column).
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("TIER").font(display_font(12.0)).color(DIM));
-                                ui.add_space(6.0);
-                                segmented(ui, setter, &p.wdf_tier);
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("PRECISION").font(display_font(12.0)).color(DIM));
-                                ui.add_space(6.0);
-                                segmented(ui, setter, &p.precision);
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("OVERSAMPLING").font(display_font(12.0)).color(DIM));
-                                ui.add_space(6.0);
-                                segmented(ui, setter, &p.oversampling);
-                                // Adaptive level-gated oversampling: only meaningful on the lossy
-                                // tiers (UltraFast/Warp) under Oversampling = Auto. Greyed elsewhere.
-                                #[cfg(feature = "adaptive-os")]
+                                // ── TRANSFORMER (Jiles-Atherton core): pill on its own line above the
+                                //    two dials so it never crowds them off the column's right edge. ──
+                                #[cfg(feature = "trafo-core")]
                                 {
-                                    let adaptive_scope = matches!(
-                                        p.wdf_tier.value(),
-                                        WdfTier::UltraFast | WdfTier::Warp
-                                    ) && p.oversampling.value() == Oversampling::Auto;
-                                    ui.add_space(16.0);
-                                    ui.add_enabled_ui(adaptive_scope, |ui| {
-                                        toggle_pill(ui, setter, &p.adaptive_os, "ADAPTIVE OS");
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.add_space(22.0);
+                                            toggle_pill(ui, setter, &p.trafo_on, "TRANSFORMER");
+                                        });
+                                        ui.add_space(12.0);
+                                        knob_cell(ui, setter, &p.trafo_hyst, "HYSTERESIS", 64.0);
+                                        ui.add_space(8.0);
+                                        knob_cell(ui, setter, &p.trafo_sat, "SATURATION", 64.0);
                                     });
+                                    ui.add_space(12.0);
+                                    hairline(ui);
+                                    ui.add_space(12.0);
                                 }
+
+                                // Quality selectors — stacked rows (each fits the column width; the
+                                // original single wide row would overflow a 300px column).
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("TIER").font(display_font(12.0)).color(DIM),
+                                    );
+                                    ui.add_space(6.0);
+                                    segmented(ui, setter, &p.wdf_tier);
+                                });
+                                ui.add_space(6.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("PRECISION")
+                                            .font(display_font(12.0))
+                                            .color(DIM),
+                                    );
+                                    ui.add_space(6.0);
+                                    segmented(ui, setter, &p.precision);
+                                });
+                                ui.add_space(6.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("OVERSAMPLING")
+                                            .font(display_font(12.0))
+                                            .color(DIM),
+                                    );
+                                    ui.add_space(6.0);
+                                    segmented(ui, setter, &p.oversampling);
+                                    // Adaptive level-gated oversampling: only meaningful on the lossy
+                                    // tiers (UltraFast/Warp) under Oversampling = Auto. Greyed elsewhere.
+                                    #[cfg(feature = "adaptive-os")]
+                                    {
+                                        let adaptive_scope = matches!(
+                                            p.wdf_tier.value(),
+                                            WdfTier::UltraFast | WdfTier::Warp
+                                        ) && p.oversampling.value()
+                                            == Oversampling::Auto;
+                                        ui.add_space(16.0);
+                                        ui.add_enabled_ui(adaptive_scope, |ui| {
+                                            toggle_pill(ui, setter, &p.adaptive_os, "ADAPTIVE OS");
+                                        });
+                                    }
+                                });
                             });
                         });
+
+                    if !wdf_on {
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("Circuit controls active in WDF mode")
+                                .font(display_font(11.0))
+                                .color(DIM)
+                                .extra_letter_spacing(1.0),
+                        );
+                    }
+                });
+                ui.separator();
+
+                // ── Col 4 — OUTPUT stage: DPR (output-path phase rotator) → OUTPUT gain → MIX ──
+                sized_column(ui, COL_W[3], |ui| {
+                    labelled_rule(ui, "OUTPUT");
+                    ui.add_space(12.0);
+                    // DPR (Dual Phase Rotator) — all-pass phase rotator after the model + levelNorm,
+                    // before the output gain; reshapes waveform asymmetry without touching magnitude.
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.add_space(22.0);
+                            toggle_pill(ui, setter, &p.dpr_on, "DPR");
+                        });
+                        ui.add_space(8.0);
+                        ui.add_enabled_ui(p.dpr_on.value(), |ui| {
+                            knob_cell(ui, setter, &p.dpr_amount, "AMOUNT", 60.0);
+                        });
                     });
-
-                if !wdf_on {
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Circuit controls active in WDF mode")
-                            .font(display_font(11.0))
-                            .color(DIM)
-                            .extra_letter_spacing(1.0),
-                    );
-                }
-            });
-            ui.separator();
-
-            // ── Col 4 — OUTPUT stage: DPR (output-path phase rotator) → OUTPUT gain → MIX ──
-            sized_column(ui, COL_W[3], |ui| {
-                labelled_rule(ui, "OUTPUT");
-                ui.add_space(12.0);
-                // DPR (Dual Phase Rotator) — all-pass phase rotator after the model + levelNorm,
-                // before the output gain; reshapes waveform asymmetry without touching magnitude.
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.add_space(22.0);
-                        toggle_pill(ui, setter, &p.dpr_on, "DPR");
+                    ui.add_space(12.0);
+                    ui.add_enabled_ui(staging_on && !p.link.value(), |ui| {
+                        knob_cell(ui, setter, &p.output_db, "OUTPUT", 60.0);
                     });
                     ui.add_space(8.0);
-                    ui.add_enabled_ui(p.dpr_on.value(), |ui| {
-                        knob_cell(ui, setter, &p.dpr_amount, "AMOUNT", 60.0);
-                    });
+                    knob_cell(ui, setter, &p.mix, "MIX", 60.0);
                 });
-                ui.add_space(12.0);
-                ui.add_enabled_ui(staging_on && !p.link.value(), |ui| {
-                    knob_cell(ui, setter, &p.output_db, "OUTPUT", 60.0);
-                });
-                ui.add_space(8.0);
-                knob_cell(ui, setter, &p.mix, "MIX", 60.0);
             });
-        });
         });
     });
 }
