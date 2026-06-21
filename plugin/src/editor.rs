@@ -26,15 +26,16 @@ const DIM: Color32 = Color32::from_rgb(0x8A, 0x82, 0x7A);
 const AMBER: Color32 = Color32::from_rgb(0xD9, 0x8A, 0x3D);
 const OXBLOOD: Color32 = Color32::from_rgb(0x9E, 0x3B, 0x2E);
 
-// ── Spacing scale ───────────────────────────────────────────────────────────────────────
-// Hand-tuned step scale (4 / 8 / 12 / 16 / 24 — not strictly geometric). The layout's
-// `add_space` calls draw from these named steps rather than bare literals so the vertical
-// rhythm lives in one place and can be retuned without hunting through the layout.
-const SP_XS: f32 = 4.0;    // tight: inline label-to-control nudges
-const SP_SM: f32 = 8.0;    // cozy: between sibling knobs/pills
-const SP_SNUG: f32 = 12.0; // snug: asymmetric frame margin, tight inline gaps
-const SP_MD: f32 = 16.0;   // section-internal: post-rule, between control rows, pill v-align
-const SP_LG: f32 = 24.0;   // major: between logical sections (header→knobs, section→section)
+// ── Spacing scale (px) ──────────────────────────────────────────────────────────────────
+// Every `add_space` in the layout draws from this set — no magic numbers. Tight tokens group
+// related controls; larger tokens break between stages. The full-height column rules carry the
+// major left→right separation, so the vertical scale stays fine-grained inside each column.
+const SP_XS: f32 = 6.0; // tightest: intra-group row gaps
+const SP_SM: f32 = 8.0; // cozy: between sibling controls
+const SP_RULE: f32 = 10.0; // breathing room around an inline rule
+const SP_MD: f32 = 12.0; // snug: frame margins, label-to-control
+const SP_LG: f32 = 16.0; // section-internal: between control rows
+const SP_XL: f32 = 22.0; // major: between logical sections within a column
 
 /// Condensed silkscreen family (labels / wordmark).
 fn display_font(size: f32) -> FontId {
@@ -247,12 +248,41 @@ fn apply_theme(ctx: &egui::Context) {
 
 // ── Layout ──────────────────────────────────────────────────────────────────────────────
 
+/// Default editor canvas size, in logical points (egui zoom scales the whole canvas uniformly,
+/// so these are the layout budget regardless of host DPI). Single source of truth: `lib.rs`
+/// passes these to `EguiState::from_size`, and `columns_fit_window` (tests) asserts the
+/// signal-flow columns fit inside `EDITOR_W`. Change the width here and the test catches drift.
+pub(crate) const EDITOR_W: u32 = 1040;
+pub(crate) const EDITOR_H: u32 = 660;
+
+/// Fixed logical widths of the four signal-flow columns: INPUT · EQUALIZER · MODEL · OUTPUT.
+/// Hoisted to a const so the layout and the fit-test (`columns_fit_window`) share one budget.
+const COL_W: [f32; 4] = [92.0, 360.0, 320.0, 140.0];
+
 fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
     // Variant 0 = NeuralNet, 1 = Wdf. Avoid importing the enum: read the normalized value.
     let wdf_on = p.backend.modulated_normalized_value() > 0.5;
 
     egui::CentralPanel::default().show(ctx, |ui| {
-        // ── Header: wordmark + backend toggle ─────────────────────────────────────────
+        // levelNorm ON = neutral auto-staging: the manual INPUT/OUTPUT/LINK controls are forced
+        // neutral (the DSP ignores them) and grayed. OFF = faithful manual staging.
+        let staging_on = !p.level_norm.value();
+
+        // LINK (levelNorm OFF only): slave OUTPUT to the opposite of INPUT (+X in ⇒ −X out) so the
+        // user pushes the circuit hot while the net output level stays put. Driven here from the
+        // editor so automation/host see consistent values; the DSP just reads both params. The OUTPUT
+        // knob is disabled below while linked, so this never fights a user drag. Runs every frame
+        // regardless of layout.
+        if staging_on && p.link.value() {
+            let desired = (-p.input_gain.value()).clamp(-24.0, 12.0);
+            if (p.output_db.value() - desired).abs() > 0.01 {
+                setter.begin_set_parameter(&p.output_db);
+                setter.set_parameter(&p.output_db, desired);
+                setter.end_set_parameter(&p.output_db);
+            }
+        }
+
+        // ── Top bar: wordmark + backend + global staging modes ────────────────────────
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("BA283")
@@ -267,242 +297,244 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                     .color(DIM)
                     .extra_letter_spacing(3.0),
             );
+            // GOTCHA: this `right_to_left` MUST stay wrapped in `ui.horizontal` — placed directly in
+            // the top-down panel it claims the full height to vertically-centre and shoves the
+            // columns off the bottom. LEVEL NORM / LINK live here (a global bar), not under a knob,
+            // because they gate controls in two different columns (INPUT col 1, OUTPUT col 4).
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(staging_on, |ui| {
+                    toggle_pill(ui, setter, &p.link, "LINK");
+                });
+                ui.add_space(SP_SM);
+                toggle_pill(ui, setter, &p.level_norm, "LEVEL NORM");
+                ui.add_space(SP_LG);
                 segmented(ui, setter, &p.backend);
             });
         });
 
-        ui.add_space(SP_SM);
-        hairline(ui);
-        ui.add_space(SP_MD);
-
-        // levelNorm ON = neutral auto-staging: INPUT and LINK are forced neutral (the DSP ignores
-        // them) and grayed; OUTPUT stays LIVE as the post-normalization level trim (DRIVE now colours
-        // at constant loudness, so OUTPUT is the user's final level control). OFF = faithful manual
-        // staging (INPUT/OUTPUT/LINK all active).
-        let staging_on = !p.level_norm.value();
-
-        // LINK (levelNorm OFF only): slave OUTPUT to the opposite of INPUT (+X in ⇒ −X out) so the
-        // user pushes the circuit hot while the net output level stays put. Driven here from the
-        // editor so automation/host see consistent values; the DSP just reads both params. The OUTPUT
-        // knob is disabled below while linked, so this never fights a user drag.
-        if staging_on && p.link.value() {
-            let desired = (-p.input_gain.value()).clamp(-24.0, 12.0);
-            if (p.output_db.value() - desired).abs() > 0.01 {
-                setter.begin_set_parameter(&p.output_db);
-                setter.set_parameter(&p.output_db, desired);
-                setter.end_set_parameter(&p.output_db);
-            }
-        }
-
-        // ── Core knob row ─────────────────────────────────────────────────────────────
-        // Signal-flow order: INPUT → DRIVE → OUTPUT → MIX. BIAS lives in the CHARACTER popup.
-        // INPUT grays under levelNorm; OUTPUT stays live under levelNorm (post-normalization trim)
-        // and only grays when LINK slaves it.
-        ui.columns(4, |cols| {
-            cols[0].add_enabled_ui(staging_on, |ui| {
-                knob(ui, setter, &p.input_gain, "INPUT", 60.0);
-            });
-            knob(&mut cols[1], setter, &p.drive_db, "DRIVE", 60.0);
-            // OUTPUT is live under levelNorm (post-normalization trim); when levelNorm is OFF it only
-            // grays while LINK slaves it. (`!staging_on` ⇒ levelNorm ON ⇒ always live, ignoring a stale LINK.)
-            cols[2].add_enabled_ui(!staging_on || !p.link.value(), |ui| {
-                knob(ui, setter, &p.output_db, "OUTPUT", 60.0);
-            });
-            knob(&mut cols[3], setter, &p.mix, "MIX", 60.0);
-        });
-
-        ui.add_space(SP_SM);
-
-        // Level-norm + link pills, right-aligned under the knob row. The `right_to_left` layout MUST
-        // be nested in a `ui.horizontal` (as the header is): placed directly in the top-down panel it
-        // claims the full remaining height to vertically-center, pushing the CIRCUIT panel off the
-        // bottom of the viewport. The horizontal wrapper bounds the row to its content height.
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                toggle_pill(ui, setter, &p.level_norm, "LEVEL NORM");
-                ui.add_space(SP_SM);
-                ui.add_enabled_ui(staging_on, |ui| {
-                    toggle_pill(ui, setter, &p.link, "LINK");
-                });
-            });
-        });
-
-        ui.add_space(SP_LG);
-
-        // ── DPR (Dual Phase Rotator) — output-path all-pass phase rotator. Sits after the model +
-        //    levelNorm and before the output gain; reshapes waveform asymmetry without touching the
-        //    magnitude spectrum. Grouped with the output-stage controls above. ──
-        labelled_rule(ui, "DPR — PHASE ROTATOR");
-        ui.add_space(SP_MD);
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.add_space(SP_MD);
-                toggle_pill(ui, setter, &p.dpr_on, "DPR");
-            });
-            ui.add_space(SP_SNUG);
-            ui.add_enabled_ui(p.dpr_on.value(), |ui| {
-                knob_cell(ui, setter, &p.dpr_amount, "AMOUNT", 60.0);
-            });
-        });
-
-        ui.add_space(SP_LG);
-
-        // ── EQUALIZER (Neve 1073/1076) — backend-agnostic, sits ahead of the model, so OUTSIDE the
-        //    WDF-only CIRCUIT panel. Gain knobs row + switched-frequency selector rows + ON/OFF. ──
-        labelled_rule(ui, "EQUALIZER");
-        ui.add_space(SP_MD);
-        ui.horizontal(|ui| {
-            knob_cell(ui, setter, &p.eq_low_gain, "LOW", 60.0);
-            ui.add_space(SP_SM);
-            knob_cell(ui, setter, &p.eq_mid_gain, "MID", 60.0);
-            ui.add_space(SP_SM);
-            knob_cell(ui, setter, &p.eq_high_gain, "HIGH", 60.0);
-            ui.add_space(SP_SM);
-            ui.vertical(|ui| {
-                ui.add_space(SP_MD);
-                toggle_pill(ui, setter, &p.eq_on, "EQ");
-            });
-        });
-        ui.add_space(SP_SM);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("HPF").font(display_font(12.0)).color(DIM));
-            ui.add_space(SP_XS);
-            segmented(ui, setter, &p.eq_hpf_freq);
-            ui.add_space(SP_MD);
-            ui.label(RichText::new("LOW").font(display_font(12.0)).color(DIM));
-            ui.add_space(SP_XS);
-            segmented(ui, setter, &p.eq_low_freq);
-        });
         ui.add_space(SP_XS);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("MID").font(display_font(12.0)).color(DIM));
-            ui.add_space(SP_XS);
-            segmented(ui, setter, &p.eq_mid_freq);
-        });
-
+        hairline(ui);
         ui.add_space(SP_LG);
 
-        // ── CIRCUIT (WDF) sub-panel ───────────────────────────────────────────────────
-        // Section header with CHARACTER popup trigger on the right.
-        let char_popup_id = ui.make_persistent_id("ba283_character_popup");
-        ui.horizontal(|ui| {
-            labelled_rule_inline(ui, "CIRCUIT (WDF)");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Click-to-toggle: read current open state, flip on click.
-                let is_open: bool = ui.memory(|m| m.data.get_temp(char_popup_id).unwrap_or(false));
-                // ASCII caret (^ / v) not a Unicode triangle: the condensed display font has no
-                // ▴/▾ glyph, so the triangle rendered as a tofu "?".
-                let chevron = if is_open { "CHARACTER ^" } else { "CHARACTER v" };
-                let btn = ui.add(
-                    egui::Button::new(
-                        RichText::new(chevron)
-                            .font(display_font(12.0))
-                            .color(if is_open { TEXT } else { DIM })
-                            .extra_letter_spacing(1.0),
-                    )
-                    .fill(if is_open { RAISED } else { egui::Color32::TRANSPARENT })
-                    .stroke(Stroke::new(1.0, if is_open { BORDER } else { egui::Color32::TRANSPARENT })),
-                );
-                if btn.clicked() {
-                    ui.memory_mut(|m| m.data.insert_temp(char_popup_id, !is_open));
-                }
-            });
-        });
-        ui.add_space(SP_MD);
-
-        // Circuit Gain — backend-AGNOSTIC: it sets the WDF R_KJ leg AND conditions the NeuralNet
-        // (FiLM gain-norm). Kept OUTSIDE the popup and the WDF-fade frame so it stays always-visible
-        // + full-opacity in NN mode (where the WDF panel is greyed). `circuit_gain_cell` forces its
-        // own enabled + opacity scope, so it needs no gating here.
-        ui.horizontal(|ui| {
-            circuit_gain_cell(ui, setter, p);
-        });
-        ui.add_space(SP_MD);
-
-        // CHARACTER popup — Bias, Age, Re-roll (all WDF-only).
-        // Drawn ABOVE the CIRCUIT frame (outside the opacity/disable scope) so the popup
-        // is always fully visible. The controls inside handle their own enable states.
-        let char_open: bool = ui.memory(|m| m.data.get_temp(char_popup_id).unwrap_or(false));
-        if char_open {
-            character_popup(ui, setter, p, wdf_on);
-            ui.add_space(SP_MD);
-        }
-
-        // Cross-fade + disable when the Neural Net backend is active.
-        let t = ctx.animate_bool_with_time(egui::Id::new("wdf_fade"), wdf_on, 0.15);
-        let opacity = 0.4 + 0.6 * t;
-
-        egui::Frame::NONE
-            .fill(RAISED)
-            .stroke(Stroke::new(1.0, BORDER))
-            .inner_margin(egui::Margin {
-                top: SP_MD as i8,
-                bottom: SP_SNUG as i8,
-                left: SP_MD as i8,
-                right: SP_MD as i8,
-            })
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.set_opacity(opacity);
-                ui.add_enabled_ui(wdf_on, |ui| {
-                    // ── TRANSFORMER (Jiles-Atherton core) ─────────────────────────────
-                    #[cfg(feature = "trafo-core")]
-                    {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.add_space(SP_LG);
-                                toggle_pill(ui, setter, &p.trafo_on, "TRANSFORMER");
-                            });
-                            ui.add_space(SP_SM);
-                            knob_cell(ui, setter, &p.trafo_hyst, "HYSTERESIS", 64.0);
-                            ui.add_space(SP_SM);
-                            knob_cell(ui, setter, &p.trafo_sat, "SATURATION", 64.0);
-                        });
-                        ui.add_space(SP_MD);
-                        hairline(ui);
-                        ui.add_space(SP_MD);
-                    }
-
-                    // ── Quality selectors ──────────────────────────────────────────────
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("TIER").font(display_font(12.0)).color(DIM));
-                        ui.add_space(SP_XS);
-                        segmented(ui, setter, &p.wdf_tier);
-                        ui.add_space(SP_MD);
-                        ui.label(RichText::new("PRECISION").font(display_font(12.0)).color(DIM));
-                        ui.add_space(SP_XS);
-                        segmented(ui, setter, &p.precision);
-                        ui.add_space(SP_MD);
-                        ui.label(RichText::new("OVERSAMPLING").font(display_font(12.0)).color(DIM));
-                        ui.add_space(SP_XS);
-                        segmented(ui, setter, &p.oversampling);
-                        // Adaptive level-gated oversampling: only meaningful on the lossy tiers
-                        // (UltraFast/Warp) under Oversampling = Auto. Greyed out elsewhere.
-                        #[cfg(feature = "adaptive-os")]
-                        {
-                            let adaptive_scope = matches!(
-                                p.wdf_tier.value(),
-                                WdfTier::UltraFast | WdfTier::Warp
-                            ) && p.oversampling.value() == Oversampling::Auto;
-                            ui.add_space(SP_MD);
-                            ui.add_enabled_ui(adaptive_scope, |ui| {
-                                toggle_pill(ui, setter, &p.adaptive_os, "ADAPTIVE OS");
-                            });
-                        }
+        // ── Signal-flow columns, left→right: INPUT · EQUALIZER · MODEL · OUTPUT. Each column is a
+        //    fixed-width top-down cell; the `ui.separator()` between them renders a full-height
+        //    vertical rule (bounded by this outer horizontal, so NOT the right_to_left trap). ──
+        // Wrapped in a `ScrollArea` so the layout is structurally clip-proof: the default
+        // `1040×660` window fits everything (no scrollbars appear), but a future control row, a
+        // longer localized label, or a host that renders the hole slightly smaller scrolls instead
+        // of clipping off-screen — the failure mode this layout originally hit. `auto_shrink=false`
+        // keeps the body filling the viewport so the full-height column separators still span it.
+        let scroll = egui::ScrollArea::both().auto_shrink([false, false]);
+        scroll.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                // ── Col 1 — INPUT stage ──
+                sized_column(ui, COL_W[0], |ui| {
+                    labelled_rule(ui, "INPUT");
+                    ui.add_space(SP_MD);
+                    ui.add_enabled_ui(staging_on, |ui| {
+                        knob_cell(ui, setter, &p.input_gain, "INPUT", 60.0);
                     });
                 });
-            });
+                ui.separator();
 
-        if !wdf_on {
-            ui.add_space(SP_XS);
-            ui.label(
-                RichText::new("Circuit controls active in WDF mode")
-                    .font(display_font(11.0))
-                    .color(DIM)
-                    .extra_letter_spacing(1.0),
-            );
-        }
+                // ── Col 2 — EQUALIZER (Neve 1073/1076): backend-agnostic, ahead of the model ──
+                // Width is set by the 6-option MID frequency selector (the widest row); it also gives
+                // the EQ on/off pill enough room beside the gain knobs so its label never wraps.
+                sized_column(ui, COL_W[1], |ui| {
+                    labelled_rule(ui, "EQUALIZER");
+                    ui.add_space(SP_SM);
+                    ui.horizontal(|ui| {
+                        knob_cell(ui, setter, &p.eq_low_gain, "LOW", 60.0);
+                        ui.add_space(SP_XS);
+                        knob_cell(ui, setter, &p.eq_mid_gain, "MID", 60.0);
+                        ui.add_space(SP_XS);
+                        knob_cell(ui, setter, &p.eq_high_gain, "HIGH", 60.0);
+                        ui.add_space(SP_MD);
+                        ui.vertical(|ui| {
+                            ui.add_space(SP_XL);
+                            toggle_pill(ui, setter, &p.eq_on, "EQ");
+                        });
+                    });
+                    ui.add_space(SP_SM);
+                    // Switched-frequency selectors stacked one-per-row: keeping HPF + LOW on a single
+                    // row makes that row ~530px wide and balloons the whole column. Stacked, the column
+                    // width is set by the 6-option MID row (~340px) and the dead space disappears.
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("HPF").font(display_font(12.0)).color(DIM));
+                        ui.add_space(SP_XS);
+                        segmented(ui, setter, &p.eq_hpf_freq);
+                    });
+                    ui.add_space(SP_XS);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("LOW").font(display_font(12.0)).color(DIM));
+                        ui.add_space(SP_XS);
+                        segmented(ui, setter, &p.eq_low_freq);
+                    });
+                    ui.add_space(SP_XS);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("MID").font(display_font(12.0)).color(DIM));
+                        ui.add_space(SP_XS);
+                        segmented(ui, setter, &p.eq_mid_freq);
+                    });
+                });
+                ui.separator();
+
+                // ── Col 3 — MODEL / CIRCUIT (the heart): circuit_gain · DRIVE · BIAS · AGE · TRANSFORMER
+                //    · quality. circuit_gain + DRIVE are backend-agnostic (stay live for NN); the rest is
+                //    WDF-only and fades/disables under the Neural Net backend. ──
+                sized_column(ui, COL_W[2], |ui| {
+                    // Header is "MODEL" (not "MODEL (WDF)"): the column leads with circuit_gain + DRIVE,
+                    // which are backend-agnostic and stay live under the Neural Net backend. The WDF-only
+                    // scope is conveyed by the faded/disabled sub-frame and its "active in WDF mode" hint.
+                    labelled_rule(ui, "MODEL");
+                    ui.add_space(SP_SM);
+                    // Always-live row (full-opacity under NN): circuit_gain self-scopes past the frame
+                    // fade; DRIVE is applied in both backends.
+                    ui.horizontal(|ui| {
+                        circuit_gain_cell(ui, setter, p);
+                        ui.add_space(SP_SM);
+                        knob_cell(ui, setter, &p.drive_db, "DRIVE", 60.0);
+                    });
+                    ui.add_space(SP_MD);
+
+                    // Cross-fade + disable when the Neural Net backend is active.
+                    let t = ctx.animate_bool_with_time(egui::Id::new("wdf_fade"), wdf_on, 0.15);
+                    let opacity = 0.4 + 0.6 * t;
+                    egui::Frame::NONE
+                        .fill(RAISED)
+                        .stroke(Stroke::new(1.0, BORDER))
+                        .inner_margin(egui::Margin::same(14))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.set_opacity(opacity);
+                            ui.add_enabled_ui(wdf_on, |ui| {
+                                // BIAS · AGE · RE-ROLL — WDF-only character controls.
+                                ui.horizontal(|ui| {
+                                    knob_cell(ui, setter, &p.bias, "BIAS", 64.0);
+                                    ui.add_space(SP_SM);
+                                    knob_cell(ui, setter, &p.age, "AGE", 64.0);
+                                    ui.add_space(SP_RULE);
+                                    ui.vertical(|ui| {
+                                        ui.add_space(SP_XL);
+                                        reroll_button(ui, setter, p);
+                                        ui.add_space(SP_XS);
+                                        let seed = p.age_seed.load(Ordering::Relaxed);
+                                        ui.label(
+                                            RichText::new(format!("UNIT {:04X}", seed & 0xFFFF))
+                                                .font(value_font(12.0))
+                                                .color(DIM),
+                                        );
+                                    });
+                                });
+
+                                ui.add_space(SP_MD);
+                                hairline(ui);
+                                ui.add_space(SP_MD);
+
+                                // ── TRANSFORMER (Jiles-Atherton core): pill on its own line above the
+                                //    two dials so it never crowds them off the column's right edge. ──
+                                #[cfg(feature = "trafo-core")]
+                                {
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.add_space(SP_XL);
+                                            toggle_pill(ui, setter, &p.trafo_on, "TRANSFORMER");
+                                        });
+                                        ui.add_space(SP_MD);
+                                        knob_cell(ui, setter, &p.trafo_hyst, "HYSTERESIS", 64.0);
+                                        ui.add_space(SP_SM);
+                                        knob_cell(ui, setter, &p.trafo_sat, "SATURATION", 64.0);
+                                    });
+                                    ui.add_space(SP_MD);
+                                    hairline(ui);
+                                    ui.add_space(SP_MD);
+                                }
+
+                                // Quality selectors — stacked rows (each fits the column width; the
+                                // original single wide row would overflow a 300px column).
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("TIER").font(display_font(12.0)).color(DIM),
+                                    );
+                                    ui.add_space(SP_XS);
+                                    segmented(ui, setter, &p.wdf_tier);
+                                });
+                                ui.add_space(SP_XS);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("PRECISION")
+                                            .font(display_font(12.0))
+                                            .color(DIM),
+                                    );
+                                    ui.add_space(SP_XS);
+                                    segmented(ui, setter, &p.precision);
+                                });
+                                ui.add_space(SP_XS);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("OVERSAMPLING")
+                                            .font(display_font(12.0))
+                                            .color(DIM),
+                                    );
+                                    ui.add_space(SP_XS);
+                                    segmented(ui, setter, &p.oversampling);
+                                    // Adaptive level-gated oversampling: only meaningful on the lossy
+                                    // tiers (UltraFast/Warp) under Oversampling = Auto. Greyed elsewhere.
+                                    #[cfg(feature = "adaptive-os")]
+                                    {
+                                        let adaptive_scope = matches!(
+                                            p.wdf_tier.value(),
+                                            WdfTier::UltraFast | WdfTier::Warp
+                                        ) && p.oversampling.value()
+                                            == Oversampling::Auto;
+                                        ui.add_space(SP_LG);
+                                        ui.add_enabled_ui(adaptive_scope, |ui| {
+                                            toggle_pill(ui, setter, &p.adaptive_os, "ADAPTIVE OS");
+                                        });
+                                    }
+                                });
+                            });
+                        });
+
+                    if !wdf_on {
+                        ui.add_space(SP_XS);
+                        ui.label(
+                            RichText::new("Circuit controls active in WDF mode")
+                                .font(display_font(11.0))
+                                .color(DIM)
+                                .extra_letter_spacing(1.0),
+                        );
+                    }
+                });
+                ui.separator();
+
+                // ── Col 4 — OUTPUT stage: DPR (output-path phase rotator) → OUTPUT gain → MIX ──
+                sized_column(ui, COL_W[3], |ui| {
+                    labelled_rule(ui, "OUTPUT");
+                    ui.add_space(SP_MD);
+                    // DPR (Dual Phase Rotator) — all-pass phase rotator after the model + levelNorm,
+                    // before the output gain; reshapes waveform asymmetry without touching magnitude.
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.add_space(SP_XL);
+                            toggle_pill(ui, setter, &p.dpr_on, "DPR");
+                        });
+                        ui.add_space(SP_SM);
+                        ui.add_enabled_ui(p.dpr_on.value(), |ui| {
+                            knob_cell(ui, setter, &p.dpr_amount, "AMOUNT", 60.0);
+                        });
+                    });
+                    ui.add_space(SP_MD);
+                    // OUTPUT is live under levelNorm (post-normalization trim); when levelNorm is OFF
+                    // it only grays while LINK slaves it. (`!staging_on` ⇒ levelNorm ON ⇒ always live.)
+                    ui.add_enabled_ui(!staging_on || !p.link.value(), |ui| {
+                        knob_cell(ui, setter, &p.output_db, "OUTPUT", 60.0);
+                    });
+                    ui.add_space(SP_SM);
+                    knob_cell(ui, setter, &p.mix, "MIX", 60.0);
+                });
+            });
+        });
     });
 }
 
@@ -516,28 +548,44 @@ fn hairline(ui: &mut egui::Ui) {
     );
 }
 
+/// Lay `add` into a fixed-width, top-down column. Used by the signal-flow column row so each
+/// stage pins to its own width — a bare `ui.vertical` sizes to content and the columns drift
+/// ragged. Height claims the panel's remaining height so the inter-column `ui.separator()` rules
+/// span the full body. This full-height claim is bounded by the outer `ui.horizontal`, so unlike a
+/// bare `right_to_left` it does NOT shove content off the bottom.
+///
+/// INVARIANT: this relies on being called as a direct child of a `ui.horizontal` — there every
+/// sibling sees the same `available_height` (a horizontal layout consumes width, not height), so
+/// all columns claim equal full height and the inter-column separators line up. Nest `sized_column`
+/// inside a vertical/top-down layout and that no longer holds — the separators would ragged.
+fn sized_column(ui: &mut egui::Ui, w: f32, add: impl FnOnce(&mut egui::Ui)) {
+    let h = ui.available_height();
+    ui.allocate_ui_with_layout(
+        egui::vec2(w, h),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.set_width(w);
+            add(ui);
+        },
+    );
+}
+
 /// A section rule with a left-aligned condensed caps label sitting on the line.
 fn labelled_rule(ui: &mut egui::Ui, label: &str) {
     ui.horizontal(|ui| {
-        labelled_rule_inline(ui, label);
+        ui.label(
+            RichText::new(label)
+                .font(display_font(12.0))
+                .color(DIM)
+                .extra_letter_spacing(2.0),
+        );
+        let w = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), Sense::hover());
+        ui.painter().line_segment(
+            [rect.left_center(), rect.right_center()],
+            Stroke::new(1.0, BORDER),
+        );
     });
-}
-
-/// The inner painting logic of `labelled_rule`, usable inside an existing `ui.horizontal` when the
-/// caller needs to append extra widgets (e.g. the CHARACTER button) on the same line.
-fn labelled_rule_inline(ui: &mut egui::Ui, label: &str) {
-    ui.label(
-        RichText::new(label)
-            .font(display_font(12.0))
-            .color(DIM)
-            .extra_letter_spacing(2.0),
-    );
-    let w = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), Sense::hover());
-    ui.painter().line_segment(
-        [rect.left_center(), rect.right_center()],
-        Stroke::new(1.0, BORDER),
-    );
 }
 
 // ── Custom arc-knob widget ──────────────────────────────────────────────────────────────
@@ -862,55 +910,9 @@ fn reroll_button(ui: &mut egui::Ui, setter: &ParamSetter, p: &Arc<Ba283Params>) 
     let cur = p.age_reroll.modulated_normalized_value() > 0.5;
     if held != cur {
         setter.begin_set_parameter(&p.age_reroll);
-
         setter.set_parameter(&p.age_reroll, held);
         setter.end_set_parameter(&p.age_reroll);
     }
-}
-
-/// CHARACTER popup panel — Bias, Age, Re-roll (all WDF-only). Drawn as an inline frame (not a
-/// floating `egui::Window`) so it participates in the top-down layout flow and doesn't clip at
-/// viewport edges. The popup is toggled by the CHARACTER button in the CIRCUIT section header.
-/// (Circuit Gain lives outside the popup — it is backend-agnostic and stays always-visible.)
-fn character_popup(
-    ui: &mut egui::Ui,
-    setter: &ParamSetter,
-    p: &Arc<Ba283Params>,
-    wdf_on: bool,
-) {
-    egui::Frame::NONE
-        .fill(RAISED)
-        .stroke(Stroke::new(1.0, BORDER))
-        .inner_margin(egui::Margin::same(SP_MD as i8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                // Bias — WDF-only.
-                ui.add_enabled_ui(wdf_on, |ui| {
-                    knob_cell(ui, setter, &p.bias, "BIAS", 64.0);
-                });
-                ui.add_space(SP_SM);
-                // Age — WDF-only.
-                ui.add_enabled_ui(wdf_on, |ui| {
-                    knob_cell(ui, setter, &p.age, "AGE", 64.0);
-                });
-                ui.add_space(SP_SM);
-                // Re-roll + unit seed — WDF-only.
-                ui.add_enabled_ui(wdf_on, |ui| {
-                    ui.vertical(|ui| {
-                        ui.add_space(SP_LG);
-                        reroll_button(ui, setter, p);
-                        ui.add_space(SP_XS);
-                        let seed = p.age_seed.load(Ordering::Relaxed);
-                        ui.label(
-                            RichText::new(format!("UNIT {:04X}", seed & 0xFFFF))
-                                .font(value_font(12.0))
-                                .color(DIM),
-                        );
-                    });
-                });
-            });
-        });
 }
 
 #[cfg(test)]
@@ -948,5 +950,23 @@ mod tests {
         assert_eq!(effective_zoom(99.0, UiScale::X150), 1.5);
         assert_eq!(effective_zoom(99.0, UiScale::X175), 1.75);
         assert_eq!(effective_zoom(99.0, UiScale::X200), 2.0);
+    }
+
+    /// Guards the hardcoded width budget: the four signal-flow columns + their separators + the
+    /// item-spacing gaps must fit inside the editor canvas. Catches drift when a column width grows
+    /// or the window shrinks (the silent right-clip failure mode). Generous estimates for the
+    /// non-column costs so the test only fires on real overflow, never on egui spacing tweaks.
+    #[test]
+    fn columns_fit_window() {
+        const SEP_W: f32 = 6.0; // egui Separator main-axis size
+        const GAP: f32 = 8.0; // s.spacing.item_spacing.x set in apply_theme
+        const PANEL_MARGIN: f32 = 16.0; // CentralPanel inner margin, both sides combined
+        let cols: f32 = COL_W.iter().sum();
+        // Layout: col sep col sep col sep col → 3 separators, 6 inter-widget gaps.
+        let budget = cols + 3.0 * SEP_W + 6.0 * GAP + PANEL_MARGIN;
+        assert!(
+            budget <= EDITOR_W as f32,
+            "signal-flow columns need {budget}px but the window is only {EDITOR_W}px wide",
+        );
     }
 }

@@ -208,10 +208,15 @@ parameter definitions live in `plugin/src/lib.rs`.
 
 ### GUI
 
-BA283 ships a custom egui editor (660×900). The **CIRCUIT** panel dims and
-disables when the Neural Net backend is active (its params are WDF-only).
-HiDPI follows the host by default (`UI Scale = Auto`), with manual 100–200%
-overrides for hosts that misreport their scale.
+BA283 ships a custom egui editor (1040×660), laid out left→right by signal flow
+in four columns — **INPUT · EQUALIZER · MODEL · OUTPUT** — with a top bar for the
+backend toggle and the global **Level Norm** / **Link** modes. The **MODEL**
+column leads with the backend-agnostic Circuit Gain + Drive; the WDF-only
+character and quality controls sit in a sub-frame that dims and disables when the
+Neural Net backend is active (its params are WDF-only). The body is wrapped in a
+scroll area, so the layout never clips. HiDPI follows the host by default
+(`UI Scale = Auto`), with manual 100–200% overrides for hosts that misreport
+their scale.
 
 ## ML / data pipeline
 
