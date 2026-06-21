@@ -954,16 +954,15 @@ impl Default for Ba283Plugin {
 }
 
 impl Ba283Plugin {
-    /// Host-rate latency introduced by the [`HostBridge`]. When the host runs near the model's
-    /// native 48 kHz (below `HOST_BRIDGE_THRESHOLD_HZ`) the model runs directly, so latency is zero.
-    /// At/above the threshold (88.2/96/176.4/192 kHz) the decimate -> model -> interpolate cascade
-    /// has a group delay of `HOST_BRIDGE_LATENCY` host-rate samples (measured by the
-    /// `host_bridge_identity_after_latency` test). This is the single source of truth for the host
-    /// report and the dry-path delay. (Effective *model* rate per host rate — and the known
-    /// 176.4/192 kHz degradation — is documented on `dsp::HOST_BRIDGE_THRESHOLD_HZ`.)
+    /// Host-rate latency introduced by the `SrcBridge`. The bridge pins the WaveNet to its native
+    /// rate (`model_sample_rate()`) for ANY host SR via an exact rational resampler; its latency is
+    /// the cascade group delay (a fixed integer measured at `bridge_prepare`) and is 0 only when the
+    /// host already runs at the model rate (bridge bypassed, bit-exact). This is the single source of
+    /// truth for the host report, the dry-path delay, and the WDF-out alignment delay.
     fn latency_samples(&self) -> u32 {
-        if self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ {
-            dsp::OS_LATENCY_SAMPLES as u32
+        let model_sr = self.channels[0].model_sample_rate();
+        if (self.sample_rate.round() as u32) != model_sr {
+            self.channels[0].bridge_latency() as u32
         } else {
             0
         }
@@ -1187,6 +1186,9 @@ impl Plugin for Ba283Plugin {
             ch.wdf_set_bias(bias);
             // EQ runs at host rate ahead of the model; size its biquad coeffs to the real SR.
             ch.eq_prepare(self.sample_rate);
+            // Build the SRC bridge so the WaveNet always runs at its native rate for this host SR,
+            // and size the dry / WDF-out alignment delays to the resulting bridge latency.
+            ch.bridge_prepare(self.sample_rate.round() as u32, ch.model_sample_rate());
         }
         self.last_rgain = rgain;
         self.last_bias = bias;
@@ -1249,7 +1251,9 @@ impl Plugin for Ba283Plugin {
         // model (direct near 48 kHz, else via the 2x HostBridge) -> Output, blended
         // with a latency-aligned dry path by Mix. Params are sample-smoothed.
         enable_ftz_daz();
-        let use_bridge = self.sample_rate >= dsp::HOST_BRIDGE_THRESHOLD_HZ;
+        // Engage the resampler whenever the host SR differs from the model's native rate; at the
+        // model rate the bridge is a bit-exact passthrough.
+        let use_bridge = (self.sample_rate.round() as u32) != self.channels[0].model_sample_rate();
         let backend = self.params.backend.value();
         // FiLM gain-conditioning value for the WaveNet (NeuralNet) backend: the discrete gain position
         // mapped onto the model's trained 0..1 gain axis via its hardware R_KJ. Inert for the WDF
