@@ -86,9 +86,14 @@ BA283 mic-preamp output stage.
   (still −0.6 dB vs ngspice across 20 Hz–20 kHz, coherence 1.000). Cost: a reported
   group-delay **latency of ~80 host samples** (the WDF path was 0-PDC before), folded
   into the host PDC report and the dry/wet alignment so Mix stays phase-locked and a
-  live backend switch needs no renegotiation. The legacy resampler remains available
-  (`--legacy-resample`; used by the C++ golden-parity test) and the os=1 tiers
-  (UltraFast/Warp at High) are unchanged.
+  live backend switch needs no renegotiation. This figure is **tier-invariant**: the
+  FIR group delay is constant across os ∈ {2,4}, and the os=1 tiers (UltraFast/Warp at
+  High, which have no FIR) are **padded** up to the same value, so a live quality/tier
+  switch also reports the same latency — the host never has to renegotiate PDC mid-
+  stream (this nih-plug rev reports latency only once, at `initialize`). Note: switching
+  to/from the WDF backend now adds ~1.7 ms of monitoring latency at 48 kHz vs the old
+  0-PDC path. The legacy resampler remains available (`--legacy-resample`; used by the
+  C++ golden-parity test, genuine 0-PDC) and the os=1 tiers are otherwise unchanged.
 - **Stepped circuit gain + level-neutral gain-staging paradigm (BREAKING param
   changes).** The BA283 has a *stepped* 5-position gain switch and no continuous
   "drive" of the circuit; the plugin now matches that:

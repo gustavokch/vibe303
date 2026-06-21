@@ -23,7 +23,7 @@ use crate::delay::RuntimeDelay;
 use crate::model::Ba283Model;
 use crate::oversample::SrcBridge;
 use crate::wavenet::WaveNet;
-use crate::wdf::{QualityConfig, WdfModel, WdfSnapshot};
+use crate::wdf::{QualityConfig, WdfModel, WdfSnapshot, FIR_LATENCY_HOST};
 use crate::InferenceBackend;
 
 /// Crossfade / resume-fade window (seconds). Masks the discontinuity of a WDF tier/precision switch
@@ -79,6 +79,13 @@ enum OsPhase {
 /// this so the Mix blend stays phase-aligned and switching backends needs no latency
 /// renegotiation. At host == model rate the bridge is bypassed and the delay is 0.
 pub const OS_LATENCY_SAMPLES: usize = 256;
+
+/// Capacity of the dry/WDF-out/NN-out alignment `RuntimeDelay`s. The dry path is delayed by the
+/// FULL reported latency `bridge_lat + FIR_LATENCY_HOST` and the WDF-out by `bridge_lat + pad`
+/// (`pad <= FIR_LATENCY_HOST`), so the cap must clear `OS_LATENCY_SAMPLES` (the bridge bound) PLUS
+/// the FIR term — otherwise `set_len` silently clamps in release and the dry/wet alignment diverges
+/// from the host-reported PDC (comb-filtering). Sized with margin so this can never under-delay.
+pub const ALIGN_DELAY_CAP: usize = OS_LATENCY_SAMPLES + FIR_LATENCY_HOST + 48;
 
 /// The [`SrcBridge`] pins the WaveNet to its native rate (`wavenet.sample_rate()`) for
 /// ANY host SR via an exact rational resampler, so the model is always evaluated at the
@@ -139,7 +146,7 @@ pub struct ChannelDsp {
     #[allow(dead_code)]
     model: Option<Ba283Model>,
     bridge: SrcBridge,
-    dry_delay: RuntimeDelay<OS_LATENCY_SAMPLES>,
+    dry_delay: RuntimeDelay<ALIGN_DELAY_CAP>,
     /// Circuit-faithful backend. Self-oversamples internally (OS=2) and decimates with IIR
     /// biquads, so its wet path has ~0 integer latency. Boxed so a live tier/OS switch installs a
     /// worker-prebuilt model by a single pointer move (`install_prebuilt`) — no struct memcpy and
@@ -148,13 +155,15 @@ pub struct ChannelDsp {
     /// Delays the WDF blended output by the active `SrcBridge` latency (set at `bridge_prepare`,
     /// `<= OS_LATENCY_SAMPLES` capacity) when the host bridge is active so the host-reported latency
     /// stays valid for BOTH backends (no renegotiation when switching).
-    wdf_out_delay: RuntimeDelay<OS_LATENCY_SAMPLES>,
+    wdf_out_delay: RuntimeDelay<ALIGN_DELAY_CAP>,
     /// Delays the NeuralNet wet output by the WDF FIR resampler's group delay (`wdf_fir_lat`) so the
     /// two backends share ONE host-reported latency (`bridge_lat + wdf_fir_lat`) and switching needs
     /// no renegotiation. 0 (passthrough) when the WDF path is on the legacy resampler / os==1.
-    nn_out_delay: RuntimeDelay<OS_LATENCY_SAMPLES>,
-    /// Group-delay latency (host samples) of the WDF steep-FIR resampler on the live model; 0 for the
-    /// legacy resampler. Folded into the reported latency and the dry/wet alignment (`resize_delays`).
+    nn_out_delay: RuntimeDelay<ALIGN_DELAY_CAP>,
+    /// ACTUAL group-delay latency (host samples) of the WDF steep-FIR resampler on the live model
+    /// (`fir_latency_host`): `FIR_LATENCY_HOST` at os>1, 0 at os==1 / legacy. Cached only as the
+    /// change-detector for `install_prebuilt` (re-pad on an os==1↔os>1 switch). The REPORTED latency
+    /// is the tier-invariant `fir_reported_latency_host()`, NOT this — see `resize_delays`.
     wdf_fir_lat: usize,
     /// Last settled snapshot installed into `wdf` (from the shared warmup). Carried across a tier
     /// rebuild so switching tiers does not require a fresh (expensive) warmup.
@@ -351,22 +360,29 @@ impl ChannelDsp {
         self.resize_delays();
     }
 
-    /// (Re)size the alignment delays from the current bridge + WDF-FIR latencies. Reported latency =
-    /// `bridge_lat + wdf_fir_lat`; both backends are delayed to it before the dry/wet blend so Mix
-    /// stays phase-aligned and a live backend switch needs no PDC renegotiation:
-    ///   - dry path:      `bridge_lat + wdf_fir_lat` (the full reported latency)
-    ///   - WDF wet:       `bridge_lat`   (its intrinsic FIR latency already covers `wdf_fir_lat`)
-    ///   - NeuralNet wet: `wdf_fir_lat`  (its intrinsic bridge latency already covers `bridge_lat`)
+    /// (Re)size the alignment delays so EVERY path lands on the single reported latency
+    /// `bridge_lat + rep_fir`, where `rep_fir = fir_reported_latency_host()` is TIER-INVARIANT
+    /// (`FIR_LATENCY_HOST` on the non-legacy tiers, 0 on legacy). `act_fir = fir_latency_host()` is
+    /// the WDF wet's INTRINSIC FIR delay on this tier (0 at os==1), and `pad = rep_fir - act_fir`
+    /// brings the os==1 tiers up to the constant so a live tier switch never renegotiates host PDC:
+    ///   - dry path:      `bridge_lat + rep_fir`        (the full reported latency)
+    ///   - WDF wet:       `bridge_lat + pad`            (+ its intrinsic `act_fir` ⇒ `bridge_lat + rep_fir`)
+    ///   - NeuralNet wet: `rep_fir`                     (+ its intrinsic `bridge_lat` ⇒ `bridge_lat + rep_fir`)
     fn resize_delays(&mut self) {
         let blat = self.bridge.latency_host();
-        self.dry_delay.set_len(blat + self.wdf_fir_lat);
-        self.wdf_out_delay.set_len(blat);
-        self.nn_out_delay.set_len(self.wdf_fir_lat);
+        let rep_fir = self.wdf.fir_reported_latency_host();
+        let act_fir = self.wdf.fir_latency_host();
+        let pad = rep_fir.saturating_sub(act_fir); // 0 at os>1, FIR_LATENCY_HOST at os==1 (non-legacy)
+        self.dry_delay.set_len(blat + rep_fir);
+        self.wdf_out_delay.set_len(blat + pad);
+        self.nn_out_delay.set_len(rep_fir);
     }
 
-    /// Reported host latency in host samples: `bridge_lat + wdf_fir_lat`.
+    /// Reported host latency in host samples: `bridge_lat + fir_reported_latency_host()`. The FIR
+    /// term is tier-invariant, so this is constant across a live quality/tier switch (only a host
+    /// SR change moves it) — the value reported once at `initialize` stays valid for the session.
     pub fn reported_latency(&self) -> usize {
-        self.bridge.latency_host() + self.wdf_fir_lat
+        self.bridge.latency_host() + self.wdf.fir_reported_latency_host()
     }
 
     /// Push the current EQ settings (block-rate). `hpf_hz <= 0` bypasses the high-pass. Coeffs are
@@ -453,9 +469,11 @@ impl ChannelDsp {
         }
         // old live → crossfade scratch; the stale 2-switches-ago scratch is returned for off-thread drop.
         let retired = std::mem::replace(&mut self.wdf_prev, old_live);
-        // Keep the reported latency / alignment in sync with the newly-installed model's resampler.
-        // Guarded so an unchanged latency does not needlessly clear the delay rings (avoids a glitch
-        // on a same-latency tier switch; the FIR latency is constant across tiers in practice).
+        // Re-pad the wet alignment for the newly-installed model's ACTUAL FIR delay. The host
+        // REPORTED latency is tier-invariant (constant `rep_fir`), so this never renegotiates PDC;
+        // but `act_fir` flips 0↔FIR_LATENCY_HOST across an os==1↔os>1 switch, changing the internal
+        // pad split, so resize when it moves. Guarded so a same-`act_fir` tier switch does not
+        // needlessly clear the delay rings (a glitch the 60 ms crossfade would otherwise mask).
         let new_lat = self.wdf.fir_latency_host();
         if new_lat != self.wdf_fir_lat {
             self.wdf_fir_lat = new_lat;

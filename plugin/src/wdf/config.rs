@@ -57,11 +57,14 @@ pub struct QualityConfig {
     /// — bypassing (`--no-decimate`) can recover some of the os=1 fidelity cost. Default on.
     pub decimate: bool,
     /// Legacy resampler: linear-interpolation upsample + 4th-order Butterworth decimator (`fc =
-    /// 0.45·host_sr`) — the path the C++ golden was captured from. Default `false`: the shipped path
-    /// uses a causal cubic-Hermite upsample + 6th-order decimator (`fc = 0.47·host_sr`), which is
-    /// much flatter in the audio passband (the linear-interp upsample alone cost ≈4 dB @20k; see
-    /// `tests/fr_probe.rs`). Zero added latency either way. Only `tests/test_wdf.rs` sets this true,
-    /// to compare bit-for-bit against the legacy C++ `OUTPUT_256`.
+    /// 0.45·host_sr`) — the path the C++ golden was captured from (≈0 latency, 0-PDC). Default
+    /// `false`: the shipped path is a Kaiser windowed-sinc polyphase **FIR** up/down resampler
+    /// (`wdf/resample.rs`, cutoffs at host-Nyquist), passband flat to ~20 kHz — the legacy stages
+    /// together rolled off ≈6 dB @20k (48k) / ≈9 dB (44.1k), the linear-interp upsample alone ≈4 dB
+    /// @20k (see `tests/fr_probe.rs`). The FIR costs a constant `FIR_LATENCY_HOST` (= 80) host
+    /// samples of group delay, reported to the host as PDC and tier-invariant (the os==1 tiers are
+    /// padded to it, so a live tier switch never renegotiates latency). Only `tests/test_wdf.rs`
+    /// sets this true, to compare bit-for-bit against the legacy C++ `OUTPUT_256`.
     pub legacy_resample: bool,
     /// FMA (fused multiply-add) contraction in the batched device kernels (`compute_bjt_preexp_batch`,
     /// `exp_bl`/`log_bl`, depletion charge). Single-rounding `vfmadd` instead of `a*b+c`; ~1 ULP/op

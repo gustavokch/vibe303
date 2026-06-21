@@ -165,3 +165,84 @@ fn wdf_backend_latency_aligned_bridged() {
     }
     assert!(max_err < 1e-6, "WDF dry not aligned at latency {lat}: max_err {max_err}");
 }
+
+#[test]
+fn reported_latency_is_tier_invariant_across_live_switch() {
+    // H1 guard: this nih-plug rev can only report latency once (at `initialize`), so the reported
+    // PDC MUST NOT change on a live quality/tier switch. The os=2 tiers carry an 80-sample FIR group
+    // delay; the os==1 tiers (UltraFast/Warp @ High) have no FIR — but are padded up to the same
+    // constant so the host figure stays put. Drive the real alloc-free live-switch path
+    // (`install_prebuilt`) os=2 → os=1 and assert the reported latency is unchanged.
+    use ba283::wdf::{QualityConfig, WdfModel, FIR_LATENCY_HOST};
+    let host = 96_000u32; // != model rate so the bridge also contributes a latency term
+    let mut dsp = ChannelDsp::new();
+    dsp.wdf_warmup();
+    let model_sr = dsp.model_sample_rate();
+    dsp.bridge_prepare(host, model_sr); // os=2 Realtime model is live here
+
+    let lat_os2 = dsp.reported_latency();
+    assert!(
+        lat_os2 >= FIR_LATENCY_HOST,
+        "os=2 tier must include the {FIR_LATENCY_HOST}-sample FIR delay, got {lat_os2}"
+    );
+
+    // Live-switch to an os==1 tier (FIR = None) via the alloc-free prebuilt pointer-swap.
+    let os1 = Box::new(WdfModel::new_with(
+        QualityConfig::ultra_fast(),
+        host as f64,
+        220.0,
+        0.5,
+    ));
+    let _retired = dsp.install_prebuilt(os1, host as f32);
+    let lat_os1 = dsp.reported_latency();
+    assert_eq!(
+        lat_os2, lat_os1,
+        "reported latency changed on a live tier switch ({lat_os2} -> {lat_os1}); host PDC desyncs"
+    );
+
+    // And back to os=2: still identical.
+    let os2 = Box::new(WdfModel::new_with(
+        QualityConfig::realtime(),
+        host as f64,
+        220.0,
+        0.5,
+    ));
+    let _retired2 = dsp.install_prebuilt(os2, host as f32);
+    assert_eq!(lat_os2, dsp.reported_latency(), "latency drifted after switching back to os=2");
+}
+
+#[test]
+fn wdf_wet_impulse_centered_on_reported_latency() {
+    // Guards the WDF wet-path delay (`wdf_out_delay`) against a wrong/swapped split in
+    // `resize_delays`. The steep FIR is LINEAR-PHASE, so a small impulse around the warmed operating
+    // point emerges as a symmetric burst whose peak sits exactly on the resampler's group-delay
+    // center — which, after the `wdf_out_delay` alignment, is the REPORTED latency. A swap of the
+    // WDF/NN delays would move this peak by |bridge_lat - FIR_LATENCY_HOST| samples.
+    let host = 96_000u32;
+    let mut dsp = ChannelDsp::new();
+    dsp.wdf_warmup();
+    let model_sr = dsp.model_sample_rate();
+    dsp.bridge_prepare(host, model_sr);
+    let lat = dsp.reported_latency();
+
+    let n = 1024usize;
+    let mut peak_idx = 0usize;
+    let mut peak_mag = 0.0f32;
+    for i in 0..n {
+        let x = if i == 4 { 0.2 } else { 0.0 }; // impulse a few samples in (full wet)
+        let y = dsp.process_sample(x, 1.0, 1.0, 0.5, 0.5, 0.05, 1.0, 1.0, true, InferenceBackend::Wdf);
+        let m = y.abs();
+        if m > peak_mag {
+            peak_mag = m;
+            peak_idx = i;
+        }
+    }
+    // Peak should land at impulse_index (4) + reported latency, within a small window that absorbs
+    // the circuit's own (sub-)sample group delay. A delay swap blows well past this.
+    let expected = 4 + lat;
+    let diff = (peak_idx as isize - expected as isize).abs();
+    assert!(
+        diff <= 8,
+        "WDF wet peak at {peak_idx}, expected ~{expected} (lat {lat}); off by {diff} — wet delay mis-sized"
+    );
+}

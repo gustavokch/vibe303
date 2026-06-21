@@ -198,6 +198,11 @@ pub struct WdfModel {
     /// decimator with a flat-to-20kHz response at the cost of a reported group-delay latency
     /// (`fir_latency_host`). `None` for legacy (golden parity) and os==1 (nothing to resample).
     fir: Option<FirResampler>,
+    /// Mirrors `cfg.legacy_resample`. Retained so the model can report a TIER-INVARIANT FIR latency
+    /// (`fir_reported_latency_host`): non-legacy tiers all report `FIR_LATENCY_HOST` regardless of
+    /// `os` (the os==1 tiers have `fir == None` but still report the constant so the host PDC never
+    /// changes on a live tier switch), while the legacy path reports 0 (golden-parity, 0-PDC).
+    legacy_resample: bool,
     sec_in_dc: f64, // output DC offset captured at warmup; subtracted from the tap
     prev_in: f64,   // previous host input sample (legacy linear-interpolation upsampling state)
     last_snapshot: Option<WdfSnapshot>,
@@ -283,6 +288,7 @@ pub use components::{
     bc184c, dep_sat_consts, q2n3055, Bjt, BjtParams, Biquad, Cap, DepLut, DepLutSet, Res,
 };
 pub use config::{CapTier, Oversampling, Precision, QualityConfig, Solver, OS};
+pub use resample::FIR_LATENCY_HOST;
 pub use math::{
     depletion_charge, depletion_charge_pre, diode_branch, exp_, fast_exp, fast_log,
     fast_pow_pos, pow_, ultra_exp, EXACT,

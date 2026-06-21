@@ -218,6 +218,7 @@ impl WdfModel {
             dec1: Biquad::default(),
             dec2: Biquad::default(),
             fir: None, // set in `new_with` (the only place host_sr/os are known together)
+            legacy_resample: cfg.legacy_resample,
             sec_in_dc: 0.0,
             prev_in: 0.0,
             last_snapshot: None,

@@ -29,6 +29,11 @@ const UP_HALF_HOST: usize = 16;
 /// Decimator prototype half-width in HOST samples (taps = `2*DN_HALF_HOST*os + 1`). Steep: at 44.1k
 /// the passband edge (20 kHz) and the fold point (22.05 kHz) are only ~2 kHz apart.
 const DN_HALF_HOST: usize = 64;
+/// Group-delay latency the resampler reports, in HOST samples — `(up_half + dn_half) / os` with
+/// `up_half = UP_HALF_HOST*os`, `dn_half = DN_HALF_HOST*os`, so it is **independent of `os`**
+/// (`UP_HALF_HOST + DN_HALF_HOST`). This os-invariance is what lets the plugin report ONE fixed
+/// host latency across every FIR tier (os ∈ {2, 4}) — no PDC renegotiation on a live tier switch.
+pub const FIR_LATENCY_HOST: usize = UP_HALF_HOST + DN_HALF_HOST;
 /// Kaiser β for ~96 dB stopband (β = 0.1102·(A−8.7), A=96).
 const KAISER_BETA: f64 = 9.62;
 
@@ -107,6 +112,10 @@ impl FirResampler {
         // Total latency in host samples = (up group delay + dn group delay) at the internal rate,
         // divided by os. Both prototypes are symmetric (linear phase) with group delay = half.
         let lat_host = (up_half + dn_half) / os;
+        debug_assert_eq!(
+            lat_host, FIR_LATENCY_HOST,
+            "FIR latency must be os-invariant (the plugin reports it as a constant)"
+        );
         Self {
             os,
             up_taps: up_taps.into(),
@@ -219,6 +228,37 @@ mod tests {
                 max_err < 2e-3,
                 "os={os}: reconstruction err {max_err:.2e} exceeds 2e-3 (lat={lat})"
             );
+        }
+    }
+
+    /// Passband flatness smoke — the WHOLE point of this module, and the only flatness check that
+    /// runs under default `cargo test` (`tests/fr_probe.rs` is gated behind `--features measure`, so
+    /// it does NOT protect the fix in normal CI). Up→down with no model must pass every passband
+    /// tone at ~unity through 20 kHz; the legacy lerp+Butterworth path drooped ≈4–6 dB here. Probe
+    /// host-normalized freqs up to 0.41 cyc/sample (≈19.7 kHz @48k) and require <0.5 dB deviation.
+    #[test]
+    fn passband_flat_through_20k() {
+        for os in 2..=MAX_OS {
+            for &f in &[0.02, 0.10, 0.20, 0.30, 0.37, 0.41] {
+                let mut r = FirResampler::new(os);
+                let lat = r.latency_host();
+                let n = 8192usize;
+                let mut up = [0.0f64; MAX_OS];
+                let mut peak = 0.0f64;
+                for k in 0..n {
+                    let x = (std::f64::consts::TAU * f * k as f64).sin();
+                    r.upsample(x, &mut up);
+                    let y = r.decimate(&up[..os]);
+                    if k > lat + 1024 {
+                        peak = peak.max(y.abs()); // settled-window envelope ~= passband gain
+                    }
+                }
+                let dev_db = 20.0 * peak.log10(); // input amplitude is 1.0
+                assert!(
+                    dev_db.abs() < 0.5,
+                    "os={os} f={f}: passband gain {dev_db:.2} dB exceeds ±0.5 dB"
+                );
+            }
         }
     }
 
