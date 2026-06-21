@@ -93,15 +93,15 @@ impl AgePattern {
         for i in 0..n_caps {
             p.cap_dev[i] = match cap_mat[i] {
                 CapMat::Electrolytic => {
-                    // Dry-out: directional, mostly downward. Half-normal magnitude toward the drop
-                    // side (σ so 2σ = dmax); a tiny upward allowance keeps the bound symmetric-ish.
+                    // Dry-out: directional and downward only — electrolytics lose capacitance as the
+                    // gel dries, they don't gain it. Half-normal magnitude toward the drop side
+                    // (σ so 2σ = dmax), bounded to the drop band: result in [-dmax, 0].
                     let dmax = C_ELEC_DROP_MAX * g;
-                    let dmin = C_ELEC_DROP_MIN * g;
                     if dmax <= 0.0 {
                         0.0
                     } else {
                         let mag = (next_gaussian(&mut s).abs() * (dmax * 0.5)).min(dmax);
-                        (-mag).clamp(-dmax, dmin)
+                        -mag
                     }
                 }
                 other => trunc_normal(&mut s, other.band() * g),
@@ -204,7 +204,7 @@ impl JaCore {
         // `set_voicing` holds `a = m_s/60`, so the anhysteretic susceptibility `chi_raw = m_s/(3a) =
         // 20` is constant across BOTH dials — and `k`/`c` don't enter `k_hi`. So the back-solved
         // current→field lump is constant: compute it once here from that fixed susceptibility.
-        let chi_raw = 20.0;
+        let chi_raw = JA_CHI_RAW;
         let chi0 = chi_raw / (1.0 - alpha * chi_raw);
         let k_hi = lp_eff / (k_phi * mu0 * (1.0 + chi0)); // current→field lump (= N_p/l_e)
         let mut core = JaCore { m_s: 0.0, a: 0.0, alpha, k: 0.0, c: 0.0, mu0, k_phi, k_hi, lp_eff };
@@ -233,7 +233,7 @@ impl JaCore {
     /// the low-drive deviation `(i_JA − phi/lp_eff)` keeps ≈cancelling. `lp = lp_base` => no change.
     pub fn set_lp_eff(&mut self, lp_eff: f64) {
         self.lp_eff = lp_eff;
-        let chi_raw = 20.0;
+        let chi_raw = JA_CHI_RAW;
         let chi0 = chi_raw / (1.0 - self.alpha * chi_raw);
         self.k_hi = lp_eff / (self.k_phi * self.mu0 * (1.0 + chi0));
     }
@@ -321,8 +321,8 @@ mod tests {
             for i in 0..MAX_RES {
                 assert!(p.res_dev[i].abs() <= r[i].band() + 1e-12, "res {i} seed {seed}");
             }
-            // Electrolytic: directional (mostly down), bounded to [-DROP_MAX, +DROP_MIN].
-            assert!(p.cap_dev[0] <= C_ELEC_DROP_MIN + 1e-12);
+            // Electrolytic: directional, downward only, bounded to [-DROP_MAX, 0].
+            assert!(p.cap_dev[0] <= 0.0);
             assert!(p.cap_dev[0] >= -C_ELEC_DROP_MAX - 1e-12);
             assert!(p.cap_dev[1].abs() <= CapMat::Styrene.band() + 1e-12);
             for i in 0..2 {

@@ -330,9 +330,8 @@ impl CapMat {
     }
 }
 
-// Electrolytics lose capacitance with age (dry-out): directional, mostly downward.
+// Electrolytics lose capacitance with age (dry-out): directional, downward only.
 pub(in crate::wdf) const C_ELEC_DROP_MAX: f64 = 0.20; // up to -20%
-pub(in crate::wdf) const C_ELEC_DROP_MIN: f64 = 0.02; // up to +2%
 
 // Transformer coupled-inductor aging band (primary/secondary magnetizing L): wirewound-ish core.
 pub(in crate::wdf) const L_DRIFT_MAX: f64 = 0.10; // ±10%
@@ -340,6 +339,11 @@ pub(in crate::wdf) const L_DRIFT_MAX: f64 = 0.10; // ±10%
 pub(in crate::wdf) const JA_MS_DRIFT: f64 = 0.10; // ±10%
 pub(in crate::wdf) const JA_K_DRIFT: f64 = 0.10; // ±10%
 pub(in crate::wdf) const JA_C_DRIFT: f64 = 0.05; // ±5%
+// Static anhysteretic susceptibility the JA `k_hi` lump is back-solved from. `set_voicing` holds
+// `a = m_s/60` => `chi_raw = m_s/(3a) = 20`, invariant across both dials and all core aging — the
+// single source of truth for `lo1166()` and `set_lp_eff` (the post-aging `k_hi` re-pin).
+#[cfg(feature = "trafo-core")]
+pub(in crate::wdf) const JA_CHI_RAW: f64 = 20.0;
 
 /// Build tolerance grade — scales every component drift band. `Ideal` => zero drift (the Age knob
 /// is inert and the model is bit-exact with pristine, for golden-reference comparisons).
