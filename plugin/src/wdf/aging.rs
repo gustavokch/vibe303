@@ -23,6 +23,9 @@ fn next_unit(state: &mut u64) -> f64 {
 fn next_gaussian(state: &mut u64) -> f64 {
     let u1 = next_unit(state).max(1.0e-12); // guard ln(0)
     let u2 = next_unit(state);
+    // Box-Muller yields a pair (cos + sin); we keep only the cos member and discard the sin. Caching
+    // the spare would alter the draw sequence (hence the voicing) for no real gain — this is a
+    // block-rate, build-time-only generator, so the extra `next_unit` is free.
     (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
 }
 

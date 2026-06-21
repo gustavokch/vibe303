@@ -333,8 +333,11 @@ impl CapMat {
 // Electrolytics lose capacitance with age (dry-out): directional, downward only.
 pub(in crate::wdf) const C_ELEC_DROP_MAX: f64 = 0.20; // up to -20%
 
-// Transformer coupled-inductor aging band (primary/secondary magnetizing L): wirewound-ish core.
-pub(in crate::wdf) const L_DRIFT_MAX: f64 = 0.10; // ±10%
+// Transformer coupled-inductor aging band. This drifts the *magnetizing inductance* (core
+// permeability), NOT the winding DCR (that's the `Wirewound` resistor leg at ±1%). Core µ shifts
+// far more than copper resistance with age/temperature/DC history, so ±10% is deliberate and is
+// what the JA `lp_eff`/`k_hi` re-pin (see `apply_trafo_aged`) tracks.
+pub(in crate::wdf) const L_DRIFT_MAX: f64 = 0.10; // ±10% magnetizing L (permeability), not DCR
 // Nonlinear JA core aging bands (knee `m_s`, pinning `k`, reversibility `c`).
 pub(in crate::wdf) const JA_MS_DRIFT: f64 = 0.10; // ±10%
 pub(in crate::wdf) const JA_K_DRIFT: f64 = 0.10; // ±10%

@@ -132,9 +132,15 @@ impl WdfModel {
 
     /// Set the build tolerance grade (0=Ideal, 1=Standard, 2=Loose): regenerate the drift pattern at
     /// the current seed (band magnitude depends on grade), then re-apply at the current age. Mirrors
-    /// `set_age_seed`. `Ideal` => zero drift (bit-exact with pristine at any age).
+    /// `set_age_seed`. `Ideal` => zero drift (bit-exact with pristine at any age). Unchanged grade is
+    /// a no-op — the pattern already reflects it — so the init / rebuild re-apply (which always also
+    /// calls `set_age_seed`) doesn't pay a redundant regenerate at the default Standard grade.
     pub fn set_tolerance_grade(&mut self, idx: i32) {
-        self.tol_grade = TolGrade::from_index(idx);
+        let grade = TolGrade::from_index(idx);
+        if grade == self.tol_grade {
+            return;
+        }
+        self.tol_grade = grade;
         self.set_age_seed(self.age_seed);
     }
 
@@ -289,6 +295,33 @@ mod tests {
         for i in 0..m.n_caps {
             assert_eq!(m.caps[i].c, pristine.caps[i].c, "cap {i}");
         }
+    }
+
+    #[test]
+    fn same_grade_is_noop_preserves_pattern() {
+        // The F3 early-return: re-asserting the current grade must NOT disturb an already-aged
+        // pattern, and a round-trip away and back must restore it bit-for-bit.
+        let mut m = fresh();
+        m.set_age_seed(0x00AB_CDEF); // Standard (default grade)
+        m.set_age(1.0);
+        let aged_g: Vec<f64> = m.res.iter().take(m.n_res).map(|r| r.g).collect();
+        let aged_gl = m.gl;
+
+        m.set_tolerance_grade(1); // Standard again => no-op, pattern unchanged
+        for i in 0..m.n_res {
+            assert_eq!(m.res[i].g, aged_g[i], "no-op grade disturbed res {i}");
+        }
+        assert_eq!(m.gl, aged_gl, "no-op grade disturbed coupled inductor");
+
+        m.set_tolerance_grade(0); // Ideal => zeroes the drift
+        let pristine = fresh();
+        assert_eq!(m.res[1].g, pristine.res[1].g, "Ideal should zero drift");
+
+        m.set_tolerance_grade(1); // back to Standard => restores the aged pattern (same seed)
+        for i in 0..m.n_res {
+            assert_eq!(m.res[i].g, aged_g[i], "round-trip back to Standard not restored at res {i}");
+        }
+        assert_eq!(m.gl, aged_gl, "round-trip back to Standard not restored (gl)");
     }
 
     #[test]
