@@ -91,13 +91,20 @@ BA283 mic-preamp output stage.
     amount).
   - **`level_norm` now defaults ON** (was OFF) and governs full neutrality: at
     defaults the insert is **unity** (fixes the historical "+30 dB louder at
-    default" bug). ON also forces `input_gain`/`output`/`link` neutral and grays
-    them; OFF restores faithful manual gain staging. **Behaviour change for
-    existing in-dev sessions:** a default insert no longer raises level.
-  - **levelNorm is now a static per-position table** (`GAIN_STEPS[pos].wdf_makeup`
-    = measured `1/G_i`, from `bin/measure_gi`, drift-guarded by
-    `tests/test_stepped_gain.rs`) instead of a runtime off-thread gain probe — the
-    probe worker/task is removed, making levelNorm deterministic and alloc-free.
+    default" bug). ON forces `input_gain`/`link` neutral and grays them, but
+    **`output` stays live** as the post-normalization level trim (DRIVE now colours
+    at constant loudness, so OUTPUT is the user's final level control); OFF restores
+    faithful manual gain staging. **Behaviour change for existing in-dev sessions:**
+    a default insert no longer raises level, and a session saved with levelNorm ON +
+    a non-zero OUTPUT now applies that OUTPUT (it was previously forced to unity).
+  - **levelNorm is a static per-position, DRIVE-swept table**
+    (`GAIN_STEPS[pos].wdf_makeup` = measured `1/G_sat(drive)` across `DRIVE_GRID_DB`,
+    interpolated by `wdf_makeup_at`, from `bin/measure_gi`, drift-guarded across the
+    full 2-D grid by `tests/test_stepped_gain.rs`) instead of a runtime off-thread
+    gain probe — the probe worker/task is removed, making levelNorm deterministic and
+    alloc-free. Storing the large-signal saturated gain (not a single small-signal
+    `1/G_v`) stops the `/drive` cancellation from over-attenuating once DRIVE pushes
+    the circuit into saturation, so DRIVE colours at constant loudness instead of sagging.
   - **NN backend** is conditioned by the discrete position (mapped via its hardware
     R_KJ). *Staged:* a full NAM retrain for the 5 discrete positions +
     input-amplitude sweep is pending; the embedded weights remain provisional and
