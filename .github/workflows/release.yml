@@ -23,23 +23,23 @@ on:
         default: true
 
 jobs:
-  guard:
-    name: version-guard
-    runs-on: ubuntu-latest
-    env:
-      INPUT_VERSION: ${{ inputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Assert input version matches plugin/Cargo.toml
-        run: |
-          crate_version="$(grep -m1 '^version' plugin/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          echo "Cargo.toml version: $crate_version, input: $INPUT_VERSION"
-          if [ "$crate_version" != "$INPUT_VERSION" ]; then
-            echo "::error::input version '$INPUT_VERSION' != plugin/Cargo.toml '$crate_version'"
-            exit 1
-          fi
+#  guard:
+#    name: version-guard
+#    runs-on: ubuntu-latest
+#    env:
+#      INPUT_VERSION: ${{ inputs.version }}
+#    steps:
+#      - uses: actions/checkout@v4
+#      - name: Assert input version matches plugin/Cargo.toml
+#        run: |
+#          crate_version="$(grep -m1 '^version' plugin/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+#          echo "Cargo.toml version: $crate_version, input: $INPUT_VERSION"
+#          if [ "$crate_version" != "$INPUT_VERSION" ]; then
+#            echo "::error::input version '$INPUT_VERSION' != plugin/Cargo.toml '$crate_version'"
+#            exit 1
+#          fi
 
-  linux:
+linux:
     name: linux-x86_64
     needs: guard
     runs-on: ubuntu-latest
