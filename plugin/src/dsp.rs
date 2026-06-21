@@ -109,6 +109,25 @@ pub const OS_LATENCY_SAMPLES: usize = 256;
 /// backends therefore reference the same 0 dBFS ≡ 0.5 V scale and are level-matched.
 pub const INPUT_FS_VOLTS: f32 = 0.5;
 
+/// NeuralNet input-domain safety clamp (net-input convention, where 1.0 ≡ 0 dBFS). The WaveNet is
+/// only valid over the level range it was reamped on; far past that it EXTRAPOLATES and can diverge
+/// (the embedded placeholder weights blow up above ~+12 dB Drive — `bin/measure_nn_gi` shows
+/// `1/G_nn_sat → 0`, i.e. runaway output). Clamping `driven` into a sane domain keeps the net in its
+/// trained region — DRIVE then saturates at the bound like a real input stage instead of diverging.
+/// 4.0 ≈ +12 dBFS: transparent for normal program + moderate Drive, engaging only on hot overdrive.
+/// Placeholder-era bound — retune to the model's actual trained max once real weights land. WDF is
+/// unaffected (this clamps only the NeuralNet arm; the circuit is physically self-limiting).
+pub const NN_INPUT_CLAMP: f32 = 4.0;
+
+/// NeuralNet FINAL-output safety ceiling (speaker domain, 1.0 ≡ 0 dBFS) — a hard backstop on the
+/// returned sample (post mix), so the NN backend can never emit a damaging blow-up even with
+/// levelNorm OFF + extreme Drive into a pathological model. Applied to the FINAL output, not the hot
+/// pre-leveling intermediate (which the NN runs ~G× above the input by design, divided back by
+/// `norm_gain`). 8.0 ≈ +18 dBFS: far above any musical output (levelNorm targets ~0 dBFS), so it is
+/// bit-exact for all in-domain signal and only ever bounds a runaway. Paired with a NaN/Inf guard on
+/// the raw model output so the NN path can never emit or propagate a non-finite sample.
+pub const NN_OUTPUT_CEIL: f32 = 8.0;
+
 pub struct ChannelDsp {
     /// Active NeuralNet engine: the gain-conditioned streaming FiLM WaveNet (`model.cond.nam`).
     wavenet: WaveNet,
@@ -455,6 +474,13 @@ impl ChannelDsp {
         self.wdf.measure_gain()
     }
 
+    /// Measure the circuit's LARGE-SIGNAL voltage gain at a 1 kHz stimulus of amplitude `amp` volts
+    /// (full solver, scratch clone). OFFLINE only (`bin/measure_gi`) — captures the gain compression
+    /// under Drive that the Drive-swept levelNorm makeup table needs. Not for the audio thread.
+    pub fn wdf_measure_gain_at(&self, amp: f64) -> f32 {
+        self.wdf.measure_gain_at(amp)
+    }
+
     /// Warm the WDF model in place and make the settled state the reset target. Off the audio thread.
     pub fn wdf_warmup(&mut self) {
         self.wdf.warmup();
@@ -733,6 +759,11 @@ impl ChannelDsp {
                 // (WS4 dual conditioning). A 2-channel model reads only `cond`; the 3-channel model
                 // reads both. Always pass both — the embedded model's width selects how many apply.
                 let deref = self.wavenet.output_ref_v() / INPUT_FS_VOLTS;
+                // Input-domain safety clamp (NeuralNet ONLY — the WDF arm keeps the unclamped `driven`,
+                // its circuit is physically self-limiting). Keeps the net inside its trained level
+                // range so hot Drive saturates at the bound instead of extrapolating into divergence.
+                // Bit-exact (identity) for all in-domain |driven| ≤ NN_INPUT_CLAMP. See `NN_INPUT_CLAMP`.
+                let driven = driven.clamp(-NN_INPUT_CLAMP, NN_INPUT_CLAMP);
                 // Disjoint field borrows so the bridge closure can call the net.
                 let (wavenet, bridge) = (&mut self.wavenet, &mut self.bridge);
                 let model_out = if use_bridge {
@@ -744,7 +775,13 @@ impl ChannelDsp {
                     // Host runs at ~the model rate: evaluate the net directly.
                     wavenet.process(driven, &[cond, input_cond])
                 };
+                // Finite guard: a non-finite (NaN/Inf) from a pathological model becomes 0 so it can
+                // never poison `last_wet`, the DPR state, the mix, or the host. NOT a magnitude clamp
+                // here — this is the PRE-leveling intermediate, which legitimately runs hot (the NN is
+                // ~G× the input; `norm_gain` divides it back). The magnitude ceiling is applied on the
+                // FINAL output below, where it is in the actual speaker-domain.
                 let wet = model_out * deref;
+                let wet = if wet.is_finite() { wet } else { 0.0 };
                 self.last_wet = wet;
                 // DPR phase rotator: reshapes asymmetry on the output path, AHEAD of the levelNorm
                 // makeup gain (so the normalized output already includes it) and the output gain.
@@ -756,7 +793,13 @@ impl ChannelDsp {
                 let wet = wet * out_gain;
                 // Dry path delayed to match the wet-path (bridge) latency so Mix aligns.
                 let dry_aligned = if use_bridge { self.dry_delay.push_pop(x) } else { x };
-                wet * mix + dry_aligned * (1.0 - mix)
+                let out = wet * mix + dry_aligned * (1.0 - mix);
+                // FINAL output safety ceiling (speaker domain, 1.0 ≡ 0 dBFS): a hard backstop so the
+                // NN backend can never emit a damaging blow-up even with levelNorm OFF + extreme Drive
+                // into a pathological model. Generous (+18 dBFS) → bit-exact for all in-domain |out| ≤
+                // NN_OUTPUT_CEIL; only ever bounds a runaway. The input clamp above already keeps the
+                // net in-domain; this is the last-line guard. See `NN_OUTPUT_CEIL`.
+                out.clamp(-NN_OUTPUT_CEIL, NN_OUTPUT_CEIL)
             }
             InferenceBackend::Wdf => {
                 // The circuit is fed/observed in volts: dBFS->volts in (`* INPUT_FS_VOLTS`),

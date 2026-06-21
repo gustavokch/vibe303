@@ -86,3 +86,32 @@ fn nn_level_norm_holds_loudness_across_gain_and_drive() {
         "level-norm ON spread {spread_db:.2} dB across gain×drive: {levels:?}"
     );
 }
+
+/// SAFETY: the NN input/output clamps (`NN_INPUT_CLAMP`/`NN_OUTPUT_CEIL`) must bound the path even
+/// when a pathological model would diverge. The embedded placeholder weights blow up above ~+12 dB
+/// Drive (`bin/measure_nn_gi`: `1/G_nn_sat → 0`); without the clamps a 0 dBFS input at +24 dB Drive
+/// drove the NN output to ~1e5 (speaker-damaging). Assert every sample stays finite and within the
+/// output ceiling (+ a small margin for the linear DPR all-pass downstream of the clamp), at a hot
+/// input across the worst gains, levelNorm OFF (raw NN, norm_gain = 1 — no leveling to mask it).
+#[test]
+fn nn_output_is_bounded_under_extreme_drive() {
+    use ba283::dsp::NN_OUTPUT_CEIL;
+    const DRIVE_MAX: f32 = 15.848_932; // +24 dB, the param max
+    let w = 2.0 * std::f32::consts::PI * F / SR;
+    for &r in &[110.0f32, 220.0, 1200.0] {
+        let mut ch = ChannelDsp::new();
+        let cond = cond_of(r);
+        let mut worst = 0.0f32;
+        for i in 0..(WARM + MEAS) {
+            let x = 1.0 * (w * i as f32).sin(); // 0 dBFS peak — far into the divergent regime at +24 dB
+            // norm_gain = 1.0 (levelNorm OFF): nothing downstream attenuates a blow-up.
+            let y = ch.process_sample(x, 1.0, DRIVE_MAX, cond, 0.5, 1.0, 1.0, 1.0, false, InferenceBackend::NeuralNet);
+            assert!(y.is_finite(), "NN output non-finite at r={r} i={i}: {y}");
+            worst = worst.max(y.abs());
+        }
+        assert!(
+            worst <= NN_OUTPUT_CEIL * 1.5,
+            "NN output {worst} exceeded the clamp ceiling {NN_OUTPUT_CEIL} (×1.5 DPR margin) at r={r}"
+        );
+    }
+}
