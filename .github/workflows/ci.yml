@@ -1,55 +1,31 @@
-# CI that runs on either a self-hosted Linux runner (if one is available)
-# or falls back to GitHub-hosted ubuntu-latest.
 name: ci
+
+# Test gate. Runs the BA283 test suite on every push to main and every pull
+# request — the only workflow that runs `cargo test` (mac.yml/release.yml only
+# bundle). Closes the gap where the `measure` alias-sweep regression guard and
+# the rest of plugin/tests/ never executed in CI.
+#
+# Linux x86_64 only: the DSP is platform-agnostic, so one runner is sufficient.
 
 on:
   push:
     branches: [main]
   pull_request:
 
-# Ensure the workflow token can list self-hosted runners.
-permissions:
-  actions: read
-
+# Cancel superseded runs on the same ref so PR pushes don't pile up runners.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Probe whether a suitable self-hosted linux runner is available for this repo.
-  choose-runner:
-    name: choose runner
-    runs-on: ubuntu-latest
-    outputs:
-      runner: ${{ steps.check.outputs.runner }}
-    steps:
-      - name: Check for online self-hosted linux runners
-        id: check
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            // List runners for the repo
-            const resp = await github.request('GET /repos/{owner}/{repo}/actions/runners', { owner, repo });
-            const runners = (resp.data && resp.data.runners) || [];
-            // Consider a runner suitable if it's online and has both 'self-hosted' and 'linux' labels.
-            const suitable = runners.some(r =>
-              r.status === 'online' &&
-              r.labels.some(l => l.name === 'self-hosted') &&
-              r.labels.some(l => l.name === 'linux')
-            );
-            const chosen = suitable ? 'self-hosted' : 'ubuntu-latest';
-            core.setOutput('runner', chosen);
-
   test:
     name: test (linux x86_64)
-    needs: choose-runner
-    # Dynamically choose runner based on the probe result above.
-    runs-on: ${{ needs.choose-runner.outputs.runner }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux build deps
+        # Same set as release.yml — building the ba283 lib pulls the baseview/GUI
+        # deps even for headless DSP tests.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -59,6 +35,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.93.0
       - uses: Swatinem/rust-cache@v2
       - name: Default test suite
+        # `probe_latency_is_documented` is a wall-clock ceiling (noisy under CI
+        # load by its own admission) — skip it by name; everything else is
+        # deterministic. Release: faster for the heavy DSP tests + shares the
+        # compile with the guard step.
         run: cargo test -p ba283 --release -- --skip probe_latency_is_documented
       - name: Alias-sweep regression guard (measure feature)
         run: cargo test -p ba283 --release --features measure --test alias_sweep
