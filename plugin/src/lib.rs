@@ -1576,13 +1576,22 @@ impl Plugin for Ba283Plugin {
                 // retrain will level-normalize the NN targets, collapsing this toward a single
                 // constant; the 5-entry table absorbs the residual per-position correction.)
                 //
-                // TODO(drive-swept NN parity): this still uses the small-signal `1/G_nn` with the
-                // analytic `/drive`, so under heavy Drive the NN output sags the same way the WDF path
-                // did before the Drive-swept `wdf_makeup` fix. The WDF backend is the shipped default
-                // and the embedded NN weights are still placeholder, so a Drive-swept `nn_norm_trim_at`
-                // table is deferred until real weights land (it would otherwise bake throwaway values).
-                // Mirror the WDF recipe then: sweep Drive in `tests/calib_nn_makeup.rs`, store
-                // `1/G_nn_sat(drive)`, and interpolate here.
+                // DRIVE-swept NN parity (deferred — EVIDENCED, not just assumed). This still uses the
+                // small-signal `1/G_nn` with the analytic `/drive`, so under heavy Drive the NN output
+                // sags the way the WDF path did before its Drive-swept `wdf_makeup` fix. The generator
+                // `bin/measure_nn_gi` now exists (mirrors `bin/measure_gi`): it sweeps the SAME Drive
+                // grid through the embedded WaveNet and emits a `1/G_nn_sat(drive)` table. Running it
+                // against the CURRENT placeholder weights proves why the table must NOT be baked yet —
+                // the placeholder net does not saturate, it DIVERGES above ~+12 dB drive (`1/G_nn_sat`
+                // collapses to ~0, i.e. G_nn_sat → ~1e7), so baking it would multiply the NN output by
+                // ~0 and SILENCE it under drive — strictly worse than today's bounded sag. levelNorm
+                // cannot level a diverging model. (That runaway is now bounded regardless by the NN
+                // input/output safety clamps `NN_INPUT_CLAMP`/`NN_OUTPUT_CEIL` in `dsp.rs` — a safety
+                // net, NOT a leveling fix.) So: keep the safe small-signal trim here until REAL
+                // weights land; then re-run `cargo run --release --bin measure_nn_gi`, confirm the
+                // curve is monotonic/sane, paste it into a per-position `nn_makeup` on `GAIN_STEPS`,
+                // add a drift guard, and switch this arm to `norm_apply_gain(nn_makeup_at(pos, drive),
+                // drive_block)` — the exact shape the WDF arm uses above.
                 if level_norm_on {
                     norm_apply_gain(nn_norm_trim(GAIN_STEPS[gain_pos_idx].r_kj_ohm), drive_block)
                 } else {
