@@ -121,6 +121,24 @@ BA283 mic-preamp output stage.
   `tests/calib_nn_makeup.rs` (no live probe — the model is a fixed black box).
   (Level Norm now defaults **ON** for a unity insert — see the stepped-gain entry
   above; the WDF backend reads the static per-position makeup table.)
+- **Neural Net path is now safety-clamped against runaway under heavy Drive.** The
+  WaveNet is only valid over the level range it was trained on; far past that it
+  extrapolates and (with the current provisional weights) can diverge above ~+12 dB
+  Drive, which drove the raw NN output to damaging levels. Three weight-agnostic,
+  always-on guards now bound it, all **bit-exact for in-domain signal** (the golden
+  PyTorch-parity test still passes): an **input-domain clamp** (`NN_INPUT_CLAMP`,
+  +12 dBFS) on the signal fed to the net — NeuralNet backend only, so the net
+  saturates at the bound instead of extrapolating (the WDF circuit is physically
+  self-limiting and is left untouched); a **finite guard** (any NaN/Inf from the
+  model becomes 0, so it can never poison the mix or the host); and a
+  **final-output ceiling** (`NN_OUTPUT_CEIL`, +18 dBFS) as a last-line speaker-safety
+  backstop on the returned sample. Regression-guarded by
+  `tests/test_nn_levers.rs::nn_output_is_bounded_under_extreme_drive`.
+  *Note:* the WDF Drive-swept levelNorm makeup is **not** mirrored on the NN path
+  yet — with provisional weights a Drive-swept `1/G_nn_sat` table would bake
+  divergent values. The offline generator `bin/measure_nn_gi` is in place to produce
+  it (one command) once final weights land; until then the NN levelNorm uses the
+  small-signal `1/G_nn` trim and the clamps bound the rest.
 - **Editor reflowed into a left→right signal-flow column layout.** The window is
   now **1040×660** (was a tall top-down stack that overran its fixed viewport and
   clipped at the bottom). Controls are grouped into four vertical columns ordered

@@ -34,6 +34,15 @@ weight/state storage is heap-boxed once at construction; the audio path only
 indexes fixed scratch + ring buffers. Bit-exact with the golden reference in
 steady state.
 
+The NN signal path is safety-clamped so it can never run away or emit a
+non-finite sample under extreme Drive (an input-domain clamp keeps the net inside
+its trained range, a finite guard zeroes any NaN/Inf, and a final-output ceiling
+backstops the speaker level). The clamps are bit-exact for in-domain signal. The
+embedded weights are still **provisional**; until final weights land the NN
+levelNorm uses the small-signal `1/G_nn` trim (the WDF backend's Drive-swept
+makeup is not yet mirrored on the NN path — `bin/measure_nn_gi` regenerates it
+when ready). Rendered tone may change before release.
+
 → `plugin/src/wavenet.rs`, weights `exported_models/model.cond.nam`
 
 (The older NAM-style `LSTM(3 x 18)` engine — `plugin/src/model.rs`, schema
