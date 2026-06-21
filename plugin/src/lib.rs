@@ -298,6 +298,7 @@ pub struct Ba283Plugin {
     last_age: f32,
     last_seed: u64,
     last_reroll: bool,
+    last_tolerance_grade: i32,
     #[cfg(feature = "trafo-core")]
     wdf_trafo_hyst_smooth: f32,
     #[cfg(feature = "trafo-core")]
@@ -762,6 +763,11 @@ pub struct Ba283Params {
     /// plugin state so a saved project recalls the exact same unit. Re-roll mutates it.
     #[persist = "age_seed"]
     pub age_seed: Arc<AtomicU64>,
+    /// Build tolerance grade: 0 = Ideal (no drift, bit-exact with pristine at any Age), 1 = Standard
+    /// (modern mass-production tolerances), 2 = Loose (vintage "mojo" — 2× wider spread, deeper
+    /// electrolytic dry-out). Scales every component drift band fed by the Age knob. WDF-only.
+    #[id = "tol_grade"]
+    pub tolerance_grade: IntParam,
     /// Persisted egui editor state (window size). Not a param; serialized so the window geometry
     /// round-trips with the project. Fixed-size today, but `create_egui_editor` requires it.
     #[persist = "editor_state"]
@@ -889,6 +895,22 @@ impl Default for Ba283Params {
                 .with_smoother(SmoothingStyle::Linear(50.0)),
             age_reroll: BoolParam::new("Re-roll Unit", false),
             age_seed: Arc::new(AtomicU64::new(DEFAULT_AGE_SEED)),
+            tolerance_grade: IntParam::new("Tolerance", 1, IntRange::Linear { min: 0, max: 2 })
+                .with_value_to_string(Arc::new(|i| {
+                    match i {
+                        0 => "Ideal",
+                        2 => "Loose",
+                        _ => "Standard",
+                    }
+                    .to_string()
+                }))
+                .with_string_to_value(Arc::new(|s| {
+                    match s.trim() {
+                        "Ideal" => Some(0),
+                        "Loose" => Some(2),
+                        _ => Some(1),
+                    }
+                })),
             editor_state: EguiState::from_size(editor::EDITOR_W, editor::EDITOR_H),
             #[cfg(feature = "trafo-core")]
             trafo_on: BoolParam::new("Transformer", true),
@@ -939,6 +961,7 @@ impl Default for Ba283Plugin {
             last_age: f32::NAN,
             last_seed: u64::MAX,
             last_reroll: false,
+            last_tolerance_grade: i32::MIN,
             #[cfg(feature = "trafo-core")]
             wdf_trafo_hyst_smooth: 0.5,
             #[cfg(feature = "trafo-core")]
@@ -1034,6 +1057,7 @@ impl Ba283Plugin {
         // force every leg in `process` to re-stamp them this block.
         self.last_age = f32::NAN;
         self.last_seed = u64::MAX;
+        self.last_tolerance_grade = i32::MIN; // fresh model defaults to Standard; re-apply user grade
         self.last_rgain = f32::NAN;
         self.last_bias = f32::NAN;
         #[cfg(feature = "trafo-core")]
@@ -1158,6 +1182,7 @@ impl Plugin for Ba283Plugin {
         let snap = warm.snapshot();
         let age = self.params.age.value();
         let seed = self.params.age_seed.load(Ordering::Relaxed);
+        let grade = self.params.tolerance_grade.value();
         #[cfg(feature = "adaptive-os")]
         let adaptive_on = self.params.adaptive_os.value();
         for ch in self.channels.iter_mut() {
@@ -1179,7 +1204,9 @@ impl Plugin for Ba283Plugin {
                 ch.wdf_clear_hi();
             }
             // Re-apply aging after the fresh build (build resets to pristine), then refresh the
-            // bias/rgain legs so their aged factor is current.
+            // bias/rgain legs so their aged factor is current. Grade first: it sets the band
+            // magnitudes the seed draw uses.
+            ch.wdf_set_tolerance_grade(grade);
             ch.wdf_set_age_seed(seed);
             ch.wdf_set_age(age);
             ch.wdf_set_rgain(rgain);
@@ -1201,6 +1228,7 @@ impl Plugin for Ba283Plugin {
         }
         self.last_age = age;
         self.last_seed = seed;
+        self.last_tolerance_grade = grade;
         self.last_reroll = self.params.age_reroll.value();
         self.wdf_rgain_smooth = rgain;
         self.wdf_bias_smooth = bias;
@@ -1460,6 +1488,19 @@ impl Plugin for Ba283Plugin {
                 }
             } else {
                 self.rebuild_stall = 0;
+            }
+            // Tolerance grade (ordered before seed/age): a change regenerates the drift pattern at
+            // the current seed with new band magnitudes, so force the age + live legs to re-apply.
+            let grade = self.params.tolerance_grade.value();
+            if grade != self.last_tolerance_grade {
+                for ch in self.channels.iter_mut() {
+                    ch.wdf_set_tolerance_grade(grade);
+                }
+                self.last_tolerance_grade = grade;
+                self.last_age = f32::NAN;
+                self.last_rgain = f32::NAN;
+                self.last_bias = f32::NAN;
+                changed = true;
             }
             // Aging (ordered after tier, before bias/rgain): re-roll edge -> seed -> age. Any change
             // forces the live bias/rgain legs to re-apply with the current aged factor.

@@ -46,6 +46,43 @@ impl WdfModel {
         (1.0 + self.age * self.age_pattern.res_dev[idx]).max(1e-6)
     }
 
+    /// Aged primary/secondary winding inductance at the current age (drift from `ind_dev`).
+    #[inline]
+    fn aged_lp(&self) -> f64 {
+        (self.lp_base * (1.0 + self.age * self.age_pattern.ind_dev[0])).max(1.0e-3)
+    }
+    #[inline]
+    fn aged_ls(&self) -> f64 {
+        (self.ls_base * (1.0 + self.age * self.age_pattern.ind_dev[1])).max(1.0e-3)
+    }
+
+    /// Rebuild the coupled-inductor companion `gl = (dt/2)·inv([Lp M; M Ls])` from (aged) winding
+    /// inductances. Mirrors the build-time stamp; called whenever the age knob drifts the core.
+    fn recompute_gl(&mut self, lp: f64, ls: f64, k: f64) {
+        let m = k * (lp * ls).sqrt();
+        let det = lp * ls - m * m;
+        let l_inv = [[ls / det, -m / det], [-m / det, lp / det]];
+        let h = self.dt * 0.5;
+        self.gl = [
+            [h * l_inv[0][0], h * l_inv[0][1]],
+            [h * l_inv[1][0], h * l_inv[1][1]],
+        ];
+    }
+
+    /// Re-voice the JA core from the cached dials and compose the per-unit aging factors: retune the
+    /// `lp_eff`/`k_hi` lump to the aged primary inductance `lp_aged`, then trim the knee/pinning/
+    /// reversibility. At age=0 all factors are 1 and `lp_aged == lp_base`, so this is bit-exact with
+    /// the un-aged voicing.
+    #[cfg(feature = "trafo-core")]
+    fn apply_trafo_aged(&mut self, lp_aged: f64) {
+        self.ja.set_lp_eff(lp_aged);
+        self.ja.set_voicing(self.trafo_hyst, self.trafo_sat);
+        let f_ms = (1.0 + self.age * self.age_pattern.core_dev[0]).max(1e-3);
+        let f_k = (1.0 + self.age * self.age_pattern.core_dev[1]).max(1e-3);
+        let f_c = (1.0 + self.age * self.age_pattern.core_dev[2]).max(1e-3);
+        self.ja.apply_core_aging(f_ms, f_k, f_c);
+    }
+
     /// Apply the aging knob: re-derive every resistor `g` and cap `geq` from its pristine base
     /// times the per-unit drift factor `(1 + age*dev)`, then rebuild G0 (+ Schur). Block-rate;
     /// preserves integrator state (dynamic re-settle, exactly like `set_bias`). The three
@@ -67,16 +104,38 @@ impl WdfModel {
             self.caps[i].c = c;
             self.caps[i].geq = 2.0 * c / self.dt;
         }
+        // Age the transformer: recompute the coupled-inductor companion from drifted winding L's,
+        // and (with the JA core) retune the lump + trim the core voicing. `build_g0` re-stamps `gl`.
+        let lp = self.aged_lp();
+        let ls = self.aged_ls();
+        self.recompute_gl(lp, ls, self.k_coupl_base);
+        #[cfg(feature = "trafo-core")]
+        self.apply_trafo_aged(lp);
         self.build_g0();
     }
 
-    /// Re-roll the "unit": regenerate the per-component drift pattern from `seed`, then re-apply at
-    /// the current `age`. The live bias/rgain legs are refreshed by the plugin afterward.
+    /// Re-roll the "unit": regenerate the per-component drift pattern from `seed` (using the per-leg
+    /// materials and current grade), then re-apply at the current `age`. The live bias/rgain legs
+    /// are refreshed by the plugin afterward.
     pub fn set_age_seed(&mut self, seed: u64) {
         self.age_seed = seed;
-        self.age_pattern =
-            AgePattern::from_seed(seed, self.n_res, self.n_caps, &self.cap_base_far);
+        self.age_pattern = AgePattern::from_seed(
+            seed,
+            self.n_res,
+            self.n_caps,
+            &self.res_material,
+            &self.cap_material,
+            self.tol_grade,
+        );
         self.set_age(self.age);
+    }
+
+    /// Set the build tolerance grade (0=Ideal, 1=Standard, 2=Loose): regenerate the drift pattern at
+    /// the current seed (band magnitude depends on grade), then re-apply at the current age. Mirrors
+    /// `set_age_seed`. `Ideal` => zero drift (bit-exact with pristine at any age).
+    pub fn set_tolerance_grade(&mut self, idx: i32) {
+        self.tol_grade = TolGrade::from_index(idx);
+        self.set_age_seed(self.age_seed);
     }
 
     /// Commit the JA core state for the next sample — the separable RK4 magnetizing filter (call
@@ -160,7 +219,11 @@ impl WdfModel {
     /// Independent of the ON/OFF gate: voicing a disabled core is harmless (no deviation injected).
     #[cfg(feature = "trafo-core")]
     pub fn set_trafo_voicing(&mut self, hyst: f64, sat: f64) {
-        self.ja.set_voicing(hyst.clamp(0.0, 1.0), sat.clamp(0.0, 1.0));
+        // Cache the dials so an age change can re-voice from the same point, then apply with the
+        // current per-unit aging composed in (bit-exact with `ja.set_voicing` at age=0).
+        self.trafo_hyst = hyst.clamp(0.0, 1.0);
+        self.trafo_sat = sat.clamp(0.0, 1.0);
+        self.apply_trafo_aged(self.aged_lp());
     }
 
     /// Current core operating point `(H, B)` in SI units — for offline B-H loop logging. Inert
@@ -187,5 +250,87 @@ impl WdfModel {
         let vbe = self.node_v(t.b) - self.node_v(t.e);
         let vbc = self.node_v(t.b) - self.node_v(t.c);
         1000.0 * compute_bjt(vbe, vbc, &t.p).ic
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh() -> WdfModel {
+        WdfModel::new(48_000.0, 1000.0, 0.5)
+    }
+
+    #[test]
+    fn age_zero_is_bitexact() {
+        let pristine = fresh();
+        let mut m = fresh();
+        m.set_age_seed(0x00AB_CDEF); // Standard grade (model default)
+        m.set_age(0.0);
+        assert_eq!(m.gl, pristine.gl, "coupled-inductor companion");
+        for i in 0..m.n_res {
+            assert_eq!(m.res[i].g, pristine.res[i].g, "res {i}");
+        }
+        for i in 0..m.n_caps {
+            assert_eq!(m.caps[i].c, pristine.caps[i].c, "cap {i}");
+        }
+    }
+
+    #[test]
+    fn ideal_grade_is_bitexact_at_full_age() {
+        let pristine = fresh();
+        let mut m = fresh();
+        m.set_tolerance_grade(0); // Ideal => zero drift even at age = 1
+        m.set_age(1.0);
+        assert_eq!(m.gl, pristine.gl, "coupled-inductor companion");
+        for i in 0..m.n_res {
+            assert_eq!(m.res[i].g, pristine.res[i].g, "res {i}");
+        }
+        for i in 0..m.n_caps {
+            assert_eq!(m.caps[i].c, pristine.caps[i].c, "cap {i}");
+        }
+    }
+
+    #[test]
+    fn transformer_inductor_ages_at_full_age() {
+        let pristine = fresh();
+        let mut m = fresh();
+        m.set_age_seed(0x00AB_CDEF);
+        m.set_age(1.0);
+        assert_ne!(m.gl, pristine.gl, "coupled inductor should drift when aged");
+    }
+
+    #[cfg(feature = "trafo-core")]
+    #[test]
+    fn ja_lump_tracks_aged_inductance() {
+        let pristine = fresh();
+        let mut m = fresh();
+        m.set_age_seed(0x00AB_CDEF);
+        m.set_age(1.0);
+        // lp_eff is re-pinned to the aged primary inductance...
+        assert!((m.ja.lp_eff - m.aged_lp()).abs() < 1e-12);
+        // ...and k_hi is re-back-solved, staying strictly proportional to lp_eff (the chi0 lump is
+        // fixed), so the low-drive deviation keeps cancelling.
+        let ratio_lp = m.ja.lp_eff / pristine.ja.lp_eff;
+        let ratio_khi = m.ja.k_hi / pristine.ja.k_hi;
+        assert!((ratio_lp - ratio_khi).abs() < 1e-9, "k_hi must track lp_eff");
+        assert!((ratio_lp - 1.0).abs() > 1e-6, "primary inductance should actually drift");
+    }
+
+    #[cfg(feature = "trafo-core")]
+    #[test]
+    fn ja_core_voicing_shifts_when_aged() {
+        let mut p = fresh();
+        p.set_tolerance_grade(0); // Ideal => pristine voicing at age 1
+        p.set_age(1.0);
+        let mut m = fresh();
+        m.set_age_seed(0x00AB_CDEF);
+        m.set_age(1.0);
+        let (ms0, k0, c0) = p.ja.core_msc();
+        let (ms1, k1, c1) = m.ja.core_msc();
+        assert!(
+            (ms1 - ms0).abs() > 1e-3 || (k1 - k0).abs() > 1e-3 || (c1 - c0).abs() > 1e-6,
+            "aged core voicing should differ from pristine: ({ms0},{k0},{c0}) vs ({ms1},{k1},{c1})"
+        );
     }
 }

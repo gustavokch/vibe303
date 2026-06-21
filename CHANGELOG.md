@@ -67,9 +67,25 @@ BA283 mic-preamp output stage.
   RMS-flat but phase redistribution can RAISE the peak level (inherent to phase
   rotation, independent of where it sits relative to the linear levelNorm/output
   scalars), so a hot input at unity output may clip — trim Output if so.
+- **Physically-modelled component aging & seeding (WDF backend).** The **Age** knob
+  (0..1) drifts a deterministic, per-"unit" component pattern derived from a persisted
+  seed (**Re-roll** picks a new virtual unit). Refinements over the first cut:
+  - **Truncated-Gaussian** drift (σ = band/2) instead of uniform — most virtual units
+    cluster near nominal, few reach the tolerance edge, matching a real production line.
+  - **Material-aware tolerance bands** per leg instead of a flat ±5%: metal-film ±1%,
+    carbon-film ±2%, carbon-comp ±10%, wirewound ±1%; caps split electrolytic (directional
+    dry-out, mostly down), polyester film ±5%, polystyrene/silver-mica timing ±2%.
+  - **Age now also drifts the transformer** — the LO1166 coupled-inductor magnetizing
+    inductances and (with `trafo-core`) the Jiles-Atherton core's knee/pinning/reversibility,
+    with the magnetizing lump re-pinned so low-drive behaviour stays continuous.
+  - **Tolerance** grade selector — **Ideal** (zero drift, bit-exact with pristine at any
+    Age), **Standard** (modern mass-production), **Loose** (vintage "mojo", 2× spread). Persisted.
+  - *Behaviour change:* at the default **Standard** grade, a non-zero Age now voices
+    differently than the previous uniform/flat-band model. **Age = 0** or grade **Ideal**
+    remain bit-exact with the pristine circuit.
 - Parameters: Backend, WDF Tier, Precision, Oversampling, Input Gain, Drive,
   Bias, Output, Mix, Level Norm, Link, Circuit Gain (5-position switch),
-  Age (+ Re-roll),
+  Age (+ Re-roll + Tolerance grade),
   EQ (+ HPF / Low / Mid frequency selectors and Low / Mid / High gains),
   DPR (+ Amount).
 - egui-based editor with Linux/X11 HiDPI scaling handling.

@@ -94,6 +94,14 @@ pub struct WdfModel {
     age_pattern: AgePattern,      // per-unit signed deviations (seed-derived, age-independent)
     age: f64,                     // current knob value [0,1]; 0 => no drift
     age_seed: u64,                // current unit seed
+    res_material: [ResMat; MAX_RES],   // per-leg material → tolerance band
+    cap_material: [CapMat; MAX_CAPS],  // per-cap dielectric → aging behaviour
+    tol_grade: TolGrade,          // build grade; scales every drift band (Ideal => no drift)
+
+    // transformer coupled-inductor pristine values (Lp, Ls, K) — for the aging recompute of `gl`
+    lp_base: f64,
+    ls_base: f64,
+    k_coupl_base: f64,
 
     // coupled inductor companion (transformer, trapezoidal): g = (dt/2) * inv([Lp M; M Ls])
     gl: [[f64; 2]; 2],
@@ -103,6 +111,10 @@ pub struct WdfModel {
     v_sprev: f64,
 
     // --- nonlinear JA transformer core (ON/OFF switch + HYST/SAT dials; feature `trafo-core`) ---
+    #[cfg(feature = "trafo-core")]
+    trafo_hyst: f64, // last HYSTERESIS dial (cached so age re-apply re-voices from the same point)
+    #[cfg(feature = "trafo-core")]
+    trafo_sat: f64, // last SATURATION dial
     #[cfg(feature = "trafo-core")]
     ja_active: bool, // ON/OFF gate; false => linear, bit-exact
     #[cfg(feature = "trafo-core")]
