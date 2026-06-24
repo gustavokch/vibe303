@@ -582,6 +582,15 @@ impl ChannelDsp {
         }
     }
 
+    /// Set the build tolerance grade (0=Ideal, 1=Standard, 2=Loose): regenerate drift, re-apply.
+    pub fn wdf_set_tolerance_grade(&mut self, idx: i32) {
+        self.wdf.set_tolerance_grade(idx);
+        #[cfg(feature = "adaptive-os")]
+        if let Some(hi) = self.wdf_hi.as_mut() {
+            hi.set_tolerance_grade(idx);
+        }
+    }
+
     /// Live transformer ON/OFF (feature `trafo-core`). OFF => bit-exact linear core.
     #[cfg(feature = "trafo-core")]
     pub fn wdf_set_trafo_enabled(&mut self, on: bool) {

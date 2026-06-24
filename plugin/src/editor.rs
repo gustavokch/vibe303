@@ -427,6 +427,19 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                                     });
                                 });
 
+                                // Build tolerance grade — scales how far the Age knob drifts the
+                                // unit (Ideal = pristine, Loose = vintage "mojo" spread).
+                                ui.add_space(SP_XS);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("TOLERANCE")
+                                            .font(display_font(12.0))
+                                            .color(DIM),
+                                    );
+                                    ui.add_space(SP_XS);
+                                    segmented(ui, setter, &p.tolerance_grade);
+                                });
+
                                 ui.add_space(SP_MD);
                                 hairline(ui);
                                 ui.add_space(SP_MD);

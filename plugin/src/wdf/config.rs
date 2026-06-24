@@ -293,13 +293,99 @@ pub const OS: usize = 2;
 pub(in crate::wdf) const MAX_RES: usize = 24;
 pub(in crate::wdf) const MAX_CAPS: usize = 8;
 
-// --- component aging drift bands (max signed deviation at age=1.0) ---
-// Resistors drift up/down a few percent (carbon/metal-film aging + tolerance spread).
-pub(in crate::wdf) const R_DRIFT_MAX: f64 = 0.05; // ±5%
-// Film caps are stable; small symmetric spread.
-pub(in crate::wdf) const C_FILM_DRIFT: f64 = 0.05; // ±5%
-// Electrolytics lose capacitance with age (dry-out): directional, mostly downward.
+// --- component aging drift bands (max signed deviation at age=1.0, Standard grade) ---
+// Tolerance is dictated by material, not a single global percentage: a vintage carbon-comp signal
+// resistor drifts an order of magnitude more than a wirewound transformer DCR. Each band is the
+// symmetric max |Δ| at age=1.0 and Standard grade; the grade multiplier (`TolGrade::mult`) and the
+// truncated-Gaussian draw (`aging.rs`) scale it down for most virtual units.
+
+/// Resistor material → symmetric tolerance/aging band.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::wdf) enum ResMat {
+    MetalFilm,  // tight modern film
+    CarbonFilm, // vintage signal film
+    CarbonComp, // vintage carbon composition — drifty, the "mojo"
+    Wirewound,  // transformer DCR / low-ohm ESR parasitics — very stable
+}
+
+impl ResMat {
+    /// Max |fractional Δ| at age=1.0, Standard grade.
+    #[inline]
+    pub(in crate::wdf) fn band(self) -> f64 {
+        match self {
+            ResMat::MetalFilm => 0.01,  // ±1%
+            ResMat::CarbonFilm => 0.02, // ±2%
+            ResMat::CarbonComp => 0.10, // ±10%
+            ResMat::Wirewound => 0.01,  // ±1%
+        }
+    }
+}
+
+/// Capacitor dielectric → aging behaviour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::wdf) enum CapMat {
+    Electrolytic, // dries out with age: directional drop (see `C_ELEC_*`)
+    Film,         // polyester/polypropylene: symmetric ±5%
+    Styrene,      // polystyrene / silver-mica timing caps: symmetric ±2%, very stable
+}
+
+impl CapMat {
+    /// Symmetric band for the non-directional dielectrics (unused for `Electrolytic`).
+    #[inline]
+    pub(in crate::wdf) fn band(self) -> f64 {
+        match self {
+            CapMat::Film => 0.05,    // ±5%
+            CapMat::Styrene => 0.02, // ±2%
+            CapMat::Electrolytic => 0.0,
+        }
+    }
+}
+
+// Electrolytics lose capacitance with age (dry-out): directional, downward only.
 pub(in crate::wdf) const C_ELEC_DROP_MAX: f64 = 0.20; // up to -20%
-pub(in crate::wdf) const C_ELEC_DROP_MIN: f64 = 0.02; // up to +2%
-// Farad threshold separating electrolytic (drift directional) from film (drift symmetric).
-pub(in crate::wdf) const C_ELEC_THRESH_F: f64 = 1.0e-6;
+
+// Transformer coupled-inductor aging band. This drifts the *magnetizing inductance* (core
+// permeability), NOT the winding DCR (that's the `Wirewound` resistor leg at ±1%). Core µ shifts
+// far more than copper resistance with age/temperature/DC history, so ±10% is deliberate and is
+// what the JA `lp_eff`/`k_hi` re-pin (see `apply_trafo_aged`) tracks.
+pub(in crate::wdf) const L_DRIFT_MAX: f64 = 0.10; // ±10% magnetizing L (permeability), not DCR
+// Nonlinear JA core aging bands (knee `m_s`, pinning `k`, reversibility `c`).
+pub(in crate::wdf) const JA_MS_DRIFT: f64 = 0.10; // ±10%
+pub(in crate::wdf) const JA_K_DRIFT: f64 = 0.10; // ±10%
+pub(in crate::wdf) const JA_C_DRIFT: f64 = 0.05; // ±5%
+// Static anhysteretic susceptibility the JA `k_hi` lump is back-solved from. `set_voicing` holds
+// `a = m_s/60` => `chi_raw = m_s/(3a) = 20`, invariant across both dials and all core aging — the
+// single source of truth for `lo1166()` and `set_lp_eff` (the post-aging `k_hi` re-pin).
+#[cfg(feature = "trafo-core")]
+pub(in crate::wdf) const JA_CHI_RAW: f64 = 20.0;
+
+/// Build tolerance grade — scales every component drift band. `Ideal` => zero drift (the Age knob
+/// is inert and the model is bit-exact with pristine, for golden-reference comparisons).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::wdf) enum TolGrade {
+    Ideal,    // 0% variance
+    Standard, // modern mass-production tolerances (the base bands above)
+    Loose,    // vintage "mojo" parts: 2× wider spread, deeper electrolytic dry-out
+}
+
+impl TolGrade {
+    /// Band multiplier applied to every drift band.
+    #[inline]
+    pub(in crate::wdf) fn mult(self) -> f64 {
+        match self {
+            TolGrade::Ideal => 0.0,
+            TolGrade::Standard => 1.0,
+            TolGrade::Loose => 2.0,
+        }
+    }
+
+    /// Map a 0..2 param index (Ideal/Standard/Loose) onto the grade; out-of-range => Standard.
+    #[inline]
+    pub(in crate::wdf) fn from_index(i: i32) -> Self {
+        match i {
+            0 => TolGrade::Ideal,
+            2 => TolGrade::Loose,
+            _ => TolGrade::Standard,
+        }
+    }
+}

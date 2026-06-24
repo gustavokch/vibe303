@@ -75,6 +75,32 @@ impl WdfModel {
             res_base_g[i] = res[i].g;
         }
 
+        // Per-leg material (parallel to the resistor netlist above) → tolerance/aging band. No
+        // datasheet: vintage Neve signal resistors are carbon (drifty), the transformer winding
+        // DCRs and low-ohm ESR parasitics are wirewound (stable), the console termination / Zobel
+        // snubber modern film. Exact assignment is a voicing choice, like the JA core voicing.
+        let res_mat_list = [
+            ResMat::Wirewound,  // R_esr_C7 (C1 ESR)
+            ResMat::CarbonComp, // R1 input series
+            ResMat::CarbonComp, // R3 base bleed
+            ResMat::CarbonComp, // R2 DC-bias feedback
+            ResMat::CarbonComp, // R4 emitter load
+            ResMat::CarbonFilm, // R_KJ (gain-knob leg)
+            ResMat::Wirewound,  // R_esr_Cgain
+            ResMat::CarbonComp, // R5 AC feedback
+            ResMat::CarbonComp, // R8 collector load
+            ResMat::CarbonComp, // R6 TR2 emitter load
+            ResMat::CarbonFilm, // R7 TR3 emitter resistor
+            ResMat::CarbonFilm, // RV1 upper
+            ResMat::CarbonFilm, // RV1 lower
+            ResMat::Wirewound,  // R_pri winding DCR
+            ResMat::Wirewound,  // R_sec winding DCR
+            ResMat::MetalFilm,  // R_term (console line in)
+            ResMat::MetalFilm,  // R_zobel
+        ];
+        let mut res_material = [ResMat::MetalFilm; MAX_RES];
+        res_material[..n_res].copy_from_slice(&res_mat_list);
+
         // --- caps ---
         let mut cv: Vec<Cap> = Vec::new();
         let push_c = |cv: &mut Vec<Cap>, a: i32, b: i32, farads: f64| {
@@ -97,6 +123,21 @@ impl WdfModel {
         for i in 0..n_caps {
             cap_base_far[i] = caps[i].c;
         }
+
+        // Per-cap dielectric (parallel to the cap netlist) → aging behaviour. The big coupling/gain
+        // caps are electrolytic (dry-out); the small pF Miller/collector caps are polystyrene /
+        // silver-mica timing caps (very stable); the Zobel snubber is film.
+        let cap_mat_list = [
+            CapMat::Electrolytic, // C1 input coupling (10 µF)
+            CapMat::Electrolytic, // Cgain (80 µF)
+            CapMat::Electrolytic, // C4 AC-feedback DC block (100 µF)
+            CapMat::Styrene,      // C3 collector (4700 pF)
+            CapMat::Styrene,      // C2 Miller TR1 B-C (220 pF)
+            CapMat::Styrene,      // C5 Miller TR2 B-C (330 pF)
+            CapMat::Film,         // Zobel (0.01 µF)
+        ];
+        let mut cap_material = [CapMat::Film; MAX_CAPS];
+        cap_material[..n_caps].copy_from_slice(&cap_mat_list);
 
         // --- BJTs (RB off: external base directly) ---
         let mut bc = bc184c();
@@ -148,11 +189,21 @@ impl WdfModel {
             age_pattern: AgePattern::identity(),
             age: 0.0,
             age_seed: 0,
+            res_material,
+            cap_material,
+            tol_grade: TolGrade::Standard,
+            lp_base: lp,
+            ls_base: ls,
+            k_coupl_base: k,
             gl,
             i_hist_p: 0.0,
             i_hist_s: 0.0,
             v_pprev: 0.0,
             v_sprev: 0.0,
+            #[cfg(feature = "trafo-core")]
+            trafo_hyst: 0.5,
+            #[cfg(feature = "trafo-core")]
+            trafo_sat: 0.5,
             #[cfg(feature = "trafo-core")]
             ja_active: false,
             #[cfg(feature = "trafo-core")]
