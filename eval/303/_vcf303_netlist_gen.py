@@ -9,13 +9,14 @@ TRANSISTOR_MODELS = """\
 .MODEL 2N3904 NPN(IS=6.73e-15 BF=416.4 VAF=74.03 IKF=0.06678 ISE=6.73e-15 NE=1.259 BR=0.7374 RB=10.0 RC=1.0 CJE=4.5e-12 TF=3.012e-10 XTF=2.0 VTF=4.0 ITF=0.4 CJC=3.638e-12 MJC=0.3085 TR=2.395e-07 XTB=1.5 KF=9e-16)
 """
 
-def add_elements(circuit):
+def add_elements(circuit, *, rreso):
     """Stamp every vcf303 component onto ``circuit`` (a PySpice ``Circuit`` already
-    carrying the rail + input sources). Build-time-variable values: none."""
+    carrying the rail + input sources). Build-time-variable values: ``rreso``."""
     circuit.C("98", "al", "ar", 3.3e-08)
     circuit.C("99", "bl", "br", 3.3e-08)
     circuit.C("100", "cl", "cr", 3.3e-08)
     circuit.C("101", "dl", "dr", 1.8e-08)
+    circuit.C("64", "re23", "fbn", 1e-08)
     circuit.R("95L", "vp8", "tl", 10000.0)
     circuit.R("95R", "vp8", "tr", 10000.0)
     circuit.R("164", "eL", "tail", 2200.0)
@@ -24,12 +25,18 @@ def add_elements(circuit):
     circuit.R("84", "vp8", "c20r", 22000.0)
     circuit.R("96", "t22e", "a3", 2200.0)
     circuit.R("85", "out", "a3", 10000.0)
+    circuit.R("27", "sig", "in_l", 100000.0)
+    circuit.R("_br", "bref", "in_r", 100000.0)
+    circuit.R("97", "out", "rb", 2200.0)
+    circuit.R("98", "re23", "a3", 100000.0)
+    circuit.R("reso", "fbn", "in_r", rreso)
     circuit.BJT("T38L", "dl", "in_l", "eL", model="2N3904")
     circuit.BJT("T38R", "dr", "in_r", "eR", model="2N3904")
     circuit.BJT("T20L", "c20l", "tl", "e20", model="2N3904")
     circuit.BJT("T20R", "c20r", "tr", "e20", model="2N3904")
     circuit.BJT("T22", "e20", "m2", "t22e", model="2N3904")
     circuit.BJT("T21", "vp8", "c20r", "out", model="2N3904")
+    circuit.BJT("T23", "vp8", "rb", "re23", model="2N3904")
     circuit.Diode("1L", "tl", "al", model="1N4148")
     circuit.Diode("1R", "tr", "ar", model="1N4148")
     circuit.Diode("2L", "al", "bl", model="1N4148")

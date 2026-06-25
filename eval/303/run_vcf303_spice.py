@@ -46,8 +46,9 @@ from PySpice.Spice.Netlist import Circuit  # noqa: E402
 
 V_RAIL = 8.0    # +8V analog rail (vp8) — top bias + T38 collector return
 V_A3 = 3.3      # "A" net = 3V3 mod-offset rail — T20/T22 gain-stage bias reference
-V_BIAS = 4.0    # T38 base DC bias (in_l/in_r); keeps the pair in forward-active
+V_BIAS = 4.0    # input DC bias (sig / in_r) — keeps the T38 pair forward-active
 V_M2 = 3.9      # T22 base bias (abstracted gain-stage divider) — sets tail current
+RRESO_OFF = 1e12  # resonance leg open => no feedback (step-2b behaviour)
 
 # The bare-ladder harness sources (ideal Ibias/Isink/Iac of step 1) are GONE — the
 # real T38 input stage drives the ladder bottom and the T20/T21 stage reads the
@@ -58,33 +59,35 @@ V_M2 = 3.9      # T22 base bias (abstracted gain-stage divider) — sets tail cu
 
 
 def _harness(i_tail: float) -> str:
-    """The +8V rail, T38 base bias + AC drive, and the cutoff tail sink. PLAIN
+    """The +8V rail, input bias + AC drive, and the cutoff tail sink. PLAIN
     numbers only (ngspice-46 mis-parses PySpice unit suffixes — see docstring)."""
     return (
         f"Vrail vp8 0 {V_RAIL}\n"
         f"Va3 a3 0 {V_A3}\n"  # "A" net = 3V3 mod-offset rail (gain-stage bias ref)
         f"Vm2 m2 0 {V_M2}\n"   # T22 base bias (abstracted gain-stage divider)
-        # Single-ended AC into the diff pair: in_l = bias + AC, in_r = bias (AC gnd).
-        f"Vin_l in_l 0 DC {V_BIAS} AC 1\n"
-        f"Vin_r in_r 0 DC {V_BIAS}\n"
+        # Signal in at `sig` (-> R27 -> in_l). in_r bias from `bref` (-> R_br); in_r
+        # also sums the resonance feedback. bref is AC-ground (DC only).
+        f"Vsig sig 0 DC {V_BIAS} AC 1\n"
+        f"Vbref bref 0 DC {V_BIAS}\n"
         # Cutoff: ideal current sink pulls I_tail out of the shared emitter tail
         # (open at AC, so it does not load the signal). = the expo bias current.
         f"Itail tail 0 {i_tail}\n"
     )
 
 
-def _netlist(i_tail: float) -> str:
-    """Stamp the ladder + T38 stage + harness; return a raw ngspice deck."""
+def _netlist(i_tail: float, rreso: float = RRESO_OFF) -> str:
+    """Stamp the ladder + active stages + harness; return a raw ngspice deck.
+    `rreso` = the resonance feedback leg (Ω); RRESO_OFF disables feedback."""
     c = Circuit("vcf303_ac")
     c.raw_spice += gen.TRANSISTOR_MODELS
-    gen.add_elements(c)
+    gen.add_elements(c, rreso=rreso)
     c.raw_spice += _harness(i_tail)
     return str(c)
 
 
-def op_point(i_tail: float) -> str:
+def op_point(i_tail: float, rreso: float = RRESO_OFF) -> str:
     """Run a DC .op and return the node-voltage table (convergence sanity check)."""
-    deck = _netlist(i_tail)
+    deck = _netlist(i_tail, rreso)
     with tempfile.TemporaryDirectory() as d:
         cir = Path(d) / "vcf.cir"
         cir.write_text(
@@ -92,16 +95,16 @@ def op_point(i_tail: float) -> str:
             + "\n.options gmin=1e-13 reltol=1e-4 abstol=1e-12 vntol=1e-7\n"
             + ".control\nop\n"
             + "print v(tl) v(tr) v(dl) v(tail) v(e20) "
-            + "v(c20l) v(c20r) v(t22e) v(out)\n.endc\n.end\n"
+            + "v(c20l) v(c20r) v(t22e) v(out) v(re23)\n.endc\n.end\n"
         )
         r = subprocess.run(["ngspice", "-b", str(cir)], capture_output=True,
                             text=True, timeout=120)
         return r.stdout + r.stderr
 
 
-def ac_response(i_tail: float):
-    """Run ngspice on the stamped deck, return (freq[Hz], mag_db) of V(tl)-V(tr)."""
-    deck = _netlist(i_tail)
+def ac_response(i_tail: float, rreso: float = RRESO_OFF):
+    """Run ngspice on the stamped deck, return (freq[Hz], mag_db) of V(out)."""
+    deck = _netlist(i_tail, rreso)
     with tempfile.TemporaryDirectory() as d:
         out = Path(d) / "ac.dat"
         cir = Path(d) / "vcf.cir"
@@ -151,13 +154,45 @@ def cutoff_and_slope(f: np.ndarray, mag_db: np.ndarray):
     return passband, f_deep, slope
 
 
+def resonance_peak(f, mag_db):
+    """Peak height (dB) of the response above its low-frequency passband — the
+    resonance bump at cutoff. Grows with feedback; diverges at self-oscillation."""
+    pb = float(mag_db[f < 20.0].mean() if np.any(f < 20.0) else mag_db[0])
+    peak = float(np.max(mag_db))
+    f_peak = float(f[int(np.argmax(mag_db))])
+    return peak - pb, f_peak
+
+
+def reso_sweep() -> int:
+    """Sweep the resonance leg Rreso at a fixed cutoff (I_tail = 32 µA) and report
+    the peak height + peak frequency. Smaller Rreso = stronger positive feedback =
+    higher resonance; the peak diverges at the self-oscillation threshold."""
+    i_tail = 32e-6
+    print(f"resonance sweep @ I_tail = {i_tail*1e6:.0f} uA  (smaller Rreso = more Q)")
+    print(f"{'Rreso':>10} {'peak':>9} {'f_peak':>10}")
+    legs = [RRESO_OFF, 220e3, 100e3, 47e3, 22e3, 10e3, 4.7e3, 2.2e3, 1e3]
+    for rr in legs:
+        f, mag = ac_response(i_tail, rr)
+        pk, fpk = resonance_peak(f, mag)
+        label = "open" if rr >= 1e11 else f"{rr/1e3:.1f}k"
+        print(f"{label:>10} {pk:7.2f}dB {fpk:9.1f}Hz")
+    print("\nWIP FINDING: the lever sweeps, but the peak forms at ~50 Hz (the open-\n"
+          " loop dominant pole), NOT at the audible cutoff — the ladder poles are\n"
+          " spread (first ~47 Hz, cluster ~kHz), not coincident. A pole-placement\n"
+          " pass is needed before resonance is musical. See `--op` / circuit notes.")
+    return 0
+
+
 def main() -> int:
-    # `--op` prints the DC operating point (T38-stage convergence sanity check).
+    # `--op` prints the DC operating point (active-stage convergence sanity check).
     if "--op" in sys.argv:
         for it in [2e-6, 32e-6, 128e-6]:
             print(f"=== I_tail = {it*1e6:.1f} uA ===")
             print(op_point(it))
         return 0
+
+    if "--reso" in sys.argv:
+        return reso_sweep()
 
     biases = [2e-6, 8e-6, 32e-6, 128e-6]  # tail (total); per-rail = I/2, f_c ~ I/(2 Vt C)
     print(f"{'I_tail':>8} {'passband':>9} {'f_-60dB':>10} {'slope':>12}")

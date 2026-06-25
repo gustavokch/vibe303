@@ -36,7 +36,7 @@
 [meta]
 name = "vcf303"
 ground = "GND"
-num_nodes = 23
+num_nodes = 28
 listening_node = "out"
 
 # --- left rail, top -> bottom ---
@@ -120,6 +120,33 @@ name = "t22e"  # T22 emitter (degen R96 -> a3)
 
 [[node]]
 name = "out"   # T21 emitter-follower output (-> X12-1)
+
+# --- step 3 (WIP): T23 resonance buffer + feedback (the SOUPED self-osc lever) ---
+# T23 buffers the output (base <- out via R97) and feeds it back, high-pass-coupled
+# (C64), through the resonance leg Rreso (param `rreso`) into the in_r input. Signal
+# enters at `sig` -> R27 -> in_l; in_r is biased from `bref` -> R_br and sums the
+# feedback (both in_l/in_r are summing nodes). The lever WORKS mechanically (param
+# leg sweeps; in_r+high-pass = regenerative near a pole, in_l = damping), BUT a
+# MUSICAL resonance peak at the audible cutoff does NOT yet emerge: the open-loop
+# response has its dominant pole at ~47 Hz with the remaining poles spread up to
+# ~kHz (NOT a near-coincident 4-pole cluster), so regeneration peaks at ~50 Hz, not
+# at fc. ROOT CAUSE = the ladder's effective bias current / differential readout
+# impedance puts the first pole ~30x below the r*C estimate — needs a systematic
+# pole-placement pass before resonance is musical. See run_vcf303_spice.py --reso.
+[[node]]
+name = "sig"   # signal input (harness Vsource) -> R27 -> in_l summing node
+
+[[node]]
+name = "bref"  # in_r DC bias reference (harness Vsource) -> R_br -> in_r
+
+[[node]]
+name = "rb"    # T23 base (from output via R97)
+
+[[node]]
+name = "re23"  # T23 emitter = buffered output (feedback source)
+
+[[node]]
+name = "fbn"   # feedback node between C64 (DC block) and Rreso (resonance leg)
 
 # --- ladder series diodes (anode = top, cathode = bottom; bias current flows
 #     top -> bottom through all four rungs of each rail) ---
@@ -286,6 +313,61 @@ name = "T21"
 model = "2N3904"
 base = "c20r"
 emitter = "out"
+collector = "vp8"
+
+# --- step 3: resonance buffer T23 + feedback leg ---
+# signal input resistor: sig -> in_l (summing node)
+[[resistor]]
+name = "R27"
+nodes = ["sig", "in_l"]
+ohms = 100000.0
+material = "carbon_film"
+
+# in_r DC bias resistor: bref -> in_r (matches R27 so both inputs see equal source Z)
+[[resistor]]
+name = "R_br"
+nodes = ["bref", "in_r"]
+ohms = 100000.0
+material = "carbon_film"
+
+# T23 base feed from the output
+[[resistor]]
+name = "R97"
+nodes = ["out", "rb"]
+ohms = 2200.0
+material = "carbon_film"
+
+# T23 emitter-follower load -> a3
+[[resistor]]
+name = "R98"
+nodes = ["re23", "a3"]
+ohms = 100000.0
+material = "carbon_film"
+
+# resonance leg (SOUPED self-osc lever): AC-coupled feedback into in_l. `rreso`
+# is the build-arg; smaller -> stronger feedback -> higher resonance / self-osc.
+# Default 47k = mild resonance (informational; param-driven by the harness).
+[[resistor]]
+name = "Rreso"
+nodes = ["fbn", "in_r"]
+ohms = 47000.0
+material = "carbon_film"
+param = "rreso"
+
+# C64 high-passes the feedback: blocks DC + the sub-fc passband emphasis so the
+# positive feedback regenerates at the ladder pole cluster (resonance at fc), not
+# at DC. Corner ~ 1/(2*pi*Rreso*C64).
+[[capacitor]]
+name = "C64"
+nodes = ["re23", "fbn"]
+farads = 1e-08
+dielectric = "film"
+
+[[bjt]]
+name = "T23"
+model = "2N3904"
+base = "rb"
+emitter = "re23"
 collector = "vp8"
 
 [model.1N4148]
