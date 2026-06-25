@@ -11,6 +11,10 @@ const R95L = 10000.0
 const R95R = 10000.0
 const R164 = 2200.0
 const R161 = 2200.0
+const R83 = 22000.0
+const R84 = 22000.0
+const R96 = 2200.0
+const R85 = 10000.0
 
 # --- Capacitor values (farads) ---
 const C98 = 3.3e-08

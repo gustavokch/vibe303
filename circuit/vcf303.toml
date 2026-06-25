@@ -36,8 +36,8 @@
 [meta]
 name = "vcf303"
 ground = "GND"
-num_nodes = 16
-listening_node = "tl"
+num_nodes = 23
+listening_node = "out"
 
 # --- left rail, top -> bottom ---
 [[node]]
@@ -89,6 +89,37 @@ name = "eR"    # T38 right emitter (degenerates through R161 to tail)
 
 [[node]]
 name = "tail"  # T38 shared emitter tail = expo bias current sink (= cutoff)
+
+# --- step 2b: T20/T22 differential gain stage + T21 output buffer ---
+# T20 reads the ladder top DIFFERENTIALLY and DC-coupled (bases = tl,tr); the
+# diode-ladder DC level (~7.8V) biases the pair directly. Collector loads R83/R84
+# -> +8V. T22 is the real tail current sink (emitter degen R96 -> a3 = the 3V3
+# offset rail "A" net). The SIGNAL path (T20 pair + R83/R84 + T21 buffer) is
+# transcribed faithfully; the gain-stage BIAS — the on-board R120/R122/R123
+# divider that I could not read confidently from the schematic — is ABSTRACTED to
+# a single harness-driven T22-base voltage (node m2), exactly as the cutoff expo
+# (T7/T11) is abstracted to a parameterised current (VCF_MAP item 3). T21 is the
+# emitter-follower output buffer. Closed-loop resonance feedback (T23) = step 3.
+[[node]]
+name = "a3"    # "A" net = 3V3 mod-offset rail (harness Vsource); bias reference
+
+[[node]]
+name = "c20l"  # T20 left collector (load R83 -> +8V)
+
+[[node]]
+name = "c20r"  # T20 right collector (load R84 -> +8V) = T21 base = output drive
+
+[[node]]
+name = "e20"   # T20 shared emitter tail (= T22 collector)
+
+[[node]]
+name = "m2"    # T22 base = abstracted gain-stage bias (harness Vsource)
+
+[[node]]
+name = "t22e"  # T22 emitter (degen R96 -> a3)
+
+[[node]]
+name = "out"   # T21 emitter-follower output (-> X12-1)
 
 # --- ladder series diodes (anode = top, cathode = bottom; bias current flows
 #     top -> bottom through all four rungs of each rail) ---
@@ -200,6 +231,62 @@ model = "2N3904"
 base = "in_r"
 emitter = "eR"
 collector = "dr"
+
+# --- step 2b: T20/T22 gain stage + T21 buffer ---
+# T20 diff pair collector loads -> +8V rail
+[[resistor]]
+name = "R83"
+nodes = ["vp8", "c20l"]
+ohms = 22000.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R84"
+nodes = ["vp8", "c20r"]
+ohms = 22000.0
+material = "carbon_film"
+
+# T22 tail-sink emitter degeneration -> a3
+[[resistor]]
+name = "R96"
+nodes = ["t22e", "a3"]
+ohms = 2200.0
+material = "carbon_film"
+
+# T21 emitter-follower load -> a3
+[[resistor]]
+name = "R85"
+nodes = ["out", "a3"]
+ohms = 10000.0
+material = "carbon_film"
+
+[[bjt]]
+name = "T20L"
+model = "2N3904"
+base = "tl"
+emitter = "e20"
+collector = "c20l"
+
+[[bjt]]
+name = "T20R"
+model = "2N3904"
+base = "tr"
+emitter = "e20"
+collector = "c20r"
+
+[[bjt]]
+name = "T22"
+model = "2N3904"
+base = "m2"
+emitter = "t22e"
+collector = "e20"
+
+[[bjt]]
+name = "T21"
+model = "2N3904"
+base = "c20r"
+emitter = "out"
+collector = "vp8"
 
 [model.1N4148]
 type = "d"
