@@ -1,0 +1,389 @@
+# ============================================================================
+# BA283 canonical circuit IR  —  SINGLE SOURCE OF TRUTH
+# ============================================================================
+# Neve BA283 AM output/line-amp section (drawing EX/10283), the real 3-BJT
+# d.c.-coupled triplet + LO1166 output transformer. This file is the ONE place
+# circuit topology and component values live; tools/circuitgen/ generates the
+# three backends from it:
+#   * SPICE   -> data_gen/netlist.py            (ngspice / PySpice data-gen)
+#   * Rust    -> plugin/src/wdf/topology_gen.rs (realtime WDF/MNA solver topology)
+#   * Julia   -> eval/acme_vs_spice/ba283_acme.jl (ACME DK-method validation)
+#
+# See circuit/RECONCILIATION.md for the element-by-element diff that produced
+# this file and the per-backend projection rules. DO NOT hand-edit the generated
+# backends — edit here and regenerate; the drift-guard test enforces this.
+#
+# ORDER IS LOAD-BEARING. Nodes are listed in WDF enum order (0..20); resistors
+# and capacitors in build.rs push order. The Rust emitter preserves these to keep
+# the generated WdfModel bit-identical to the current hand-written build.rs.
+# ============================================================================
+
+[meta]
+name = "BA283"
+drawing = "EX/10283"
+rail_node = "A"
+rail_voltage = 24.0
+ground = "GND"
+num_nodes = 21              # WDF NUM_NODES (intrinsic bases included, RB-off)
+listening_node = "SEC_IN"   # balanced secondary tap (the sampled output)
+
+# ---------------------------------------------------------------------------
+# Nodes (WDF enum order). `known` = fixed potential (excluded from MNA unknowns).
+# `intrinsic_base` nodes exist only in the WDF (RB-off → pinned); SPICE/ACME wire
+# the external base directly and omit them.
+# ---------------------------------------------------------------------------
+[[node]]
+name = "A"
+spice = "A"
+known = true
+role = "rail"
+[[node]]
+name = "INPUT"
+spice = "INPUT"
+known = true
+role = "input"
+[[node]]
+name = "C1_MID"
+spice = "C1_MID"
+[[node]]
+name = "R1_MID"
+spice = "R1_MID"
+[[node]]
+name = "TR1_B"
+spice = "TR1_B"
+[[node]]
+name = "TR1_BI"
+known = true
+intrinsic_base = true
+[[node]]
+name = "TR1_E"
+spice = "TR1_E"
+[[node]]
+name = "TR1_C"
+spice = "TR1_C"
+[[node]]
+name = "TR2_BI"
+known = true
+intrinsic_base = true
+[[node]]
+name = "J"
+spice = "J"
+[[node]]
+name = "CGAIN_MID"
+spice = "Cgain_MID"
+[[node]]
+name = "TR2_E"
+spice = "TR2_E"
+[[node]]
+name = "TR3_BI"
+known = true
+intrinsic_base = true
+[[node]]
+name = "TR3_E"
+spice = "TR3_E"
+[[node]]
+name = "RV1_W"
+spice = "RV1_WIPER"
+[[node]]
+name = "F"
+spice = "F"
+[[node]]
+name = "C4_MID"
+spice = "C4_MID"
+[[node]]
+name = "PA"
+spice = "pa"
+role = "xfmr_pri_internal"
+[[node]]
+name = "SA"
+spice = "sa"
+acme = "SEC_W"
+role = "xfmr_sec_internal"
+[[node]]
+name = "SEC_IN"
+spice = "SEC_IN"
+role = "listening"
+[[node]]
+name = "ZOBEL"
+spice = "ZOBEL_MID"
+
+# ---------------------------------------------------------------------------
+# Resistors (build.rs push order = res[] array index order).
+# `param` marks a build-time variable leg (not a literal): the default `ohms`
+# is the shipped value, but codegen wires it to the build argument named.
+# ---------------------------------------------------------------------------
+[[resistor]]
+name = "R_esr_C7"
+nodes = ["C1_MID", "R1_MID"]
+ohms = 1.0
+material = "wirewound"
+role = "esr"
+[[resistor]]
+name = "R1"
+nodes = ["R1_MID", "TR1_B"]
+ohms = 2.2e3
+material = "carbon_comp"
+[[resistor]]
+name = "R3"
+nodes = ["TR1_B", "GND"]
+ohms = 68.0e3
+material = "carbon_comp"
+[[resistor]]
+name = "R2"
+nodes = ["RV1_W", "TR1_B"]
+ohms = 56.0e3
+material = "carbon_comp"
+[[resistor]]
+name = "R4"
+nodes = ["TR1_E", "GND"]
+ohms = 1.2e3
+material = "carbon_comp"
+[[resistor]]
+name = "R_KJ"
+nodes = ["TR1_E", "J"]
+ohms = 220.0
+material = "carbon_film"
+param = "rgain"             # K<->J gain shunt; build arg `rgain` (ohms)
+role = "gain_knob"
+[[resistor]]
+name = "R_esr_Cgain"
+nodes = ["CGAIN_MID", "GND"]
+ohms = 1.0
+material = "wirewound"
+role = "esr"
+[[resistor]]
+name = "R5"
+nodes = ["C4_MID", "TR1_E"]
+ohms = 3.3e3
+material = "carbon_comp"
+role = "ac_feedback"
+[[resistor]]
+name = "R8"
+nodes = ["A", "TR1_C"]
+ohms = 33.0e3
+material = "carbon_comp"
+[[resistor]]
+name = "R6"
+nodes = ["TR2_E", "GND"]
+ohms = 18.0e3
+material = "carbon_comp"
+[[resistor]]
+name = "R7"
+nodes = ["TR3_E", "GND"]
+ohms = 47.0
+material = "carbon_film"
+[[resistor]]
+name = "RV1_upper"
+nodes = ["TR3_E", "RV1_W"]
+ohms = 756.7              # default @ BIAS_NORM_FIXED=0.77 (informational; param-driven)
+material = "carbon_film"
+param = "rv1_upper"        # RV1 split upper leg from `bias`
+role = "bias_pot_upper"
+[[resistor]]
+name = "RV1_lower"
+nodes = ["RV1_W", "GND"]
+ohms = 3943.3             # default @ BIAS_NORM_FIXED=0.77 (informational; param-driven)
+material = "carbon_film"
+param = "rv1_lower"       # RV1 split lower leg from `bias`
+role = "bias_pot_lower"
+[[resistor]]
+name = "R_pri"
+nodes = ["F", "PA"]
+ohms = 14.5
+material = "wirewound"
+role = "xfmr_pri_dcr"
+[[resistor]]
+name = "R_sec"
+nodes = ["SEC_IN", "SA"]
+ohms = 44.0
+material = "wirewound"
+role = "xfmr_sec_dcr"
+[[resistor]]
+name = "R_term"
+nodes = ["SEC_IN", "GND"]
+ohms = 600.0
+material = "metal_film"
+role = "line_termination"
+[[resistor]]
+name = "R_zobel"
+nodes = ["F", "ZOBEL"]
+ohms = 1.5e3
+material = "metal_film"
+role = "zobel"
+
+# ---------------------------------------------------------------------------
+# Capacitors (build.rs push order for the 7 WDF caps; C6 is WDF-inert).
+# `wdf_drop`: both terminals are `known` nodes (rail↔ground) → injects no current
+# into the MNA unknowns, so the Rust emitter omits it. SPICE/ACME keep it.
+# ---------------------------------------------------------------------------
+[[capacitor]]
+name = "C1"
+nodes = ["INPUT", "C1_MID"]
+farads = 10.0e-6
+dielectric = "electrolytic"
+role = "input_coupling"
+[[capacitor]]
+name = "Cgain"
+nodes = ["J", "CGAIN_MID"]
+farads = 80.0e-6
+dielectric = "electrolytic"
+[[capacitor]]
+name = "C4"
+nodes = ["F", "C4_MID"]
+farads = 100.0e-6
+dielectric = "electrolytic"
+role = "ac_feedback_block"
+[[capacitor]]
+name = "C3"
+nodes = ["TR1_C", "GND"]
+farads = 4700.0e-12
+dielectric = "styrene"
+role = "compensation"
+[[capacitor]]
+name = "C2"
+nodes = ["TR1_B", "TR1_C"]
+farads = 220.0e-12
+dielectric = "styrene"
+role = "miller"
+[[capacitor]]
+name = "C5"
+nodes = ["TR1_C", "F"]
+farads = 330.0e-12
+dielectric = "styrene"
+role = "miller"
+[[capacitor]]
+name = "Czobel"
+nodes = ["ZOBEL", "A"]
+farads = 0.01e-6
+dielectric = "film"
+role = "zobel"
+[[capacitor]]
+name = "C6"
+nodes = ["A", "GND"]
+farads = 80.0e-6
+dielectric = "electrolytic"
+role = "rail_decoupling"
+wdf_drop = true            # both-known (rail↔gnd): inert in WDF MNA, SPICE/ACME only
+
+# ---------------------------------------------------------------------------
+# BJTs (instance order TR1, TR2, TR3). `base` is the EXTERNAL base node; the WDF
+# additionally has an `intrinsic_base` node (RB-off → pinned). c/e as named.
+# ---------------------------------------------------------------------------
+[[bjt]]
+name = "TR1"
+model = "BC184C"
+base = "TR1_B"
+emitter = "TR1_E"
+collector = "TR1_C"
+intrinsic_base = "TR1_BI"
+[[bjt]]
+name = "TR2"
+model = "BC184C"
+base = "TR1_C"
+emitter = "TR2_E"
+collector = "F"
+intrinsic_base = "TR2_BI"
+[[bjt]]
+name = "TR3"
+model = "2N3055"
+base = "TR2_E"
+emitter = "TR3_E"
+collector = "F"
+intrinsic_base = "TR3_BI"
+
+# ---------------------------------------------------------------------------
+# Transformer (LO1166): linear coupled-inductor. Winding DCRs R_pri/R_sec are
+# ordinary resistors above; this block is the K-coupled inductor pair only.
+# primary winding spans pri_nodes; secondary spans sec_nodes.
+# ---------------------------------------------------------------------------
+[transformer]
+name = "LO1166"
+lp = 1.9
+ls = 5.36
+k = 0.9995
+pri_nodes = ["PA", "A"]    # primary internal (after R_pri) .. rail (collector choke)
+sec_nodes = ["SA", "GND"]  # secondary internal (before R_sec) .. ground
+
+# ---------------------------------------------------------------------------
+# BJT model cards (full SPICE Gummel-Poon = canonical superset). Each backend
+# projects its subset (see RECONCILIATION.md):
+#   SPICE: verbatim   ACME: ACME-bjt keys   Rust: derived BjtParams
+# Rust defaults when a key is absent: vjc=0.75, var=0, ikr=0; consts vt=0.02585.
+# ---------------------------------------------------------------------------
+[model.BC184C]
+type = "npn"
+is = 1.04e-14
+bf = 600.0
+vaf = 120.0
+ikf = 0.05
+ise = 1.00e-14
+ne = 1.5
+br = 0.1
+nr = 1.00
+var = 200.0
+isc = 1.00e-15
+nc = 1.2
+rb = 50.0
+re = 0.5
+rc = 0.5
+cjc = 4.50e-12
+mjc = 0.33
+vjc = 0.75
+cje = 1.40e-11
+mje = 0.33
+vje = 0.75
+tf = 4.00e-10
+tr = 1.00e-08
+
+[model.2N3055]
+type = "npn"
+is = 4.66e-12
+bf = 360.0
+vaf = 100.0
+ikf = 0.25
+ise = 3.339e-11
+br = 2.0
+isc = 5e-9
+rb = 3.0
+irb = 0.001
+rbm = 0.4
+rc = 0.04
+cje = 5.802e-10
+vje = 1.2
+mje = 0.45
+tf = 8e-8
+xtf = 1.0
+itf = 3.0
+ptf = 120.0
+cjc = 2.121e-10
+mjc = 0.4
+tr = 2.55e-6
+xtb = 1.0
+
+# ---------------------------------------------------------------------------
+# Parametric maps + constants (mirror data_gen/netlist.py module constants).
+# Consumed by the SPICE/Rust emitters where they emit the gain/bias plumbing.
+# ---------------------------------------------------------------------------
+[params]
+bjt_vt = 0.02585           # thermal voltage const used by the Rust BjtParams
+sqrt2_trunc = 1.41421356   # truncated √2 in vcrit (matches C++ golden vectors)
+
+# RV1 (4k7 bias preset) remap
+rv1_total_ohms = 4700.0
+rv1_wiper_min = 0.3
+bias_norm_fixed = 0.77
+
+# K<->J gain map (log-linear gain_norm[0,1] <-> R_KJ ohms)
+gain_rkj_default = 220.0
+gain_rkj_max = 10000.0      # gain_norm 0.0 (min gain)
+gain_rkj_min = 82.0         # gain_norm 1.0 (max gain)
+fb_r5_ohms = 3.3e3
+
+# Input-gain conditioning axis
+input_gain_db_min = -24.0
+input_gain_db_max = 24.0
+
+# Stepped (WS4) hardware gain detents: R_KJ ohms idx 0..4 = 15/20/25/30/35 dB.
+stepped_rkj_ohms = [1.0e9, 1200.0, 470.0, 220.0, 110.0]
+# Embedded WDF makeup table = 1/G_i per detent (shared WDF/NN reference).
+stepped_makeup = [0.202892, 0.118732, 0.073245, 0.043799, 0.026136]

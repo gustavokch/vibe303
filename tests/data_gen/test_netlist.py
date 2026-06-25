@@ -8,7 +8,7 @@ from data_gen.netlist import build_netlist
 def test_build_netlist_returns_circuit_with_expected_nodes():
     circuit = build_netlist(bias_norm=0.5)
     netlist_str = str(circuit)
-    for token in ("Vsupply", "BC184C", "2N3055", "LO1166", "Rterm", "C_esr"):
+    for token in ("Vsupply", "BC184C", "2N3055", "LO1166", "R_term", "C_esr"):
         assert token in netlist_str, f"netlist missing token {token!r}\n{netlist_str}"
 
 
@@ -69,26 +69,26 @@ def test_rv1_bias_mapping_values():
 
     s0 = str(build_netlist(0.0))
     up0, lo0 = legs(0.0)
-    assert _resistor_value(s0, "Rupper") == pytest.approx(up0, abs=tol)
-    assert _resistor_value(s0, "Rlower") == pytest.approx(lo0, abs=tol)
+    assert _resistor_value(s0, "RV1_upper") == pytest.approx(up0, abs=tol)
+    assert _resistor_value(s0, "RV1_lower") == pytest.approx(lo0, abs=tol)
 
     s1 = str(build_netlist(1.0))
     # wiper -> 1.0 so R_upper hits the 1 Ω clamp; R_lower -> 4700.
-    assert _resistor_value(s1, "Rupper") == pytest.approx(1.0, abs=tol)
-    assert _resistor_value(s1, "Rlower") == pytest.approx(4700.0, abs=tol)
+    assert _resistor_value(s1, "RV1_upper") == pytest.approx(1.0, abs=tol)
+    assert _resistor_value(s1, "RV1_lower") == pytest.approx(4700.0, abs=tol)
 
     s_mid = str(build_netlist(0.5))
     up_m, lo_m = legs(0.5)
-    assert _resistor_value(s_mid, "Rupper") == pytest.approx(up_m, abs=tol)
-    assert _resistor_value(s_mid, "Rlower") == pytest.approx(lo_m, abs=tol)
+    assert _resistor_value(s_mid, "RV1_upper") == pytest.approx(up_m, abs=tol)
+    assert _resistor_value(s_mid, "RV1_lower") == pytest.approx(lo_m, abs=tol)
 
 
 def test_clamp_keeps_legs_at_least_one_ohm():
     """Neither RV1 leg may render below 1 ohm (no rail-to-ground short)."""
     for bias in (0.0, 1.0):
         s = str(build_netlist(bias))
-        assert _resistor_value(s, "Rupper") >= 1.0
-        assert _resistor_value(s, "Rlower") >= 1.0
+        assert _resistor_value(s, "RV1_upper") >= 1.0
+        assert _resistor_value(s, "RV1_lower") >= 1.0
 
 
 def test_lo1166_instance_line_present():

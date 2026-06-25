@@ -1,4 +1,5 @@
 use super::*;
+use super::topology_gen::{build_topology, Topology};
 
 impl WdfModel {
 
@@ -13,153 +14,31 @@ impl WdfModel {
     /// is fixed (RB off, U=16); only the solver levers vary. Mirrors `BA283::build` +
     /// `qualityPreset` (`main.cpp:314-409`, `main.cpp:92`).
     pub fn build_with(cfg: QualityConfig, internal_sr: f64, rgain: f64, bias: f64) -> Self {
-        use node::*;
         let dt = 1.0 / internal_sr;
 
-        let mut known = [false; NUM_NODES];
-        known[N_A as usize] = true;
-        known[N_INPUT as usize] = true;
-        // RB off: pin the 3 intrinsic-base nodes (V=0) so they're excluded from the unknown map.
-        known[N_TR1_BI as usize] = true;
-        known[N_TR2_BI as usize] = true;
-        known[N_TR3_BI as usize] = true;
-
-        let mut urow = [-1i32; NUM_NODES];
-        let mut u = 0usize;
-        for i in 0..NUM_NODES {
-            urow[i] = if known[i] {
-                -1
-            } else {
-                let r = u as i32;
-                u += 1;
-                r
-            };
-        }
-
-        // --- resistors (builder may use Vec; the process path is array-only) ---
-        let mut rv: Vec<Res> = Vec::new();
-        let push_r = |rv: &mut Vec<Res>, a: i32, b: i32, ohms: f64| rv.push(Res { a, b, g: 1.0 / ohms });
-        let (r_upper, r_lower) = rv1_split(bias);
-        // TR1 (BC184C) common-emitter input
-        push_r(&mut rv, N_C1_MID, N_R1_MID, 1.0); // R_esr_C7 (C1 ESR)
-        push_r(&mut rv, N_R1_MID, N_TR1_B, 2.2e3); // R1 input series
-        push_r(&mut rv, N_TR1_B, GND, 68.0e3); // R3 base bleed
-        push_r(&mut rv, N_RV1_W, N_TR1_B, 56.0e3); // R2 DC-bias feedback
-        push_r(&mut rv, N_TR1_E, GND, 1.2e3); // R4 emitter load
-        let r_kj_idx = rv.len();
-        push_r(&mut rv, N_TR1_E, N_J, rgain); // R_KJ (gain knob)
-        push_r(&mut rv, N_CGAIN_MID, GND, 1.0); // R_esr_Cgain
-        push_r(&mut rv, N_C4_MID, N_TR1_E, 3.3e3); // R5 AC feedback
-        push_r(&mut rv, N_A, N_TR1_C, 33.0e3); // R8 collector load
-        // TR2+TR3 compound common-collector pair
-        push_r(&mut rv, N_TR2_E, GND, 18.0e3); // R6 TR2 emitter load
-        push_r(&mut rv, N_TR3_E, GND, 47.0); // R7 TR3 emitter resistor
-        let r_upper_idx = rv.len();
-        push_r(&mut rv, N_TR3_E, N_RV1_W, r_upper); // RV1 upper
-        let r_lower_idx = rv.len();
-        push_r(&mut rv, N_RV1_W, GND, r_lower); // RV1 lower
-        // LO1166 + primary Zobel + secondary termination
-        push_r(&mut rv, N_F, N_PA, 14.5); // R_pri winding DCR
-        push_r(&mut rv, N_SEC_IN, N_SA, 44.0); // R_sec winding DCR
-        push_r(&mut rv, N_SEC_IN, GND, 600.0); // R_term (console line in)
-        push_r(&mut rv, N_F, N_ZOBEL, 1.5e3); // R_zobel (primary Boucherot snubber)
-        // RB off: bases wire directly (no RB resistors).
-
-        let mut res = [Res::default(); MAX_RES];
-        let n_res = rv.len();
-        res[..n_res].copy_from_slice(&rv);
-
-        // Capture pristine resistor conductances for aging (re-derived per age apply).
-        let mut res_base_g = [0.0f64; MAX_RES];
-        for i in 0..n_res {
-            res_base_g[i] = res[i].g;
-        }
-
-        // Per-leg material (parallel to the resistor netlist above) → tolerance/aging band. No
-        // datasheet: vintage Neve signal resistors are carbon (drifty), the transformer winding
-        // DCRs and low-ohm ESR parasitics are wirewound (stable), the console termination / Zobel
-        // snubber modern film. Exact assignment is a voicing choice, like the JA core voicing.
-        let res_mat_list = [
-            ResMat::Wirewound,  // R_esr_C7 (C1 ESR)
-            ResMat::CarbonComp, // R1 input series
-            ResMat::CarbonComp, // R3 base bleed
-            ResMat::CarbonComp, // R2 DC-bias feedback
-            ResMat::CarbonComp, // R4 emitter load
-            ResMat::CarbonFilm, // R_KJ (gain-knob leg)
-            ResMat::Wirewound,  // R_esr_Cgain
-            ResMat::CarbonComp, // R5 AC feedback
-            ResMat::CarbonComp, // R8 collector load
-            ResMat::CarbonComp, // R6 TR2 emitter load
-            ResMat::CarbonFilm, // R7 TR3 emitter resistor
-            ResMat::CarbonFilm, // RV1 upper
-            ResMat::CarbonFilm, // RV1 lower
-            ResMat::Wirewound,  // R_pri winding DCR
-            ResMat::Wirewound,  // R_sec winding DCR
-            ResMat::MetalFilm,  // R_term (console line in)
-            ResMat::MetalFilm,  // R_zobel
-        ];
-        let mut res_material = [ResMat::MetalFilm; MAX_RES];
-        res_material[..n_res].copy_from_slice(&res_mat_list);
-
-        // --- caps ---
-        let mut cv: Vec<Cap> = Vec::new();
-        let push_c = |cv: &mut Vec<Cap>, a: i32, b: i32, farads: f64| {
-            cv.push(Cap { a, b, c: farads, geq: 2.0 * farads / dt, i_prev: 0.0 })
-        };
-        push_c(&mut cv, N_INPUT, N_C1_MID, 10.0e-6); // C1 input coupling
-        push_c(&mut cv, N_J, N_CGAIN_MID, 80.0e-6); // Cgain
-        push_c(&mut cv, N_F, N_C4_MID, 100.0e-6); // C4 AC-feedback DC block
-        push_c(&mut cv, N_TR1_C, GND, 4700.0e-12); // C3 on TR1 collector
-        push_c(&mut cv, N_TR1_B, N_TR1_C, 220.0e-12); // C2 Miller across TR1 B-C
-        push_c(&mut cv, N_TR1_C, N_F, 330.0e-12); // C5 Miller across TR2 B-C
-        push_c(&mut cv, N_ZOBEL, N_A, 0.01e-6); // Zobel cap (primary, to rail)
-
-        let mut caps = [Cap::default(); MAX_CAPS];
-        let n_caps = cv.len();
-        caps[..n_caps].copy_from_slice(&cv);
-
-        // Capture pristine cap farads for aging (geq re-derived per age apply).
-        let mut cap_base_far = [0.0f64; MAX_CAPS];
-        for i in 0..n_caps {
-            cap_base_far[i] = caps[i].c;
-        }
-
-        // Per-cap dielectric (parallel to the cap netlist) → aging behaviour. The big coupling/gain
-        // caps are electrolytic (dry-out); the small pF Miller/collector caps are polystyrene /
-        // silver-mica timing caps (very stable); the Zobel snubber is film.
-        let cap_mat_list = [
-            CapMat::Electrolytic, // C1 input coupling (10 µF)
-            CapMat::Electrolytic, // Cgain (80 µF)
-            CapMat::Electrolytic, // C4 AC-feedback DC block (100 µF)
-            CapMat::Styrene,      // C3 collector (4700 pF)
-            CapMat::Styrene,      // C2 Miller TR1 B-C (220 pF)
-            CapMat::Styrene,      // C5 Miller TR2 B-C (330 pF)
-            CapMat::Film,         // Zobel (0.01 µF)
-        ];
-        let mut cap_material = [CapMat::Film; MAX_CAPS];
-        cap_material[..n_caps].copy_from_slice(&cap_mat_list);
-
-        // --- BJTs (RB off: external base directly) ---
-        let mut bc = bc184c();
-        let mut q = q2n3055();
-        bc.cheap_exp = cfg.cheap_exp; // ultra-fast tier: low-order transport exp
-        q.cheap_exp = cfg.cheap_exp;
-        let bjts = [
-            Bjt::new(N_TR1_B, N_TR1_E, N_TR1_C, bc), // TR1
-            Bjt::new(N_TR1_C, N_TR2_E, N_F, bc),     // TR2 (base = TR1_C, collector = F)
-            Bjt::new(N_TR2_E, N_TR3_E, N_F, q),      // TR3 (base = TR2_E, collector = F)
-        ];
-
-        // coupled inductor companion: L = [Lp M; M Ls], M = K*sqrt(Lp*Ls)
-        let (lp, ls, k): (f64, f64, f64) = (1.9, 5.36, 0.9995);
-        let m = k * (lp * ls).sqrt();
-        let det = lp * ls - m * m;
-        let l_inv = [[ls / det, -m / det], [-m / det, lp / det]];
-        let h = dt * 0.5;
-        let gl = [
-            [h * l_inv[0][0], h * l_inv[0][1]],
-            [h * l_inv[1][0], h * l_inv[1][1]],
-        ];
+        // Topology (nodes, elements, materials, BJT wiring, transformer companion) is generated
+        // from circuit/ba283.toml by tools/circuitgen — see topology_gen.rs. The solver, levers,
+        // LUTs, aging and JA core below stay hand-written.
+        let Topology {
+            urow,
+            u,
+            res,
+            n_res,
+            res_base_g,
+            res_material,
+            caps,
+            n_caps,
+            cap_base_far,
+            cap_material,
+            bjts,
+            r_kj_idx,
+            r_upper_idx,
+            r_lower_idx,
+            lp,
+            ls,
+            k,
+            gl,
+        } = build_topology(cfg.cheap_exp, dt, rgain, bias);
 
         let mut model = WdfModel {
             v: [0.0; NUM_NODES],

@@ -45,30 +45,9 @@ from __future__ import annotations
 
 from PySpice.Spice.Netlist import Circuit
 
-# --- Verbatim component model cards (mirrored in design doc Appendix A) -----
-
-_TRANSISTOR_MODELS = """\
-.MODEL 2N3055 NPN(IS=4.66E-12 BF=360 VAF=100 IKF=0.25 ISE=3.339E-11 BR=2 ISC=5E-9 RB=3 IRB=0.001 RBM=0.4 RC=0.04 CJE=5.802E-10 VJE=1.2 MJE=0.45 TF=8E-8 XTF=1 ITF=3 PTF=120 CJC=2.121E-10 MJC=0.4 TR=2.55E-6 XTB=1)
-.MODEL BC184C NPN(IS=1.04E-14 BF=600 VAF=120 IKF=0.05 ISE=1.00E-14 NE=1.5 BR=0.1 NR=1.00 VAR=200 ISC=1.00E-15 NC=1.2 RB=50 RE=0.5 RC=0.5 CJC=4.50E-12 MJC=0.33 VJC=0.75 CJE=1.40E-11 MJE=0.33 VJE=0.75 TF=4.00E-10 TR=1.00E-08)
-"""  # noqa: E501
-
-# Marinair/Carnhill LO1166 gapped single-ended output transformer, linear
-# mutual-inductance model. Turns ratio N = Nsec/Npri = 1.68 (1:1.68 step-up);
-# LS = N^2 * LP gives the 1.68x passband voltage gain. LP ~ 1.9 H magnetizing
-# (20 Hz LF corner into the reflected ~600 Ohm line). Real winding DC
-# resistances: primary 14.5 Ohm (7+8 across the windings), secondary 44 Ohm.
-# K < 1 gives the leakage inductance; the primary Zobel (added in build_netlist)
-# damps its HF ring. Windings block DC -> clean AC-only secondary tap.
-_LO1166_SUBCKT = """\
-.SUBCKT LO1166 PRI_IN PRI_OUT SEC_IN SEC_OUT
-.param LP=1.9 LS=5.36 K=0.9995
-R_pri PRI_IN pa 14.5
-L_pri pa PRI_OUT {LP}
-L_sec sa SEC_OUT {LS}
-R_sec SEC_IN sa 44.0
-K1 L_pri L_sec {K}
-.ENDS LO1166
-"""
+# Component model cards, the LO1166 subckt and all element stamping are generated from
+# circuit/ba283.toml by tools/circuitgen (single source of truth); see data_gen/_netlist_gen.py.
+from data_gen import _netlist_gen
 
 # Gain-setting K<->J network: R_KJ (220 Ohm = the real card's 26 dB tap) in
 # series with the 80 uF gain cap shunts TR1's emitter load R4 for a.c. R5 is the
@@ -208,77 +187,16 @@ def build_netlist(bias_norm: float, gain_rkj: float = GAIN_RKJ_OHMS) -> Circuit:
 
     circuit = Circuit("BA283")
 
-    # Inject transistor .MODEL cards + LO1166 .SUBCKT verbatim via raw_spice to
-    # keep the cards bit-for-bit identical to the design-doc appendix.
+    # Model cards, LO1166 subckt and all passive/active elements come from the generated
+    # module (single source of truth in circuit/ba283.toml). build_netlist keeps only the
+    # parametric plumbing: the RV1 bias split, the gain resistor, and the +24 V rail source.
     circuit.raw_spice += _ESR_COMMENT
-    circuit.raw_spice += _TRANSISTOR_MODELS
-    circuit.raw_spice += _LO1166_SUBCKT
-
-    # --- Rails -------------------------------------------------------------
-    # +24 V supply on node A (the BA283 "A" rail). Signal ground is PySpice's
-    # global ground (node 0). C6 decouples the rail.
+    circuit.raw_spice += _netlist_gen.TRANSISTOR_MODELS
+    circuit.raw_spice += _netlist_gen.LO1166_SUBCKT
+    # +24 V supply on node A; PySpice global ground = node 0. Audio injection (filesource on
+    # node INPUT) is layered in by run_spice.py.
     circuit.V("supply", "A", circuit.gnd, 24)
-    circuit.C("6", "A", circuit.gnd, 80e-6)
-
-    # ====================================================================
-    # TR1 (BC184C) — common-emitter input stage.
-    # ====================================================================
-    # Input coupling C1 (10 µF) + R1 (2k2) + 1 Ω ESR into the base.
-    circuit.C("1", "INPUT", "C1_MID", 10e-6)
-    circuit.R("_esr_C7", "C1_MID", "R1_MID", 1.0)
-    circuit.R("1", "R1_MID", "TR1_B", 2.2e3)
-    # Base bleed R3 (68 k) and the DC-bias feedback R2 (56 k) from the RV1 wiper.
-    circuit.R("3", "TR1_B", circuit.gnd, 68e3)
-    circuit.R("2", "RV1_WIPER", "TR1_B", 56e3)
-    # Emitter load R4 (1k2); the emitter is contact J.
-    circuit.R("4", "TR1_E", circuit.gnd, 1.2e3)
-    # Collector load R8 (33 k) to the rail.
-    circuit.R("8", "A", "TR1_C", 33e3)
-    # Compensation: C2 (220 pF) Miller across TR1 B-C, C3 (4700 pF) on TR1_C.
-    circuit.C("2", "TR1_B", "TR1_C", 220e-12)
-    circuit.C("3", "TR1_C", circuit.gnd, 4700e-12)
-    circuit.BJT("TR1", "TR1_C", "TR1_B", "TR1_E", model="BC184C")
-
-    # --- K <-> J gain network: shunts TR1 emitter load to ground for a.c. ---
-    # R_KJ (220 Ω, the 26 dB tap) + 80 µF gain cap + 1 Ω ESR. The cap blocks DC,
-    # so the gain setting does not disturb the RV1 bias.
-    circuit.R("KJ", "TR1_E", "J", gain_rkj)
-    circuit.C("gain", "J", "Cgain_MID", 80e-6)
-    circuit.R("_esr_Cgain", "Cgain_MID", circuit.gnd, 1.0)
-
-    # ====================================================================
-    # TR2 (BC184C) + TR3 (2N3055) — common-collector compound output pair.
-    #   TR2 base = TR1 collector; TR2 emitter -> TR3 base; TR2 & TR3 collectors
-    #   tied together at node F (driven into the transformer primary).
-    # ====================================================================
-    # TR2 emitter resistor R6 (18 k); C5 (330 pF) Miller across TR2 B-C (TR1_C->F)
-    circuit.R("6", "TR2_E", circuit.gnd, 18e3)
-    circuit.C("5", "TR1_C", "F", 330e-12)
-    circuit.BJT("TR2", "F", "TR1_C", "TR2_E", model="BC184C")
-
-    # --- RV1 (4k7 bias preset) sampling TR3's emitter ----------------------
-    # Pot from TR3_E to ground; the wiper (a fraction of TR3_E set by bias_norm)
-    # is the DC-bias reference fed to TR1 via R2. Both legs clamped >= 1 Ω.
-    circuit.R("upper", "TR3_E", "RV1_WIPER", r_upper)
-    circuit.R("lower", "RV1_WIPER", circuit.gnd, r_lower)
-    # TR3 emitter resistor R7 (47 Ω) to ground.
-    circuit.R("7", "TR3_E", circuit.gnd, 47.0)
-    circuit.BJT("TR3", "F", "TR2_E", "TR3_E", model="2N3055")
-
-    # --- A.C. feedback: common collector F -> C4 (100 µF) -> R5 (3k3) -> TR1_E
-    circuit.C("4", "F", "C4_MID", 100e-6)
-    circuit.R("5", "C4_MID", "TR1_E", FB_R5_OHMS)
-
-    # --- LO1166 instance + primary Zobel + 600 Ω secondary termination -----
-    # Subcircuit pins: PRI_IN=F (common collector), PRI_OUT=A (rail, primary as
-    # collector choke), SEC_IN (balanced output tap), SEC_OUT=0.
-    circuit.raw_spice += "XLO1166 F A SEC_IN 0 LO1166\n"
-    # Primary Zobel (Boucherot): 1k5 + 0.01 µF across F->A damps the leakage-
-    # inductance HF top-ring (the real card's snubber).
-    circuit.R("zobel", "F", "ZOBEL_MID", 1.5e3)
-    circuit.C("zobel", "ZOBEL_MID", "A", 0.01e-6)
-    # 600 Ω console line-in termination on the secondary tap.
-    circuit.R("term", "SEC_IN", circuit.gnd, 600)
+    _netlist_gen.add_elements(circuit, r_upper=r_upper, r_lower=r_lower, gain_rkj=gain_rkj)
 
     return circuit
 

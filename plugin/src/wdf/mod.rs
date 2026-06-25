@@ -270,6 +270,7 @@ mod config;
 mod aging;
 mod accessors;
 mod build;
+mod topology_gen; // @generated from circuit/ba283.toml by tools/circuitgen
 mod params;
 mod solvers;
 mod schur;
