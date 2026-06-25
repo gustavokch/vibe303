@@ -77,10 +77,20 @@ reviewed manual edit:
 
 ```yaml
       - name: Circuit-IR drift guard
-        # stdlib-only (Python 3.11+ tomllib); committed SPICE/Rust/ACME backends
-        # must match circuit/ba283.toml. Regenerate: `python -m tools.circuitgen`.
-        run: python3 -m tools.circuitgen --check
+        # circuit/ba283.toml is the single source of truth; the committed SPICE/Rust/
+        # ACME backends (+ the hand-written BJT ctors / node enum) must match it.
+        # stdlib-only (Python 3.11+ tomllib). Regenerate: `python -m tools.circuitgen`.
+        run: |
+          python3 -m tools.circuitgen --check
+          python3 -m pip install --quiet pytest
+          python3 -m pytest tests/circuitgen -q
 ```
+
+The `tests/circuitgen` suite now also guards the two backends the codegen does NOT
+emit but that must still track the IR: `test_rust_bjt_params_match_ir_card` (the
+hand-written `components.rs` BJT constructors vs the `[model.*]` cards) and
+`test_rust_node_enum_order_matches_ir` (the `node::N_*` enum order vs the IR node
+list). `--check` alone does not cover those.
 
 ## Conclusion
 No latent drift exists today. The IR captures the superset (incl. C6 and full BJT

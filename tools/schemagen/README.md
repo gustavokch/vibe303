@@ -1,5 +1,12 @@
 # schemagen — schematic image → circuit IR
 
+> **Status: EXPERIMENTAL.** Unlike `tools/circuitgen`, schemagen is not exercised
+> in CI: the `vlm` backend needs a network call + `OPENROUTER_API_KEY`, and the
+> `local` backend is a deps-gated stub (`NotImplementedError` until
+> ultralytics/easyocr are wired). It is a draft-generating convenience, never on
+> the bit-exact path — its only output is a `*.draft.toml` for human review before
+> promotion. Treat failures here as non-blocking.
+
 SINA-style (arXiv 2601.22114v1) front-end that turns a schematic image into a
 **draft** `circuit/*.toml` IR for the circuitgen pipeline. The draft is always
 human-reviewed before promotion; a closed-loop ngspice `.op` gate (Masala-CHAI V2

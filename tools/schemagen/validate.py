@@ -11,6 +11,7 @@ A draft that fails either gate is rejected before a human reviews it.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -19,7 +20,7 @@ from pathlib import Path
 
 from tools.circuitgen import emit_spice
 from tools.circuitgen.ir import GROUND, Circuit, load
-from tools.circuitgen.rustfmt import py_f64
+from tools.circuitgen.literals import py_f64
 
 
 @dataclass
@@ -73,12 +74,47 @@ def _flat_cir(c: Circuit) -> str:
             f"Q{bj.name} {sp(bj.collector)} {sp(bj.base)} {sp(bj.emitter)} {bj.model}"
         )
     # transformer instance
-    pri_in = next(n for n in r_pri.nodes if n != t.pri_nodes[0])
-    sec_in = next(n for n in r_sec.nodes if n != t.sec_nodes[0])
+    pri_in = next((n for n in r_pri.nodes if n != t.pri_nodes[0]), None)
+    sec_in = next((n for n in r_sec.nodes if n != t.sec_nodes[0]), None)
+    if pri_in is None or sec_in is None:
+        raise ValueError(
+            f"transformer {t.name}: a winding DCR has no external terminal "
+            f"(R_pri={r_pri.nodes}, R_sec={r_sec.nodes})"
+        )
     pins = [pri_in, t.pri_nodes[1], sec_in, t.sec_nodes[1]]
     lines.append(f"X{t.name} {' '.join(sp(p) for p in pins)} {t.name}")
-    lines += [".op", ".end", ""]
+    # Run the .op inside a control block so we can (a) bracket it with sentinels that
+    # prove the analysis ran to completion regardless of ngspice's exit code (it often
+    # returns 0 even on a failed .op), and (b) dump every node voltage so we can scan
+    # the actual solved values for nan/inf rather than trusting log wording.
+    lines += [
+        ".control",
+        "echo OP_BEGIN",
+        "op",
+        "print all",
+        "echo OP_END",
+        ".endc",
+        ".end",
+        "",
+    ]
     return "\n".join(lines)
+
+
+# ngspice non-convergence / failure wording varies by version; match a broad set
+# case-insensitively. (We also require positive sentinels + finite values below, so
+# this list need not be exhaustive to avoid a false PASS.)
+_FAIL_MARKERS = (
+    "singular matrix",
+    "matrix is singular",
+    "timestep too small",
+    "no convergence",
+    "convergence problem",
+    "convergence failure",
+    "iteration limit reached",
+    "gmin stepping failed",
+    "source stepping failed",
+    "fatal",
+)
 
 
 def validate(draft_path: str | Path, *, run_sim: bool = True) -> ValidationResult:
@@ -108,11 +144,30 @@ def validate(draft_path: str | Path, *, run_sim: bool = True) -> ValidationResul
             )
             sim_ran = True
             out = (proc.stdout + proc.stderr).lower()
-            bad = ("singular matrix" in out or "timestep too small" in out
-                   or "no convergence" in out or "iteration limit reached" in out)
-            sim_converged = proc.returncode == 0 and not bad
-            msgs.append(f"ngspice .op: {'converged' if sim_converged else 'FAILED'} "
-                        f"(rc={proc.returncode})")
+            had_fail = any(m in out for m in _FAIL_MARKERS)
+            # Positive proof the .op actually ran AND printed solved values.
+            ran_to_end = "op_begin" in out and "op_end" in out
+            # The solved node voltages must be finite — a diverged .op can print
+            # 'nan'/'inf' while ngspice still exits 0. Word-boundary match so banner
+            # words like "info"/"nanoseconds" do not trigger a false rejection.
+            had_nonfinite = re.search(r"\b(nan|inf)\b", out) is not None
+            sim_converged = (
+                proc.returncode == 0 and ran_to_end and not had_fail and not had_nonfinite
+            )
+            reason = (
+                "converged" if sim_converged
+                else "FAILED ("
+                + ", ".join(
+                    r for r, bad in (
+                        (f"rc={proc.returncode}", proc.returncode != 0),
+                        (".op did not complete", not ran_to_end),
+                        ("error in log", had_fail),
+                        ("non-finite node voltage", had_nonfinite),
+                    ) if bad
+                )
+                + ")"
+            )
+            msgs.append(f"ngspice .op: {reason}")
             if not sim_converged:
                 msgs.append(out[-800:])
 

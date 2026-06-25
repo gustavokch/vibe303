@@ -39,6 +39,7 @@ class Resistor:
     ohms: float
     material: str
     param: str | None = None  # build-arg name when a variable leg
+    wdf_drop: bool = False  # both-known terminals → inert in WDF MNA (same rule as caps)
     role: str | None = None
 
 
@@ -143,6 +144,7 @@ def load(path: str | Path) -> Circuit:
             ohms=float(r["ohms"]),
             material=r["material"],
             param=r.get("param"),
+            wdf_drop=r.get("wdf_drop", False),
             role=r.get("role"),
         )
         for r in raw["resistor"]
@@ -229,6 +231,21 @@ def validate(c: Circuit) -> None:
         if node not in known_names:
             errs.append(f"{elem} references unknown node '{node}'")
 
+    def check_wdf_drop(kind: str, name: str, nodes: tuple[str, str], flag: bool) -> None:
+        """Enforce the WDF emitter rule for ANY two-terminal element (R and C alike):
+        an element with BOTH terminals on known nodes injects no current into the MNA
+        unknowns, so the Rust topology omits it. The author MUST acknowledge that with
+        ``wdf_drop = true`` — otherwise the SPICE/ACME backends keep the element while
+        the WDF silently drops it (the exact 3-way drift this harness exists to kill)."""
+        both_known = c.element_dropped_in_wdf(nodes)
+        if flag and not both_known:
+            errs.append(f"{kind} {name} has wdf_drop=true but a terminal is an unknown node")
+        if both_known and not flag:
+            errs.append(
+                f"{kind} {name} spans two known nodes but is missing wdf_drop=true "
+                "(it would be silently inert in the WDF while SPICE/ACME keep it)"
+            )
+
     touched: set[str] = set()
     for r in c.resistors:
         for nd in r.nodes:
@@ -236,23 +253,14 @@ def validate(c: Circuit) -> None:
             touched.add(nd)
         if r.param is None and r.ohms <= 0:
             errs.append(f"resistor {r.name} has non-positive ohms {r.ohms}")
+        check_wdf_drop("resistor", r.name, r.nodes, r.wdf_drop)
     for cap in c.capacitors:
         for nd in cap.nodes:
             check_ref(f"capacitor {cap.name}", nd)
             touched.add(nd)
         if cap.farads <= 0:
             errs.append(f"capacitor {cap.name} has non-positive farads {cap.farads}")
-        # wdf_drop must be consistent with the both-known rule
-        both_known = c.is_known(cap.nodes[0]) and c.is_known(cap.nodes[1])
-        if cap.wdf_drop and not both_known:
-            errs.append(
-                f"capacitor {cap.name} has wdf_drop=true but a terminal is an unknown node"
-            )
-        if both_known and not cap.wdf_drop:
-            errs.append(
-                f"capacitor {cap.name} spans two known nodes but is missing wdf_drop=true "
-                "(it would be silently inert in the WDF)"
-            )
+        check_wdf_drop("capacitor", cap.name, cap.nodes, cap.wdf_drop)
     for b in c.bjts:
         for term, nd in (("base", b.base), ("emitter", b.emitter), ("collector", b.collector)):
             check_ref(f"bjt {b.name}.{term}", nd)

@@ -95,9 +95,17 @@ def digitize(
     except urllib.error.URLError as e:  # pragma: no cover - network
         raise RuntimeError(f"OpenRouter request failed: {e}") from e
 
+    # OpenRouter (like the OpenAI API) often returns HTTP 200 with a top-level
+    # {"error": {...}} body on rate-limit / bad-model / out-of-credit failures —
+    # urllib does NOT raise for these. Surface the real message, not a raw dump.
+    if isinstance(body, dict) and body.get("error"):
+        err = body["error"]
+        msg = err.get("message", err) if isinstance(err, dict) else err
+        raise RuntimeError(f"OpenRouter error: {msg}")
+
     try:
         text = body["choices"][0]["message"]["content"]
-    except (KeyError, IndexError) as e:  # pragma: no cover - shape
+    except (KeyError, IndexError, TypeError) as e:  # pragma: no cover - shape
         raise RuntimeError(f"unexpected OpenRouter response: {body}") from e
     return _strip_fences(text)
 

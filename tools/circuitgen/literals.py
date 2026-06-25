@@ -1,5 +1,11 @@
 """Shared float -> Rust/Python/Julia literal helpers.
 
+NOTE: this module does NOT run rustfmt (it was once misleadingly named
+``rustfmt.py``). It only formats numeric literals. The generated Rust
+(``topology_gen.rs``) is laid out by the emitter and carries a module-level
+``#![rustfmt::skip]`` so a stray ``cargo fmt`` can never reformat it out of sync
+with the drift guard (a ``rustfmt.toml`` ``ignore`` would be nightly-only).
+
 A Rust ``f64`` literal must parse to the IDENTICAL IEEE-754 bits as the value in
 the IR for bit-exactness. Python's ``repr(float)`` emits the shortest decimal
 that round-trips to the same f64; any conforming parser (Rust/Julia) recovers the
