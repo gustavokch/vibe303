@@ -32,6 +32,15 @@ use crate::InferenceBackend;
 /// operating-point step — well below audibility, while still feeling instant for a setting change.
 const WDF_XFADE_S: f32 = 0.060;
 
+/// Silent host-sample count used to settle a freshly-restored WDF model before it is faded in (see
+/// [`WdfModel::settle_after_restore`]). A High/Realtime snapshot installed into a Medium model is a
+/// non-fixed-point of its LUT-companion solver; the re-convergence steps the `N_SEC_IN` tap, which
+/// drives the FIR resampler's step response into a large transient ~one group delay later (the
+/// precision-swap click). Draining it needs more than the FIR impulse length (`2 * FIR_LATENCY_HOST`
+/// = 160 host samples); 256 clears it with margin. ~5 ms at 48 kHz of one-time Newton work on a rare
+/// user-driven tier/precision change — well inside the 60 ms crossfade that already masks the swap.
+const WDF_SWAP_PRIME_SAMPLES: usize = 256;
+
 /// Adaptive-oversampling detector + crossfade constants (feature `adaptive-os`). The envelope is a
 /// peak follower (instant attack, `OS_REL_S` exponential release) on the driven, pre-model input
 /// volts. It arms a resident os=2 model above `OS_ARM_V`, disarms below `OS_DISARM_V` (−6 dB
@@ -447,6 +456,9 @@ impl ChannelDsp {
         *self.wdf_prev = std::mem::replace(&mut *self.wdf, new);
         if let Some(snap) = self.wdf_snap {
             self.wdf.restore(&snap);
+            // Drain the restore-time operating-point step through the FIR before fading in, so the
+            // crossfade blends a settled model (kills the Medium-tier swap click). See the const.
+            self.wdf.settle_after_restore(WDF_SWAP_PRIME_SAMPLES);
             self.wdf.save_snapshot();
         }
         self.xfade_remain = self.xfade_len;
@@ -465,6 +477,8 @@ impl ChannelDsp {
         let old_live = std::mem::replace(&mut self.wdf, lo);
         if let Some(snap) = self.wdf_snap {
             self.wdf.restore(&snap);
+            // Same prime as `wdf_set_tier`: production tier/precision swaps route through here.
+            self.wdf.settle_after_restore(WDF_SWAP_PRIME_SAMPLES);
             self.wdf.save_snapshot();
         }
         // old live → crossfade scratch; the stale 2-switches-ago scratch is returned for off-thread drop.
