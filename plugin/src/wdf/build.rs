@@ -1,5 +1,9 @@
 use super::*;
 use super::topology_gen::{build_topology, Topology};
+// Node constants are referenced only by the JFET voicing branch below (the IR-generated
+// topology wires the stock BJTs by name); gate the import so the no-jfet build is warning-clean.
+#[cfg(feature = "jfet")]
+use super::node::*;
 
 impl WdfModel {
 
@@ -30,7 +34,7 @@ impl WdfModel {
             n_caps,
             cap_base_far,
             cap_material,
-            bjts,
+            bjts: topo_bjts,
             r_kj_idx,
             r_upper_idx,
             r_lower_idx,
@@ -39,6 +43,32 @@ impl WdfModel {
             k,
             gl,
         } = build_topology(cfg.cheap_exp, dt, rgain, bias);
+
+        // JFET voicing (feature `jfet`, cfg.jfet): the three transistor slots hold gate-junction
+        // cards (Cgs/Cgd + gate leakage diode) and the square-law channel params are gathered into
+        // `jfet_params`. `cfg.jfet=false` (and the no-feature build) keep the generated BJT cards
+        // straight from the IR-derived topology (bit-exact with the pre-codegen build).
+        #[cfg(feature = "jfet")]
+        let (bjts, jfet_params) = if cfg.jfet {
+            let (gc_s, jx_s) = jfet::jfet_small();
+            let (gc_p, jx_p) = jfet::jfet_power();
+            let mut s = gc_s;
+            let mut p3 = gc_p;
+            s.cheap_exp = cfg.cheap_exp;
+            p3.cheap_exp = cfg.cheap_exp;
+            (
+                [
+                    Bjt::new(N_TR1_B, N_TR1_E, N_TR1_C, s),
+                    Bjt::new(N_TR1_C, N_TR2_E, N_F, s),
+                    Bjt::new(N_TR2_E, N_TR3_E, N_F, p3),
+                ],
+                [jx_s, jx_s, jx_p],
+            )
+        } else {
+            (topo_bjts, [JfetExtra::default(); 3])
+        };
+        #[cfg(not(feature = "jfet"))]
+        let bjts = topo_bjts;
 
         let mut model = WdfModel {
             v: [0.0; NUM_NODES],
@@ -60,6 +90,10 @@ impl WdfModel {
                 DepLutSet::empty()
             }),
             bjts,
+            #[cfg(feature = "jfet")]
+            jfet: cfg.jfet,
+            #[cfg(feature = "jfet")]
+            jfet_params,
             r_kj_idx,
             r_upper_idx,
             r_lower_idx,

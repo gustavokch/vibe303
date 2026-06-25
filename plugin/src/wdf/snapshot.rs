@@ -56,6 +56,24 @@ impl WdfModel {
         self.last_snapshot = Some(self.snapshot());
     }
 
+    /// Silently settle the operating point after a [`restore`](Self::restore), before this model is
+    /// faded in. A restore seeds an operating point captured from a DIFFERENT model variant (e.g. a
+    /// High snapshot into a Medium model whose depletion-charge LUT companion makes that point a
+    /// non-fixed-point), so the first solves' `N_SEC_IN` tap steps away from the restored `sec_in_dc`
+    /// as Newton re-converges. That step drives the freshly-`reset` FIR resampler's step response,
+    /// which emerges ~one FIR group delay later as a large transient — the precision-swap click the
+    /// FIR resampler regressed (only the Medium/charge-LUT tier; High/Low match `sec_in_dc` and are
+    /// clean). Solving `n` silent host samples here drains that step THROUGH the FIR before the model
+    /// is faded in, so the crossfade blends a settled model. `n` must exceed the FIR impulse length
+    /// (`~2 * FIR_LATENCY_HOST`); call sites size it with margin. Mirrors the adaptive-os
+    /// `PrimeHi`/`PrimeLo` priming. Bounded (`n` solves, `os` each); swaps are rare user-driven tier
+    /// changes already masked by the 60 ms crossfade, so the one-time cost is inaudible.
+    pub fn settle_after_restore(&mut self, n: usize) {
+        for _ in 0..n {
+            let _ = self.process_host_sample(0.0);
+        }
+    }
+
     fn clear_driver_state(&mut self) {
         self.prev_in = 0.0;
         for bq in [&mut self.dec1, &mut self.dec2] {
