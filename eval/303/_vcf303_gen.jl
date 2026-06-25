@@ -7,6 +7,10 @@ module vcf303Gen
 using ACME
 
 # --- Resistor values (ohms) ---
+const R95L = 10000.0
+const R95R = 10000.0
+const R164 = 2200.0
+const R161 = 2200.0
 
 # --- Capacitor values (farads) ---
 const C98 = 3.3e-08
@@ -16,5 +20,6 @@ const C101 = 1.8e-08
 
 # --- BJT model constructors (ACME-projected Gummel-Poon subset) ---
 q1n4148() = diode(; is = 1.4199999999999998e-11, η = 1.7)
+q2n3904() = bjt(:npn; is = 6.73e-15, βf = 416.4, βr = 0.7374, vaf = 74.03, ikf = 0.06678, ise = 6.73e-15, ηe = 1.259, rb = 10.0, rc = 1.0)
 
 end # module vcf303Gen

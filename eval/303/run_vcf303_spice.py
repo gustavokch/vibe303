@@ -40,40 +40,58 @@ import _vcf303_netlist_gen as gen  # noqa: E402
 
 from PySpice.Spice.Netlist import Circuit  # noqa: E402
 
-R_TOP = 1000.0  # differential readout termination across (tl,tr) — Ω
-R_REF = 1e6     # DC reference leg dl->GND (open at AC; ~µV DC error) — Ω
+V_RAIL = 8.0    # +8V analog rail (vp8) — top bias + T38 collector return
+V_BIAS = 4.0    # T38 base DC bias (in_l/in_r); keeps the pair in forward-active
+
+# STEP 2a: the bare-ladder harness sources (ideal Ibias/Isink/Iac) are GONE — the
+# real T38 differential input stage now drives the ladder bottom. We supply only
+# the +8V rail, the T38 base bias, and the parameterised cutoff = the T38 tail
+# sink current (= the expo-converter output, per VCF_MAP.md item 3). The signal
+# is the differential base AC. tail current = TOTAL ladder bias = 2x the per-rail
+# current of step 1 (the pair splits it), so f_c ~ (I_tail/2)/(Vt*C).
 
 
-def _netlist(i_bias_per_rail: float) -> str:
-    """Stamp the ladder + harness and return a raw ngspice deck (PySpice is used
-    only for netlisting; see module docstring)."""
+def _harness(i_tail: float) -> str:
+    """The +8V rail, T38 base bias + AC drive, and the cutoff tail sink. PLAIN
+    numbers only (ngspice-46 mis-parses PySpice unit suffixes — see docstring)."""
+    return (
+        f"Vrail vp8 0 {V_RAIL}\n"
+        # Single-ended AC into the diff pair: in_l = bias + AC, in_r = bias (AC gnd).
+        f"Vin_l in_l 0 DC {V_BIAS} AC 1\n"
+        f"Vin_r in_r 0 DC {V_BIAS}\n"
+        # Cutoff: ideal current sink pulls I_tail out of the shared emitter tail
+        # (open at AC, so it does not load the signal). = the expo bias current.
+        f"Itail tail 0 {i_tail}\n"
+    )
+
+
+def _netlist(i_tail: float) -> str:
+    """Stamp the ladder + T38 stage + harness; return a raw ngspice deck."""
     c = Circuit("vcf303_ac")
     c.raw_spice += gen.TRANSISTOR_MODELS
     gen.add_elements(c)
-    ib = i_bias_per_rail
-    # NB: emit the harness sources via raw_spice with PLAIN numbers. PySpice's
-    # unit suffixes (`16e-6 @ u_A` -> "1.6e-05A", "1000Ohm") are mis-parsed by
-    # ngspice 46 (trailing "A" reads as atto=1e-18 -> ~zero bias -> dead ladder).
-    # The generated add_elements already emits suffix-free floats.
-    c.raw_spice += (
-        # Bias: inject I into each top rail, sink the same I from each bottom rail —
-        # ideal current sources (open at AC) so the signal climbs the ladder.
-        f"Ibias_l 0 tl {ib}\n"
-        f"Ibias_r 0 tr {ib}\n"
-        f"Isink_l dl 0 {ib}\n"
-        f"Isink_r dr 0 {ib}\n"
-        # Readout termination (completes the AC loop) + DC reference.
-        f"Rtop tl tr {R_TOP}\n"
-        f"Rref dl 0 {R_REF}\n"
-        # Differential AC drive at the bottom (1 A AC, antiphase dl<-->dr). DC=0.
-        "Iac dl dr DC 0 AC 1\n"
-    )
+    c.raw_spice += _harness(i_tail)
     return str(c)
 
 
-def ac_response(i_bias_per_rail: float):
+def op_point(i_tail: float) -> str:
+    """Run a DC .op and return the node-voltage table (convergence sanity check)."""
+    deck = _netlist(i_tail)
+    with tempfile.TemporaryDirectory() as d:
+        cir = Path(d) / "vcf.cir"
+        cir.write_text(
+            deck
+            + "\n.options gmin=1e-13 reltol=1e-4 abstol=1e-12 vntol=1e-7\n"
+            + ".control\nop\nprint v(tl) v(dl) v(eL) v(tail) v(tr) v(dr)\n.endc\n.end\n"
+        )
+        r = subprocess.run(["ngspice", "-b", str(cir)], capture_output=True,
+                            text=True, timeout=120)
+        return r.stdout + r.stderr
+
+
+def ac_response(i_tail: float):
     """Run ngspice on the stamped deck, return (freq[Hz], mag_db) of V(tl)-V(tr)."""
-    deck = _netlist(i_bias_per_rail)
+    deck = _netlist(i_tail)
     with tempfile.TemporaryDirectory() as d:
         out = Path(d) / "ac.dat"
         cir = Path(d) / "vcf.cir"
@@ -90,22 +108,47 @@ def ac_response(i_bias_per_rail: float):
     return data[:, 0], data[:, 1]  # freq, magnitude(dB)
 
 
+F_DEEP = -60.0  # deep-stopband level (dB) used as the bias-robust cutoff metric
+
+
+def _cross(f, mag_db, level):
+    """First frequency where mag_db falls to `level` (linear interp in log f)."""
+    below = np.where(mag_db <= level)[0]
+    if not below.size or below[0] == 0:
+        return float("nan")
+    i = below[0]
+    f0, f1, m0, m1 = f[i - 1], f[i], mag_db[i - 1], mag_db[i]
+    t = (level - m0) / (m1 - m0) if m1 != m0 else 0.0
+    return float(np.exp(np.log(f0) + t * (np.log(f1) - np.log(f0))))
+
+
 def cutoff_and_slope(f: np.ndarray, mag_db: np.ndarray):
-    passband = mag_db[f < 10.0].max() if np.any(f < 10.0) else mag_db[0]
-    below = np.where(mag_db <= passband - 3.0)[0]
-    fc = float(f[below[0]]) if below.size else float("nan")
-    # ASYMPTOTIC roll-off: fit well above fc (>=16x), where all 4 poles are active
-    # (closer to fc the slope is still steepening through the poles).
-    hi = (f > 16 * fc) & (f < 400 * fc) & np.isfinite(mag_db)
+    """Returns (passband_dB, f_deep, slope). NOTE the step-2a passband gain scales
+    with the bias current (diff-pair gm = I/2Vt → peaking), so the classic
+    -3dB-from-peak corner is bias-dependent and a poor tracking metric; the
+    bias-robust cutoff is the DEEP-stopband crossing (F_DEEP), where all four
+    poles are engaged regardless of passband gain. The T20 gain stage (step 2b)
+    normalises the passband; until then we track on F_DEEP."""
+    passband = float(mag_db[f < 10.0].max() if np.any(f < 10.0) else mag_db[0])
+    f_deep = _cross(f, mag_db, F_DEEP)
+    # ASYMPTOTIC roll-off: fit the deep region (-120..-40 dB), all 4 poles active.
+    hi = (mag_db < -40.0) & (mag_db > -130.0) & np.isfinite(mag_db)
     slope = float("nan")
     if hi.sum() >= 2:
         slope = float(np.polyfit(np.log2(f[hi]), mag_db[hi], 1)[0])  # dB/octave
-    return passband, fc, slope
+    return passband, f_deep, slope
 
 
 def main() -> int:
-    biases = [1e-6, 4e-6, 16e-6, 64e-6]  # per-rail; f_c ~ I/(Vt*C)
-    print(f"{'I_rail':>8} {'passband':>9} {'f_-3dB':>10} {'slope':>12}")
+    # `--op` prints the DC operating point (T38-stage convergence sanity check).
+    if "--op" in sys.argv:
+        for it in [2e-6, 32e-6, 128e-6]:
+            print(f"=== I_tail = {it*1e6:.1f} uA ===")
+            print(op_point(it))
+        return 0
+
+    biases = [2e-6, 8e-6, 32e-6, 128e-6]  # tail (total); per-rail = I/2, f_c ~ I/(2 Vt C)
+    print(f"{'I_tail':>8} {'passband':>9} {'f_-60dB':>10} {'slope':>12}")
     fcs = []
     for ib in biases:
         f, mag = ac_response(ib)
@@ -116,10 +159,10 @@ def main() -> int:
     ratios = [fcs[i + 1] / fcs[i] for i in range(len(fcs) - 1)
               if np.isfinite(fcs[i]) and fcs[i] > 0 and np.isfinite(fcs[i + 1])]
     tracks = len(ratios) == len(biases) - 1 and all(2.5 < r < 6.0 for r in ratios)
-    _, _, mid_slope = cutoff_and_slope(*ac_response(16e-6))
+    _, _, mid_slope = cutoff_and_slope(*ac_response(32e-6))
     slope_ok = -26.0 < mid_slope < -21.0  # asymptotic 4-pole ~ -24 dB/oct
-    print(f"\ncutoff/bias ratios (per 4x I): {[round(r, 2) for r in ratios]}")
-    print("RESULT:", "4-POLE LP, cutoff tracks bias"
+    print(f"\nf_-60dB / bias ratios (per 4x I): {[round(r, 2) for r in ratios]}")
+    print("RESULT:", "4-POLE LP via T38 input stage, cutoff tracks bias"
           if (tracks and slope_ok) else "CHECK (see numbers above)")
     return 0 if (tracks and slope_ok) else 1
 

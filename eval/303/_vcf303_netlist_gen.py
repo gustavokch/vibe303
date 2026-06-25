@@ -6,6 +6,7 @@ Imported by data_gen/netlist.py, which keeps the parametric build_netlist logic.
 
 TRANSISTOR_MODELS = """\
 .MODEL 1N4148 D(IS=1.4199999999999998e-11 RS=4.2 N=1.7 BV=75.0 IBV=4.9999999999999996e-06 CJO=1.7399999999999999e-12 VJ=0.75 M=0.333 TT=4.320000000000001e-09)
+.MODEL 2N3904 NPN(IS=6.73e-15 BF=416.4 VAF=74.03 IKF=0.06678 ISE=6.73e-15 NE=1.259 BR=0.7374 RB=10.0 RC=1.0 CJE=4.5e-12 TF=3.012e-10 XTF=2.0 VTF=4.0 ITF=0.4 CJC=3.638e-12 MJC=0.3085 TR=2.395e-07 XTB=1.5 KF=9e-16)
 """
 
 def add_elements(circuit):
@@ -15,6 +16,12 @@ def add_elements(circuit):
     circuit.C("99", "bl", "br", 3.3e-08)
     circuit.C("100", "cl", "cr", 3.3e-08)
     circuit.C("101", "dl", "dr", 1.8e-08)
+    circuit.R("95L", "vp8", "tl", 10000.0)
+    circuit.R("95R", "vp8", "tr", 10000.0)
+    circuit.R("164", "eL", "tail", 2200.0)
+    circuit.R("161", "eR", "tail", 2200.0)
+    circuit.BJT("T38L", "dl", "in_l", "eL", model="2N3904")
+    circuit.BJT("T38R", "dr", "in_r", "eR", model="2N3904")
     circuit.Diode("1L", "tl", "al", model="1N4148")
     circuit.Diode("1R", "tr", "ar", model="1N4148")
     circuit.Diode("2L", "al", "bl", model="1N4148")

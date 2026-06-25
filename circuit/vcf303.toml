@@ -1,4 +1,20 @@
-# vcf303 — TB-303 / TD-3 diode-ladder VCF, STEP 1 = bare 4-pole ladder core.
+# vcf303 — TB-303 / TD-3 diode-ladder VCF, STEP 2a = ladder core + T38
+# differential input stage (the active bottom drive).
+#
+# STEP 2a (this file): the bare ladder of step 1 PLUS the real T38 differential
+# input stage (DMMT3904W dual NPN = matched 2N3904). T38 replaces the step-1
+# harness's ideal bottom AC drive + DC sink: its two collectors feed the ladder
+# bottom rails (dl,dr); its emitters degenerate through R164/R161 (2.2K) into a
+# shared tail; the tail current = the EXPO-converter output = the ladder bias =
+# CUTOFF (still parameterised, injected by the harness as an ideal sink, per
+# VCF_MAP.md item 3 — do NOT transcribe the T7/T11 expo literally). The signal
+# enters as the differential base voltage (in_l vs in_r). The ladder TOP (tl,tr)
+# is biased from the +8V analog rail through R95 (10K per rail; C87's 10µF just
+# stiffens the rail, modelled ideal), which also forms the differential readout
+# load. T20/T22 gain readout + T21 output buffer = STEP 2b/2c (still OUT).
+# Active stages map: see eval/303/VCF_MAP.md.
+#
+# --- STEP 1 (ladder core) notes retained below ---
 #
 # The diode ladder only: 4 rungs × 2 rails = 8 diodes (the diode-connected
 # 2SC1583 pairs of the real filter, modelled as 1N4148 per the Stinchcombe
@@ -20,7 +36,7 @@
 [meta]
 name = "vcf303"
 ground = "GND"
-num_nodes = 10
+num_nodes = 16
 listening_node = "tl"
 
 # --- left rail, top -> bottom ---
@@ -54,6 +70,25 @@ name = "cr"
 
 [[node]]
 name = "dr"
+
+# --- step 2a: rail, T38 diff-input stage + tail (harness drives vp8/in_l/in_r/tail) ---
+[[node]]
+name = "vp8"   # +8V analog rail (harness Vsource); top-bias + collector return
+
+[[node]]
+name = "in_l"  # T38 left base = signal input (harness AC drive)
+
+[[node]]
+name = "in_r"  # T38 right base = signal reference (harness DC bias, AC ground)
+
+[[node]]
+name = "eL"    # T38 left emitter (degenerates through R164 to tail)
+
+[[node]]
+name = "eR"    # T38 right emitter (degenerates through R161 to tail)
+
+[[node]]
+name = "tail"  # T38 shared emitter tail = expo bias current sink (= cutoff)
 
 # --- ladder series diodes (anode = top, cathode = bottom; bias current flows
 #     top -> bottom through all four rungs of each rail) ---
@@ -124,6 +159,48 @@ nodes = ["dl", "dr"]
 farads = 1.8e-08
 dielectric = "film"
 
+# --- step 2a: top-of-ladder bias from +8V rail (R95 per rail; also the
+#     differential readout load). C87 10µF stiffens the rail (modelled ideal). ---
+[[resistor]]
+name = "R95L"
+nodes = ["vp8", "tl"]
+ohms = 10000.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R95R"
+nodes = ["vp8", "tr"]
+ohms = 10000.0
+material = "carbon_film"
+
+# --- step 2a: T38 differential input stage (DMMT3904W dual NPN) ---
+# collectors -> ladder bottom (dl,dr); emitters -> R164/R161 degen -> tail sink.
+[[resistor]]
+name = "R164"
+nodes = ["eL", "tail"]
+ohms = 2200.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R161"
+nodes = ["eR", "tail"]
+ohms = 2200.0
+material = "carbon_film"
+
+[[bjt]]
+name = "T38L"
+model = "2N3904"
+base = "in_l"
+emitter = "eL"
+collector = "dl"
+
+[[bjt]]
+name = "T38R"
+model = "2N3904"
+base = "in_r"
+emitter = "eR"
+collector = "dr"
+
 [model.1N4148]
 type = "d"
 is = 1.4199999999999998e-11
@@ -135,3 +212,25 @@ cjo = 1.7399999999999999e-12
 vj = 0.75
 m = 0.333
 tt = 4.320000000000001e-09
+
+[model.2N3904]
+type = "npn"
+is = 6.73e-15
+bf = 416.4
+vaf = 74.03
+ikf = 0.06678
+ise = 6.73e-15
+ne = 1.259
+br = 0.7374
+rb = 10.0
+rc = 1.0
+cje = 4.5e-12
+tf = 3.012e-10
+xtf = 2.0
+vtf = 4.0
+itf = 0.4
+cjc = 3.638e-12
+mjc = 0.3085
+tr = 2.395e-07
+xtb = 1.5
+kf = 9e-16
