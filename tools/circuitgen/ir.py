@@ -64,6 +64,22 @@ class Bjt:
 
 
 @dataclass(frozen=True)
+class Diode:
+    name: str
+    nodes: tuple[str, str]  # (anode, cathode)
+    model: str
+
+
+@dataclass(frozen=True)
+class Jfet:
+    name: str
+    model: str
+    drain: str
+    gate: str
+    source: str
+
+
+@dataclass(frozen=True)
 class Transformer:
     name: str
     lp: float
@@ -87,7 +103,9 @@ class Circuit:
     resistors: list[Resistor]
     capacitors: list[Capacitor]
     bjts: list[Bjt]
-    transformer: Transformer
+    diodes: list[Diode]
+    jfets: list[Jfet]
+    transformer: Transformer | None
     models: dict[str, Model]
     params: dict
     source_path: Path
@@ -147,7 +165,7 @@ def load(path: str | Path) -> Circuit:
             wdf_drop=r.get("wdf_drop", False),
             role=r.get("role"),
         )
-        for r in raw["resistor"]
+        for r in raw.get("resistor", [])
     ]
     capacitors = [
         Capacitor(
@@ -158,7 +176,7 @@ def load(path: str | Path) -> Circuit:
             wdf_drop=c.get("wdf_drop", False),
             role=c.get("role"),
         )
-        for c in raw["capacitor"]
+        for c in raw.get("capacitor", [])
     ]
     bjts = [
         Bjt(
@@ -169,16 +187,38 @@ def load(path: str | Path) -> Circuit:
             collector=b["collector"],
             intrinsic_base=b.get("intrinsic_base"),
         )
-        for b in raw["bjt"]
+        for b in raw.get("bjt", [])
     ]
-    xf = raw["transformer"]
-    transformer = Transformer(
-        name=xf["name"],
-        lp=float(xf["lp"]),
-        ls=float(xf["ls"]),
-        k=float(xf["k"]),
-        pri_nodes=_as_pair(xf["pri_nodes"]),
-        sec_nodes=_as_pair(xf["sec_nodes"]),
+    diodes = [
+        Diode(
+            name=d["name"],
+            nodes=_as_pair(d["nodes"]),
+            model=d["model"],
+        )
+        for d in raw.get("diode", [])
+    ]
+    jfets = [
+        Jfet(
+            name=j["name"],
+            model=j["model"],
+            drain=j["drain"],
+            gate=j["gate"],
+            source=j["source"],
+        )
+        for j in raw.get("jfet", [])
+    ]
+    xf = raw.get("transformer")
+    transformer = (
+        None
+        if xf is None
+        else Transformer(
+            name=xf["name"],
+            lp=float(xf["lp"]),
+            ls=float(xf["ls"]),
+            k=float(xf["k"]),
+            pri_nodes=_as_pair(xf["pri_nodes"]),
+            sec_nodes=_as_pair(xf["sec_nodes"]),
+        )
     )
     models = {
         name: Model(
@@ -186,7 +226,7 @@ def load(path: str | Path) -> Circuit:
             type=m["type"],
             params={k: float(v) for k, v in m.items() if k != "type"},
         )
-        for name, m in raw["model"].items()
+        for name, m in raw.get("model", {}).items()
     }
 
     circuit = Circuit(
@@ -195,9 +235,11 @@ def load(path: str | Path) -> Circuit:
         resistors=resistors,
         capacitors=capacitors,
         bjts=bjts,
+        diodes=diodes,
+        jfets=jfets,
         transformer=transformer,
         models=models,
-        params=raw["params"],
+        params=raw.get("params", {}),
         source_path=path,
     )
     # frozen dataclass: populate the lookup caches via object.__setattr__.
@@ -269,9 +311,22 @@ def validate(c: Circuit) -> None:
             errs.append(f"bjt {b.name} references undefined model '{b.model}'")
         if b.intrinsic_base and b.intrinsic_base not in known_names:
             errs.append(f"bjt {b.name} intrinsic_base '{b.intrinsic_base}' is not a node")
-    for nd in (*c.transformer.pri_nodes, *c.transformer.sec_nodes):
-        check_ref("transformer", nd)
-        touched.add(nd)
+    for d in c.diodes:
+        for nd in d.nodes:
+            check_ref(f"diode {d.name}", nd)
+            touched.add(nd)
+        if d.model not in c.models:
+            errs.append(f"diode {d.name} references undefined model '{d.model}'")
+    for j in c.jfets:
+        for term, nd in (("drain", j.drain), ("gate", j.gate), ("source", j.source)):
+            check_ref(f"jfet {j.name}.{term}", nd)
+            touched.add(nd)
+        if j.model not in c.models:
+            errs.append(f"jfet {j.name} references undefined model '{j.model}'")
+    if c.transformer is not None:
+        for nd in (*c.transformer.pri_nodes, *c.transformer.sec_nodes):
+            check_ref("transformer", nd)
+            touched.add(nd)
 
     # every non-known, non-intrinsic node must be touched by at least one element
     for n in c.nodes:
@@ -295,5 +350,8 @@ if __name__ == "__main__":
         f"OK {circ.meta['name']}: {len(circ.nodes)} nodes, "
         f"{len(circ.resistors)} resistors, {len(circ.capacitors)} caps "
         f"({sum(c.wdf_drop for c in circ.capacitors)} wdf-dropped), "
-        f"{len(circ.bjts)} bjts, models={list(circ.models)}"
+        f"{len(circ.bjts)} bjts, {len(circ.diodes)} diodes, "
+        f"{len(circ.jfets)} jfets, "
+        f"{'no transformer' if circ.transformer is None else circ.transformer.name}, "
+        f"models={list(circ.models)}"
     )
