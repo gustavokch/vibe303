@@ -309,6 +309,9 @@ pub struct Ba283Plugin {
     last_trafo_hyst: f32,
     #[cfg(feature = "trafo-core")]
     last_trafo_sat: f32,
+    /// Edge-detect the JFET toggle so a flip triggers an off-thread device-card rebuild.
+    #[cfg(feature = "jfet")]
+    last_jfet_on: bool,
 }
 
 /// Which emulation runs per sample. `Wdf` (the circuit-faithful MNA solver) is the default;
@@ -391,11 +394,30 @@ static GAIN_STEPS: &[GainStep] = &[
     GainStep { label: "35 dB", r_kj_ohm: 110.0, wdf_makeup: &[0.026130, 0.026131, 0.026131, 0.026133, 0.026137, 0.027833, 0.035305, 0.046863, 0.063611, 0.087916, 0.123313, 0.174285, 0.247381] },
 ];
 
+/// JFET-voicing levelNorm makeup (`1/G_sat(drive)`), one row per `circuit_gain` position, parallel
+/// to [`GAIN_STEPS`]`.wdf_makeup` but measured at the JFET operating point (the square-law device has
+/// a different large-signal gain than the BJT). Selected over the BJT row when the `jfet_on` toggle
+/// is active. Measured offline by `bin/measure_gi --jfet`; the drift-guard test re-measures and pins
+/// them, same as the BJT table.
+///
+/// Measured at the JFET operating point by `bin/measure_gi --jfet` (A0=0.5 V, 48 kHz, bias 0.5,
+/// age 0, realtime tier). The square-law JFET is a much lower-gain stage than the BJT, so `1/G_sat`
+/// is correspondingly larger — levelNorm restores loudness. The R_KJ gain switch barely moves the
+/// JFET op-point (the channel dominates), so the rows are near-flat across positions.
+#[cfg(feature = "jfet")]
+static JFET_MAKEUP: &[&[f32]] = &[
+    &[0.732504, 1.031113, 1.456483, 2.054513, 2.927074, 4.136772, 5.869234, 8.400356, 12.120723, 18.462402, 29.556221, 52.480568, 78.564415],
+    &[0.456384, 0.644702, 0.910658, 1.286503, 1.818785, 2.562026, 3.607754, 5.066092, 7.066998, 9.777667, 13.546615, 16.460974, 22.724096],
+    &[0.745791, 1.056615, 1.492792, 2.111400, 2.981435, 4.217591, 5.972560, 8.563764, 12.338037, 18.416058, 27.809322, 52.654575, 78.627380],
+    &[0.734668, 1.035195, 1.462263, 2.068180, 2.940866, 4.156803, 5.912261, 8.437886, 12.148693, 18.371506, 29.682121, 52.596130, 82.594559],
+    &[0.631453, 0.891853, 1.259912, 1.779536, 2.513508, 3.547656, 4.988314, 7.004646, 9.774137, 13.372101, 18.712748, 22.229465, 26.428787],
+];
+
 /// Linear-interpolate a [`GainStep`]'s `wdf_makeup` curve (`1/G_sat`) at `drive_db` over
 /// [`DRIVE_GRID_DB`], flat-holding past either end. Mirrors [`nn_calib_lookup`]'s interp style.
-fn wdf_makeup_at(step: &GainStep, drive_db: f32) -> f32 {
+fn wdf_makeup_at(row: &'static [f32], drive_db: f32) -> f32 {
     let g = DRIVE_GRID_DB;
-    let m = step.wdf_makeup;
+    let m = row;
     // The interp indexes `m` by `g`'s length; a row shorter than the grid would read OOB. The
     // structural invariant is `m.len() == g.len()` (the drift guard pins the values, not the row
     // length). `debug_assert` catches a mismatch loudly in dev; in release, bounding the walk by the
@@ -789,6 +811,13 @@ pub struct Ba283Params {
     #[cfg(feature = "trafo-core")]
     #[id = "trafo_sat"]
     pub trafo_sat: FloatParam,
+    /// JFET voicing (feature `jfet`) ON/OFF. OFF (default) = stock BJT Class A, bit-exact; ON swaps
+    /// all three transistors to a Shichman-Hodges square-law JFET — a creative tonal alternative,
+    /// not a faithful model. WDF-only. Toggling it triggers an off-thread model rebuild (device-card
+    /// swap), like a tier change. Off-by-default feature spike; A/B with `--features jfet`.
+    #[cfg(feature = "jfet")]
+    #[id = "jfet_on"]
+    pub jfet_on: BoolParam,
     /// DPR (Dual Phase Rotator) ON/OFF. OFF (default) = bit-exact today's sound; ON inserts an
     /// all-pass phase rotator on the output path (ahead of the levelNorm makeup gain and the output gain) that
     /// reshapes waveform asymmetry without changing the magnitude spectrum. Both backends. See
@@ -922,6 +951,8 @@ impl Default for Ba283Params {
             trafo_sat: FloatParam::new("Saturation", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_value_to_string(formatters::v2s_f32_rounded(2))
                 .with_smoother(SmoothingStyle::Linear(50.0)),
+            #[cfg(feature = "jfet")]
+            jfet_on: BoolParam::new("JFET", false),
             // DPR defaults: OFF (bit-exact today) + amount 0.5 → ~200 Hz canonical rotator corner.
             dpr_on: BoolParam::new("DPR", false),
             // Amount is consumed block-rate (read via `.value()` in `process`, like the EQ params),
@@ -972,6 +1003,8 @@ impl Default for Ba283Plugin {
             last_trafo_hyst: f32::NAN,
             #[cfg(feature = "trafo-core")]
             last_trafo_sat: f32::NAN,
+            #[cfg(feature = "jfet")]
+            last_jfet_on: false,
         }
     }
 }
@@ -991,7 +1024,7 @@ impl Ba283Plugin {
     /// Test/diagnostic accessor. `drive_db = 0` returns the unity-Drive column.
     #[doc(hidden)]
     pub fn pos_makeup(pos: i32, drive_db: f32) -> f32 {
-        wdf_makeup_at(&GAIN_STEPS[gain_pos(pos)], drive_db)
+        wdf_makeup_at(GAIN_STEPS[gain_pos(pos)].wdf_makeup, drive_db)
     }
 
     /// Park a retired model box for an off-thread drop (the worker drains the ring). Alloc-free
@@ -1170,6 +1203,13 @@ impl Plugin for Ba283Plugin {
             .config()
             .with_precision(precision.to_wdf())
             .with_oversampling(oversampling.to_wdf());
+        // JFET voicing: fold the toggle into the build config (device-card swap).
+        #[cfg(feature = "jfet")]
+        let cfg = {
+            let mut c = cfg;
+            c.jfet = self.params.jfet_on.value();
+            c
+        };
         // Warm at the realtime tier (the DC operating point is tier-independent — freeze-caps only
         // changes the per-iter companion), then install the settled snapshot into each channel's
         // tier-configured model.
@@ -1218,6 +1258,10 @@ impl Plugin for Ba283Plugin {
         self.last_tier = tier;
         self.last_precision = precision;
         self.last_oversampling = oversampling;
+        #[cfg(feature = "jfet")]
+        {
+            self.last_jfet_on = self.params.jfet_on.value();
+        }
         #[cfg(feature = "adaptive-os")]
         {
             self.last_adaptive_os = adaptive_on;
@@ -1400,15 +1444,29 @@ impl Plugin for Ba283Plugin {
             let adaptive_changed = adaptive_on != self.last_adaptive_os;
             #[cfg(not(feature = "adaptive-os"))]
             let adaptive_changed = false;
+            // JFET toggle flip forces a device-card rebuild (same off-thread path as a tier change).
+            #[cfg(feature = "jfet")]
+            let jfet_on = self.params.jfet_on.value();
+            #[cfg(feature = "jfet")]
+            let jfet_changed = jfet_on != self.last_jfet_on;
+            #[cfg(not(feature = "jfet"))]
+            let jfet_changed = false;
             if tier != self.last_tier
                 || precision != self.last_precision
                 || oversampling != self.last_oversampling
                 || adaptive_changed
+                || jfet_changed
             {
                 let cfg = tier
                     .config()
                     .with_precision(precision.to_wdf())
                     .with_oversampling(oversampling.to_wdf());
+                #[cfg(feature = "jfet")]
+                let cfg = {
+                    let mut c = cfg;
+                    c.jfet = jfet_on;
+                    c
+                };
                 // Hi-os sibling config: built only on the adaptive-eligible lossy tiers under Auto
                 // with the toggle on; `None` clears it.
                 #[cfg(feature = "adaptive-os")]
@@ -1446,6 +1504,10 @@ impl Plugin for Ba283Plugin {
                 #[cfg(feature = "adaptive-os")]
                 {
                     self.last_adaptive_os = adaptive_on;
+                }
+                #[cfg(feature = "jfet")]
+                {
+                    self.last_jfet_on = jfet_on;
                 }
             }
             // Consume a finished off-thread build (alloc-free pointer-swap; see the method). The
@@ -1570,7 +1632,16 @@ impl Plugin for Ba283Plugin {
         // this is deterministic. The per-sample ramp below smooths a position/Drive change in. Inert
         // for the NeuralNet backend (which uses its own static `nn_norm_trim`).
         let drive_db_block = self.params.drive_db.value();
-        self.norm_trim_target = wdf_makeup_at(&GAIN_STEPS[gain_pos_idx], drive_db_block);
+        // JFET voicing uses its own measured makeup row at the same gain position.
+        #[cfg(feature = "jfet")]
+        let makeup_row = if self.params.jfet_on.value() {
+            JFET_MAKEUP[gain_pos_idx]
+        } else {
+            GAIN_STEPS[gain_pos_idx].wdf_makeup
+        };
+        #[cfg(not(feature = "jfet"))]
+        let makeup_row = GAIN_STEPS[gain_pos_idx].wdf_makeup;
+        self.norm_trim_target = wdf_makeup_at(makeup_row, drive_db_block);
 
         // levelNorm + NN loudness makeup. Two backends, two mechanisms, both folded into `target_gain`
         // (the per-sample ramp below smooths every transition click-free):

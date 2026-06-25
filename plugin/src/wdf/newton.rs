@@ -209,7 +209,20 @@ impl WdfModel {
                     compute_bjt_preexp_batch::<false>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
                 }
             };
-            #[cfg(not(any(feature = "adaa-insolve", feature = "adaa-port")))]
+            // JFET voicing (feature `jfet`): route the device eval to the square-law JFET batch
+            // kernel instead of Gummel-Poon when `self.jfet` is set. The scatter below is unchanged
+            // (same `BjtOutSoA` interface, gate→base/source→emitter/drain→collector). jfet + adaa-*
+            // are mutually exclusive features (both off-default spikes); the adaa arms assume BJT
+            // transport, so jfet is only wired into this default-build arm.
+            #[cfg(all(feature = "jfet", not(any(feature = "adaa-insolve", feature = "adaa-port"))))]
+            let bout = if self.jfet {
+                compute_jfet_preexp_batch(&vbe4, &vbc4, b, &self.jfet_params, &ef4, &er4, &ec4)
+            } else if fma_on {
+                compute_bjt_preexp_batch::<true>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
+            } else {
+                compute_bjt_preexp_batch::<false>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
+            };
+            #[cfg(all(not(feature = "jfet"), not(any(feature = "adaa-insolve", feature = "adaa-port"))))]
             let bout = if fma_on {
                 compute_bjt_preexp_batch::<true>(&vbe4, &vbc4, b, &ef4, &er4, &ec4)
             } else {

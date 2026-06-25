@@ -79,6 +79,15 @@ pub struct WdfModel {
     n_caps: usize,
     bjts: [Bjt; 3],
 
+    // --- JFET voicing (feature `jfet`): when `jfet` is set, the three `bjts[]` slots hold
+    // gate-junction cards (Cgs/Cgd + gate leakage diode) and the square-law channel params live
+    // here, one per slot. The Newton device eval routes to the JFET batch kernel instead of the
+    // Gummel-Poon one. `jfet=false` ⇒ stock BJT path, bit-exact. See `wdf/jfet/mod.rs`.
+    #[cfg(feature = "jfet")]
+    jfet: bool,
+    #[cfg(feature = "jfet")]
+    jfet_params: [JfetExtra; 3],
+
     // Depletion-charge LUTs (BE/BC per BJT), built once at construction from the fixed junction
     // cards. `Arc` so the audio-thread `measure_gain` clone is a refcount bump, not a deep copy
     // (preserving the no-heap-on-clone invariant). Used only when `dep_lut` is set (lossy tiers).
@@ -266,6 +275,8 @@ fn rv1_split(bias: f64) -> (f64, f64) {
 mod components;
 mod math;
 mod bjt;
+#[cfg(feature = "jfet")]
+mod jfet;
 mod config;
 mod aging;
 mod accessors;
@@ -283,6 +294,8 @@ mod snapshot;
 // `BjtOutSoA`, `MAX_RES`) into this module's scope so sibling submodules resolve them
 // via `use super::*`. Only the modules that export such helpers are needed here.
 use bjt::*;
+#[cfg(feature = "jfet")]
+use jfet::*;
 use config::*;
 use math::*;
 use resample::FirResampler;

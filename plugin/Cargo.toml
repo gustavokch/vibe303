@@ -34,6 +34,11 @@ subrate-spike = []
 # Opt out with `--no-default-features` for a bit-exact linear-transformer A/B build.
 default = ["trafo-core", "adaptive-os"]
 trafo-core = []
+# JFET voicing: swap all three Class A transistors from the Gummel-Poon BJT to a Shichman-Hodges
+# square-law JFET. A creative tonal alternative (not a faithful model), exposed as a runtime `JFET`
+# toggle + off-thread device-card rebuild. Off by default — A/B build with `--features jfet`.
+# Mutually exclusive with the `adaa-*` spike features (those assume BJT transport).
+jfet = []
 # Measurement-only hooks (alias-sweep harness). Additive, off by default — never in the shipped
 # plugin. Gates `WdfModel::capture_os_raw` + the `tests/alias_sweep.rs` broadband-alias harness.
 # Run with: cargo test --features measure --release --test alias_sweep -- --nocapture

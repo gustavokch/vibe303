@@ -140,15 +140,51 @@ impl WdfModel {
         cap_material[..n_caps].copy_from_slice(&cap_mat_list);
 
         // --- BJTs (RB off: external base directly) ---
-        let mut bc = bc184c();
-        let mut q = q2n3055();
-        bc.cheap_exp = cfg.cheap_exp; // ultra-fast tier: low-order transport exp
-        q.cheap_exp = cfg.cheap_exp;
-        let bjts = [
-            Bjt::new(N_TR1_B, N_TR1_E, N_TR1_C, bc), // TR1
-            Bjt::new(N_TR1_C, N_TR2_E, N_F, bc),     // TR2 (base = TR1_C, collector = F)
-            Bjt::new(N_TR2_E, N_TR3_E, N_F, q),      // TR3 (base = TR2_E, collector = F)
-        ];
+        // JFET voicing (feature `jfet`, cfg.jfet): the three transistor slots hold gate-junction
+        // cards (Cgs/Cgd + gate leakage diode) and the square-law channel params are gathered into
+        // `jfet_params`. `cfg.jfet=false` (and the no-feature build) keep the stock BJT cards.
+        #[cfg(feature = "jfet")]
+        let (bjts, jfet_params) = if cfg.jfet {
+            let (gc_s, jx_s) = jfet::jfet_small();
+            let (gc_p, jx_p) = jfet::jfet_power();
+            let mut s = gc_s;
+            let mut p3 = gc_p;
+            s.cheap_exp = cfg.cheap_exp;
+            p3.cheap_exp = cfg.cheap_exp;
+            (
+                [
+                    Bjt::new(N_TR1_B, N_TR1_E, N_TR1_C, s),
+                    Bjt::new(N_TR1_C, N_TR2_E, N_F, s),
+                    Bjt::new(N_TR2_E, N_TR3_E, N_F, p3),
+                ],
+                [jx_s, jx_s, jx_p],
+            )
+        } else {
+            let mut bc = bc184c();
+            let mut q = q2n3055();
+            bc.cheap_exp = cfg.cheap_exp;
+            q.cheap_exp = cfg.cheap_exp;
+            (
+                [
+                    Bjt::new(N_TR1_B, N_TR1_E, N_TR1_C, bc),
+                    Bjt::new(N_TR1_C, N_TR2_E, N_F, bc),
+                    Bjt::new(N_TR2_E, N_TR3_E, N_F, q),
+                ],
+                [JfetExtra::default(); 3],
+            )
+        };
+        #[cfg(not(feature = "jfet"))]
+        let bjts = {
+            let mut bc = bc184c();
+            let mut q = q2n3055();
+            bc.cheap_exp = cfg.cheap_exp; // ultra-fast tier: low-order transport exp
+            q.cheap_exp = cfg.cheap_exp;
+            [
+                Bjt::new(N_TR1_B, N_TR1_E, N_TR1_C, bc), // TR1
+                Bjt::new(N_TR1_C, N_TR2_E, N_F, bc),     // TR2 (base = TR1_C, collector = F)
+                Bjt::new(N_TR2_E, N_TR3_E, N_F, q),      // TR3 (base = TR2_E, collector = F)
+            ]
+        };
 
         // coupled inductor companion: L = [Lp M; M Ls], M = K*sqrt(Lp*Ls)
         let (lp, ls, k): (f64, f64, f64) = (1.9, 5.36, 0.9995);
@@ -181,6 +217,10 @@ impl WdfModel {
                 DepLutSet::empty()
             }),
             bjts,
+            #[cfg(feature = "jfet")]
+            jfet: cfg.jfet,
+            #[cfg(feature = "jfet")]
+            jfet_params,
             r_kj_idx,
             r_upper_idx,
             r_lower_idx,
