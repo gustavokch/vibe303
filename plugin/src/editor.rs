@@ -463,6 +463,16 @@ fn draw_ui(ctx: &egui::Context, setter: &ParamSetter, p: &Arc<Ba283Params>) {
                                     ui.add_space(SP_MD);
                                 }
 
+                                // ── JFET voicing (feature `jfet`): swap the Class A BJTs for a
+                                //    square-law JFET. A creative tonal A/B, not a faithful model. ──
+                                #[cfg(feature = "jfet")]
+                                {
+                                    toggle_pill(ui, setter, &p.jfet_on, "JFET");
+                                    ui.add_space(SP_MD);
+                                    hairline(ui);
+                                    ui.add_space(SP_MD);
+                                }
+
                                 // Quality selectors — stacked rows (each fits the column width; the
                                 // original single wide row would overflow a 300px column).
                                 ui.horizontal(|ui| {

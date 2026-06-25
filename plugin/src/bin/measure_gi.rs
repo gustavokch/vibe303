@@ -47,9 +47,34 @@ fn db_to_gain(db: f32) -> f64 {
     10.0f64.powf(db as f64 * 0.05)
 }
 
+/// Build the measurement config, optionally with the JFET voicing on (`--jfet`, requires the
+/// `jfet` feature). The JFET op-point differs from the BJT's, so its makeup row (`JFET_MAKEUP` in
+/// `lib.rs`) is measured separately.
+fn measure_cfg() -> (QualityConfig, bool) {
+    let jfet = std::env::args().any(|a| a == "--jfet");
+    #[cfg(feature = "jfet")]
+    {
+        let mut c = QualityConfig::realtime();
+        c.jfet = jfet;
+        (c, jfet)
+    }
+    #[cfg(not(feature = "jfet"))]
+    {
+        if jfet {
+            eprintln!("--jfet requires `--features jfet`; rebuild with it to measure the JFET table");
+            std::process::exit(1);
+        }
+        (QualityConfig::realtime(), false)
+    }
+}
+
 fn main() {
+    let (cfg, jfet) = measure_cfg();
     let mut makeup = [[0f32; DRIVE_GRID_DB.len()]; 5];
-    println!("// DRIVE-swept WDF makeup `1/G_sat`. Rows = gain positions, cols = DRIVE grid (dB).");
+    println!(
+        "// DRIVE-swept {} makeup `1/G_sat`. Rows = gain positions, cols = DRIVE grid (dB).",
+        if jfet { "JFET" } else { "WDF" }
+    );
     println!(
         "// A0 = {:.4} V (0 dBFS), SR = {} Hz, bias = {}, age 0, default trafo, realtime tier.",
         A0_VOLTS, SR, BIAS
@@ -61,7 +86,7 @@ fn main() {
     println!();
     for (i, &r) in STEP_R_KJ.iter().enumerate() {
         let mut ch = ChannelDsp::new();
-        ch.wdf_rebuild_with(QualityConfig::realtime(), SR, r, BIAS);
+        ch.wdf_rebuild_with(cfg, SR, r, BIAS);
         ch.wdf_warmup();
         print!("//  {} {:<6}     ", i, LABELS[i]);
         for (j, &d) in DRIVE_GRID_DB.iter().enumerate() {
@@ -80,7 +105,10 @@ fn main() {
         print!("{:.1}, ", d);
     }
     println!("\n];");
-    println!("// Rows align with GAIN_STEPS order (15/20/25/30/35 dB); paste into each `wdf_makeup`.");
+    println!(
+        "// Rows align with GAIN_STEPS order (15/20/25/30/35 dB); paste into {}.",
+        if jfet { "`JFET_MAKEUP`" } else { "each `wdf_makeup`" }
+    );
     for (i, row) in makeup.iter().enumerate() {
         print!("// {} ({}): &[", i, LABELS[i]);
         for (j, m) in row.iter().enumerate() {

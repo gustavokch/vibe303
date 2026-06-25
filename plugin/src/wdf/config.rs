@@ -89,6 +89,13 @@ pub struct QualityConfig {
     /// device-eval kernel. On for fast/ultra-fast (and `with_precision(Medium)`); off at realtime
     /// (bit-identical / golden) and a no-op on warp / `Precision::Low` (`cap_tier = Off`, no charge).
     pub dep_lut: bool,
+    /// JFET voicing (feature `jfet`): swap all three Class A transistors from the Gummel-Poon BJT
+    /// model to a Shichman-Hodges square-law JFET. A creative tonal alternative, not a faithful
+    /// model — orthogonal to every other lever. `false` (the default in every preset) keeps the
+    /// stock BJT path bit-exact. Acted on at build time (`build_with` picks the device cards), so it
+    /// rides the off-thread rebuild like a tier change, not a live in-place toggle.
+    #[cfg(feature = "jfet")]
+    pub jfet: bool,
     /// Sub-rate Newton spike lever — **NO-GO, behind `subrate-spike` feature only**.
     /// See the full verdict in the `#[cfg(feature = "subrate-spike")]`-gated field below.
     /// Not present in the default build; compile with `--features subrate-spike` to access.
@@ -159,6 +166,8 @@ impl QualityConfig {
             fma: false,
             fixed_step: false,
             dep_lut: false, // realtime stays bit-exact (golden) — pow path, no table
+            #[cfg(feature = "jfet")]
+            jfet: false, // stock BJT path; the runtime toggle / measure bin flip this on
             #[cfg(feature = "subrate-spike")]
             subrate: 1,
             #[cfg(feature = "subrate-spike")]
