@@ -397,8 +397,9 @@ static GAIN_STEPS: &[GainStep] = &[
 /// JFET-voicing levelNorm makeup (`1/G_sat(drive)`), one row per `circuit_gain` position, parallel
 /// to [`GAIN_STEPS`]`.wdf_makeup` but measured at the JFET operating point (the square-law device has
 /// a different large-signal gain than the BJT). Selected over the BJT row when the `jfet_on` toggle
-/// is active. Measured offline by `bin/measure_gi --jfet`; the drift-guard test re-measures and pins
-/// them, same as the BJT table.
+/// is active. Measured offline by `bin/measure_gi --jfet`; the drift-guard test
+/// `tests/test_jfet.rs::jfet_makeup_matches_remeasured_gain` re-measures and pins these values,
+/// same as the BJT table's guard in `tests/test_stepped_gain.rs`.
 ///
 /// Measured at the JFET operating point by `bin/measure_gi --jfet` (A0=0.5 V, 48 kHz, bias 0.5,
 /// age 0, realtime tier). The square-law JFET is a much lower-gain stage than the BJT, so `1/G_sat`
@@ -1025,6 +1026,14 @@ impl Ba283Plugin {
     #[doc(hidden)]
     pub fn pos_makeup(pos: i32, drive_db: f32) -> f32 {
         wdf_makeup_at(GAIN_STEPS[gain_pos(pos)].wdf_makeup, drive_db)
+    }
+
+    /// JFET-voicing analogue of [`pos_makeup`]: the embedded [`JFET_MAKEUP`] trim for a
+    /// `circuit_gain` position at `drive_db`. Test/diagnostic accessor for the JFET drift guard.
+    #[cfg(feature = "jfet")]
+    #[doc(hidden)]
+    pub fn jfet_pos_makeup(pos: i32, drive_db: f32) -> f32 {
+        wdf_makeup_at(JFET_MAKEUP[gain_pos(pos)], drive_db)
     }
 
     /// Park a retired model box for an off-thread drop (the worker drains the ring). Alloc-free

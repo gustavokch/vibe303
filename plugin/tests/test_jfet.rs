@@ -108,3 +108,40 @@ fn jfet_idle_is_quiet() {
     }
     assert!(peak < 1.0, "idle output not quiet: peak {peak}");
 }
+
+/// DRIFT GUARD for the embedded `JFET_MAKEUP` table — the JFET analogue of
+/// `test_stepped_gain::embedded_makeup_matches_remeasured_gain`. Re-measure each `circuit_gain`
+/// position's LARGE-SIGNAL voltage gain `G_sat` at every DRIVE grid point with the JFET cards on
+/// (the exact `A0 * 10^(drive/20)` stimulus `bin/measure_gi --jfet` uses) and assert `1/G_sat`
+/// matches the curve baked into `JFET_MAKEUP` (via `Ba283Plugin::jfet_pos_makeup`). Tuning `beta`
+/// in `jfet_small`/`jfet_power` — which the card docs invite — shifts the op-point and fails this,
+/// forcing a `measure_gi --jfet` re-run instead of silently shipping a stale levelNorm.
+#[test]
+fn jfet_makeup_matches_remeasured_gain() {
+    use ba283::dsp::{ChannelDsp, INPUT_FS_VOLTS};
+    use ba283::Ba283Plugin;
+    // MUST mirror `DRIVE_GRID_DB` in lib.rs / bin/measure_gi.
+    const DRIVE_GRID_DB: [f32; 13] =
+        [-12.0, -9.0, -6.0, -3.0, 0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0, 24.0];
+    // Mirrors `bin/measure_gi::STEP_R_KJ` (open sentinel → 110 Ω), idx 0..4 = 15/20/25/30/35 dB.
+    const STEP_R_KJ: [f32; 5] = [1.0e9, 1_200.0, 470.0, 220.0, 110.0];
+    let a0 = INPUT_FS_VOLTS as f64; // 0 dBFS calibration reference
+    let host = wdf_golden::HOST_SR as f32;
+    for (pos, &r) in STEP_R_KJ.iter().enumerate() {
+        let mut ch = ChannelDsp::new();
+        ch.wdf_rebuild_with(cfg_jfet(true), host, r, 0.5);
+        ch.wdf_warmup();
+        for &d in &DRIVE_GRID_DB {
+            let amp = a0 * 10f64.powf(d as f64 * 0.05);
+            let measured = 1.0 / ch.wdf_measure_gain_at(amp) as f64;
+            let embedded = Ba283Plugin::jfet_pos_makeup(pos as i32, d) as f64;
+            let rel = (measured - embedded).abs() / embedded;
+            assert!(
+                rel < 0.02,
+                "pos {pos} (R={r}Ω) drive {d:+} dB: embedded JFET makeup {embedded} drifted from \
+                 re-measured {measured} (rel {rel:.4} > 2%). Re-run \
+                 `cargo run --features jfet --release --bin measure_gi -- --jfet` and update JFET_MAKEUP."
+            );
+        }
+    }
+}

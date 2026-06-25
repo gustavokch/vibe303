@@ -28,6 +28,12 @@
 //! its trapezoidal trailing update model them with **zero** change. Diffusion charge is disabled
 //! (`tf = tr = 0`) since a reverse-biased gate stores none.
 
+// JFET and the `adaa-*` spikes are mutually exclusive: the JFET Newton arm is gated
+// `not(any(adaa-*))`, so combining them silently disables the JFET path (BJT transport runs under
+// the JFET cards). Fail the build loudly instead of shipping a silent no-op voicing.
+#[cfg(any(feature = "adaa-insolve", feature = "adaa-port"))]
+compile_error!("feature `jfet` is mutually exclusive with the `adaa-*` spikes (they assume BJT transport)");
+
 use super::*;
 
 /// Per-device JFET channel parameters (Shichman-Hodges). Held alongside the gate-junction
