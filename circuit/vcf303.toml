@@ -1,0 +1,137 @@
+# vcf303 — TB-303 / TD-3 diode-ladder VCF, STEP 1 = bare 4-pole ladder core.
+#
+# The diode ladder only: 4 rungs × 2 rails = 8 diodes (the diode-connected
+# 2SC1583 pairs of the real filter, modelled as 1N4148 per the Stinchcombe
+# diode-ladder analysis) + 4 shunt caps bridging the two rails. The active
+# stages (T38 diff input, T20/T22 gain, T21 buffer, T23 resonance, T7/T11 expo
+# cutoff) are deliberately OUT for this step — see eval/303/VCF_MAP.md. The
+# harness (eval/303/run_vcf303_spice.py) injects the parameterised ladder bias
+# current (= cutoff) at the TOP and the differential AC signal at the BOTTOM,
+# and provides the DC sink + ground reference. None of the ladder nodes are
+# `known`: the harness attaches current/AC sources to them externally, so they
+# stay solved (a both-known shunt cap would be inert — the wdf_drop trap).
+#
+# Rails / DC: bias current I flows TOP(tl,tr) -> down each rail through the
+# series diodes -> BOTTOM(dl,dr) sink. Diode r_small = Vt/I, shunt caps C =>
+# cutoff wc ~ I/(Vt*C): cutoff tracks the bias current (like BA283's R_KJ leg).
+# Signal: differential AC injected at the bottom (dl,dr), 4-pole LP read at the
+# top (tl,tr). Souped tap-select poles (step 5) will expose a/b/c as probes.
+
+[meta]
+name = "vcf303"
+ground = "GND"
+num_nodes = 10
+listening_node = "tl"
+
+# --- left rail, top -> bottom ---
+[[node]]
+name = "tl"   # top-left: readout + bias-current inject (4-pole tap)
+
+[[node]]
+name = "al"   # after rung 1 (2-pole tap)
+
+[[node]]
+name = "bl"   # after rung 2 (3-pole tap)
+
+[[node]]
+name = "cl"   # after rung 3
+
+[[node]]
+name = "dl"   # bottom-left: differential signal inject + DC sink
+
+# --- right rail, top -> bottom ---
+[[node]]
+name = "tr"
+
+[[node]]
+name = "ar"
+
+[[node]]
+name = "br"
+
+[[node]]
+name = "cr"
+
+[[node]]
+name = "dr"
+
+# --- ladder series diodes (anode = top, cathode = bottom; bias current flows
+#     top -> bottom through all four rungs of each rail) ---
+[[diode]]
+name = "D1L"
+nodes = ["tl", "al"]
+model = "1N4148"
+
+[[diode]]
+name = "D1R"
+nodes = ["tr", "ar"]
+model = "1N4148"
+
+[[diode]]
+name = "D2L"
+nodes = ["al", "bl"]
+model = "1N4148"
+
+[[diode]]
+name = "D2R"
+nodes = ["ar", "br"]
+model = "1N4148"
+
+[[diode]]
+name = "D3L"
+nodes = ["bl", "cl"]
+model = "1N4148"
+
+[[diode]]
+name = "D3R"
+nodes = ["br", "cr"]
+model = "1N4148"
+
+[[diode]]
+name = "D4L"
+nodes = ["cl", "dl"]
+model = "1N4148"
+
+[[diode]]
+name = "D4R"
+nodes = ["cr", "dr"]
+model = "1N4148"
+
+# --- shunt caps bridging the two rails (one per inter-rung level = 4 poles).
+#     Bottom (input) level = .018µF (C101), the three upper = .033µF
+#     (C98/C99/C100) per VCF_MAP.md. ---
+[[capacitor]]
+name = "C98"
+nodes = ["al", "ar"]
+farads = 3.3e-08
+dielectric = "film"
+
+[[capacitor]]
+name = "C99"
+nodes = ["bl", "br"]
+farads = 3.3e-08
+dielectric = "film"
+
+[[capacitor]]
+name = "C100"
+nodes = ["cl", "cr"]
+farads = 3.3e-08
+dielectric = "film"
+
+[[capacitor]]
+name = "C101"
+nodes = ["dl", "dr"]
+farads = 1.8e-08
+dielectric = "film"
+
+[model.1N4148]
+type = "d"
+is = 1.4199999999999998e-11
+rs = 4.2
+n = 1.7
+bv = 75.0
+ibv = 4.9999999999999996e-06
+cjo = 1.7399999999999999e-12
+vj = 0.75
+m = 0.333
+tt = 4.320000000000001e-09
