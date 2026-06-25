@@ -10,14 +10,12 @@ from __future__ import annotations
 
 import sys
 
-from .ir import load
-from .targets import IR_PATH, REPO_ROOT, render_all
+from .targets import REPO_ROOT, render_circuits
 
 
 def main(argv: list[str]) -> int:
     check = "--check" in argv
-    circuit = load(IR_PATH)
-    rendered = render_all(circuit)
+    rendered = render_circuits()
 
     stale: list[str] = []
     for path, text in rendered.items():
