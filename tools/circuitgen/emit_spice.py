@@ -116,12 +116,12 @@ def generate(c: Circuit) -> str:
         val = _PARAM_ALIASES.get(r.param, r.param) if r.param else py_f64(r.ohms)
         out.append(f'    circuit.R("{_suffix(r.name, "R")}", {a}, {b}, {val})\n')
     for bj in c.bjts:
-        col = c.node(bj.collector).spice_name()
-        base = c.node(bj.base).spice_name()
-        emit = c.node(bj.emitter).spice_name()
+        col = _spice_node(c, bj.collector)
+        base = _spice_node(c, bj.base)
+        emit = _spice_node(c, bj.emitter)
         out.append(
-            f'    circuit.BJT("{bj.name}", "{col}", "{base}", '
-            f'"{emit}", model="{bj.model}")\n'
+            f'    circuit.BJT("{bj.name}", {col}, {base}, '
+            f'{emit}, model="{bj.model}")\n'
         )
     for d in c.diodes:
         a, k = _spice_node(c, d.nodes[0]), _spice_node(c, d.nodes[1])
