@@ -1,0 +1,211 @@
+[meta]
+name = "TB-303 / Behringer TD-3 VCF Lowpass"
+drawing = ""
+rail_node = "X12_2"
+rail_voltage = 8.0
+ground = "GND"
+num_nodes = 15
+listening_node = "VCA_OUT"
+
+[[node]]
+name = "X12_2"
+known = true
+role = "rail"
+
+[[node]]
+name = "VCF_IN"
+known = true
+role = "input"
+
+[[node]]
+name = "CUTOFF_CV"
+known = true
+role = "input"
+
+[[node]]
+name = "RESO_CV"
+known = true
+role = "input"
+
+[[node]]
+name = "T34_C"
+known = false
+
+[[node]]
+name = "T35_C"
+known = false
+
+[[node]]
+name = "T36_C"
+known = false
+
+[[node]]
+name = "T37_C"
+known = false
+
+[[node]]
+name = "T38_B"
+known = false
+
+[[node]]
+name = "T38_C"
+known = false
+
+[[node]]
+name = "T38_E"
+known = false
+
+[[node]]
+name = "T20_C"
+known = false
+
+[[node]]
+name = "T21_C"
+known = false
+
+[[node]]
+name = "T23_C"
+known = false
+
+[[node]]
+name = "VCA_OUT"
+known = false
+role = "listening"
+
+[[resistor]]
+name = "R27"
+nodes = ["X12_2", "VCF_IN"]
+ohms = 100000.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R23"
+nodes = ["VCF_IN", "T38_B"]
+ohms = 20000.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R24"
+nodes = ["T38_B", "GND"]
+ohms = 1000.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R83"
+nodes = ["T38_C", "T20_C"]
+ohms = 22000.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R84"
+nodes = ["T20_C", "T21_C"]
+ohms = 22000.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R85"
+nodes = ["T21_C", "VCA_OUT"]
+ohms = 10000.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R97"
+nodes = ["RESO_CV", "T23_C"]
+ohms = 22000.0
+material = "carbon_film"
+
+[[resistor]]
+name = "R98"
+nodes = ["T23_C", "GND"]
+ohms = 10000.0
+material = "carbon_film"
+
+[[capacitor]]
+name = "C98"
+nodes = ["T34_C", "T35_C"]
+farads = 0.000033
+dielectric = "film"
+
+[[capacitor]]
+name = "C99"
+nodes = ["T35_C", "T36_C"]
+farads = 0.000033
+dielectric = "film"
+
+[[capacitor]]
+name = "C100"
+nodes = ["T36_C", "T37_C"]
+farads = 0.000033
+dielectric = "film"
+
+[[capacitor]]
+name = "C101"
+nodes = ["T37_C", "GND"]
+farads = 0.000033
+dielectric = "film"
+
+[[capacitor]]
+name = "C87"
+nodes = ["X12_2", "GND"]
+farads = 0.000001
+dielectric = "electrolytic"
+
+[[capacitor]]
+name = "C81"
+nodes = ["T21_C", "GND"]
+farads = 0.000001
+dielectric = "electrolytic"
+
+[[diode]]
+name = "D1"
+nodes = ["T34_C", "T35_C"]
+model = "DMMT3904"
+
+[[diode]]
+name = "D2"
+nodes = ["T35_C", "T36_C"]
+model = "DMMT3904"
+
+[[diode]]
+name = "D3"
+nodes = ["T36_C", "T37_C"]
+model = "DMMT3904"
+
+[[diode]]
+name = "D4"
+nodes = ["T37_C", "GND"]
+model = "DMMT3904"
+
+[[bjt]]
+name = "T38"
+model = "DMMT3904"
+base = "T38_B"
+emitter = "T38_E"
+collector = "T38_C"
+
+[[bjt]]
+name = "T20"
+model = "DMMT3904"
+base = "T38_C"
+emitter = "GND"
+collector = "T20_C"
+
+[[bjt]]
+name = "T21"
+model = "DMMT3904"
+base = "T20_C"
+emitter = "GND"
+collector = "T21_C"
+
+[[bjt]]
+name = "T23"
+model = "DMMT3904"
+base = "RESO_CV"
+emitter = "GND"
+collector = "T23_C"
+
+[model.DMMT3904]
+type = "npn"
+is = 1e-14
+bf = 200.0
+vaf = 100.0

@@ -27,33 +27,55 @@ known = bool                    # optional, default false
 role  = string                  # optional: rail|input|listening|...
 
 # Passive/active elements. `nodes = [a, b]` are net names (or "GND").
+# Put EACH key on its own line (valid TOML). Never separate keys with ';'.
 [[resistor]]
-name = string; nodes = [string, string]; ohms = float; material = string
-# material ∈ {carbon_comp, carbon_film, metal_film, wirewound}
+name = string
+nodes = [string, string]
+ohms = float
+material = string               # ∈ {carbon_comp, carbon_film, metal_film, wirewound}
 # optional: role = string ; param = string (if a build-time variable leg)
 
 [[capacitor]]
-name = string; nodes = [string, string]; farads = float; dielectric = string
-# dielectric ∈ {electrolytic, film, styrene}
+name = string
+nodes = [string, string]
+farads = float
+dielectric = string             # ∈ {electrolytic, film, styrene}
 # set wdf_drop = true ONLY when BOTH terminals are known nodes (e.g. rail↔GND)
 
 [[bjt]]
-name = string; model = string   # model must match a [model.<NAME>] below
-base = string; emitter = string; collector = string
+name = string
+model = string                  # must match a [model.<NAME>] below
+base = string
+emitter = string
+collector = string
+
+[[diode]]                       # e.g. 1N4148 ladder/clamp diodes
+name = string
+nodes = [string, string]        # [anode, cathode]
+model = string                  # must match a [model.<NAME>] with type="d"
+
+[[jfet]]                        # n-channel JFET (e.g. buffer/follower)
+name = string
+model = string                  # must match a [model.<NAME>] with type="njf"
+drain = string
+gate = string
+source = string
 
 [transformer]                   # optional, if a transformer is present
 name = string; lp = float; ls = float; k = float
 pri_nodes = [string, string]; sec_nodes = [string, string]
 
-# Full SPICE .MODEL card for each transistor model, keys lower-cased.
+# Full SPICE .MODEL card for each transistor/diode/JFET model, keys lower-cased.
 [model.<NAME>]
-type = "npn" | "pnp"
+type = "npn" | "pnp" | "d" | "njf"
+# bjt (npn/pnp): is, bf, vaf, ...   diode (d): is, n, rs, ...   jfet (njf): beta, vto, lambda, ...
 is = float; bf = float; ...     # every parameter legible on the schematic/datasheet
 
 [params]                        # optional analog plumbing constants you can read off
 # e.g. pot totals, gain map endpoints
 
 RULES:
+- Valid TOML only: one key per line; NEVER use ';' to separate keys on a line.
 - Use net names that reflect the schematic labels where legible; otherwise invent
   stable names (e.g. node connecting R3 and TR1 base -> "TR1_B").
 - Every non-known net must touch >= 1 element (no dangling nodes).
