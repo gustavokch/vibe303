@@ -34,28 +34,6 @@ const C80 = 1.0000000000000001e-07
 q1n4148() = diode(; is = 1.4199999999999998e-11, η = 1.7)
 q2n3904() = bjt(:npn; is = 6.73e-15, βf = 416.4, βr = 0.7374, vaf = 74.03, ikf = 0.06678, ise = 6.73e-15, ηe = 1.259, rb = 10.0, rc = 1.0)
 q2n3906() = bjt(:pnp; is = 4e-14, βf = 400.0, βr = 7.5, vaf = 50.0, ikf = 0.02, ise = 7e-15, ηe = 1.16, rc = 2.4)
-# MPF104: JFET (njf) — no native ACME element; build a source-follower
-#   surrogate in the @circuit body. Params:
-const mpf104_beta = 0.0004888999999999999
-const mpf104_betatce = -0.5
-const mpf104_rd = 1.0
-const mpf104_rs = 1.0
-const mpf104_lambda = 0.00383
-const mpf104_vto = -1.45
-const mpf104_vtotc = -0.0025
-const mpf104_is = 1.8130000000000002e-13
-const mpf104_isr = 1.7470000000000001e-12
-const mpf104_n = 1.0
-const mpf104_nr = 2.0
-const mpf104_xti = 3.0
-const mpf104_alpha = 2.543e-06
-const mpf104_vk = 152.2
-const mpf104_cgd = 4e-12
-const mpf104_m = 0.3114
-const mpf104_pb = 0.5
-const mpf104_fc = 0.5
-const mpf104_cgs = 4.6269999999999996e-12
-const mpf104_kf = 4.284e-18
-const mpf104_af = 1.0
+mpf104() = mosfet(:n; vt = -1.45, α = 0.0004888999999999999, λ = 0.00383)  # JFET surrogate (depletion NMOS)
 
 end # module vco303Gen

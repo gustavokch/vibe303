@@ -90,12 +90,17 @@ def generate(c: Circuit) -> str:
                 dk.append(f"η = {julia_f64(model.params['n'])}")
             out.append(f"{fn}() = diode({'; ' + ', '.join(dk) if dk else ''})\n")
         elif model.type == "njf":
-            # ACME has no native JFET. The MPF104 buffer is realised as a source-follower
-            # surrogate inside the hand-written @circuit body; its params are exposed here.
-            out.append(f"# {name}: JFET (njf) — no native ACME element; build a source-follower\n")
-            out.append("#   surrogate in the @circuit body. Params:\n")
-            for k, v in model.params.items():
-                out.append(f"const {fn}_{k} = {julia_f64(v)}\n")
+            # ACME has no native JFET. A depletion-mode NMOS is a faithful square-law
+            # surrogate for the source-follower buffer (same gate/source/drain topology,
+            # captures ramp-top clipping). Map vto->vt, beta->α, lambda->λ.
+            mk = []
+            if "vto" in model.params:
+                mk.append(f"vt = {julia_f64(model.params['vto'])}")
+            if "beta" in model.params:
+                mk.append(f"α = {julia_f64(model.params['beta'])}")
+            if "lambda" in model.params:
+                mk.append(f"λ = {julia_f64(model.params['lambda'])}")
+            out.append(f"{fn}() = mosfet(:n; {', '.join(mk)})  # JFET surrogate (depletion NMOS)\n")
         else:
             out.append(f"# {name}: unsupported model type '{model.type}' for ACME\n")
 
