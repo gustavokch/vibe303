@@ -17,8 +17,11 @@ const R96 = 2200.0
 const R85 = 10000.0
 const R27 = 100000.0
 const R_br = 100000.0
-const R97 = 2200.0
-const R98 = 100000.0
+const R64 = 10000.0
+const Rb1 = 680000.0
+const Rb2 = 100000.0
+const R71 = 2200.0
+const Rc9 = 27000.0
 # Rreso: build-time param (rreso)
 
 # --- Capacitor values (farads) ---
@@ -26,7 +29,8 @@ const C98 = 3.3e-08
 const C99 = 3.3e-08
 const C100 = 3.3e-08
 const C101 = 1.8e-08
-const C64 = 1e-08
+const C23 = 1e-06
+const C_out = 1e-06
 
 # --- BJT model constructors (ACME-projected Gummel-Poon subset) ---
 q1n4148() = diode(; is = 1.4199999999999998e-11, η = 1.7)

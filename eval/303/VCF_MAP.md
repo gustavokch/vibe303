@@ -63,7 +63,8 @@ Input/bias on the bottom-left rails: `R27` 100k + `C19` 1µ (signal in from X12)
 2. ✅ Each `Tnn` pair = **diode-connected** 2SC1583 dual (B-C shorted, 2-terminal) —
    confirmed on the Roland sheet; the 1N4148 diode-ladder model is structurally right.
 3. ✅ Ladder bias = parameterized cutoff current (abstracted), matches BA283 R_KJ.
-4. ✅ `.op` converges; AC = 4-pole LP, cutoff tracks bias (step 2b). Resonance ✗ — see §8.
+4. ✅ `.op` converges; AC = 4-pole LP, cutoff tracks bias (step 2b). Resonance ✅ —
+   active Q9 feedback gives fc-tracking peak, see §11 (supersedes the §8–§10 ✗).
 
 ## 7. Designator cross-reference (Roland sheet ↔ this map / TOML)
 The VCF block was re-read from the **original Roland TB-303** sheet
@@ -147,3 +148,34 @@ multiplier can synthesise resonance at fc DESPITE spread poles (it doesn't need 
 coincidence). ⇒ NEXT = transcribe the Q9/Q10/Q11 feedback faithfully (trace whether it
 modulates the Q12 tail current or injects push-pull into both bases) and re-test `--reso`.
 This is the prime remaining candidate for "real 303 resonates, model doesn't".
+
+## 11. RESONANCE SOLVED (2026-06-26) — the active Q9 feedback was the missing piece
+The §8–§10 "model can't resonate at fc" verdict is **OVERTURNED**. Root cause of the
+failure: the reconstructed feedback used a **unity emitter-follower** (old `T23`) — no
+gain, no inversion — so the loop could only close at DC (every Rreso peaked at ~1 Hz).
+
+**Pin-level re-read of the Roland sheet** (`q9_pins.png`, `reso_cluster.png`): the real
+feedback is the **active, inverting Q9/Q10/Q11 stage**. `Q9` = a common-emitter amp
+(emitter degenerated to GND via `R71` 2.2K, base from the output via `R64`/`R65` 10K,
+collector loaded to +8V), buffered by `Q10`/`Q11`. It supplies the regenerative VOLTAGE
+GAIN the unity buffer lacked.
+
+**Faithful build** (`vcf303.toml` step-3, rework): `Q9` transcribed as the single CE
+gain stage (gain ≈ `Rc9`/`R71` ≈ 27k/2.2k ≈ 12×; `Q10`/`Q11` output-buffer folded into
+the existing `out` follower; base bias divider abstracted per VCF_MAP item 3). Output
+AC-coupled (`C23` 1µF) → CE amp → AC-coupled (`C_out`) → resonance leg `Rreso` (param,
+= the RESONANCE pot VR4) → **`in_r`** (the OTHER diff input). The inject node is the key:
+because `Q9` inverts, feeding `in_r` makes the loop **negative at DC** (stable, flat) but
+**positive near fc** once the ladder's own phase lag rotates the sign — the textbook way
+a multipole filter resonates. (Injecting `in_l` instead = wideband negative feedback,
+just flattens — measured.)
+
+**Result** (`run_vcf303_spice.py --reso`): an **fc-TRACKING** resonance peak up to ~20 dB.
+Peak frequency follows the bias current (cutoff): **532 Hz @16µA → 1.0 kHz @32µA → 1.7
+kHz @64µA → 2.7 kHz @128µA**. `Rreso` sweeps Q to an optimum ~47k; the stock loop then
+self-limits (no self-oscillation — that's Devil-Fish territory, an optional souped
+higher-gain `Rc9`/`R71` regime). `Rreso = RRESO_OFF` (1e12) opens the leg → **step-2b
+gate stays bit-exact** (4-pole LP, cutoff tracks bias; gate green). The passive-ladder
+pole spread (§9) was a red herring — the loop closes where ladder phase + the amp's 180°
+sum to regeneration, near fc, regardless of where the open-loop dominant pole sits.
+NEXT = step 4 (ACME-vs-SPICE VCF parity).

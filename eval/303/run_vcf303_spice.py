@@ -95,7 +95,7 @@ def op_point(i_tail: float, rreso: float = RRESO_OFF) -> str:
             + "\n.options gmin=1e-13 reltol=1e-4 abstol=1e-12 vntol=1e-7\n"
             + ".control\nop\n"
             + "print v(tl) v(tr) v(dl) v(tail) v(e20) "
-            + "v(c20l) v(c20r) v(t22e) v(out) v(re23)\n.endc\n.end\n"
+            + "v(c20l) v(c20r) v(t22e) v(out) v(bq9) v(eq9) v(cq9)\n.endc\n.end\n"
         )
         r = subprocess.run(["ngspice", "-b", str(cir)], capture_output=True,
                             text=True, timeout=120)
@@ -177,28 +177,21 @@ def reso_sweep() -> int:
         label = "open" if rr >= 1e11 else f"{rr/1e3:.1f}k"
         print(f"{label:>10} {pk:7.2f}dB {fpk:9.1f}Hz")
     print(
-        "\nFINDING (pole-spread dig, supersedes the earlier 'make poles coincident'\n"
-        " framing — see scratch probe_poles.py --r95/--itop/--phase/--loop/--difftest):\n"
-        " 1. The passive diode ladder's 4 poles are INHERENTLY spread (f60/f3 ~42-260x\n"
-        "    vs an ideal coincident 4-pole's 5.6x) and CANNOT be clustered by any top\n"
-        "    termination — high-Z current-source top makes it WORSE (260x), low-Z best\n"
-        "    (~42x). Coincidence is a Moog (buffered-stage) property; a diode ladder is\n"
-        "    passive, so this is expected, not a bug to tune out.\n"
-        " 2. The dominant pole is pinned ~47 Hz @32uA and saturates ~hundreds Hz (R95\n"
-        "    10K caps the top-section pole at ~1/(2pi*R95*2C) ~= 241 Hz once diode r\n"
-        "    drops below it; f3 scales ~I^0.5, not the I^1 of a clean diode-ladder pole).\n"
-        " 3. The forward sig->out phase NEVER reaches -180 deg at a frequency with gain:\n"
-        "    phase hits -90 deg only at ~3 kHz where |H| is already -40 dB. So global\n"
-        "    feedback can only close the loop sub-50 Hz (the spurious peak), regardless\n"
-        "    of injection node (in_l/in_r), C64, Rreso, differential readout, or current\n"
-        "    vs voltage feedback -- ALL tested, ALL peak at DC or ~50 Hz, never at fc.\n"
-        " => The blocker is NOT pole-placement and NOT the feedback-network tuning. The\n"
-        "    modeled OPEN-LOOP ladder cannot support fc resonance. The real TB-303 does\n"
-        "    resonate, so the model diverges from the circuit. NEXT = re-read the\n"
-        "    schematic for the EXACT T23 feedback injection + input summing topology\n"
-        "    (VCF_MAP s4 -- the Rreso->in_r base inject is a reconstruction, unconfirmed)\n"
-        "    and the ladder drive/termination impedance regime Stinchcombe's resonant\n"
-        "    analysis assumes; the current R95-top / T38-bottom asymmetry is suspect.")
+        "\nFINDING (RESOLVED 2026-06-26 — active Q9 feedback yields fc-tracking resonance):\n"
+        " The peak now tracks the bias current (cutoff): ~532 Hz @16uA -> 1.0 kHz @32uA\n"
+        " -> 1.7 kHz @64uA -> 2.7 kHz @128uA, up to ~20 dB tall at Rreso ~= 47k. This\n"
+        " REVERSES the earlier 'the modeled ladder cannot support fc resonance' verdict:\n"
+        " that was measured with a UNITY emitter-follower (old T23) feedback, which has\n"
+        " no gain and no inversion, so the loop could only close at DC. The real 303\n"
+        " feedback is the ACTIVE, INVERTING Q9/Q10/Q11 common-emitter amp. Transcribing\n"
+        " it (Q9 CE, gain ~Rc9/R71 ~= 12x) + injecting into in_r (so the loop is -ve at\n"
+        " DC, +ve near fc once the ladder rotates the phase) gives a true fc-tracking\n"
+        " resonance peak. The passive ladder's pole SPREAD was a red herring: the loop\n"
+        " closes where the ladder phase + the amp's 180deg sum to regeneration, near fc,\n"
+        " not at the dominant pole. Smaller Rreso raises Q to an optimum (~47k) then the\n"
+        " loop self-limits — the stock 303 does not self-oscillate (Devil-Fish territory).\n"
+        " NEXT = step 4 (ACME-vs-SPICE VCF parity), and a souped higher-gain self-osc\n"
+        " regime as an optional extension of the Rc9/R71 ratio.")
     return 0
 
 

@@ -114,7 +114,10 @@ drift tests):**
      stopband has an HF feedthrough floor (diode junction caps). A closed-loop read
      (AC-coupled C79 input + R121 output→2nd-base feedback) was tried + reverted
      (mis-biased). T20 runs as a low-headroom diff buffer (ladder top sits ~+8V).
-3. ⚠️ **WIP / BLOCKED (2eebc68 + pole-spread dig).** Resonance T23 + souped
+3. ✅ **RESOLVED (2026-06-26) — see the bottom of this item + VCF_MAP §11.** The
+   "model can't resonate" verdict below is SUPERSEDED: the active Q9 feedback gives
+   an fc-tracking resonance peak. History retained for context.
+   ⚠️ ~~WIP / BLOCKED (2eebc68 + pole-spread dig).~~ Resonance T23 + souped
    self-osc lever: T23 buffers output (base ← out via R97), high-pass-couples
    (C64) through the resonance leg `Rreso` (build-param `rreso`) into in_r; input
    restructured to summing nodes (sig→R27→in_l, in_r biased bref→R_br + sums
@@ -195,11 +198,24 @@ drift tests):**
    R71 2.2K, driven by R97 10K + C23 1µF, feeding back around Q12 — almost certainly a
    DIFFERENTIAL regenerative Q-multiplier, not the model's single-ended T23→Rreso→in_r.
    A Q-multiplier synthesises resonance at fc DESPITE spread poles (no pole coincidence
-   needed). **NEXT = transcribe the Q9/Q10/Q11 feedback faithfully** (trace tail-current
-   modulation vs push-pull base injection) + re-test `--reso`. Scratch tests:
-   `test_2sc.py`, `test_isrc2.py`, `test_combined.py`, `sweep_rtop.py` (all under the
-   `…ba283-303-circuit/…/scratchpad`). Repo is step-2b green; all findings committed.
-   Fallback if Q9/Q10/Q11 also fails: defer self-osc to Phase-2 DSP, proceed to step 4.
+   needed).
+
+   **★ RESONANCE SOLVED (2026-06-26, VCF_MAP §11).** Pin-level re-read (`q9_pins.png`):
+   the real feedback is the **active, INVERTING Q9 common-emitter amp** (emitter degen
+   `R71` 2.2K → GND, base from output via `R64` 10K, collector load `Rc9` → +8V), NOT a
+   differential Q-multiplier and NOT the old unity emitter-follower T23. The unity buffer
+   was WHY it never resonated (no gain, no inversion → loop only closes at DC). Rebuilt
+   `vcf303.toml` step-3: `out` →(C23 1µF)→ Q9 CE amp (gain ≈ Rc9/R71 ≈ 12×) →(C_out)→
+   `Rreso` leg → **`in_r`**. Inject = in_r (Q9 inverts ⇒ loop −ve at DC, +ve near fc once
+   the ladder rotates the phase; in_l = wideband neg-fb, just flattens). **Result: fc-
+   TRACKING resonance up to ~20 dB**, peak follows cutoff — 532 Hz @16µA → 1.0 kHz @32µA
+   → 1.7 kHz @64µA → 2.7 kHz @128µA (`run_vcf303_spice.py --reso`). The §8–§10 pole-spread
+   "blocker" was a red herring (loop closes at ladder-phase + amp-180° = regen, near fc).
+   `Rreso=RRESO_OFF` opens the leg ⇒ step-2b gate bit-exact; `--check` + 7/7 drift green;
+   BA283 byte-identical. Stock loop self-limits (Q optimum ~Rreso 47k) — no self-osc
+   without a higher-gain `Rc9`/`R71` "Devil-Fish" regime (optional souped follow-up).
+   Scratch: `q9_pins.py`/`shape.py`/`track.py`/`selfosc.py` (under `…ba283-303-circuit/
+   …/scratchpad`). **NEXT = step 4 (ACME-vs-SPICE VCF parity).**
 4. **ACME-vs-SPICE parity** for the VCF (use `vco303_acme.jl` as the `@circuit`
    template + the generated `_vcf303_gen.jl`); target ≈ −30 dB ESR like BA283.
 5. **Souped tap-select poles:** expose probe nodes after rungs T35/T36/T37.
