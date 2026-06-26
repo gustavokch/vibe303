@@ -155,10 +155,39 @@ drift tests):**
    structurally can't (sim: raising the DC-coupled load to 100K just shifts the
    op-point and KILLS the peak). Passive-ladder pole spread is inherent, NOT the
    lever; resonance comes from the high-gain AC-coupled loop.
-   **NEXT = rebuild the readout AC-coupled per VCF_MAP §7** (add C21 ladder-top→gain,
-   R114 100K load, C17 input, C15 output coupling caps; re-bias the gain stage off
-   its own divider so the load no longer sets DC), then re-test resonance/self-osc
-   with the `--reso` harness. Then step 4 (ACME parity), step 5 (tap-select poles).
+   **AC-COUPLED READOUT REBUILT + MEASURED → §8 HYPOTHESIS FALSIFIED (2026-06-26).**
+   Built the §7 fix in `vcf303.toml`: T20 bases AC-coupled off the ladder top via
+   `C21L/C21R` (1µF), biased to an independent divider node `gbias`, loads raised to
+   `R114` 100K. `--check` stayed green; `.op` converged; the readout gain rose to
+   +28dB passband (vs ~+8dB DC-coupled). **But resonance did NOT emerge:** `--reso`
+   still peaked at ~3–4 Hz, barely responding to feedback (open 1.48dB → 1k 1.74dB).
+   More forward gain ≠ resonance — the blocker is the forward-path POLE SPREAD, not
+   readout coupling. (Also regressed the step-2b automated gate: +28dB passband pushes
+   the −60dB/slope metrics out of range.) **Changes REVERTED** — repo back to step-2b
+   green. The §7-faithful AC-coupled readout is correct-as-topology but is NOT the
+   resonance lever; re-apply only alongside a real fix (+ retune the gate metric).
+   Scratch: `probe_readout.py` (readout works fine, +28dB), `sweep_rtop.py`,
+   `test_isrctop.py` (under the `…-ba283-303-circuit/…/scratchpad`).
+
+   **TOP-TERMINATION DIG (2026-06-26) — the real anomaly is the DOMINANT-POLE
+   DEPRESSION, not the top termination.** The Roland sheet (`laddertop.png`) shows the
+   ladder top fed by the **2SC2291 current source** (high-Z cascode), NOT a 10K-to-rail
+   — so the model's `R95` 10K top is unfaithful and was the suspect. BUT: sweeping R95
+   10K→1M LOWERS the dominant pole (40→2.3 Hz) and worsens spread; a faithful current
+   source top + bleeder pins the dominant pole at ~1.6 Hz (bleeder×C). Resonance peaks
+   always ride the dominant pole (1–47 Hz), never fc. ⇒ Top termination is NOT the
+   lever. **THE CORE BUG:** the ladder's dominant pole sits ~47 Hz when the diode
+   small-signal r·C predicts ~kHz (r=Vt/I≈1.6k @16µA, C=.033µ → ~3kHz) — ~**60× too
+   low** — and the 4 poles spread 42–260× up to ~20kHz. A real 303 resonates, so the
+   model's ladder SECTION structure diverges from the circuit. Prime suspects for the
+   60×: (a) the differential cap-between-rails modelling vs the real per-rail shunt;
+   (b) diode current far below i_tail/2; (c) 1N4148 vs the real diode-connected
+   2SC1583 r/C; (d) cascaded-unbuffered-RC dominant-pole math (lowest pole ≈ 0.1/RC).
+   **NEXT (open fork — see session report):** instrument per-section pole
+   contributions to localise the 60× depression / re-examine the differential-cap
+   section model; OR get the real-303 resonance mechanism (pole-coincidence vs a 2nd-
+   order feedback resonance); OR move self-osc resonance to the Phase-2 DSP domain and
+   proceed to step 4 (ACME parity) + step 5 (tap poles) with the faithful spread ladder.
 4. **ACME-vs-SPICE parity** for the VCF (use `vco303_acme.jl` as the `@circuit`
    template + the generated `_vcf303_gen.jl`); target ≈ −30 dB ESR like BA283.
 5. **Souped tap-select poles:** expose probe nodes after rungs T35/T36/T37.

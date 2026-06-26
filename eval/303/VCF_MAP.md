@@ -92,5 +92,26 @@ decouples DC bias from AC gain → the real stage runs the high loop gain self-o
 WITHOUT saturating; the DC-coupled model can't (sim: 22K→100K load just shifts the DC
 op-point and kills the peak). Passive diode-ladder poles are inherently spread (not a
 bug — see `run_vcf303_spice.py --reso`); resonance comes from the high-gain AC-coupled
-loop, not pole coincidence. **FIX = rebuild the readout AC-coupled per §7** (C21
-ladder-top→gain, R114 100K, C17 input, C15 output), then re-test resonance/self-osc.
+loop, not pole coincidence. ~~FIX = rebuild the readout AC-coupled per §7~~ —
+**FALSIFIED 2026-06-26** (see §9).
+
+## 9. AC-coupled readout FALSIFIED + the real anomaly (2026-06-26)
+The §8 fix (AC-couple T20 via `C21`, bias to `gbias`, `R114` 100K loads) was BUILT and
+MEASURED: readout gain rose to +28dB but **resonance did not emerge** — `--reso` still
+peaked at ~3–4 Hz (the `C64`/`Rreso` high-pass corner), unmoved by feedback. More
+forward gain ≠ resonance. The §7 AC-coupled/100K readout is faithful-as-topology but
+NOT the resonance lever; the change was reverted (it also regressed the step-2b gate).
+
+**Top-termination dig:** `laddertop.png` confirms the real ladder top = the **2SC2291
+current source** (high-Z), not `R95` 10K-to-rail. But neither a high resistive top
+(R95→1M lowers the dominant pole to ~2 Hz) nor a faithful current-source top (pins it
+~1.6 Hz via the DC bleeder×C) clusters the poles or lands resonance at fc.
+
+**The core bug = DOMINANT-POLE DEPRESSION.** The ladder's first pole sits ~47 Hz where
+the diode r·C predicts ~kHz (r=Vt/I≈1.6k @16µA × C=.033µ → ~3kHz) — ~60× too low — and
+the 4 poles spread 42–260× up to ~20kHz. Feedback always regenerates at that low
+dominant pole, never at fc. The real 303 resonates ⇒ the modelled ladder SECTION
+structure diverges. Suspects: differential-cap-between-rails vs real per-rail shunt;
+diode current ≪ i_tail/2; 1N4148 vs diode-connected 2SC1583 r/C; cascaded-unbuffered-RC
+pole math. NEXT = localise the 60× (per-section pole instrument) OR confirm the real
+resonance mechanism OR defer self-osc to Phase-2 DSP and proceed to ACME parity.
