@@ -231,9 +231,26 @@ drift tests):**
    ladder rig, header = the NO-GO), `eval/303/compare_vcf303.py` (reproducer: SPICE
    ladder correct 86 dB 4-pole bias-tracking, ACME output collapses ~1e-8 V vs ~2 mV
    → `RESULT: NO-GO confirmed`, exit 0). Scratch probes under `…/scratchpad/acme_*.jl`.
-5. **Souped tap-select poles:** expose probe nodes after rungs T35/T36/T37 (a/b/c
-   ladder taps already exist as nodes `al/bl/cl` in `vcf303.toml`) — ngspice-validated
-   (ACME parity is off the table per step 4).
+5. ✅ **DONE (2026-06-26) — see VCF_MAP §13.** Souped tap-select 2/3/4-pole is a pure
+   READOUT-TAP choice (no switch element, no IR change): signal injects at the ladder
+   bottom (dl,dr), reading a lower differential tap crosses fewer shunt caps → fewer
+   poles. `run_vcf303_spice.py --poles` (I_tail=32µA, atten @5kHz): **tl=−70.9dB (4-pole),
+   bl=−57.2dB (3-pole), cl=−42.8dB (2-pole)**, monotone ~14dB/pole; `al≡tl` (rung-1
+   diode adds no pole). Map: **4-pole=tl, 3-pole=bl, 2-pole=cl** (the plugin muxes which
+   node the gain stage reads). Slopes compressed below 24/18/12 dB/oct by pole spread +
+   HF feedthrough (§9), so the demo confirms the mechanism, not integer slopes. Default
+   step-2b gate stays green. **⇒ Phase-1 VCF feature-complete at circuit level.**
+
+## Phase-1 status: COMPLETE (VCO + VCF, ngspice-validated)
+VCO core: oscillates + 1 V/oct (ngspice). VCF: 4-pole LP + bias-tracking cutoff (step
+2) + fc-tracking resonance via active Q9 feedback (step 3) + tap-select 2/3/4-pole (step
+5). ACME parity = NO-GO for both (current-source bias / fixed-step switching defeat
+ACME's solver — ngspice is ground truth). **NEXT = Phase 2** (nih-plug monosynth voice;
+gets its own brainstorm/plan per the design doc): osc (validated vco303 core + DSP
+extras: 2nd osc, sub-osc, multi-waveform), VCF (diode-ladder WDF or Huovilainen/TPT
+fitted to vcf303 + tap-select + self-osc), sequencer (per-step gate+velocity),
+envelopes/accent/VCA. Cytomic VA papers digested as the realtime-filter reference
+(design plan, Phase-2 section).
 
 ## Commands
 ```bash

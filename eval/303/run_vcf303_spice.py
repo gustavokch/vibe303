@@ -121,6 +121,36 @@ def ac_response(i_tail: float, rreso: float = RRESO_OFF):
     return data[:, 0], data[:, 1]  # freq, magnitude(dB)
 
 
+# Souped tap-select poles (step 5): the ladder injects the signal at the BOTTOM
+# (dl,dr via the T38 collectors) and the stock readout is the TOP (tl,tr) = the
+# full 4-pole. Reading a LOWER differential tap crosses fewer shunt caps -> fewer
+# poles, so 2/3/4-pole is purely a READOUT-TAP CHOICE — no SPICE switch element,
+# and in the plugin just a mux on which ladder node the gain stage reads. The taps
+# are existing IR nodes (tl/al/bl/cl per rail). Validated by ngspice only (ACME VCF
+# parity is a NO-GO, see VCF_MAP §12). Differential vdb(<tap>L,<tap>R) per level.
+TAPS = [("tl", "tr"), ("al", "ar"), ("bl", "br"), ("cl", "cr")]
+
+
+def tap_response(i_tail: float, rreso: float = RRESO_OFF):
+    """ngspice .ac reading every differential ladder tap; returns (freq, {tap: mag_db})."""
+    deck = _netlist(i_tail, rreso)
+    cols = " ".join(f"vdb({lo},{ro})" for lo, ro in TAPS)
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "ac.dat"
+        cir = Path(d) / "vcf.cir"
+        cir.write_text(
+            deck
+            + "\n.options gmin=1e-13 reltol=1e-4 abstol=1e-12 vntol=1e-7\n"
+            + ".control\nac dec 40 1 3e6\n"
+            + f"wrdata {out} {cols}\n.endc\n.end\n"
+        )
+        subprocess.run(["ngspice", "-b", str(cir)], capture_output=True, timeout=120)
+        data = np.loadtxt(out)
+    # wrdata writes (freq, val) column pairs per probe, in TAPS order
+    f = data[:, 0]
+    return f, {TAPS[i][0]: data[:, 2 * i + 1] for i in range(len(TAPS))}
+
+
 F_DEEP = -60.0  # deep-stopband level (dB) used as the bias-robust cutoff metric
 
 
@@ -195,6 +225,53 @@ def reso_sweep() -> int:
     return 0
 
 
+F_REF = 5000.0   # high-f reference for the per-tap stopband attenuation metric
+
+
+def _tap_metrics(f: np.ndarray, mag_db: np.ndarray):
+    """(passband_dB, atten@F_REF dB-below-passband, slope 1k->5k dB/oct) for a tap."""
+    pb = float(mag_db[f < 10.0].mean() if np.any(f < 10.0) else mag_db[0])
+    a = float(np.interp(np.log10(F_REF), np.log10(f), mag_db)) - pb
+    m1k = float(np.interp(np.log10(1000.0), np.log10(f), mag_db))
+    m5k = float(np.interp(np.log10(F_REF), np.log10(f), mag_db))
+    slope = (m5k - m1k) / np.log2(F_REF / 1000.0)
+    return pb, a, slope
+
+
+def poles_sweep() -> int:
+    """Souped tap-select poles: read each differential ladder tap and report its
+    stopband attenuation. The signal injects at the BOTTOM (dl,dr); reading a LOWER
+    tap crosses fewer shunt caps -> fewer poles -> less attenuation. 2/3/4-pole is
+    thus a pure READOUT-TAP choice (no switch element; in the plugin, a mux on which
+    ladder node the gain stage reads). ngspice-only (ACME parity NO-GO, VCF_MAP §12).
+
+    NOTE the absolute slopes are compressed well below the textbook 24/18/12 dB/oct
+    by the inherent diode-ladder pole SPREAD + the HF diode-junction feedthrough
+    floor (VCF_MAP §9). The demo therefore confirms the tap-select MECHANISM via the
+    monotone attenuation ladder (each lower tap ~one pole shallower), not a clean
+    integer slope. `tl` and `al` are degenerate (the rung-1 diode adds series R, no
+    pole), so the three souped options map to tl=4-pole, bl=3-pole, cl=2-pole."""
+    i_tail = 32e-6
+    print(f"souped tap-select poles @ I_tail = {i_tail*1e6:.0f} uA (reso open), atten @ {F_REF:.0f} Hz")
+    print(f"{'tap':>6} {'passband':>9} {'atten':>11} {'slope1-5k':>11}")
+    f, taps = tap_response(i_tail)
+    att = {}
+    for name, _ in TAPS:
+        pb, a, slope = _tap_metrics(f, taps[name])
+        att[name] = a
+        print(f"{name:>6} {pb:7.1f}dB {a:8.1f}dB {slope:7.1f}d/oct")
+    sel = [("4-pole", "tl"), ("3-pole", "bl"), ("2-pole", "cl")]
+    print("\nsouped selector (atten step ~= one pole):")
+    for label, tap in sel:
+        print(f"  {label:>7} = tap {tap}: {att[tap]:6.1f} dB @ {F_REF:.0f} Hz")
+    # monotone & meaningfully separated: each lower tap >= ~8 dB less attenuation
+    # (about one pole at this reference frequency).
+    ok = (att["tl"] <= att["bl"] - 8.0) and (att["bl"] <= att["cl"] - 8.0)
+    print("RESULT:", "tap-select 2/3/4-pole confirmed (monotone tl<bl<cl, ~1 pole/step)"
+          if ok else "CHECK (see attenuation ladder above)")
+    return 0 if ok else 1
+
+
 def main() -> int:
     # `--op` prints the DC operating point (active-stage convergence sanity check).
     if "--op" in sys.argv:
@@ -205,6 +282,9 @@ def main() -> int:
 
     if "--reso" in sys.argv:
         return reso_sweep()
+
+    if "--poles" in sys.argv:
+        return poles_sweep()
 
     biases = [2e-6, 8e-6, 32e-6, 128e-6]  # tail (total); per-rail = I/2, f_c ~ I/(2 Vt C)
     print(f"{'I_tail':>8} {'passband':>9} {'f_-60dB':>10} {'slope':>12}")

@@ -213,5 +213,29 @@ direct probing (scratch `acme_scale.jl`/`acme_gmin.jl`/`acme_full.jl`/`acme_leak
 Artifacts: `vcf303_acme.jl` (the bare-ladder ACME rig, header documents the NO-GO) and
 `compare_vcf303.py` (the **reproducer**: SPICE bare-ladder `.ac` gives the correct bias-
 tracking 4-pole at 86 dB passband; ACME output collapses to ~1e-8 V vs the expected
-~2 mV → `RESULT: NO-GO confirmed`). NEXT = step 5 (souped tap-select 2/3/4-pole probes,
-ngspice-validated).
+~2 mV → `RESULT: NO-GO confirmed`).
+
+## §13 — Step 5: souped tap-select 2/3/4-pole (DONE, ngspice-validated, 2026-06-26)
+
+The 2/3/4-pole switch is a pure **READOUT-TAP CHOICE** — no SPICE switch element, no IR
+change. The signal injects at the ladder BOTTOM (dl,dr via the T38 collectors); reading
+a LOWER differential tap crosses fewer shunt caps → fewer poles. The taps are existing
+IR nodes (`tl/al/bl/cl` per rail). Measured (`run_vcf303_spice.py --poles`, I_tail=32µA,
+stopband attenuation @5kHz below passband):
+
+| tap | atten @5kHz | slope 1–5kHz | poles |
+|-----|-------------|--------------|-------|
+| tl  | −70.9 dB    | −16.6 dB/oct | 4     |
+| al  | −70.9 dB    | −16.6 dB/oct | 4 (≡tl) |
+| bl  | −57.2 dB    | −11.9 dB/oct | 3     |
+| cl  | −42.8 dB    | − 8.0 dB/oct | 2     |
+
+Monotone ~14 dB/pole steps. `tl` and `al` are **degenerate** (the rung-1 diode adds only
+series R, no pole), so the three souped options map cleanly: **4-pole = tl, 3-pole = bl,
+2-pole = cl** (exactly the requested 2/3/4). In the plugin this is a mux on which ladder
+node the gain stage reads. Absolute slopes are compressed below textbook 24/18/12 dB/oct
+by the inherent diode-ladder pole spread + the HF diode-junction feedthrough floor (§9),
+so the demo confirms the MECHANISM (monotone attenuation ladder, ~1 pole/tap), not clean
+integer slopes. Reso leg open; the step-2b default 4-pole gate stays green. ⇒ Phase-1
+VCF is feature-complete at circuit level (4-pole + bias-tracking cutoff + fc-tracking
+resonance + tap-select 2/3/4-pole); next is Phase 2 (the nih-plug DSP voice).
