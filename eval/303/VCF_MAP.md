@@ -115,3 +115,13 @@ structure diverges. Suspects: differential-cap-between-rails vs real per-rail sh
 diode current ≪ i_tail/2; 1N4148 vs diode-connected 2SC1583 r/C; cascaded-unbuffered-RC
 pole math. NEXT = localise the 60× (per-section pole instrument) OR confirm the real
 resonance mechanism OR defer self-osc to Phase-2 DSP and proceed to ACME parity.
+
+**Rung-device test (2026-06-26) — NEGATIVE.** Swapped the 8 ladder diodes for BC-tied
+2N3904 (= the real diode-connected 2SC1583, n=1 vs 1N4148's n=1.7) in the ngspice deck
+(`test_2sc.py`). Dominant pole rose only ~1.4× (47→55 Hz @32µA, the n ratio) and the
+spread WORSENED (74→101×, upper poles rise more than the dominant). The rung device is
+NOT the 60× cause. ⇒ the dominant-pole depression + spread is STRUCTURAL to the passive
+cascaded-RC ladder (unbuffered cascade → lowest pole ≈0.1/RC, poles inherently spread —
+the opposite of a buffered Moog). Not committed (negative + complicates ACME). Remaining
+fork: structurally hunt the 60× / pin down the real-303 resonance mechanism (is stock
+res genuinely low-Q?) / defer self-osc to Phase-2 DSP and proceed to step 4 ACME parity.
