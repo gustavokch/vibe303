@@ -183,11 +183,23 @@ drift tests):**
    60×: (a) the differential cap-between-rails modelling vs the real per-rail shunt;
    (b) diode current far below i_tail/2; (c) 1N4148 vs the real diode-connected
    2SC1583 r/C; (d) cascaded-unbuffered-RC dominant-pole math (lowest pole ≈ 0.1/RC).
-   **NEXT (open fork — see session report):** instrument per-section pole
-   contributions to localise the 60× depression / re-examine the differential-cap
-   section model; OR get the real-303 resonance mechanism (pole-coincidence vs a 2nd-
-   order feedback resonance); OR move self-osc resonance to the Phase-2 DSP domain and
-   proceed to step 4 (ACME parity) + step 5 (tap poles) with the faithful spread ladder.
+   **RESO/GAIN RE-READ DONE (2026-06-26, VCF_MAP §10).** Re-read the full Roland VCF:
+   topology is faithfully transcribed (2SC2291 current-source top, AC-coupled C21
+   readout, R114 100K, rail-bridging caps, Q12 input pair) — NO hidden inter-section
+   buffer, it IS a passive ladder so the spread is faithful. Tested every faithful
+   termination×coupling combo (resistive 10K–1M, current-source top, DC/AC readout,
+   combined): ALL reproduce the spread; in every case a fixed RC (R95 / DC bleeder /
+   the C21+Rg ≈1.6 Hz coupling corner) forms a dominant pole BELOW the bias-dependent
+   ladder poles → no tweak yields high-Q fc-tracking resonance. **THE ONE SIMPLIFIED
+   ELEMENT = the resonance feedback:** real = Q9/Q10/Q11 (3 transistors) + R64/R65 10K +
+   R71 2.2K, driven by R97 10K + C23 1µF, feeding back around Q12 — almost certainly a
+   DIFFERENTIAL regenerative Q-multiplier, not the model's single-ended T23→Rreso→in_r.
+   A Q-multiplier synthesises resonance at fc DESPITE spread poles (no pole coincidence
+   needed). **NEXT = transcribe the Q9/Q10/Q11 feedback faithfully** (trace tail-current
+   modulation vs push-pull base injection) + re-test `--reso`. Scratch tests:
+   `test_2sc.py`, `test_isrc2.py`, `test_combined.py`, `sweep_rtop.py` (all under the
+   `…ba283-303-circuit/…/scratchpad`). Repo is step-2b green; all findings committed.
+   Fallback if Q9/Q10/Q11 also fails: defer self-osc to Phase-2 DSP, proceed to step 4.
 4. **ACME-vs-SPICE parity** for the VCF (use `vco303_acme.jl` as the `@circuit`
    template + the generated `_vcf303_gen.jl`); target ≈ −30 dB ESR like BA283.
 5. **Souped tap-select poles:** expose probe nodes after rungs T35/T36/T37.

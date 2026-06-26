@@ -125,3 +125,25 @@ cascaded-RC ladder (unbuffered cascade → lowest pole ≈0.1/RC, poles inherent
 the opposite of a buffered Moog). Not committed (negative + complicates ACME). Remaining
 fork: structurally hunt the 60× / pin down the real-303 resonance mechanism (is stock
 res genuinely low-Q?) / defer self-osc to Phase-2 DSP and proceed to step 4 ACME parity.
+
+## 10. Reso/gain schematic RE-READ (2026-06-26) — the unfaithful spot = the Q9/Q10/Q11 feedback
+Re-read the full Roland VCF (`vcf_roland.png`, `gain.png`, `reso_tight.png`). Confirmed
+faithfully transcribed: 2SC2291 current-source top; AC-coupled readout via `C21`;
+`R114` 100K gain load (Q19/Q20 = 2SC1583); rail-bridging caps C26/C24/C19=.033, C18=.018;
+Q12 = bottom 2SC1583 input pair, emitter degen R68/R69 2.2K. **No hidden inter-section
+buffer/bootstrap — it IS a passive ladder, so the pole spread is faithful.**
+
+Tested every faithful termination×coupling combo (resistive top 10K–1M, current-source
+top, DC vs AC-coupled readout, all combined) — ALL reproduce the inherent passive-ladder
+spread, and in EVERY case some fixed RC (R95, the DC bleeder, or the C21/Rg ≈1.6 Hz
+coupling corner) forms a dominant pole BELOW the bias-dependent ladder poles. So no
+termination/coupling tweak yields high-Q fc-tracking resonance.
+
+**THE ONE THING THE MODEL SIMPLIFIES = the resonance feedback.** Real = **Q9/Q10/Q11**
+(3 transistors) + `R64`/`R65` 10K + `R71` 2.2K, driven by `R97` 10K + `C23` 1µF from the
+output, feeding back around Q12 — almost certainly a DIFFERENTIAL regenerative "Q-
+multiplier", not the single-ended `T23`→`Rreso`→in_r in the model. A differential Q-
+multiplier can synthesise resonance at fc DESPITE spread poles (it doesn't need pole
+coincidence). ⇒ NEXT = transcribe the Q9/Q10/Q11 feedback faithfully (trace whether it
+modulates the Q12 tail current or injects push-pull into both bases) and re-test `--reso`.
+This is the prime remaining candidate for "real 303 resonates, model doesn't".
