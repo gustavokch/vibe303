@@ -141,11 +141,24 @@ drift tests):**
      **open-loop ladder** cannot support fc resonance. The real TB-303 DOES
      resonate ⇒ the model diverges from the circuit.
    **Step 2b stays green with the reso leg open (default).**
-   **NEXT = back to the SCHEMATIC** (source of truth): re-read the exact T23
-   feedback injection + input summing topology (VCF_MAP §4 — the Rreso→in_r base
-   inject is a reconstruction, unconfirmed) and the ladder drive/termination
-   impedance regime that Stinchcombe's resonant diode-ladder analysis assumes; the
-   current R95-top (mid-Z) / T38-bottom (high-Z) asymmetry is the prime suspect.
+
+   **SCHEMATIC RE-READ DONE (2026-06-25, VCF_MAP §7/§8).** Re-read the VCF off the
+   ORIGINAL Roland sheet (`schem-5.gif`, center) — the TD3 PNG was the wrong source
+   (different designators). Confirmed: (a) the feedback IS AC-coupled (`C23` 1µF) via
+   `R97` ~10K into the second base of the bottom diff-input pair `Q12` = structurally
+   IDENTICAL to the modelled `Rreso`+`C64`→in_r — so the feedback topology is NOT the
+   bug; (b) the ladder rungs are diode-connected 2SC1583 pairs = the 1N4148 model is
+   right; (c) ROOT CAUSE = the real readout gain stage is **AC-coupled** (`C21`
+   electrolytic ladder-top→gain, `C17` input, `C15` output) with a **100K** load
+   (`R114`), which decouples DC bias from AC gain so it runs the high loop gain
+   self-osc needs WITHOUT saturating. The model's DC-coupled 22K-load readout
+   structurally can't (sim: raising the DC-coupled load to 100K just shifts the
+   op-point and KILLS the peak). Passive-ladder pole spread is inherent, NOT the
+   lever; resonance comes from the high-gain AC-coupled loop.
+   **NEXT = rebuild the readout AC-coupled per VCF_MAP §7** (add C21 ladder-top→gain,
+   R114 100K load, C17 input, C15 output coupling caps; re-bias the gain stage off
+   its own divider so the load no longer sets DC), then re-test resonance/self-osc
+   with the `--reso` harness. Then step 4 (ACME parity), step 5 (tap-select poles).
 4. **ACME-vs-SPICE parity** for the VCF (use `vco303_acme.jl` as the `@circuit`
    template + the generated `_vcf303_gen.jl`); target ≈ −30 dB ESR like BA283.
 5. **Souped tap-select poles:** expose probe nodes after rungs T35/T36/T37.

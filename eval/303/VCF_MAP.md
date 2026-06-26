@@ -59,8 +59,38 @@ Input/bias on the bottom-left rails: `R27` 100k + `C19` 1µ (signal in from X12)
   > 1.
 
 ## Open items before a converging netlist
-1. Trace the `+8V` rail vs the `A` net vs GND across stages (diff-pair tail polarity).
-2. Confirm each `Tnn` pair's internal diode-connection wiring (B-C vs B-E short).
-3. Bias the ladder current source (T7/T38) — likely the parameterized cutoff input,
-   not a literal expo-converter transcription (matches how BA283 parameterizes gain).
-4. DC `.op` convergence, then AC sweep to confirm 4-pole LP + resonance peak.
+1. ✅ Trace the `+8V` rail vs `A` net vs GND: top rail = +8V; `A` = 3V3 mod-offset.
+2. ✅ Each `Tnn` pair = **diode-connected** 2SC1583 dual (B-C shorted, 2-terminal) —
+   confirmed on the Roland sheet; the 1N4148 diode-ladder model is structurally right.
+3. ✅ Ladder bias = parameterized cutoff current (abstracted), matches BA283 R_KJ.
+4. ✅ `.op` converges; AC = 4-pole LP, cutoff tracks bias (step 2b). Resonance ✗ — see §8.
+
+## 7. Designator cross-reference (Roland sheet ↔ this map / TOML)
+The VCF block was re-read from the **original Roland TB-303** sheet
+(`schematics/roland.TB-303.schem-5.gif`, main board, center) — the TD3/Behringer
+PNG uses different numbers (T43/T46/IC11…) and was the wrong source for the ladder.
+Real Roland VCF designators:
+- **Ladder** (diode-connected 2SC1583 pairs, top→bottom): top device **2SC2291**
+  (cutoff-current source / cascode into the ladder top), then rungs **Q16/Q23**,
+  **Q14/Q17**, **Q13/Q15**, bottom pair **Q12** (the differential INPUT pair).
+- **Shunt caps**: `C26`/`C24`/`C19` = .033µF (upper three), `C18` = .018µF (bottom).
+- **Gain / readout** (off the ladder top): **Q19/Q20** + `R114` **100K** load, `R96`
+  10K, `R109`/`R108`; **AC-coupled via `C21`** (electrolytic) from the ladder top.
+- **Input**: signal → `C17` (1µF/50) → `Q12` base. Emitter degen `R68`/`R69` 2.2K.
+- **Resonance buffer**: **Q9/Q10/Q11** → feedback **AC-coupled via `C23` (1µF/50)
+  + `R97` ~10K into the SECOND base of `Q12`** (the input diff pair). Output also
+  AC-coupled via `C15` (1µF/50).
+- **Cutoff CV summing** (the expo front-end, abstracted): `R73` 100K, `R63` 470K,
+  `R72` 220K, `R71` 2.2K → expo → ladder-top current.
+
+## 8. Resonance failure — root cause (pole-spread + AC-coupling dig, 2026-06-25)
+The reconstructed feedback topology (`Rreso`+`C64` → in_r base) and the diode-ladder
+model are BOTH faithful (confirmed above). The no-resonance blocker is the **readout
+gain stage being DC-coupled with low (22K) loads** in the model, vs the real circuit's
+**AC-coupled (`C21`/`C17`/`C15`) high-gain (`R114` 100K) stage**. AC-coupling
+decouples DC bias from AC gain → the real stage runs the high loop gain self-osc needs
+WITHOUT saturating; the DC-coupled model can't (sim: 22K→100K load just shifts the DC
+op-point and kills the peak). Passive diode-ladder poles are inherently spread (not a
+bug — see `run_vcf303_spice.py --reso`); resonance comes from the high-gain AC-coupled
+loop, not pole coincidence. **FIX = rebuild the readout AC-coupled per §7** (C21
+ladder-top→gain, R114 100K, C17 input, C15 output), then re-test resonance/self-osc.
