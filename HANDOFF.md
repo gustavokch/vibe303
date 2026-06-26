@@ -215,10 +215,25 @@ drift tests):**
    BA283 byte-identical. Stock loop self-limits (Q optimum ~Rreso 47k) — no self-osc
    without a higher-gain `Rc9`/`R71` "Devil-Fish" regime (optional souped follow-up).
    Scratch: `q9_pins.py`/`shape.py`/`track.py`/`selfosc.py` (under `…ba283-303-circuit/
-   …/scratchpad`). **NEXT = step 4 (ACME-vs-SPICE VCF parity).**
-4. **ACME-vs-SPICE parity** for the VCF (use `vco303_acme.jl` as the `@circuit`
-   template + the generated `_vcf303_gen.jl`); target ≈ −30 dB ESR like BA283.
-5. **Souped tap-select poles:** expose probe nodes after rungs T35/T36/T37.
+   …/scratchpad`). **NEXT = step 5 (souped tap-select poles, ngspice-validated).**
+4. ✅ **DONE (2026-06-26) — NO-GO. See VCF_MAP §12.** ACME-vs-SPICE parity for the
+   VCF is **NOT achievable** (diode ladder *or* full active circuit). The 303 VCF
+   sets cutoff with an IDEAL BIAS CURRENT; ACME's DC homotopy (no SPICE gmin) routes
+   that current through the singularity-breaking reference leaks instead of the
+   devices → a NONPHYSICAL all-devices-OFF branch (probed: ladder `tl=−64 kV`, every
+   diode reverse-biased OFF; full circuit T38 OFF → bias-independent dead filter).
+   Without leaks ACME aborts ("Failed to find initial solution"); with them it
+   converges to the wrong branch. Also needed `decompose_nonlinearity=false` to build
+   at all (decompose explodes: 8 diodes=16s, +6-BJT=801s). ngspice's Newton+gmin/
+   source-stepping finds the physical branch; ACME's homotopy does not — **extends the
+   VCO ACME NO-GO** (solver-robustness, not a model bug). ⇒ **ngspice stays the VCF
+   ground truth** (steps 1–3, gated). Artifacts: `eval/303/vcf303_acme.jl` (bare-
+   ladder rig, header = the NO-GO), `eval/303/compare_vcf303.py` (reproducer: SPICE
+   ladder correct 86 dB 4-pole bias-tracking, ACME output collapses ~1e-8 V vs ~2 mV
+   → `RESULT: NO-GO confirmed`, exit 0). Scratch probes under `…/scratchpad/acme_*.jl`.
+5. **Souped tap-select poles:** expose probe nodes after rungs T35/T36/T37 (a/b/c
+   ladder taps already exist as nodes `al/bl/cl` in `vcf303.toml`) — ngspice-validated
+   (ACME parity is off the table per step 4).
 
 ## Commands
 ```bash

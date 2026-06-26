@@ -178,4 +178,40 @@ higher-gain `Rc9`/`R71` regime). `Rreso = RRESO_OFF` (1e12) opens the leg → **
 gate stays bit-exact** (4-pole LP, cutoff tracks bias; gate green). The passive-ladder
 pole spread (§9) was a red herring — the loop closes where ladder phase + the amp's 180°
 sum to regeneration, near fc, regardless of where the open-loop dominant pole sits.
-NEXT = step 4 (ACME-vs-SPICE VCF parity).
+
+## §12 — Step 4: ACME-vs-SPICE VCF parity = NO-GO (2026-06-26)
+
+ACME-vs-SPICE parity for the vcf303 is **NOT achievable** — for the diode LADDER CORE
+*or* the full active circuit. ngspice stays the VCF ground truth (`run_vcf303_spice.py`,
+steps 1–3, committed + gated); there is no ACME VCF parity. Mechanism, established by
+direct probing (scratch `acme_scale.jl`/`acme_gmin.jl`/`acme_full.jl`/`acme_leak.jl`/
+`acme_dc.jl`):
+
+- **Build cost is fine; the DC operating point is the wall.** The bare 8-diode ladder
+  builds in ACME in ~16 s. The full active circuit needs two tricks to build at all:
+  `decompose_nonlinearity=false` (the nonlinear-subsystem decomposition explodes with
+  BJT count — 8 diodes = 16 s, +6-BJT gain stage = 801 s, full = impractical; disabling
+  it builds in ~31 s) and gmin reference leaks (ACME has no SPICE gmin, so the current-
+  source-driven nodes are singular at the homotopy's u=0 start → "Failed to find initial
+  solution").
+- **But the converged solution is NONPHYSICAL.** The 303 VCF sets its cutoff with an
+  **ideal bias current** (the expo-converter output; the ladder tail / per-rail current
+  sources). ACME's homotopy routes that entire bias current through the singularity-
+  breaking gmin leaks instead of through the devices, so every node runs away to
+  `|V| = I_bias · R_leak`. Probed on the bare ladder: `tl = −64 kV, dl = +64 kV`, every
+  diode reverse-biased ~64 kV = **OFF** at I=64µA / 1 GΩ leak (±6.4 MV at 100 GΩ). The
+  small-signal transimpedance collapses to ~1e-3 Ω (numerical noise) vs the correct
+  20 kΩ ngspice gives on the *identical* netlist. The SAME mechanism kills the full
+  circuit (the T38 long-tailed-pair tail current escapes the leak → T38 OFF → a bias-
+  INDEPENDENT dead filter: output byte-identical across 8/32/128 µA).
+- **Root cause = solver robustness.** ngspice's Newton + gmin/source-stepping finds the
+  physical "devices-ON" branch; ACME's homotopy does not. This **extends the VCO ACME
+  NO-GO** (`vco303_acme.jl`): ACME's solver is systematically less robust than ngspice's
+  for the 303's current-source-biased nonlinear topologies (the VCO failed on fixed-step
+  switching; the VCF fails on current-source DC bias — different symptom, same verdict).
+
+Artifacts: `vcf303_acme.jl` (the bare-ladder ACME rig, header documents the NO-GO) and
+`compare_vcf303.py` (the **reproducer**: SPICE bare-ladder `.ac` gives the correct bias-
+tracking 4-pole at 86 dB passband; ACME output collapses to ~1e-8 V vs the expected
+~2 mV → `RESULT: NO-GO confirmed`). NEXT = step 5 (souped tap-select 2/3/4-pole probes,
+ngspice-validated).

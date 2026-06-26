@@ -48,3 +48,6 @@ exported_models/*.nam
 
 # Scratch / throwaway experiment dirs (training snapshots live canonically in ba283-nam-lstm)
 scratch/
+
+# step-4 ACME VCF parity render scratch (binaries)
+eval/303/_acme_vcf_work/
