@@ -1,6 +1,6 @@
 """ACME-vs-SPICE for the vcf303 diode-ladder VCF (STEP 4) — NO-GO reproducer.
 
-Step 4 attempted the BA283-style ACME-vs-SPICE parity on the VCF. It is a NO-GO
+Step 4 attempted ACME-vs-SPICE parity on the VCF. It is a NO-GO
 (see vcf303_acme.jl header / VCF_MAP §12): ACME's DK-method converges only to a
 NONPHYSICAL operating point for the 303's ideal-current-source-biased ladder (the
 bias current escapes the gmin reference leaks -> every diode reverse-biased OFF ->

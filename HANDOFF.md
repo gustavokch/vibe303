@@ -1,9 +1,17 @@
 # HANDOFF — Souped-up TB-303 SPICE/ACME model
 
-**Branch:** `feat/souped-303-circuit` (worktree `~/Git/ba283-303-circuit`, repo of
-record; synced copy lives in `ba283-vst3/tools/`). 6 commits, all pushed.
+**Repo:** `~/Git/vibe303` — standalone 303 project (remote `gustavokch/vibe303`). The
+303 work was relocated here out of the `ba283-vst3` worktree, and the BA283 preamp
+product was removed (git history retains it; pre-removal ba283 code is at commit
+`af74b60`). Phase-1 circuit commits (HEAD `a071dd0`) carried over.
 **Design plan:** `~/.claude/plans/brainstorming-lets-use-our-eventual-waffle.md`
-**Source material:** `~/Git/vibe303` (schematics, docs, `netlist.txt`).
+**Phase-2 design + plan:** `docs/plans/2026-06-26-phase2-303-voice-design.md` +
+`docs/plans/2026-06-26-phase2-303-voice-implementation-plan.md`.
+
+**STATUS: Phase 1 (SPICE/ACME circuit model) COMPLETE.** VCO core + VCF both built &
+ngspice-validated; ACME parity = NO-GO for both (ngspice is ground truth). Next = Phase 2
+(nih-plug DSP voice) — design + implementation plan written (see above); build per the
+plan (M1 vertical slice first).
 
 ## Goal
 Take the Roland TB-303 architecture "to the next level" via the `circuitgen`
@@ -50,14 +58,23 @@ drift tests):**
   (CV 4/5/6 → 231/477/1000 Hz).
 - `eval/303/vco303_acme.jl` — ACME model (spike artifact + VCF template).
 
-**VCF (step 1 DONE + validated — commit c5615ab):**
-- `eval/303/VCF_MAP.md` — complete schematic read (the bridge; no netlist exists
-  for the VCF). 4-pole ladder T34–T37 + .033/.018 caps + T38 diff input; gain
-  stage T20/T22; output buffer T21; reso buffer T23; expo cutoff T7/T11.
+**VCF (ALL STEPS 1–5 DONE + validated — see the numbered "Next steps" list below
+for per-step detail + commits; circuit-level feature-complete):**
+- Steps: 1 ladder core (c5615ab) → 2a/2b active stages → 3 fc-tracking resonance
+  (active Q9 feedback, c70ba53) → 4 ACME parity NO-GO (cd809ac) → 5 tap-select
+  2/3/4-pole (a071dd0). The numbered list at the bottom has the full story per step.
+- `eval/303/VCF_MAP.md` — complete schematic read + §1–§13 findings log (the bridge;
+  no netlist exists for the VCF). 4-pole ladder T34–T37 + .033/.018 caps + T38 diff
+  input; gain stage T20/T22; output buffer T21; **active Q9 resonance amp**; expo
+  cutoff T7/T11. §12 = ACME NO-GO; §13 = tap-select poles.
 - `circuit/vcf303.toml` — **NEW.** Bare ladder core only: 8 diodes (4 rungs × 2
   rails, 1N4148) + 4 shunt caps (.033/.033/.033/.018µF). Active stages deferred.
-- `eval/303/run_vcf303_spice.py` — **ngspice AC: 4-pole LP ~−22..−24 dB/oct,
-  cutoff tracks bias current** (8.4→31.7→119→399 Hz across 1/4/16/64 µA).
+- `circuit/vcf303.toml` — **full active VCF** (ladder + T38 diff input + T20/T22 gain
+  + T21 buffer + active Q9 resonance amp; bias networks abstracted per VCF_MAP item 3).
+- `eval/303/run_vcf303_spice.py` — the ngspice harness + 4 gates: default = 4-pole LP
+  cutoff-tracks-bias; `--reso` = fc-tracking resonance; `--poles` = tap-select 2/3/4;
+  `--op` = DC sanity. PySpice stamps, ngspice runs (PySpice can't drive ngspice-46).
+- `eval/303/vcf303_acme.jl` + `compare_vcf303.py` — ACME NO-GO rig + reproducer (step 4).
 - `circuit/vcf303.draft.toml` — gpt-4o SINA skeleton; superseded, kept as ref.
 - ngspice-46 gotchas baked into the harness (see What didn't work).
 

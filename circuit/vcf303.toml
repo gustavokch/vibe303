@@ -29,7 +29,8 @@
 #
 # Rails / DC: bias current I flows TOP(tl,tr) -> down each rail through the
 # series diodes -> BOTTOM(dl,dr) sink. Diode r_small = Vt/I, shunt caps C =>
-# cutoff wc ~ I/(Vt*C): cutoff tracks the bias current (like BA283's R_KJ leg).
+# cutoff wc ~ I/(Vt*C): cutoff tracks the bias current (a controllable
+# bias-current cutoff, the standard diode-ladder approach).
 # Signal: differential AC injected at the bottom (dl,dr), 4-pole LP read at the
 # top (tl,tr). Souped tap-select poles (step 5) will expose a/b/c as probes.
 

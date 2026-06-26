@@ -1,9 +1,0 @@
-Bundled fonts — both licensed under the SIL Open Font License 1.1 (OFL).
-
-- BarlowSemiCondensed-SemiBold.ttf  — Barlow Semi Condensed, The Barlow Project Authors
-  (https://github.com/jpt/barlow). Full license: OFL-Barlow.txt
-- Archivo-Variable.ttf              — Archivo, Omnibus-Type (https://github.com/Omnibus-Type/Archivo).
-  Full license: OFL-Archivo.txt
-
-The OFL permits bundling and embedding in the BA283 plugin binary. See each OFL-*.txt
-for the verbatim license text and the reserved font names.

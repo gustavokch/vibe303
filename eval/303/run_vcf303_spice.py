@@ -17,7 +17,7 @@ the model parameterises rather than transcribes:
 
 The SIGNAL path (T38 pair, ladder, T20 pair + R83/R84 loads, T21 buffer) is
 transcribed faithfully; the BIAS networks (cutoff expo, gain-stage divider) are
-parameterised, matching VCF_MAP.md item 3 + the BA283 R_KJ approach.
+parameterised, matching VCF_MAP.md item 3 (controllable bias-current cutoff).
 
 Runs a ``.op`` (``--op``) for DC-convergence sanity, then a ``.ac`` sweep at
 several bias currents, reporting the deep-stopband (-60 dB) cutoff + roll-off

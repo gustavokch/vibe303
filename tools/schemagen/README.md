@@ -46,18 +46,17 @@ After review, rename the draft to `circuit/<name>.toml` and run
 | `vlm` (default) | stdlib only (`urllib`) + `OPENROUTER_API_KEY` | implemented; GPT-4o vision emits the circuit.toml schema directly |
 | `local` | `ultralytics` + `easyocr` + `opencv` (torch) | scaffolded stub — YOLO11 detect + CCL connectivity (junction-dot) + EasyOCR; needs a trained detector |
 
-## Validating the BA283 reconstruction
+## Validating a reconstruction
 
-The intended first use is a **regression check** of the existing hand-authored
-`circuit/ba283.toml` against the original board image (`1073PRE2.jpg`) /
-transformer drawing (`docs/xformers/NeveXfmr.jpeg`): digitize the image, then diff
-the draft IR against the hand-authored one to surface any topology disagreement
-before trusting the tool on a new circuit.
+The intended use is a **regression check** of a hand-authored `circuit/<name>.toml`
+against its source schematic image: digitize the image, then diff the draft IR
+against the hand-authored one to surface any topology disagreement before trusting
+the tool on a new circuit.
 
 ## Notes / verification status
 
 - The **closed-loop validation** (`validate.py`: structural gate + ngspice `.op`)
-  is implemented and verified against `circuit/ba283.toml` (RESULT: OK).
+  is implemented and was verified against a hand-authored reference IR (RESULT: OK).
 - The **VLM backend** (`vlm.py`) is stdlib-only and ready, but un-run here (needs a
   key). The deck builder ties `role="input"` nodes to a 0 V source so the `.op`
   has a defined DC point (the real backends drive the input at runtime).

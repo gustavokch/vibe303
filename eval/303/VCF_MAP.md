@@ -47,7 +47,7 @@ Input/bias on the bottom-left rails: `R27` 100k + `C19` 1µ (signal in from X12)
 - CV summing inputs: `R45` 100K (VCF CV **lin** input), `VR1` 470K (VCF OFFSET),
   `R47` 220K + `R59` 100K (VCF CV **log** inputs).
 - **Cutoff lever:** the ladder bias current. In the model this is the parameterized
-  cutoff control (like BA283's R_KJ gain leg).
+  cutoff control (a controllable bias current).
 
 ## 6. Output to VCA
 `C62` 1µF, `R39` 47K, `D9` → "to VCA".
@@ -62,7 +62,7 @@ Input/bias on the bottom-left rails: `R27` 100k + `C19` 1µ (signal in from X12)
 1. ✅ Trace the `+8V` rail vs `A` net vs GND: top rail = +8V; `A` = 3V3 mod-offset.
 2. ✅ Each `Tnn` pair = **diode-connected** 2SC1583 dual (B-C shorted, 2-terminal) —
    confirmed on the Roland sheet; the 1N4148 diode-ladder model is structurally right.
-3. ✅ Ladder bias = parameterized cutoff current (abstracted), matches BA283 R_KJ.
+3. ✅ Ladder bias = parameterized cutoff current (abstracted, controllable bias current).
 4. ✅ `.op` converges; AC = 4-pole LP, cutoff tracks bias (step 2b). Resonance ✅ —
    active Q9 feedback gives fc-tracking peak, see §11 (supersedes the §8–§10 ✗).
 

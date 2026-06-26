@@ -82,8 +82,8 @@ def digitize(
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
             # OpenRouter attribution headers (optional but recommended).
-            "HTTP-Referer": "https://github.com/gustavokch/ba283-vst3",
-            "X-Title": "ba283 schemagen",
+            "HTTP-Referer": "https://github.com/gustavokch/vibe303",
+            "X-Title": "vibe303 schemagen",
         },
         method="POST",
     )

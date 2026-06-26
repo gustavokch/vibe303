@@ -35,7 +35,7 @@ class ValidationResult:
 def _flat_cir(c: Circuit) -> str:
     """A self-contained ngspice deck for a DC operating-point check."""
     sp = lambda n: "0" if n == GROUND else c.node(n).spice_name()
-    lines = [".title BA283 draft validation", ""]
+    lines = [f".title {c.meta.get('name', 'circuit')} draft validation", ""]
     # model cards + subckt (reuse the generated card formatter)
     for m in c.models.values():
         lines.append(emit_spice._spice_card(m))
