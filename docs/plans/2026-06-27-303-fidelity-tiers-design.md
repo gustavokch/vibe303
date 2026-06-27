@@ -287,3 +287,48 @@ optimum — raising it distorts the envelope away from the gold. The old `ultra_
 (~600 Hz vs the gold's 1002 Hz) + resonance-peak shape + VCO saw harmonics. Closing it needs the
 active T20/T21/Q9 VCF stages and a per-note VCO pitch secant — the "expand VCF active stages" path,
 deferred. Ultra now ships as a circuit-faithful (corr 0.977) tier under the spectral gate.
+
+### F4 — High (WDF-lite) tier, spectral-gated (DONE)
+
+**Definition (user, 2026-06-27): High = polyBLEP saw → `LadderVcf` @ 2× oversample.** High keeps the
+nonlinear nodal diode-ladder VCF (the audible circuit character) but drives it with the cheap
+polyBLEP saw, skipping Ultra's dominant cost — the 21-node nodal VCO Newton. This places High
+between Low (TPT, closed-form) and Ultra (circuit VCO → ladder @ 4×) on both fidelity and cost.
+
+**Wiring (`voice.rs`):** added `ladder_hi: LadderVcf::new(sr*2)` + `os2: Os2x`. `Tier::High` routes
+`osc.tick()` → `os2.up` → 2× `ladder_hi.tick` → `os2.down`. `set_cutoff`/`set_reso` drive all three
+backends so tier switches stay click-free on the param axis. `latency_samples()` returns the 2× OS
+group delay for High. Zero-alloc (gated by `no_alloc::high_voice_hot_path_is_alloc_free`).
+
+**Spectral fidelity** (`tests/high_spectral.rs`, shared metric in `tests/common/mod.rs`, gold op
+note 57 / 1002 Hz / reso 0.85):
+
+| Tier  | LSD (dB) | corr  |
+|-------|----------|-------|
+| Low   | 42.16    | 0.931 |
+| High  | 28.78    | 0.971 |
+| Ultra | 4.42     | 0.977 |
+
+High lands between Low and Ultra on **both** axes — a genuine fidelity step over Low. The
+gold-power-weighted LSD stays large for any non-circuit saw (it concentrates on the gold's dominant
+bins, which only the circuit VCO reproduces), so High's LSD sits far from Ultra's but well below
+Low's. Gate budget LSD ≤ 32 dB, corr ≥ 0.95: Low's 42.16 / 0.931 both fail, so the gate is a real
+discriminator, not a rubber stamp.
+
+**Cost** (release, 2 s render, warm-started; `high_spectral::cost_bench`):
+
+| Tier  | ns/sample | % of one core @ 48 kHz | per-sample solves |
+|-------|-----------|------------------------|-------------------|
+| Low   | 125       | 0.6 %                  | TPT (closed-form, no Newton) |
+| High  | 6051      | 29 %                   | 2× `LadderVcf` (10-node Newton) |
+| Ultra | 24413     | 117 %                  | 1× `Vco303` (21-node Newton) + 4× `LadderVcf` |
+
+**Cost/fidelity gap.** High reaches corr 0.971 (vs Ultra's 0.977 — within 0.6 %) at **~4× lower
+cost** and, critically, stays real-time on one core (29 %), whereas Ultra at 117 % of a core is
+effectively offline-grade for a single voice. The 21-node VCO Newton is the entire gap: skipping it
+costs almost nothing in correlation because the shared diode-ladder VCF dominates the audible
+spectral envelope. High is the RT-viable fidelity tier; Ultra is the reference/bounce tier.
+
+**Same corner ceiling.** High inherits `LadderVcf`'s ~600 Hz corner ceiling (passive ladder, no
+active stages) — `set_cal(1.0)` remains the LSD optimum; brightening via bias distorts the envelope.
+The active-stage headroom path (deferred) would lift both High and Ultra.

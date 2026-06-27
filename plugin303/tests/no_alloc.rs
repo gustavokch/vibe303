@@ -53,6 +53,28 @@ fn ultra_voice_hot_path_is_alloc_free() {
 }
 
 #[test]
+fn high_voice_hot_path_is_alloc_free() {
+    use plugin303::dsp::filter::Tier;
+    let mut voice = Voice::new(48_000.0); // High chain: polyBLEP saw + 2× OS + nodal ladder
+    voice.set_tier(Tier::High);
+    voice.set_cutoff(1_000.0);
+    voice.set_reso(0.5);
+    voice.note_on(57);
+    for _ in 0..128 {
+        voice.tick(); // warm-start the ladder Newton outside the guard
+    }
+    reset_violation_count();
+    assert_no_alloc(|| {
+        let mut acc = 0.0f32;
+        for _ in 0..4_096 {
+            acc += voice.tick();
+        }
+        core::hint::black_box(acc);
+    });
+    assert_eq!(violation_count(), 0, "High voice.tick allocated on the audio path");
+}
+
+#[test]
 fn ladder_vcf_hot_path_is_alloc_free() {
     let mut f = LadderVcf::new(48_000.0); // setup (may allocate) before the guard
     f.set_cutoff(1_000.0);

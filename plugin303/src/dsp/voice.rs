@@ -6,7 +6,7 @@ use super::filter::{Filter303, Tier};
 use super::ladder::TptLadder;
 use super::ladder_wdf::LadderVcf;
 use super::osc::Saw;
-use super::oversample::Os4x;
+use super::oversample::{Os2x, Os4x};
 use super::vco::Vco303;
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
@@ -16,6 +16,9 @@ pub fn midi_to_freq(note: u8) -> f32 {
 
 /// Ultra-tier oversampling factor (nodal ladder runs at `OS_FACTOR × sr`).
 pub const ULTRA_OS_FACTOR: f32 = 4.0;
+
+/// High-tier oversampling factor (polyBLEP saw → nodal ladder at `2 × sr`).
+pub const HIGH_OS_FACTOR: f32 = 2.0;
 
 /// Level trim to bring the DC-blocked VCO saw to ~unit (polyBLEP-saw) amplitude.
 const VCO_GAIN: f32 = 2.0;
@@ -28,6 +31,9 @@ pub struct Voice {
     /// Ultra-tier nodal diode-ladder, preallocated, run inside `os`.
     ladder: LadderVcf,
     os: Os4x,
+    /// High-tier nodal diode-ladder (polyBLEP saw source), run inside `os2`.
+    ladder_hi: LadderVcf,
+    os2: Os2x,
     env: AdEnv,
     tier: Tier,
     sr: f32,
@@ -41,24 +47,28 @@ impl Voice {
             filter: TptLadder::new(sr),
             ladder: LadderVcf::new(sr * ULTRA_OS_FACTOR),
             os: Os4x::new(),
+            ladder_hi: LadderVcf::new(sr * HIGH_OS_FACTOR),
+            os2: Os2x::new(),
             env: AdEnv::new(sr),
             tier: Tier::Low,
             sr,
         }
     }
 
-    /// Select the fidelity tier. Low/High route to the TPT path; Ultra routes to
-    /// the nodal diode-ladder inside the 4× oversampler (F3.5). A plain field
-    /// write — no allocation, RT-safe.
+    /// Select the fidelity tier. Low routes to the TPT path; High routes to the
+    /// nodal diode-ladder inside the 2× oversampler (polyBLEP saw, F4.1); Ultra
+    /// routes to the circuit VCO → nodal ladder at 4× (F3.5). A plain field write
+    /// — no allocation, RT-safe.
     pub fn set_tier(&mut self, tier: Tier) {
         self.tier = tier;
     }
 
-    /// Added latency (base samples) of the current tier. Ultra adds the 4× OS
-    /// round-trip group delay; Low/High are zero-latency. Host PDC wiring is F5.
+    /// Added latency (base samples) of the current tier. High/Ultra add their OS
+    /// round-trip group delay; Low is zero-latency. Host PDC wiring is F5.
     pub fn latency_samples(&self) -> usize {
         match self.tier {
-            Tier::Low | Tier::High => 0,
+            Tier::Low => 0,
+            Tier::High => self.os2.latency_samples(),
             Tier::Ultra => self.os.latency_samples(),
         }
     }
@@ -75,12 +85,14 @@ impl Voice {
     pub fn set_cutoff(&mut self, hz: f32) {
         self.filter.set_cutoff(hz);
         self.ladder.set_cutoff(hz);
+        self.ladder_hi.set_cutoff(hz);
     }
 
     /// Filter resonance in [0, 1].
     pub fn set_reso(&mut self, r: f32) {
         self.filter.set_reso(r);
         self.ladder.set_reso(r);
+        self.ladder_hi.set_reso(r);
     }
 
     /// Ultra-tier VCF brightness calibration (spectral V5). Default is the
@@ -92,8 +104,16 @@ impl Voice {
 
     pub fn tick(&mut self) -> f32 {
         let f = match self.tier {
-            // F4: High gets the cheaper WDF-lite solver; on TPT for now.
-            Tier::Low | Tier::High => self.filter.tick(self.osc.tick()),
+            // Low: polyBLEP saw → TPT ladder (cheap, ships).
+            Tier::Low => self.filter.tick(self.osc.tick()),
+            // High (F4.1): polyBLEP saw → nodal diode-ladder at 2× oversample.
+            // Skips the costly nodal VCO Newton but keeps the circuit-filter
+            // character — sits between Low and Ultra at a fraction of Ultra cost.
+            Tier::High => {
+                let hi = self.os2.up(self.osc.tick());
+                let o = [self.ladder_hi.tick(hi[0]), self.ladder_hi.tick(hi[1])];
+                self.os2.down(o)
+            }
             // Ultra: circuit VCO saw → nodal diode-ladder at 4× oversample.
             Tier::Ultra => {
                 let s = self.vco.tick() * VCO_GAIN;
