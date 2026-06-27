@@ -4,16 +4,22 @@ use std::sync::Arc;
 
 mod dsp;
 mod params;
+use dsp::voice::Voice;
 use params::Plugin303Params;
 
 pub struct Plugin303 {
     params: Arc<Plugin303Params>,
+    sample_rate: f32,
+    voice: Voice,
 }
 
 impl Default for Plugin303 {
     fn default() -> Self {
+        let sample_rate = 48_000.0;
         Self {
             params: Arc::new(Plugin303Params::default()),
+            sample_rate,
+            voice: Voice::new(sample_rate),
         }
     }
 }
@@ -39,15 +45,43 @@ impl Plugin for Plugin303 {
         self.params.clone()
     }
 
+    fn initialize(
+        &mut self,
+        _layout: &AudioIOLayout,
+        cfg: &BufferConfig,
+        _ctx: &mut impl InitContext<Self>,
+    ) -> bool {
+        self.sample_rate = cfg.sample_rate;
+        self.voice = Voice::new(self.sample_rate);
+        true
+    }
+
+    fn reset(&mut self) {
+        // Clear the voice tail so transport stop / loop-jump doesn't bleed.
+        self.voice = Voice::new(self.sample_rate);
+    }
+
     fn process(
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
-        _context: &mut impl ProcessContext<Self>,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        for channel in buffer.as_slice() {
-            for s in channel.iter_mut() {
-                *s = 0.0;
+        let mut next_event = context.next_event();
+        for (sample_idx, mut frame) in buffer.iter_samples().enumerate() {
+            // Apply every event scheduled for this sample (sample-accurate).
+            while let Some(event) = next_event {
+                if event.timing() != sample_idx as u32 {
+                    break;
+                }
+                if let NoteEvent::NoteOn { note, .. } = event {
+                    self.voice.note_on(note);
+                }
+                next_event = context.next_event();
+            }
+            let out = self.voice.tick();
+            for s in frame.iter_mut() {
+                *s = out;
             }
         }
         ProcessStatus::Normal
