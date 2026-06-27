@@ -23,6 +23,15 @@ pub const HIGH_OS_FACTOR: f32 = 2.0;
 /// Level trim to bring the DC-blocked VCO saw to ~unit (polyBLEP-saw) amplitude.
 const VCO_GAIN: f32 = 2.0;
 
+/// Per-tier VCF brightness (cutoff→bias scale on the shared `LadderVcf`). With
+/// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
+/// gold sits *below* 1.0 — the resonance peak otherwise over-brightens. Tuned
+/// per tier (different OS rate ⇒ different optimum): Ultra (4×) at 0.70 minimises
+/// LSD to 3.87 dB; High (2×) at 0.50 keeps corr ≥ 0.95 while beating its prior
+/// LSD. See `brightness_sweep`/`high_brightness_sweep` diagnostics (F6.5).
+const ULTRA_BRIGHT: f64 = 0.70;
+const HIGH_BRIGHT: f64 = 0.50;
+
 /// Tier-switch crossfade length in seconds (equal-power settle-then-crossfade).
 /// Long enough to mask the incoming path's cold-start transient (VCO 1 ms self-
 /// start, ladder warm-up) and any oscillator phase jump, short enough to feel
@@ -108,14 +117,18 @@ impl Voice {
         let lat_high = Os2x::new().latency_samples();
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
+        let mut ladder = LadderVcf::new(sr * ULTRA_OS_FACTOR);
+        ladder.set_cal(ULTRA_BRIGHT);
+        let mut ladder_hi = LadderVcf::new(sr * HIGH_OS_FACTOR);
+        ladder_hi.set_cal(HIGH_BRIGHT);
         Self {
             osc: Saw::new(),
             osc_hi: Saw::new(),
             vco: Vco303::new(sr),
             filter: TptLadder::new(sr),
-            ladder: LadderVcf::new(sr * ULTRA_OS_FACTOR),
+            ladder,
             os: Os4x::new(),
-            ladder_hi: LadderVcf::new(sr * HIGH_OS_FACTOR),
+            ladder_hi,
             os2: Os2x::new(),
             env: AdEnv::new(sr),
             tier: Tier::Low,
@@ -202,6 +215,19 @@ impl Voice {
     /// envelope. No effect on Low/High.
     pub fn set_ultra_brightness(&mut self, cal: f64) {
         self.ladder.set_cal(cal);
+    }
+
+    /// Diagnostic: override the Ultra ladder's Q9 resonance feedback gain (for
+    /// spectral calibration sweeps against the gold). Not used at runtime.
+    pub fn set_ultra_reso_gain(&mut self, g: f64) {
+        self.ladder.set_reso_gain(g);
+    }
+
+    /// High-tier VCF brightness calibration. High shares the `LadderVcf` core but
+    /// runs at 2× (vs Ultra's 4×); with the active Q9 resonance the brightness
+    /// optimum differs, so it is tuned independently of `set_ultra_brightness`.
+    pub fn set_high_brightness(&mut self, cal: f64) {
+        self.ladder_hi.set_cal(cal);
     }
 
     /// One pre-envelope sample from a single tier's signal path, advancing only

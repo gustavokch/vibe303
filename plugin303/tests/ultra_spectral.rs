@@ -14,9 +14,11 @@ use common::{gold_dir, load_f32, load_gold_op, spectral_match};
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 
-const LSD_BUDGET_DB: f32 = 5.5; // achieved 4.42 dB (gold-power-weighted) + margin
-const CORR_MIN: f32 = 0.95; // achieved corr 0.977; spectra share their shape
-const ULTRA_BRIGHTNESS: f64 = 1.0; // VCF brightness cal (cal=1.0 is the LSD optimum)
+// F6.5: active Q9 resonance (F6.3) + re-tuned brightness (0.70) dropped the
+// gold-power-weighted LSD from 4.42 → 3.87 dB. Budget tightened below the old 5.5.
+const LSD_BUDGET_DB: f32 = 4.0; // achieved 3.87 dB (deterministic render) + margin
+const CORR_MIN: f32 = 0.95; // achieved corr 0.979; spectra share their shape
+const ULTRA_BRIGHTNESS: f64 = 0.70; // re-tuned VCF brightness (resonance-active LSD min)
 
 fn render_ultra(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: f64) -> Vec<f32> {
     let mut v = Voice::new(sr);
@@ -33,10 +35,23 @@ fn render_ultra(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: f64) -
 fn brightness_sweep() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let op = load_gold_op("voice_A2_mid.json");
-    for cal in [1.0f64, 2.0, 4.0, 7.0, 10.0, 15.0, 20.0] {
+    for cal in [0.64f64, 0.66, 0.68, 0.70, 0.72, 0.74, 0.76] {
         let m = render_ultra(op.sr, op.cutoff, op.reso, op.note, gold.len(), cal);
         let (lsd, corr) = spectral_match(&gold, &m, op.sr);
-        println!("cal={cal:5.1}  LSD={lsd:.2} dB  corr={corr:.3}");
+        println!("cal={cal:5.2}  LSD={lsd:.2} dB  corr={corr:.3}");
+    }
+    println!("-- reso_gain sweep at cal=0.70 --");
+    for rg in [8.0f64, 10.0, 11.0, 12.0, 13.0, 14.0] {
+        let mut v = Voice::new(op.sr);
+        v.set_tier_immediate(Tier::Ultra);
+        v.set_ultra_brightness(0.70);
+        v.set_ultra_reso_gain(rg);
+        v.set_cutoff(op.cutoff);
+        v.set_reso(op.reso);
+        v.note_on(op.note);
+        let m: Vec<f32> = (0..gold.len()).map(|_| v.tick()).collect();
+        let (lsd, corr) = spectral_match(&gold, &m, op.sr);
+        println!("rg={rg:5.1}  LSD={lsd:.2} dB  corr={corr:.3}");
     }
 }
 
