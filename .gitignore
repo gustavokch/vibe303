@@ -37,16 +37,10 @@ runs/
 .idea/
 *.swp
 
-# Large local training bundle (kept out of git)
-colab/ba283_train_bundle/
-
-# Exported `.nam` models (large weights JSON; regenerable via train_wavenet.py --export)
-exported_models/*.nam
-
 # git worktrees
 .worktrees/
 
-# Scratch / throwaway experiment dirs (training snapshots live canonically in ba283-nam-lstm)
+# Scratch / throwaway experiment dirs
 scratch/
 
 # step-4 ACME VCF parity render scratch (binaries)

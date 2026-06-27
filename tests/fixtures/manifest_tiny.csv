@@ -1,7 +1,0 @@
-dry_path,wet_path,gain_value,duration_s,stim_kind
-tests/fixtures/fixt_data/sweepA.wav,tests/fixtures/fixt_data/sweepA_bias0.00.wav,0.0,2.0,sweep
-tests/fixtures/fixt_data/sweepA.wav,tests/fixtures/fixt_data/sweepA_bias0.50.wav,0.5,2.0,sweep
-tests/fixtures/fixt_data/sweepA.wav,tests/fixtures/fixt_data/sweepA_bias1.00.wav,1.0,2.0,sweep
-tests/fixtures/fixt_data/sweepB.wav,tests/fixtures/fixt_data/sweepB_bias0.00.wav,0.0,2.0,sweep
-tests/fixtures/fixt_data/sweepB.wav,tests/fixtures/fixt_data/sweepB_bias0.50.wav,0.5,2.0,sweep
-tests/fixtures/fixt_data/sweepB.wav,tests/fixtures/fixt_data/sweepB_bias1.00.wav,1.0,2.0,sweep

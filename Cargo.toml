@@ -1,6 +1,9 @@
 # Cargo.toml
 [workspace]
-members = ["plugin", "xtask"]
+# `plugin303` (the TB-303 voice) is added by the Phase-2 implementation plan, M1.1
+# (docs/plans/2026-06-26-phase2-303-voice-implementation-plan.md). `xtask` is the
+# nih-plug bundler runner, kept ready for it.
+members = ["xtask"]
 resolver = "2"
 
 [profile.release]

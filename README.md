@@ -1,329 +1,51 @@
-# BA283
+# vibe303 — Souped-up TB-303
 
-Neural **and** circuit emulation of the Neve BA283 mic-preamp output stage, shipped as a VST3 plugin.
+Circuit-grounded emulation of the Roland TB-303, taken "to the next level": a
+validated SPICE/ACME model of the analog core (Phase 1) and a nih-plug VST3/CLAP
+monosynth voice built on top of it (Phase 2).
 
 - **Version:** 0.1.0
 - **Vendor:** desmen
 - **License:** TBD
 
+> This repo began as a fork of the BA283 preamp project (shared `circuitgen`
+> circuit-IR pipeline + ngspice/ACME validation harness). The BA283 product code
+> was removed; what remains is the 303 work plus the reusable pipeline.
+
 ---
 
-## What it is
+## Status
 
-The BA283 is the output stage of a classic Neve mic preamp: a three-transistor
-(TR1/TR2 BC184C + TR3 2N3055) global-feedback, d.c.-coupled amplifier driving a
-Marinair/Carnhill LO1166 output transformer. Gain is set by a resistor shunt
-(`R_KJ`, ~220 Ω–10 kΩ → ~14–33 dB) and bias trims TR3's idle current for
-symmetric clipping.
+**Phase 1 — analog circuit model: COMPLETE.** VCO core + diode-ladder VCF modelled as
+circuit IR (`circuit/vco303.toml`, `circuit/vcf303.toml`), emitted to SPICE + ACME via
+`tools/circuitgen`, and ngspice-validated (`eval/303/`). VCO oscillates with 1 V/oct;
+VCF gives a 4-pole LP with bias-tracking cutoff, active-Q9 fc-tracking resonance, and
+tap-select 2/3/4-pole. ACME parity = NO-GO for both (ngspice is ground truth). See
+`HANDOFF.md` and `eval/303/VCF_MAP.md`.
 
-This project reproduces that stage as a plugin with **two runtime-selectable
-inference backends**, both validated against ngspice renders of the real circuit.
-The default backend is **Circuit (WDF)**; the Neural Net is the learned
-alternative.
+**Phase 2 — nih-plug voice: PLANNED.** Monophonic VST3/CLAP synth (`plugin303`): fitted
+antialiased VCO, TPT diode-ladder VCF, MEG/VEG envelopes, accent, 16-step sequencer +
+live MIDI, souped levers (2nd osc, sub, saw↔square sweep, self-osc). Design + plan:
+`docs/plans/2026-06-26-phase2-303-voice-design.md` and
+`docs/plans/2026-06-26-phase2-303-voice-implementation-plan.md`.
 
-## The two backends
+## Layout
 
-### Neural Net
+- `circuit/` — circuit-IR definitions (`vco303.toml`, `vcf303.toml`).
+- `tools/circuitgen/` — IR → SPICE/ACME emitters + drift guard.
+- `tools/schemagen/` — SPICE-deck / schematic → draft-IR importers.
+- `eval/303/` — ngspice + ACME validation harnesses (the ground truth).
+- `eval/acme_vs_spice/` — the shared Julia ACME project environment.
+- `tests/circuitgen/` — drift-guard + IR-validation tests.
+- `xtask/` — nih-plug bundler runner (for the Phase-2 plugin).
 
-Hand-coded pure-Rust streaming **FiLM WaveNet** matching a `neural-amp-modeler`
-0.13 export (stock package, conditioned by config — not a fork): 23 dilated
-causal conv layers, 3 channels, 2-channel condition `[audio, gain]`
-(gain-conditioned), per-layer `LeakyReLU(0.01)`, receptive field 6347. Streaming
-and causal, so it adds **zero latency**. Zero-alloc and realtime-safe — all
-weight/state storage is heap-boxed once at construction; the audio path only
-indexes fixed scratch + ring buffers. Bit-exact with the golden reference in
-steady state.
-
-The NN signal path is safety-clamped so it can never run away or emit a
-non-finite sample under extreme Drive (an input-domain clamp keeps the net inside
-its trained range, a finite guard zeroes any NaN/Inf, and a final-output ceiling
-backstops the speaker level). The clamps are bit-exact for in-domain signal. The
-embedded weights are still **provisional**; until final weights land the NN
-levelNorm uses the small-signal `1/G_nn` trim (the WDF backend's Drive-swept
-makeup is not yet mirrored on the NN path — `bin/measure_nn_gi` regenerates it
-when ready). Rendered tone may change before release.
-
-→ `plugin/src/wavenet.rs`, weights `exported_models/model.cond.nam`
-
-(The older NAM-style `LSTM(3 x 18)` engine — `plugin/src/model.rs`, schema
-`ba283-lstm-v2` — is still compiled but dormant; it is the model the in-repo
-`train/` pipeline produces. See [ML / data pipeline](#ml--data-pipeline).)
-
-### Circuit (WDF, default)
-
-A nodal MNA + Newton-Raphson solver with Gummel-Poon BJT models and coupled
-inductors, ported from [`gustavokch/ba283_wdf`](https://github.com/gustavokch/ba283-wdf).
-Circuit-faithful: tracks SPICE at ESR ≈ −30 dB, coherence 1.0. Includes a
-Jiles-Atherton model of the LO1166 output-transformer core (feature `trafo-core`,
-on by default) and per-component aging.
-
-Four quality tiers trade accuracy for speed:
-
-- `Realtime` — bit-exact reference, all speed levers off (2× oversampled).
-- `Fast` — predict + Schur + freeze-caps, near-transparent, ~5× faster.
-- `UltraFast` — adds cheap transport-exp and drops to 1×, ~9× faster.
-- `Warp` — also drops the BJT junction-charge model, ~12× faster.
-
-The two 1× tiers (`UltraFast`, `Warp`) can opt into **Adaptive OS** (below),
-which engages a resident `os=4` model on hot transients to claw back their
-aliasing without paying the oversampling cost on quiet material.
-
-Two orthogonal dials further tune the WDF backend. **Precision** is the
-device-model fidelity axis — it steps the BJT charge-storage model down from the
-tier baseline (and never up), independent of the tier's iteration strategy and
-the oversampling rate:
-
-- `High` — identity; preserves the bit-exact Realtime/golden contract.
-- `Medium` — junction charge model → depletion-only, plus the cheap low-order
-  transport exp (~−3%; the depletion step itself is near-zero CPU, fidelity-only).
-- `Low` — drop the charge model entirely (the dominant lever, ~−26% on Fast),
-  plus the cheap transport exp.
-
-Steps are monotone (a tier already at the lowest charge model, e.g. `Warp`,
-stays there). Loss stays within the harness budget (added ESR vs Realtime+High
-≤ −50 dB; the ACME model floor is ~−23 dB).
-
-**Oversampling** (`Auto`/`1×`/`2×`) is the antialiasing-rate axis: `Auto` defers
-to the tier, `1×`/`2×` force the internal rate.
-
-**Adaptive OS** is the level-gated companion to the `1×` lossy tiers. A
-peak-follower envelope on the driven input arms a resident `os=4` model on hot
-transients (where `os=1` aliases most) and holds `os=1` when quiet — so you pay
-the oversampling cost only on the transients that need it. It ships **off**
-(opt-in) and is inert unless the tier is `UltraFast`/`Warp` and Oversampling is
-`Auto`. See [`docs/adr/0001-adaptive-oversampling.md`](docs/adr/0001-adaptive-oversampling.md).
-
-→ `plugin/src/wdf/` (solver module). Architecture decisions are recorded under
-[`docs/adr/`](docs/adr/).
-
-## Build
-
-**Prerequisites:** Rust `1.93.0` (auto-pinned by `plugin/rust-toolchain.toml` if
-you use rustup).
+## Commands
 
 ```bash
-cargo xtask bundle ba283 --release      # → VST3 bundle under target/bundled/
-```
-
-Standalone CLI renderer (offline processing, no DAW):
-
-```bash
-cargo run --release --bin ba283_standalone -- --input dry.wav --output wet.wav
-# WDF backend at a given gain shunt:
-cargo run --release --bin ba283_standalone -- \
-    --input dry.wav --output wet.wav --backend wdf --circuit-gain 220 --tier fast
-```
-
-Run `ba283_standalone` with no args to see the full flag list (`--bias`,
-`--drive-db`, `--output-db`, `--mix`, `--backend nn|wdf`,
-`--tier realtime|fast|ultra-fast|warp`, `--precision high|medium|low`,
-`--level-norm`, `--raw`, …).
-
-## Install
-
-Grab the zip for your platform from the [Releases](../../releases) page. Each
-archive contains both the **VST3** and **CLAP** bundles. Verify the download
-against `SHA256SUMS`, then unzip and copy the bundles into your plugin path.
-
-**Linux x86_64:**
-
-```bash
-unzip BA283-v0.1.0-linux-x86_64.zip
-cp -r BA283.vst3 ~/.vst3/
-cp -r BA283.clap ~/.clap/
-```
-
-**macOS arm64:**
-
-```bash
-unzip BA283-v0.1.0-macos-arm64.zip
-cp -r BA283.vst3 ~/Library/Audio/Plug-Ins/VST3/
-cp -r BA283.clap ~/Library/Audio/Plug-Ins/CLAP/
-# Builds are unsigned/unnotarized — clear the gatekeeper quarantine flag:
-xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/BA283.vst3
-xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/CLAP/BA283.clap
-```
-
-### System requirements
-
-- **Linux:** x86_64 CPU with the **x86-64-v3** feature level (AVX2 + FMA —
-  Intel Haswell 2013+ / AMD Excavator 2015+ or newer). The release binary is
-  compiled for this floor; older CPUs will fault with an illegal instruction.
-- **macOS:** Apple Silicon (arm64). Intel Macs are not built for v0.1.
-
-To build from source instead, see [Build](#build) above.
-
-## Usage in a DAW
-
-Load **BA283** and drive its parameters. Groups marked _WDF-only_ are inert
-when the Neural Net backend is selected.
-
-**Backend & signal**
-
-| Parameter | Range / values | Default |
-|-----------|----------------|---------|
-| **Backend** | `Circuit (WDF)` / `Neural Net` | Circuit (WDF) |
-| **Drive** | −12 .. +24 dB | 0 dB |
-| **Bias** | 0 .. 1 (TR3 idle-current trim) | 0.5 |
-| **Output** | −24 .. +12 dB | 0 dB |
-| **Mix** | 0 .. 100% (wet) | 100% |
-
-**WDF quality** _(WDF-only)_
-
-| Parameter | Range / values | Default |
-|-----------|----------------|---------|
-| **WDF Tier** | `Realtime` / `Fast` / `UltraFast` / `Warp` | Realtime |
-| **Precision** | `High` / `Medium` / `Low` | High |
-| **Oversampling** | `Auto` / `1×` / `2×` | Auto |
-| **Adaptive OS** | bool — level-gated `os=4` on hot transients (1× lossy tiers only) | Off |
-
-**Circuit** _(WDF-only)_
-
-| Parameter | Range / values | Default |
-|-----------|----------------|---------|
-| **Circuit Gain** | `R_KJ` shunt, 47 .. 10 000 Ω | 220 Ω |
-| **Stepped Gain** | bool — snap to 5 hardware positions (15/20/25/30/35 dB) | Off |
-| **Age** | 0 .. 1 component drift (vintage wear) | 0 |
-| **Age Re-roll** | momentary — pick a new random unit | — |
-
-**Transformer core** _(WDF-only, feature `trafo-core`)_
-
-| Parameter | Range / values | Default |
-|-----------|----------------|---------|
-| **Transformer** | On / Off (Jiles-Atherton LO1166 core) | On |
-| **Hysteresis** | 0 .. 1 (loop width) | 0.5 |
-| **Saturation** | 0 .. 1 (knee position) | 0.5 |
-
-**EQ** _(both backends, Neve 1073/1076, pre-model)_
-
-| Parameter | Range / values | Default |
-|-----------|----------------|---------|
-| **EQ** | On / Off (bit-exact when off) | Off |
-| **HPF** | `Off` / 50 / 80 / 160 / 300 Hz | Off |
-| **Low-Shelf** | freq 35/60/110/220 Hz · gain ±16 dB | 0 dB |
-| **Mid / Presence** | freq 360 Hz..7.2 kHz · gain ±18 dB (proportional-Q) | 0 dB |
-| **High-Shelf** | gain ±16 dB (fixed 12 kHz) | 0 dB |
-
-**Other**
-
-| Parameter | Range / values | Default |
-|-----------|----------------|---------|
-| **Level Norm** _(WDF-only)_ | On / Off — RMS-match output to input | Off |
-| **UI Scale** | `Auto` / 100–200% (not automatable) | Auto |
-
-The EQ sits **before** the modeled stage, matching the real channel strip
-(`MIC → EQ → BA283/AV → LO1166 → OUT`), and is bit-exact when off. Full
-parameter definitions live in `plugin/src/lib.rs`.
-
-### GUI
-
-BA283 ships a custom egui editor (1040×660), laid out left→right by signal flow
-in four columns — **INPUT · EQUALIZER · MODEL · OUTPUT** — with a top bar for the
-backend toggle and the global **Level Norm** / **Link** modes. The **MODEL**
-column leads with the backend-agnostic Circuit Gain + Drive; the WDF-only
-character and quality controls sit in a sub-frame that dims and disables when the
-Neural Net backend is active (its params are WDF-only). The body is wrapped in a
-scroll area, so the layout never clips. HiDPI follows the host by default
-(`UI Scale = Auto`), with manual 100–200% overrides for hosts that misreport
-their scale.
-
-## ML / data pipeline
-
-The neural backends are trained offline against ngspice renders of the real
-circuit. The objective and SPICE data-gen are shared; the two engines differ in
-architecture and where they are trained.
-
-### Shipped WaveNet (the active backend)
-
-The deployed `exported_models/model.cond.nam` is a FiLM-conditioned WaveNet built
-on **stock `neural-amp-modeler` 0.13** (conditioned by config, not a fork). Its
-training scripts live in the sibling repo
-`~/Git/ba283-nam-lstm/scratch/nam_sweep/`; only the SPICE reamp, the embed, and
-the scoring touch this repo:
-
-```
-gen.py (sibling)        SPICE reamp: T3K-60s dry @ 9-gain grid, bias 0.77
-   │                    (drives this repo's data_gen.run_spice + netlist)
-   ▼
-train_wavenet.py        stateless WaveNet loop, window = RF(6347) + n_out
-   │                    --export → model.cond.nam (input_scale 2.0, output_ref_v 64, 48 kHz)
-   ▼
-exported_models/model.cond.nam   embedded into the plugin at build time (active path)
-   ▼
-eval/nam_vs_acme/       3-way scoring (NAM vs ACME vs SPICE), worst-gain gate
-```
-
-- **Operator runbook:** [`docs/wavenet_training_runbook.md`](docs/wavenet_training_runbook.md)
-
-### Dormant recurrent engine (in-repo `train/`)
-
-The in-repo pipeline trains the **dormant** recurrent engine
-(`plugin/src/model.rs`) and emits the `ba283-lstm-v2` JSON schema. It is
-**selectable** (`--model {lstm|s4d|s6}`, default `lstm` 3×18 FiLM; SSM trains for
-comparison but does not export):
-
-```
-data_gen/   SPICE: parameterized netlist → ngspice transient render (dry/wet pairs)
-   │        netlist.py · run_spice.py · stimulus.py · resample.py
-   ▼
-train/      TBPTT training, perceptual loss (pre-emphasised ESR + DC), FiLM gain conditioning
-   │        train.py --model lstm → best.pth
-   ▼
-train/export.py   serialize → self-describing JSON (schema ba283-lstm-v2)
-   ▼
-plugin/weights/ba283_lstm_3x18.json   embedded into the plugin at build time (dormant LSTM path)
-```
-
-Current dataset: `ba283_spice_gain` (gain-conditioned, leakage-free split).
-Cloud training is available via `colab/ba283_train_colab.ipynb`.
-
-- **How (operator runbook):** [`docs/training_runbook.md`](docs/training_runbook.md)
-- **Ablation studies (Colab):** [`docs/colab_ablation_runbook.md`](docs/colab_ablation_runbook.md)
-- **Why (concepts — perceptual ESR + DC loss, TBPTT, FiLM, WaveNet vs recurrent):** [`docs/training_explained.md`](docs/training_explained.md)
-
-The training objective (both engines) is the Wright & Välimäki perceptual loss (arXiv:1911.08922):
-pre-emphasised ESR (`α = 0.8613`, 48 kHz matched-z of the paper's 0.85) plus a DC
-term (`--dc-weight`, on by default) that catches the constant offset pre-emphasis is
-blind to. An opt-in IEC A-weighting pre-emphasis filter is available via
-`--preemph-filter aweight`.
-
-## Evaluation
-
-- [`eval/wdf_vs_spice/`](eval/wdf_vs_spice/README.md) — validates the WDF solver
-  against SPICE (ESR, NRMSE, Welch FR coherence).
-- [`eval/acme_vs_spice/`](eval/acme_vs_spice/README.md) — ACME.jl circuit-model
-  feasibility spike vs SPICE.
-- [`eval/nam_vs_acme/`](eval/nam_vs_acme/README.md) — 3-way scoring of the NAM /
-  Neural Net export against ACME + SPICE references.
-
-## Repository map
-
-| Path | Purpose |
-|------|---------|
-| `plugin/` | Rust VST3 plugin (nih-plug): `lib.rs`, `wavenet.rs` (active NN), `model.rs` (dormant LSTM), `wdf/` (solver), `eq.rs`, `editor.rs`, `dsp.rs`, weights |
-| `exported_models/` | shipped WaveNet `model.cond.nam` (embedded into `wavenet.rs` at build time) |
-| `xtask/` | nih-plug build runner (`cargo xtask bundle ba283`) |
-| `train/` | PyTorch training pipeline for the **dormant** recurrent engine (`train.py`, `model.py`, `ssm.py`, `export.py`) — the WaveNet is trained externally (sibling repo `ba283-nam-lstm/scratch/nam_sweep/`) |
-| `data_gen/` | SPICE dataset generation (PySpice + ngspice) |
-| `eval/` | Validation harnesses (`wdf_vs_spice`, `acme_vs_spice`, `nam_vs_acme`) |
-| `colab/` | Google Colab training notebooks |
-| `docs/` | Concept guide, runbook, design plans |
-| `docs/adr/` | Architecture decision records (`0001` = adaptive oversampling) |
-| `tests/` | Python + Rust tests |
-| `checkpoints/` | Training checkpoints (`best.pth`, `last.pth`) |
-
-## Development
-
-**Rust:**
-
-```bash
-cargo test
-```
-
-**Python (3.12, [uv](https://docs.astral.sh/uv/)):**
-
-```bash
-uv sync
-uv run pytest        # tests in tests/
-uv run ruff check .
+# regenerate all backends from the IR / drift-guard
+uv run --no-project python -m tools.circuitgen [--check]
+uv run --no-project --with pytest python -m pytest tests/circuitgen/ -q
+# ngspice 303 renders
+uv run --no-project --with PySpice --with numpy python eval/303/run_vco303_spice.py 5
+uv run --no-project --with PySpice --with numpy python eval/303/run_vcf303_spice.py --reso
 ```

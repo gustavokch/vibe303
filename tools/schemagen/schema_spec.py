@@ -1,7 +1,7 @@
 """The circuit.toml schema, described for a vision-language model.
 
-Kept in sync with tools/circuitgen/ir.py (the loader) and circuit/ba283.toml (the
-reference instance). The VLM is asked to emit exactly this format so the output
+Kept in sync with tools/circuitgen/ir.py (the loader) and the circuit/*.toml
+reference instances. The VLM is asked to emit exactly this format so the output
 drops straight into the circuitgen pipeline.
 """
 

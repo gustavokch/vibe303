@@ -1,4 +1,4 @@
-"""Load + validate the canonical circuit IR (``circuit/ba283.toml``).
+"""Load + validate the canonical circuit IR (``circuit/vcf303.toml``).
 
 The IR is the single source of truth; the emitters consume the typed objects
 returned by :func:`load`. Validation is strict — a malformed IR must fail here,
@@ -344,7 +344,7 @@ def validate(c: Circuit) -> None:
 if __name__ == "__main__":
     import sys
 
-    p = sys.argv[1] if len(sys.argv) > 1 else "circuit/ba283.toml"
+    p = sys.argv[1] if len(sys.argv) > 1 else "circuit/vcf303.toml"
     circ = load(p)
     print(
         f"OK {circ.meta['name']}: {len(circ.nodes)} nodes, "
