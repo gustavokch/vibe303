@@ -6,6 +6,8 @@
 //! harness exists; the wrapper layers above `voice.tick` are nih-plug-owned.
 
 use assert_no_alloc::*;
+use plugin303::dsp::filter::Filter303;
+use plugin303::dsp::ladder_wdf::LadderVcf;
 use plugin303::dsp::oversample::Os4x;
 use plugin303::dsp::voice::Voice;
 
@@ -25,6 +27,25 @@ fn voice_hot_path_is_alloc_free() {
         core::hint::black_box(acc);
     });
     assert_eq!(violation_count(), 0, "voice.tick allocated on the audio path");
+}
+
+#[test]
+fn ladder_vcf_hot_path_is_alloc_free() {
+    let mut f = LadderVcf::new(48_000.0); // setup (may allocate) before the guard
+    f.set_cutoff(1_000.0);
+    f.set_reso(0.3);
+    for _ in 0..64 {
+        f.tick(0.0); // warm-start the Newton state outside the guarded region
+    }
+    reset_violation_count();
+    assert_no_alloc(|| {
+        let mut acc = 0.0f32;
+        for i in 0..4_096 {
+            acc += f.tick((i as f32 * 0.01).sin() * 0.1);
+        }
+        core::hint::black_box(acc);
+    });
+    assert_eq!(violation_count(), 0, "LadderVcf::tick allocated on the audio path");
 }
 
 #[test]

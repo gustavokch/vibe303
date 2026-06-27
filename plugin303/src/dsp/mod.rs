@@ -4,6 +4,7 @@ pub mod env;
 pub mod expmath;
 pub mod filter;
 pub mod ladder;
+pub mod ladder_wdf;
 pub mod oversample;
 pub mod osc;
 pub mod voice;
