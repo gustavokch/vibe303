@@ -4,6 +4,7 @@ pub mod diode;
 pub mod env;
 pub mod expmath;
 pub mod filter;
+pub mod jfet;
 pub mod ladder;
 pub mod ladder_wdf;
 pub mod oversample;
