@@ -633,14 +633,261 @@ fn low_voice_esr_within_budget() {
 **F2 close:** re-run `compare_voice.py`; append the post-F2 Low ESR to the design doc's F1 findings
 (the number F3's High/Ultra budgets are set relative to).
 
-## Phase F3 — WDF Ultra
+## Phase F3 — Ultra: nonlinear diode-ladder VCF (nodal Newton)
 
-- **F3.1** `dsp/ladder_wdf.rs` — wave-digital 4-rung diode ladder (8×1N4148 + caps) + active Q9
-  resonance; nonlinear diode pairs solved per sample (Newton + LUT). Port BA283 WDF discipline
-  (structure-aware solve, zero-alloc, autovectorised transcendentals, denormal flush).
-- **F3.2** ADAA/OS **decision point** (from F1.5): 2nd-order ADAA on the diode nonlinearity vs 4×
-  OS for Ultra — implement the winner; keep the other behind a bench.
-- **F3.3** Ultra ESR ≤ −30 dB gate; coherence ~1.0.
+Outcome: a per-sample **nodal MNA + Newton-Raphson** solve of the vcf303 4-rung diode ladder
+(8× 1N4148 + 4 shunt caps), biased by the cutoff tail current and closed by the resonance leg,
+running at 4× oversample. Wired behind `Tier::Ultra`, ESR ≤ −30 dB vs the whole-voice SPICE
+reference, coherence ≈ 1.0. Zero-alloc hot path.
+
+**Reality check (corrects the design's "WDF" label):** the BA283 reference (`~/Git/ba283_wdf/
+main.cpp`) is *not* a wave-digital tree — it solves the circuit by **nodal MNA + Newton with
+companion models** (Ebers-Moll/diode stamps, trapezoidal cap companions, gmin-homotopy, a Schur
+complement that factors the constant linear block once and Newton-iterates only the nonlinear
+block). That is the discipline we port. The vcf303 ladder rungs are literal **1N4148 diodes**
+(see `eval/303/_vcf303_netlist_gen.py`: `Diode("1L"..."4R")`), so Ultra models the 8-diode +
+4-cap ladder core directly; the active stages (T38 input gm, T20/T21 readout, Q9 resonance) enter
+as the linear drive/read/feedback wrappers exactly as the SPICE harness parameterises them
+(`Itail` cutoff sink, `Rreso` feedback leg). We validate against the *existing*
+`run_vcf303_spice.py` gold — no new SPICE topology.
+
+**Order:** F3.1 (transcendentals) → F3.2 (diode + cap companion) → F3.3 (the solver) →
+F3.4 (ADAA/OS decision bench) → F3.5 (wire Ultra + ESR gate) → F3.6 (no-alloc + tune/close).
+
+---
+
+### Task F3.1: `dsp/expmath.rs` — fast exp/log (BA283 transcendentals)
+
+Autovectorisable `exp`/`log` via IEEE-754 exponent assembly + Taylor (ported from
+`ba283_wdf/main.cpp` `fast_exp`/`fast_log`). The diode stamp calls `exp` per node per Newton
+iter, so this is the hot transcendental.
+
+**Files:**
+- Create: `plugin303/src/dsp/expmath.rs`
+- Modify: `plugin303/src/dsp/mod.rs` (`pub mod expmath;`)
+
+**Step 1: Write the failing tests** — match `std` within tolerance over the junction domain.
+
+```rust
+// expmath.rs tests
+#[test]
+fn fast_exp_matches_std_over_junction_domain() {
+    for i in -2000..=200 {            // v/Vt ranges deeply negative (reverse bias) to ~+5
+        let x = i as f64 * 0.05;
+        let (a, b) = (fast_exp(x), x.exp());
+        let rel = (a - b).abs() / b.max(1e-300);
+        assert!(rel < 1e-9 || b < 1e-300, "exp({x}) rel err {rel}");
+    }
+    assert_eq!(fast_exp(-800.0), 0.0); // deep reverse bias underflows cleanly, no NaN
+}
+
+#[test]
+fn fast_log_matches_std() {
+    for i in 1..100_000 {
+        let x = i as f64 * 1e-3;
+        assert!((fast_log(x) - x.ln()).abs() < 1e-9, "log({x})");
+    }
+}
+```
+
+**Step 2: Run, verify fail.**
+
+**Step 3: Implement** — port `fast_exp` (k via `(k+1023)<<52` with the `k<=-1023 => 0.0` underflow
+guard — critical: reverse-biased junctions give `v/Vt ~ -1000`) and `fast_log` (exponent-field
+decompose + `atanh` series). Use `f64::from_bits`/`to_bits` (Rust's strict-aliasing-safe analog of
+the C++ `memcpy`).
+
+**Step 4: Run, verify pass.**
+
+**Step 5: Commit.** `git commit -m "feat(303): fast exp/log for the nodal solver (F3.1)"`
+
+---
+
+### Task F3.2: `dsp/diode.rs` — 1N4148 stamp + junction-cap companion
+
+**Files:**
+- Create: `plugin303/src/dsp/diode.rs`
+- Modify: `plugin303/src/dsp/mod.rs`
+
+1N4148 params (from `_vcf303_netlist_gen.TRANSISTOR_MODELS`): `IS=1.42e-11`, `N=1.7`,
+`CJO=1.74e-12`, `VJ=0.75`, `M=0.333`, `RS=4.2`. Thermal `Vt=0.025852` (300 K) ⇒ emission
+`nVt = N*Vt`. `vcrit = nVt*ln(nVt/(IS*√2))` (SPICE pnjlim).
+
+The stamp method is named `stamp` (returns the MNA contribution `(I, g)`); the charge companion
+is `charge` (returns `(Q, C)`).
+
+**Step 1: Write the failing tests.**
+
+```rust
+// diode.rs tests
+#[test]
+fn diode_current_and_conductance_match_shockley() {
+    let d = Diode1N4148::new();
+    for &v in &[-0.5, 0.0, 0.3, 0.6, 0.7] {
+        let (i, g) = d.stamp(v);                // (current, dI/dV)
+        if v < d.vcrit {
+            let want = d.is * ((v / d.n_vt).exp() - 1.0);
+            assert!((i - want).abs() <= 1e-6 * want.abs().max(1e-9));
+        }
+        assert!(g > 0.0, "conductance must stay positive for Newton");
+    }
+}
+
+#[test]
+fn diode_is_linear_beyond_vcrit() {
+    // above vcrit the stamp must be the C1 linear extension (bounded exp), so an
+    // overshot Newton step can't explode the residual.
+    let d = Diode1N4148::new();
+    let (_, g1) = d.stamp(d.vcrit + 0.1);
+    let (_, g2) = d.stamp(d.vcrit + 0.2);
+    assert!((g1 - g2).abs() < 1e-6, "conductance not frozen past vcrit");
+}
+
+#[test]
+fn depletion_cap_is_finite_forward_biased() {
+    let d = Diode1N4148::new();
+    let (_q, c) = d.charge(0.74);               // near/over FC*Vj must stay finite (FC extrapolation)
+    assert!(c.is_finite() && c > 0.0);
+}
+```
+
+**Step 2–4: Implement + pass** — port the C++ `diodeEval` routine (vcrit linearization) as `stamp`
+and `depletionCharge` (FC=0.5 extrapolation) as `charge`, using `expmath`.
+
+**Step 5: Commit.** `git commit -m "feat(303): 1N4148 diode stamp + junction-cap companion (F3.2)"`
+
+---
+
+### Task F3.3: `dsp/ladder_wdf.rs` — nodal diode-ladder solver (`impl Filter303`)
+
+The core. A fixed-size dense MNA solve of the 4-rung ladder, Newton per sample with gmin homotopy,
+trapezoidal cap companions. **Module name kept `ladder_wdf` for continuity with the design doc,
+though the method is nodal-Newton.**
+
+**Topology** (from `_vcf303_netlist_gen.py`): two rails L/R, nodes
+`tl,al,bl,cl,dl` and `tr,ar,br,cr,dr`. Rungs = diodes `tl–al, al–bl, bl–cl, cl–dl` (and the R
+mirror). Shunt caps bridge the rails per rung: `C98 al–ar (33n), C99 bl–br (33n), C100 cl–cr (33n),
+C101 dl–dr (18n)`. Differential signal drives the bottom (`dl,dr`); cutoff is the ladder bias
+current `I_tail` pulled from the rail tops (sets each diode's `r_d = nVt/I_d` ⇒ corner ∝ I); the
+differential output is read across `tl–tr`. (The active T38/T20/T21/Q9 stages are the linear
+drive/read/feedback wrappers — F3.5.)
+
+**Numerics:**
+- **Cap companion (trapezoidal):** `Geq = 2C/dt`, `Ieq = -(Geq*v_prev + i_prev)`; per-cap state
+  `(v_prev, i_prev)` updated after convergence. `dt = 1/(sr*OS)`.
+- **MNA assembly:** node-admittance `G` (`N×N`) + RHS `i` (`N`). Stamp each diode rung with
+  `diode.stamp` (g into G, companion current into i), each cap with `(Geq, Ieq)`, the bias current
+  source, and the differential drive (a Norton source from the input wrapper).
+- **Newton:** `F(v) = G(v)·v − i(v)`; solve `J·Δv = −F` (J = G plus the diode `dg/dv` terms, but
+  the stamp already returns `g = dI/dV`, so `G` *is* the Jacobian for the static part). Iterate to
+  `‖F‖₂ < 1e-9` or `maxIters=50`; on stall, **gmin homotopy** (add `gmin` to each node's diagonal,
+  sweep `gmin = 1e-3 → 0`). 
+- **Linear solve:** fixed `N`-dim dense LU with partial pivot on stack arrays (`[[f64; N]; N]`),
+  zero-alloc. `N ≤ 12` (10 rail nodes + slack).
+- **Discipline (BA283):** denormal flush (FTZ via explicit `if x.abs() < 1e-30 { 0.0 }` on states),
+  `fast_exp`, warm-start each sample from the previous converged `v` (the cross-sample predictor).
+
+**Step 1: Write the failing tests.**
+
+```rust
+// ladder_wdf.rs tests
+#[test]
+fn dc_operating_point_converges() {
+    let mut f = LadderVcf::new(48_000.0);
+    f.set_cutoff(1_000.0);
+    f.set_reso(0.0);
+    for _ in 0..256 { f.tick(0.0); }            // settle; must not NaN / stall
+    assert!(f.tick(0.0).is_finite());
+}
+
+#[test]
+fn cutoff_tracks_bias_current() {
+    // doubling cutoff ~ shifts the -3dB corner up ~2x (small-signal AC probe).
+    fn corner(fc: f32) -> f32 { /* sweep sines, find -3dB from passband; helper in mod */ 0.0 }
+    let (a, b) = (corner(500.0), corner(2_000.0));
+    assert!(b > a * 2.5 && b < a * 5.0, "cutoff does not track bias: {a} -> {b}");
+}
+
+#[test]
+fn slope_is_four_pole_ish() {
+    // ~ -20..-24 dB/oct deep stopband (matches vcf303_gold slope ~ -21 dB/oct).
+    // measure two octaves above corner.
+}
+```
+
+**Step 2–4: Implement + pass.** Iterate convergence/solver until the AC probes match the
+`eval/303/vcf303_gold.json` trend (corner tracks bias, slope ≈ −21 dB/oct). This is the riskiest
+task — expect to tune gmin schedule + warm-start. Validate the DC op against
+`run_vcf303_spice.py --op` node voltages where practical.
+
+**Step 5: no-alloc gate.** Extend `tests/no_alloc.rs` with a `LadderVcf::tick` loop.
+
+**Step 6: Commit.** `git commit -m "feat(303): nodal diode-ladder VCF solver, Newton+gmin (F3.3)"`
+
+---
+
+### Task F3.4: ADAA/OS decision bench (resolves F1.5)
+
+Decide 2nd-order ADAA on the diode nonlinearity **vs** 4× OS for Ultra (F1.5 said OS is mandatory;
+this picks the *residual* trimmer). Build a bench, measure alias ESR each way, implement the winner.
+
+**Files:**
+- Create: `plugin303/benches/ladder_alias.rs` (or a `#[test]` reporting numbers, `--nocapture`)
+- Possibly: `dsp/adaa.rs` (add `Adaa2` if 2nd-order wins)
+
+**Step 1:** Drive the F3.3 ladder with a hot saw at three notes; render at (a) 4× OS naive,
+(b) 2× OS + ADAA1 on the diode, (c) 2× OS + ADAA2. Compute alias-bin ESR (reuse the FFT metric
+from `adaa.rs` tests / `eval` analog).
+
+**Step 2:** Record the table in the design doc; **implement the winner** as Ultra's path; keep the
+loser behind a `#[cfg(feature = "bench")]` or a bench-only constructor.
+
+**Step 3: Commit.** `git commit -m "bench(303): Ultra ADAA-vs-4xOS decision; implement winner (F3.4)"`
+
+---
+
+### Task F3.5: Wire `Tier::Ultra` → ladder solver at OS; Ultra ESR gate
+
+**Files:**
+- Modify: `plugin303/src/dsp/voice.rs` (Ultra routes to `LadderVcf` inside the oversampler)
+- Modify: `plugin303/src/bin/render303.rs` (a `--tier` arg so the harness can render Ultra)
+- Create (gold): `eval/303/gold/ultra_A2_mid.f32` + sidecar (via `gen_gold.py --tier ultra`… see note)
+- Create: `plugin303/tests/ultra_esr.rs`
+
+**Step 1: Voice wiring.** Add `LadderVcf` as a preallocated field; `tick` routes `Tier::Ultra`
+through `Os{4}x` (up → solver at hi rate → down). Keep Low/High on TPT. The OS adds latency — the
+voice reports it (deferred to F5 for host PDC, but record it).
+
+**Step 2: render303 `--tier`.** Map `0/1/2 → Low/High/Ultra`; default Low (keeps F2 golds valid).
+
+**Step 3: Generate Ultra gold + gate.** The whole-voice SPICE reference is unchanged (it already
+*is* the diode-ladder truth); the Ultra gold is the SAME `voice_reference(...)` waveform the Low
+gate used — so the gate is: render the **Ultra** voice, ESR vs that SPICE gold ≤ −30 dB. Add
+`tests/ultra_esr.rs` (reuse the `voice_esr.rs` ESR port).
+
+```rust
+// ultra_esr.rs
+const ULTRA_BUDGET_DB: f32 = -30.0;
+// render Tier::Ultra at the sidecar cutoff/reso; esr_db(gold, ultra) <= -30
+```
+
+**Step 4: Run.** Iterate solver/OS until ≤ −30 dB. If 4× can't reach it, escalate to 8× (the OS
+switch is already there) or revisit ADAA2 (F3.4). **Add a coherence check** (Welch, in a Python
+companion `eval/303/coherence.py`) asserting ≈ 1.0 in-band.
+
+**Step 5: Commit.** `git commit -m "feat(303): Ultra tier = diode-ladder solver at OS; ESR <= -30 dB gate (F3.5)"`
+
+---
+
+### Task F3.6: no-alloc, denormal, tune, close F3
+
+- Confirm `cargo test --test no_alloc` covers the Ultra path (solver + OS).
+- Denormal/NaN guard: a long-render test that asserts no NaN/inf and bounded output across a cutoff
+  sweep (the Newton solver must never emit a bad sample).
+- Append F3 findings to the design doc: achieved Ultra ESR/coherence, OS factor chosen, ADAA
+  decision, per-sample Newton iteration count (cost). **Closes F3; informs F4 (High = cheaper
+  solver: fewer Newton iters + `fast_exp` already in).**
+- Commit: `docs(plan): F3 Ultra results + F4 cost budget`.
 
 ## Phase F4 — WDF-lite High
 
