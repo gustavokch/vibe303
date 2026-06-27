@@ -31,6 +31,28 @@ fn voice_hot_path_is_alloc_free() {
 }
 
 #[test]
+fn ultra_voice_hot_path_is_alloc_free() {
+    use plugin303::dsp::filter::Tier;
+    let mut voice = Voice::new(48_000.0); // full Ultra chain: VCO + 4× OS + nodal ladder
+    voice.set_tier(Tier::Ultra);
+    voice.set_cutoff(1_000.0);
+    voice.set_reso(0.5);
+    voice.note_on(57);
+    for _ in 0..128 {
+        voice.tick(); // self-start + warm-start outside the guard
+    }
+    reset_violation_count();
+    assert_no_alloc(|| {
+        let mut acc = 0.0f32;
+        for _ in 0..4_096 {
+            acc += voice.tick();
+        }
+        core::hint::black_box(acc);
+    });
+    assert_eq!(violation_count(), 0, "Ultra voice.tick allocated on the audio path");
+}
+
+#[test]
 fn ladder_vcf_hot_path_is_alloc_free() {
     let mut f = LadderVcf::new(48_000.0); // setup (may allocate) before the guard
     f.set_cutoff(1_000.0);
