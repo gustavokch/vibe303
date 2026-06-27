@@ -1,5 +1,6 @@
 //! Headless 303 voice renderer for the ESR harness. Emits raw `f32le` (no wav dep).
-//! Args: --note --sr --secs --cutoff --reso --out
+//! Args: --note --sr --secs --cutoff --reso --tier --out
+use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 use std::io::Write;
 
@@ -27,9 +28,15 @@ fn main() {
     let secs = arg("--secs", 0.5);
     let cutoff = arg("--cutoff", 1_000.0);
     let reso = arg("--reso", 0.0);
+    let tier = arg("--tier", 0.0) as i32; // 0=Low 1=High 2=Ultra; default keeps F2 golds valid
     let out = arg_s("--out", "render.f32");
 
     let mut v = Voice::new(sr);
+    v.set_tier(match tier {
+        1 => Tier::High,
+        2 => Tier::Ultra,
+        _ => Tier::Low,
+    });
     v.set_cutoff(cutoff);
     v.set_reso(reso / 100.0); // --reso is a percentage; the voice wants 0..1
     v.note_on(note);

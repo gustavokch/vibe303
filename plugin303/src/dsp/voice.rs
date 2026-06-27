@@ -2,18 +2,26 @@
 //! Accent, glide, sub/detune and the souped levers come in M4/M6.
 
 use super::env::AdEnv;
-use super::filter::Tier;
+use super::filter::{Filter303, Tier};
 use super::ladder::TptLadder;
+use super::ladder_wdf::LadderVcf;
 use super::osc::Saw;
+use super::oversample::Os4x;
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
 pub fn midi_to_freq(note: u8) -> f32 {
     440.0 * 2.0f32.powf((note as f32 - 69.0) / 12.0)
 }
 
+/// Ultra-tier oversampling factor (nodal ladder runs at `OS_FACTOR × sr`).
+pub const ULTRA_OS_FACTOR: f32 = 4.0;
+
 pub struct Voice {
     osc: Saw,
     filter: TptLadder,
+    /// Ultra-tier nodal diode-ladder, preallocated, run inside `os`.
+    ladder: LadderVcf,
+    os: Os4x,
     env: AdEnv,
     tier: Tier,
     sr: f32,
@@ -24,16 +32,28 @@ impl Voice {
         Self {
             osc: Saw::new(),
             filter: TptLadder::new(sr),
+            ladder: LadderVcf::new(sr * ULTRA_OS_FACTOR),
+            os: Os4x::new(),
             env: AdEnv::new(sr),
             tier: Tier::Low,
             sr,
         }
     }
 
-    /// Select the fidelity tier. F2: High/Ultra route to the TPT path until the WDF
-    /// backends land (F3/F4). A plain field write — no allocation, RT-safe.
+    /// Select the fidelity tier. Low/High route to the TPT path; Ultra routes to
+    /// the nodal diode-ladder inside the 4× oversampler (F3.5). A plain field
+    /// write — no allocation, RT-safe.
     pub fn set_tier(&mut self, tier: Tier) {
         self.tier = tier;
+    }
+
+    /// Added latency (base samples) of the current tier. Ultra adds the 4× OS
+    /// round-trip group delay; Low/High are zero-latency. Host PDC wiring is F5.
+    pub fn latency_samples(&self) -> usize {
+        match self.tier {
+            Tier::Low | Tier::High => 0,
+            Tier::Ultra => self.os.latency_samples(),
+        }
     }
 
     pub fn note_on(&mut self, note: u8) {
@@ -41,21 +61,35 @@ impl Voice {
         self.env.trigger();
     }
 
-    /// Filter cutoff in Hz.
+    /// Filter cutoff in Hz. Applied to every tier's backend so tier switches are
+    /// click-free on the parameter axis.
     pub fn set_cutoff(&mut self, hz: f32) {
         self.filter.set_cutoff(hz);
+        self.ladder.set_cutoff(hz);
     }
 
     /// Filter resonance in [0, 1].
     pub fn set_reso(&mut self, r: f32) {
         self.filter.set_reso(r);
+        self.ladder.set_reso(r);
     }
 
     pub fn tick(&mut self) -> f32 {
         let s = self.osc.tick();
-        // F3/F4: route High/Ultra to the WDF backends. All tiers use TPT for now.
         let f = match self.tier {
-            Tier::Low | Tier::High | Tier::Ultra => self.filter.tick(s),
+            // F4: High gets the cheaper WDF-lite solver; on TPT for now.
+            Tier::Low | Tier::High => self.filter.tick(s),
+            // Ultra: nodal diode-ladder at 4× oversample.
+            Tier::Ultra => {
+                let hi = self.os.up(s);
+                let o = [
+                    self.ladder.tick(hi[0]),
+                    self.ladder.tick(hi[1]),
+                    self.ladder.tick(hi[2]),
+                    self.ladder.tick(hi[3]),
+                ];
+                self.os.down(o)
+            }
         };
         f * self.env.tick()
     }

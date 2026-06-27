@@ -889,6 +889,56 @@ companion `eval/303/coherence.py`) asserting ≈ 1.0 in-band.
   solver: fewer Newton iters + `fast_exp` already in).**
 - Commit: `docs(plan): F3 Ultra results + F4 cost budget`.
 
+## Phase F3-VCO — Ultra needs the circuit oscillator (added 2026-06-27)
+
+**Why:** F3.5 measured the Ultra voice at **+2.73 dB ESR** vs the whole-voice SPICE gold —
+statistically identical to Low/TPT (+2.44 dB). Root cause (confirmed by the F1/F2 topology
+finding): the whole-voice reference is `circuit VCO saw → diode VCF → VCA`, but the Rust voice
+still feeds the Ultra VCF a **polyBLEP saw**. The input mismatch is topological and dominant
+(`corr ≈ 0.27`), so no VCF improvement can reach −30 dB against it. **Decision (user, 2026-06-27):
+extend Ultra to model the circuit VCO** — i.e. nodally model the whole voice, not just the VCF.
+
+Reaching −30 dB whole-voice therefore needs three things, in order: the circuit VCO, the VCF
+absolute-corner + active-resonance calibration, and the chain glue. Mirrors F3's device→solver→
+wire→gate granularity. Reuses `expmath` (done) and `diode` (done).
+
+**Device params** (`eval/303/_vco303_netlist_gen.TRANSISTOR_MODELS`): 2N3904 NPN, 2N3906 PNP
+(Gummel-Poon: Is/BF/BR/VAF/IKF + junction caps CJE/CJC), MPF104 NJF (Shichman-Hodges:
+BETA=4.889e-4, VTO=−1.45, LAMBDA=3.83e-3, gate diode IS=1.813e-13, CGD/CGS=4e-12/4.627e-12).
+Topology in `_vco303_netlist_gen.add_elements` (21 nodes, integrator C3=10n on `vp–cp`, JFET Q1
+reset). Validate against `eval/303/run_vco303_spice.py` (gold: CV 4/5/6 → 231/477/1000 Hz, 1 V/oct).
+
+### Task V1: `dsp/bjt.rs` — Gummel-Poon BJT stamp (NPN + PNP)
+Port `computeBjt` (`ba283_wdf/main.cpp:208-261`): transport currents via `diode::stamp`-style
+exp, base-charge `qb` (Early VAF + high-injection IKF), node-form Jacobian `(Ib,Ic,Ie)` + 9
+partials. PNP = sign-flipped voltages. Junction-cap companions reuse `diode::charge` form (CJE/CJC).
+TDD: forward-active β≈BF check, `Ie=-(Ic+Ib)` KCL, monotone `Ic(vbe)`, PNP mirror. Commit.
+
+### Task V2: `dsp/jfet.rs` — MPF104 N-JFET stamp
+Shichman-Hodges NJF: cutoff / triode / saturation `Id(vgs,vds)` with LAMBDA channel-length
+modulation, gate-junction diodes (IS,N) + CGS/CGD depletion caps. `stamp(vgs,vds)->(Id, gm, gds)`.
+TDD: `Id=0` below VTO, square-law in saturation, triode slope, gm/gds > 0. Commit.
+
+### Task V3 (RISK): `dsp/vco.rs` — nodal relaxation-oscillator solver
+21-node MNA + Newton (dense LU on stack, gmin homotopy, trapezoidal caps, warm-start) of the
+vco303 core. Driven rails `vp/vh/cvb/cv`; CV sets pitch. The integrator ramps C3 then the JFET
+resets — **stiff at the reset edge**; expect to tune the gmin schedule + a reset-aware step limit.
+`set_freq(hz)` maps to the CV that yields that pitch (port the secant `solve_cv` idea, or a
+calibrated 1 V/oct map). Output the saw at `o_p`. Validate: self-oscillates, pitch matches
+`midi_to_freq` ±1 cent, saw shape vs `run_vco303_spice.py` gold. Zero-alloc, `tests/no_alloc`.
+
+### Task V4: chain VCO→VCF→VCA + calibrate the VCF
+Replace the polyBLEP `Saw` with `Vco303` for `Tier::Ultra` only (Low/High keep polyBLEP). Feed its
+saw into `LadderVcf`. **Fix the VCF absolute corner** (cap-value calibration so corner≈cutoff
+without diode-saturation) and **add the active Q9 resonance stage** (the gold's reso=0.85 peak).
+Re-measure the per-block op-point ESR vs `voice_esr_baseline.json`.
+
+### Task V5: whole-voice Ultra ESR gate ≤ −30 dB + coherence
+Re-run `tests/ultra_esr.rs` (already written, currently failing at +2.73 dB). Iterate VCO+VCF
+calibration + OS factor until ≤ −30 dB. Add the Welch coherence check (`eval/303/coherence.py`)
+≈ 1.0 in-band. Append F3-VCO findings (achieved ESR, Newton iters/sample for VCO and VCF, OS
+factor) to the design doc. **Then** close F3.6 (no-alloc/denormal over the full Ultra chain).
+
 ## Phase F4 — WDF-lite High
 
 - Cheap transport-`exp` + reduced Newton iterations over the F3 solver (device-model precision
