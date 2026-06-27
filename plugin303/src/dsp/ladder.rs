@@ -34,7 +34,10 @@ impl TptLadder {
     }
 
     pub fn set_cutoff(&mut self, hz: f32) {
-        let wd = std::f32::consts::PI * hz.clamp(20.0, self.sr * 0.45) / self.sr;
+        // Upper bound can't drop below the 20 Hz floor, else `f32::clamp` panics
+        // (min > max) at pathologically low sample rates.
+        let hi = (self.sr * 0.45).max(20.0);
+        let wd = std::f32::consts::PI * hz.clamp(20.0, hi) / self.sr;
         self.g = wd.tan(); // per-stage 1-pole TPT coefficient
     }
 
@@ -103,6 +106,13 @@ mod tests {
             }
         }
         (acc / n as f32).sqrt()
+    }
+
+    #[test]
+    fn construct_at_low_sample_rate_does_not_panic() {
+        // sr*0.45 < 20 would make set_cutoff's clamp bounds invert (min > max).
+        let mut f = TptLadder::new(44.0);
+        f.set_cutoff(1_000.0); // must clamp, not panic
     }
 
     #[test]
