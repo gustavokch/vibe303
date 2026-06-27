@@ -332,3 +332,49 @@ spectral envelope. High is the RT-viable fidelity tier; Ultra is the reference/b
 **Same corner ceiling.** High inherits `LadderVcf`'s ~600 Hz corner ceiling (passive ladder, no
 active stages) — `set_cal(1.0)` remains the LSD optimum; brightening via bias distorts the envelope.
 The active-stage headroom path (deferred) would lift both High and Ultra.
+
+### F5 — tune + ship: click-free switching, host PDC, OS decision (DONE)
+
+**OS-switch param dropped (user, 2026-06-27): oversampling is tier-intrinsic.** The plan listed a
+user-facing 2×/4×/8× OS param, but each tier's ladder is calibrated to its own rate (High @ 2×,
+Ultra @ 4×) and gated there. A global OS param would conflict with that per-tier tuning and force a
+recalibration + re-gate of every tier. OS stays fixed per tier; the factor is part of each tier's
+definition, not a separate control. (8× remains available as future Ultra headroom, behind the
+deferred active-stage work.)
+
+**F5.1 — click-free tier switching (equal-power crossfade).** A tier switch swaps the whole signal
+path (TPT ↔ nodal ladder ↔ circuit VCO); the paths differ in timbre and the incoming one starts
+cold, so a hard `set_tier` popped. `Voice::set_tier` now starts a ~10 ms equal-power crossfade
+(`cos/sin` weights — the tiers are largely uncorrelated, so equal-power avoids the mid-fade dip a
+linear blend gives). Each tier owns independent oscillator state — a second polyBLEP `Saw`
+(`osc_hi`) was added so Low and High can render in the same sample during a fade without
+double-advancing one shared phase (which would jump the pitch). The incoming path's cold-start
+transient (VCO 1 ms self-start, ladder warm-up) and any oscillator phase jump sit at weight ≈ 0 at
+fade onset, so the fade doubles as the "settle" — no separate pre-roll needed. `set_tier_immediate`
+sets the initial/persisted tier with no fade (construction, `initialize`, offline renders).
+
+Gate `tests/tier_switch.rs`: for all 4 switch pairs the max per-sample step in the switch window
+stays ≤ 2.5× the steady-state slew (measured ratios Low→High 1.00, High→Ultra 1.44, Low→Ultra 1.00,
+Ultra→Low 0.13 — all comfortably under). `no_alloc::tier_crossfade_hot_path_is_alloc_free` proves
+the dual-path fade (the heaviest hot path, both tiers rendered per sample) stays alloc-free.
+
+**F5.2 — host PDC.** `voice.latency_samples()` is reported to the host via `set_latency_samples`:
+once in `initialize` (persisted tier) and on tier change in `process` (guarded on a stored previous
+value so the host isn't notified every block). Low = 0, High = 2× OS group delay, Ultra = 4× OS
+group delay. `voice::latency_matches_tier_oversampler` locks the contract (Low zero, High > 0,
+Ultra ≥ High).
+
+**Final tier scorecard** (gold op note 57 / 1002 Hz / reso 0.85; cost release, warm-started):
+
+| Tier  | Gate                          | LSD (dB) | corr  | ns/sample | %core@48k |
+|-------|-------------------------------|----------|-------|-----------|-----------|
+| Low   | `voice_esr` (regression guard)| 42.16    | 0.931 | 125       | 0.6 %     |
+| High  | `high_spectral` (LSD≤32, c≥.95)| 28.78   | 0.971 | 6051      | 29 %      |
+| Ultra | `ultra_spectral` (LSD≤5.5, c≥.95)| 4.42  | 0.977 | 24413     | 117 %     |
+
+All tiers ≥ 2× oversampled (Low excepted — TPT is alias-suppressed by design), zero-alloc on the hot
+path, click-free to switch, PDC-reported. `cargo test -p plugin303`: 65 passed, 8 ignored.
+
+**Deferred (optional Ultra headroom):** active VCF stages (T20/T21 readout + Q9 resonance) to clear
+the ~600 Hz corner ceiling + per-note VCO pitch secant — would tighten Ultra's residual 4.4 dB LSD
+and lift High with it. Not required to ship the three-tier axis.

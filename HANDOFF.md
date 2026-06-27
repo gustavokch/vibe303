@@ -1,4 +1,4 @@
-# HANDOFF — 303 Fidelity Tiers, Phase F3 (Ultra diode-ladder VCF)
+# HANDOFF — 303 Fidelity Tiers, F1–F5 COMPLETE (Low / High / Ultra)
 
 **Branch:** `feat/phase2-303-fidelity-tiers` (clean, all work committed; remote
 `gustavokch/vibe303`, base `main`).
@@ -10,8 +10,9 @@ F1-granularity; F4/F5 still outlined.
 > codebase; the project pivoted to the ESR-gated **fidelity-tier** axis). Phase-1 SPICE reference
 > is complete — see the appendix.
 
-**To continue:** F1, F2, F3 + F3-VCO are DONE. Next is **F4 (High)** or the optional Ultra active-
-stage headroom — see Next Steps. Use `superpowers:executing-plans` against the plan above.
+**To continue:** F1, F2, F3 + F3-VCO, **F4 (High)**, and **F5 (tune + ship)** are DONE. The three-
+tier axis is complete, gated, and shippable. Only the **optional Ultra active-stage headroom**
+remains (deferred) — see Next Steps. Use `superpowers:executing-plans` against the plan above.
 
 ---
 
@@ -66,6 +67,26 @@ circuit-VCO saw → VCF; polyBLEP saw can't reach it).
   4.42 dB, corr = 0.977** (budget LSD≤5.5, corr≥0.95). Ultra ships circuit-faithful.
 - F3.6: Ultra-chain no-alloc gate + NaN/bounded sweep guard.
 
+**F4 (High / WDF-lite) — DONE.** High = polyBLEP saw → `LadderVcf` @ 2× OS (skips the costly nodal
+VCO Newton, keeps the nonlinear diode-ladder filter). Sits between Low and Ultra on both axes.
+- F4.1 `voice.rs` — `ladder_hi`+`os2` fields, `Tier::High` path, cutoff/reso fan-out, High latency.
+- F4.2 `tests/high_spectral.rs` — spectral gate **LSD ≤ 32, corr ≥ 0.95** (achieved 28.78 dB /
+  0.971; Low's 42.16 / 0.931 both fail → real discriminator). Welch LSD+corr helpers extracted to
+  `tests/common/mod.rs`; `ultra_spectral.rs` refactored onto it.
+- F4.3 `cost_bench` + no-alloc High gate + design-doc cost table. **High ~4× cheaper than Ultra and
+  RT-viable (29 % of one core); Ultra is 117 % — offline-grade per voice.**
+
+**F5 (tune + ship) — DONE.** Three-tier axis complete, gated, shippable.
+- **OS-switch param dropped (user decision): OS is tier-intrinsic** (High 2×, Ultra 4×), each ladder
+  calibrated to its rate. A global OS param would conflict with per-tier tuning.
+- F5.1 click-free **equal-power crossfade** (~10 ms) on `set_tier`. Each tier owns independent osc
+  state (`osc_hi` Saw added) so Low+High render together during a fade without phase double-advance.
+  `set_tier_immediate` for the initial/persisted selection (no fade). Gate `tests/tier_switch.rs`
+  (switch-window step ≤ 2.5× steady, 4 pairs) + `no_alloc` dual-path crossfade gate.
+- F5.2 host **PDC**: `voice.latency_samples()` reported via `set_latency_samples` in `initialize` +
+  on tier change in `process` (guarded on prev). Low 0 / High 2×OS / Ultra 4×OS delay.
+- `cargo test -p plugin303`: **65 passed, 8 ignored.**
+
 ## What Worked
 
 - **PySpice `.simulator` DOES drive ngspice-46 for `.tran`** (VCO self-starts with ramped rails).
@@ -92,17 +113,16 @@ circuit-VCO saw → VCF; polyBLEP saw can't reach it).
 
 ## Next Steps
 
-F3 + F3-VCO are DONE (Ultra ships under the spectral gate, corr 0.977). Remaining:
+F1–F5 are DONE. The three-tier fidelity axis (Low / High / Ultra) is complete, gated, click-free,
+and PDC-reported. Only optional polish remains:
 
 1. **Ultra headroom (optional, deferred)** — close the residual ~4.4 dB LSD by modeling the
    **active VCF stages** (T20/T21 readout + Q9 resonance) so the corner clears its ~600 Hz ceiling,
    plus a **per-note VCO pitch secant** (this solver runs ~1.4× fast vs ngspice). This is the
-   "expand VCF active stages" path. Only needed if a tighter spectral match is wanted.
-2. **F4 — High (WDF-lite):** cheaper solver over the F3 core (fewer Newton iters; `fast_exp`
-   already in). Spectral budget looser than Ultra; added-error vs Ultra ≤ budget.
-3. **F5 — tune + ship:** all-tier targets, click-free tier switching (settle-then-crossfade),
-   finalize the 2×/4×/8× OS switch param, host PDC (Ultra latency = `voice.latency_samples()`),
-   finish-branch / PR.
+   "expand VCF active stages" path. Only needed if a tighter spectral match is wanted; would lift
+   High with it (shared `LadderVcf` core). 8× OS for Ultra would ride on this work.
+2. **Ship** — finish-branch / PR (in progress), then host-test in a DAW (VST3/CLAP), wire the
+   accent/glide/decay levers (M4/M6, separate axis from fidelity tiers).
 
 **Key gotchas for the next session:**
 - VCF corner has a **~600 Hz structural ceiling** at 48 kHz (passive ladder only) — raising
