@@ -19,6 +19,7 @@ use super::bjt::{Bjt, BjtParams};
 use super::diode::Diode1N4148;
 use super::jfet::Jfet;
 use super::linalg::lu_solve;
+use std::sync::Mutex;
 
 // --- unknown node indices ---------------------------------------------------
 const II: usize = 0;
@@ -60,6 +61,28 @@ const DC_BLOCK_HZ: f32 = 7.6;
 /// Per-iteration node-voltage step limit (damped Newton): bounds the exponential
 /// overshoot that otherwise diverges on this stiff relaxation core.
 const VLIM: f64 = 0.5;
+
+// --- per-note pitch LUT (F6.6) ---------------------------------------------
+/// Refined-CV pitch LUT (secant-calibrated against this solver's realized pitch).
+/// `K` anchors span MIDI `LUT_MIDI_LO`..`+ (K-1)·LUT_MIDI_STEP`; `set_freq` does a
+/// log-frequency lookup + lerp (RT-safe). The `CV_FIT` quadratic alone is ~1.4 %
+/// (worse — ~6 % — at the low end), too coarse for instrument-wide pitch.
+const LUT_K: usize = 17;
+const LUT_MIDI_LO: f64 = 24.0; // C1 ≈ 32.7 Hz
+const LUT_MIDI_STEP: f64 = 3.0; // every 3 semitones → top anchor MIDI 72 (C5 ≈ 523 Hz)
+
+fn lut_midi(i: usize) -> f64 {
+    LUT_MIDI_LO + i as f64 * LUT_MIDI_STEP
+}
+fn midi_hz(m: f64) -> f64 {
+    440.0 * 2.0f64.powf((m - 69.0) / 12.0)
+}
+
+/// Process-global LUT cache keyed by sample rate (`f32` bits). The secant build
+/// renders the VCO many times, so it must NOT run per-`Vco303` (the host's
+/// `reset()` rebuilds the voice). Built once per sr; reused thereafter. Touched
+/// only at construction — never on the audio thread.
+static LUT_CACHE: Mutex<Vec<(u32, [f64; LUT_K])>> = Mutex::new(Vec::new());
 
 /// Add a current `Σ termsⱼ·Vⱼ + constant` *leaving* `node` to the KCL system.
 #[inline]
@@ -139,6 +162,9 @@ pub struct Vco303 {
     dc_y1: f32,
     /// DC-blocker pole, derived from `sr` so the HP corner is rate-invariant.
     dc_r: f32,
+    /// Per-note refined-CV pitch LUT (F6.6), filled from the per-sr cache at
+    /// construction. `set_freq` lerps it — no render, no alloc (RT-safe).
+    cv_lut: [f64; LUT_K],
     /// Diagnostics: Newton iters used + whether the last sample fell to homotopy.
     pub dbg_iters: u32,
     pub dbg_homotopy: bool,
@@ -146,6 +172,14 @@ pub struct Vco303 {
 
 impl Vco303 {
     pub fn new(sr: f32) -> Self {
+        let mut o = Self::raw(sr);
+        o.cv_lut = Self::cv_lut_for(sr);
+        o
+    }
+
+    /// Bare construct with an empty LUT — used both by `new` (before attaching
+    /// the cached LUT) and by the LUT builder's throwaway render instance.
+    fn raw(sr: f32) -> Self {
         Self {
             sr: sr as f64,
             npn: BjtParams::n2n3904(),
@@ -162,9 +196,89 @@ impl Vco303 {
             // ~7.6 Hz HP corner (matches the legacy 0.999 @ 48 kHz) made
             // rate-invariant: r = exp(-2π·f_hp/sr).
             dc_r: (-2.0 * std::f32::consts::PI * DC_BLOCK_HZ / sr).exp(),
+            cv_lut: [0.0; LUT_K],
             dbg_iters: 0,
             dbg_homotopy: false,
         }
+    }
+
+    /// Return the refined-CV LUT for `sr`, building (and caching) it once. The
+    /// build renders a throwaway VCO per anchor (secant), so it is gated behind
+    /// the process-global cache — never repeated per voice / per `reset()`.
+    fn cv_lut_for(sr: f32) -> [f64; LUT_K] {
+        let key = sr.to_bits();
+        if let Ok(cache) = LUT_CACHE.lock() {
+            if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
+                return lut;
+            }
+        }
+        let mut tmp = Self::raw(sr);
+        let mut lut = [0.0; LUT_K];
+        for (i, slot) in lut.iter_mut().enumerate() {
+            *slot = tmp.secant_cv(midi_hz(lut_midi(i)));
+        }
+        if let Ok(mut cache) = LUT_CACHE.lock() {
+            if !cache.iter().any(|(k, _)| *k == key) {
+                cache.push((key, lut));
+            }
+        }
+        lut
+    }
+
+    /// Secant-solve the CV that makes this solver realize `target` Hz. Seeded
+    /// from the `CV_FIT` quadratic, refined to ≲0.1 %. Runs only at LUT build.
+    fn secant_cv(&mut self, target: f64) -> f64 {
+        let mut cv0 = cv_for_freq(target);
+        let mut f0 = self.measure_freq(cv0);
+        let mut cv1 = cv0 + 0.1;
+        let mut f1 = self.measure_freq(cv1);
+        for _ in 0..5 {
+            let denom = f1 - f0;
+            if denom.abs() < 1e-9 {
+                break;
+            }
+            let cv2 = cv1 - (f1 - target) * (cv1 - cv0) / denom;
+            cv0 = cv1;
+            f0 = f1;
+            cv1 = cv2;
+            f1 = self.measure_freq(cv1);
+            if (f1 / target - 1.0).abs() < 1e-3 {
+                break;
+            }
+        }
+        cv1
+    }
+
+    /// Realized fundamental (Hz) at a fixed `cv`, via interpolated rising
+    /// zero-crossings over a steady window. Mutates state; LUT-build only.
+    fn measure_freq(&mut self, cv: f64) -> f64 {
+        self.reset();
+        self.cv = cv;
+        let warm = (self.sr * 0.04) as usize;
+        for _ in 0..warm {
+            self.tick();
+        }
+        let n = (self.sr * 0.2) as usize;
+        let mut prev = self.tick();
+        let (mut first_t, mut last_t, mut count) = (-1.0f64, 0.0f64, 0i64);
+        for i in 0..n {
+            let y = self.tick();
+            if prev < 0.0 && y >= 0.0 {
+                let frac = (-prev as f64) / ((y - prev) as f64);
+                let t = i as f64 + frac;
+                if first_t < 0.0 {
+                    first_t = t;
+                } else {
+                    last_t = t;
+                    count += 1;
+                }
+            }
+            prev = y;
+        }
+        if count == 0 || last_t <= first_t {
+            return 0.0;
+        }
+        count as f64 * self.sr / (last_t - first_t)
     }
 
     /// Raw converged node voltages (diagnostics).
@@ -172,10 +286,24 @@ impl Vco303 {
         self.v[i]
     }
 
-    /// Set pitch via the measured CV calibration (`voice_ref_spice._VCO_CAL`,
-    /// quadratic `cv = poly(log2 f)`). A seed; V5 refines to match SPICE pitch.
+    /// Set pitch from the refined-CV LUT (F6.6): log-frequency lookup + linear
+    /// interpolation between anchors. RT-safe — no render, no alloc. Outside the
+    /// LUT span it clamps to the end anchors (the quadratic `CV_FIT` seed still
+    /// underlies the build, so the edges degrade gracefully).
     pub fn set_freq(&mut self, hz: f32) {
-        self.cv = cv_for_freq(hz as f64);
+        let f = (hz as f64).max(1.0);
+        // Anchor frequencies are log-uniform (equal MIDI steps), so position in
+        // semitones maps linearly to the LUT index.
+        let midi = 69.0 + 12.0 * (f / 440.0).log2();
+        let pos = (midi - LUT_MIDI_LO) / LUT_MIDI_STEP;
+        let pos = pos.clamp(0.0, (LUT_K - 1) as f64);
+        let i = pos.floor() as usize;
+        self.cv = if i >= LUT_K - 1 {
+            self.cv_lut[LUT_K - 1]
+        } else {
+            let frac = pos - i as f64;
+            self.cv_lut[i] * (1.0 - frac) + self.cv_lut[i + 1] * frac
+        };
     }
 
     /// Raw control voltage (diagnostics / calibration).
