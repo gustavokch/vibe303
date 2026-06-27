@@ -7,6 +7,7 @@ use super::ladder::TptLadder;
 use super::ladder_wdf::LadderVcf;
 use super::osc::Saw;
 use super::oversample::Os4x;
+use super::vco::Vco303;
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
 pub fn midi_to_freq(note: u8) -> f32 {
@@ -16,8 +17,13 @@ pub fn midi_to_freq(note: u8) -> f32 {
 /// Ultra-tier oversampling factor (nodal ladder runs at `OS_FACTOR × sr`).
 pub const ULTRA_OS_FACTOR: f32 = 4.0;
 
+/// Level trim to bring the DC-blocked VCO saw to ~unit (polyBLEP-saw) amplitude.
+const VCO_GAIN: f32 = 2.0;
+
 pub struct Voice {
     osc: Saw,
+    /// Ultra-tier nodal circuit VCO (replaces the polyBLEP saw for Ultra only).
+    vco: Vco303,
     filter: TptLadder,
     /// Ultra-tier nodal diode-ladder, preallocated, run inside `os`.
     ladder: LadderVcf,
@@ -31,6 +37,7 @@ impl Voice {
     pub fn new(sr: f32) -> Self {
         Self {
             osc: Saw::new(),
+            vco: Vco303::new(sr),
             filter: TptLadder::new(sr),
             ladder: LadderVcf::new(sr * ULTRA_OS_FACTOR),
             os: Os4x::new(),
@@ -57,7 +64,9 @@ impl Voice {
     }
 
     pub fn note_on(&mut self, note: u8) {
-        self.osc.set_freq(midi_to_freq(note), self.sr);
+        let f = midi_to_freq(note);
+        self.osc.set_freq(f, self.sr);
+        self.vco.set_freq(f);
         self.env.trigger();
     }
 
@@ -75,12 +84,12 @@ impl Voice {
     }
 
     pub fn tick(&mut self) -> f32 {
-        let s = self.osc.tick();
         let f = match self.tier {
             // F4: High gets the cheaper WDF-lite solver; on TPT for now.
-            Tier::Low | Tier::High => self.filter.tick(s),
-            // Ultra: nodal diode-ladder at 4× oversample.
+            Tier::Low | Tier::High => self.filter.tick(self.osc.tick()),
+            // Ultra: circuit VCO saw → nodal diode-ladder at 4× oversample.
             Tier::Ultra => {
+                let s = self.vco.tick() * VCO_GAIN;
                 let hi = self.os.up(s);
                 let o = [
                     self.ladder.tick(hi[0]),

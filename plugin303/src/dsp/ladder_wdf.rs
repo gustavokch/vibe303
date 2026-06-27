@@ -67,6 +67,13 @@ const GMIN_BASE: f64 = 1e-12;
 /// gold is an F3.5 task; F3.3 only needs the corner to *track* the bias and the
 /// stopband to be four-pole.
 const C_REF: f64 = 3.3e-8;
+/// Bias scale for the cutoff→corner map. **Structural limit found in V4:** raising
+/// CAL lifts the corner only until it saturates at a ~600 Hz ceiling (at 48 kHz)
+/// and breaks bias-tracking — the simplified differential ladder (no active T20/
+/// T21/Q9 stages) cannot reach the audio cutoffs the real vcf303 hits. Kept at 1.0
+/// (physical bias, F3.3 tracking + slope green). See `corner_vs_cutoff` diagnostic
+/// and the V4 finding in the design doc. Closing this needs the active stages.
+const CAL: f64 = 1.0;
 
 /// Solve `A·x = b` by dense LU with partial pivoting on the stack. Returns
 /// `None` if the matrix is singular. Zero-alloc.
@@ -284,7 +291,7 @@ impl Filter303 for LadderVcf {
     fn set_cutoff(&mut self, hz: f32) {
         // I_tail = nVt · 2π · fc · C_ref ⇒ r_d = nVt/I ⇒ corner ∝ fc.
         let fc = hz.max(1.0) as f64;
-        self.i0 = self.diode.n_vt * TAU * fc * C_REF;
+        self.i0 = self.diode.n_vt * TAU * fc * C_REF * CAL;
     }
 
     fn set_reso(&mut self, r: f32) {
@@ -324,6 +331,17 @@ mod tests {
             }
         }
         ((sout_e / sin_e).sqrt()) as f32
+    }
+
+    #[test]
+    #[ignore = "diagnostic: detected corner vs cutoff setting at current CAL"]
+    fn corner_vs_cutoff() {
+        let mut f = LadderVcf::new(48_000.0);
+        println!("CAL={CAL}");
+        for &fc in &[250.0f32, 500.0, 1000.0, 2000.0, 4000.0] {
+            let c = corner(&mut f, fc);
+            println!("  set {fc:7.0} -> corner {c:8.1}  (x{:.2})", c / fc);
+        }
     }
 
     /// −3 dB corner via geometric bisection (lowpass gain is monotone).

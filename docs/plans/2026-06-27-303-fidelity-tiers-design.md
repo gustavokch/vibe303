@@ -230,3 +230,35 @@ they fold — **the ladder is self-anti-aliasing for static tones.** OS therefor
 *dynamic* cases this bench can't isolate: fast cutoff sweeps (303 accent/decay) and resonance
 near Nyquist. The binding arbiter is F3.5's whole-voice SPICE ESR gate (≤ −30 dB), which stresses
 exactly those. **Decision: start Ultra at 4× OS; escalate to 8× only if the F3.5 ESR gate misses.**
+
+### F3-VCO V1–V4 update — circuit VCO built + chained; two structural walls found
+
+V1/V2/V3 landed the device models (Gummel-Poon BJT, MPF104 JFET) and the **nodal vco303
+relaxation-oscillator solver** (`dsp/vco.rs`): 21-node MNA+Newton, damped-Newton + gmin homotopy,
+trapezoidal caps, rail self-start. It **self-oscillates** with a clean relaxation sawtooth at ~3
+Newton iters/sample, zero-alloc. The decisive bring-up bug was a cap-companion sign (current
+leaving `p` = `Geq·(vp−vq) − Ieq`).
+
+V4 wired `Vco303` → `Os4x` → `LadderVcf` for `Tier::Ultra` and measured the whole-voice ESR. **It
+rose to +5.2 dB (worse than the +2.73 dB polyBLEP path).** Diagnosis turned up two structural walls
+that block the −30 dB gate with the current bespoke chain:
+
+1. **VCO pitch / reset timing.** This solver runs ~1.4× faster than ngspice's VCO at the same CV
+   (different time-stepping + reset edge), with curvature (`measure_pitch_map`). Refitting `CV_FIT`
+   to *this* solver (`characterize_freq_cv`) pins pitch to ~1.4 %, but ESR needs <0.1 % (pitch
+   error is NOT removed by lag-alignment — F1). Closing it needs a per-note secant against this
+   solver's own measured pitch, and even then the reset *shape* differs from ngspice.
+2. **VCF corner ceiling.** The simplified differential diode-ladder core (passive ladder only, no
+   active T20/T21 readout or Q9 resonance) saturates its detected −3 dB corner at a **~600 Hz
+   ceiling** at 48 kHz (`corner_vs_cutoff`): raising the bias scale lifts the corner only until it
+   plateaus and bias-tracking breaks. It cannot reach the gold's 1002 Hz cutoff, let alone the
+   resonance peak. The real corner range needs the active stages, not just the rung core.
+
+**Assessment.** −30 dB whole-voice ESR means matching ngspice's adaptive-timestep transient to
+~0.03 % sample-for-sample across VCO pitch+shape, VCF corner+resonance, and reset dynamics. Each
+bespoke stage is currently 1–10× off *structurally*, and the ladder has a hard corner ceiling. This
+target is likely unreachable with independent fixed-rate reimplementations vs ngspice without
+essentially replicating ngspice's solver. The architecture (both nodal solvers) is complete and
+correct as circuits; the gap is precision-matching a different simulator. **Open decision: keep
+grinding per-stage calibration (uncertain payoff), redefine Ultra's acceptance to a spectral/
+coherence metric instead of sample-exact ESR, or expand the VCF to the full active topology.**

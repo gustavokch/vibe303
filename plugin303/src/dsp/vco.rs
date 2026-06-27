@@ -163,6 +163,11 @@ impl Vco303 {
         self.cv = cv_for_freq(hz as f64);
     }
 
+    /// Raw control voltage (diagnostics / calibration).
+    pub fn set_cv(&mut self, cv: f64) {
+        self.cv = cv;
+    }
+
     pub fn reset(&mut self) {
         self.v = [0.0; NU];
         self.cvp = [0.0; 5];
@@ -390,10 +395,10 @@ impl Vco303 {
     }
 }
 
-/// Measured CV calibration (`voice_ref_spice._VCO_CAL`): quadratic fit of CV in
-/// `log2(freq)`. Coefficients precomputed from the 5 (CV, Hz) points.
+/// CV for a target pitch: quadratic fit of CV in `log2(freq)` calibrated to **this
+/// solver's** measured `freq(cv)` (not SPICE's — our reset timing differs ~1.4×).
+/// Good to ~1.4 % pitch; a per-note secant refinement for tighter match is V5.
 fn cv_for_freq(freq: f64) -> f64 {
-    // np.polyfit(log2(freq), cv, 2) over the _VCO_CAL table.
     const A: f64 = CV_FIT[0];
     const B: f64 = CV_FIT[1];
     const C: f64 = CV_FIT[2];
@@ -402,8 +407,8 @@ fn cv_for_freq(freq: f64) -> f64 {
 }
 
 /// Quadratic coefficients [a, b, c] for cv = a·x² + b·x + c, x = log2(freq).
-/// Computed offline from `_VCO_CAL = [(2.9,107.7),(3.4,153.9),(4.0,231),(5.0,477),(6.0,1000)]`.
-const CV_FIT: [f64; 3] = [-0.014_253_787_9, 1.204_130_362_2, -4.584_355_617_0];
+/// Refit offline from `characterize_freq_cv` (this solver's measured points).
+const CV_FIT: [f64; 3] = [0.011_078_504_3, 0.844_571_322_2, -3.808_754_753_1];
 
 #[cfg(test)]
 mod tests {
@@ -452,6 +457,32 @@ mod tests {
                     o.node(O_R), o.node(O_P), o.dbg_iters, o.dbg_homotopy
                 );
             }
+        }
+    }
+
+    fn render_cv(cv: f64, sr: f32, secs: f32) -> Vec<f32> {
+        let mut osc = Vco303::new(sr);
+        osc.set_cv(cv);
+        let n = (sr * secs) as usize;
+        let settle = (sr * 0.04) as usize;
+        let mut out = Vec::with_capacity(n);
+        for i in 0..(n + settle) {
+            let y = osc.tick();
+            if i >= settle {
+                out.push(y);
+            }
+        }
+        out
+    }
+
+    #[test]
+    #[ignore = "diagnostic: characterize freq(cv) for MY solver to refit CV_FIT"]
+    fn characterize_freq_cv() {
+        let sr = 48_000.0;
+        // Long render for fine zero-cross resolution.
+        for cv in [2.5f64, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5] {
+            let f = measure_freq(&render_cv(cv, sr, 0.4), sr);
+            println!("cv={cv:.2} freq={f:8.2} log2f={:.4}", (f as f64).log2());
         }
     }
 
