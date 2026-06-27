@@ -1,3 +1,4 @@
+pub mod adaa;
 pub mod env;
 pub mod filter;
 pub mod ladder;
