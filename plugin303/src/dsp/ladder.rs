@@ -10,6 +10,16 @@ pub struct TptLadder {
     sr: f32,
 }
 
+/// Integrator-state headroom. Soft-clip is linear for `|x| << HEADROOM` so
+/// small-signal AC response (the vcf303 fit) is untouched, and saturates near
+/// the rails for self-osc / overdrive.
+const HEADROOM: f32 = 8.0;
+
+/// Soft-clip: `H*tanh(x/H)` — `~x` near 0, asymptotic to `±H`.
+fn sat(x: f32) -> f32 {
+    HEADROOM * (x / HEADROOM).tanh()
+}
+
 impl TptLadder {
     pub fn new(sr: f32) -> Self {
         let mut s = Self { g: 0.0, k: 0.0, z: [0.0; 4], sr };
@@ -45,14 +55,17 @@ impl TptLadder {
         let u = x - self.k * y4;
 
         // Forward pass: advance every integrator state with the resolved input.
+        // Each stage's integrator state is soft-clipped (per-stage tanh): linear
+        // for |state| << HEADROOM, asymptotic to ±HEADROOM — the diode-ladder
+        // squelch and the bound that keeps self-oscillation finite.
         let mut v = u;
         for z in self.z.iter_mut() {
             let hp = (v - *z) * a; // = g*(in - state)/(1+g)
             let lp = hp + *z;
-            *z = lp + hp;
+            *z = sat(lp + hp);
             v = lp;
         }
-        v // v == y4 (the 4-pole tap)
+        v // v ~= y4 (the 4-pole tap)
     }
 }
 
@@ -61,11 +74,15 @@ mod tests {
     use super::*;
 
     fn rms(f: &mut TptLadder, freq: f32, sr: f32) -> f32 {
+        rms_amp(f, freq, sr, 1.0)
+    }
+
+    fn rms_amp(f: &mut TptLadder, freq: f32, sr: f32, amp: f32) -> f32 {
         let mut acc = 0.0f32;
         let n = 20_000;
         let mut ph = 0.0f32;
         for _ in 0..n {
-            let x = (2.0 * std::f32::consts::PI * ph).sin();
+            let x = amp * (2.0 * std::f32::consts::PI * ph).sin();
             let y = f.tick(x);
             acc += y * y;
             ph += freq / sr;
@@ -106,6 +123,24 @@ mod tests {
         assert!(
             g_reso > g_flat * 2.0,
             "resonance did not peak at cutoff: flat={g_flat}, reso={g_reso}"
+        );
+    }
+
+    #[test]
+    fn saturation_compresses_large_signals() {
+        let sr = 48_000.0;
+        let f0 = 100.0; // passband, gain ~1 so the stage drive tracks input amplitude
+        // Small-signal gain (effectively linear).
+        let mut small = TptLadder::new(sr);
+        small.set_cutoff(1_000.0);
+        let g_small = rms_amp(&mut small, f0, sr, 0.05) / 0.05;
+        // Large-signal gain: per-stage tanh saturates, so gain drops.
+        let mut large = TptLadder::new(sr);
+        large.set_cutoff(1_000.0);
+        let g_large = rms_amp(&mut large, f0, sr, 40.0) / 40.0;
+        assert!(
+            g_large < 0.8 * g_small,
+            "no saturation: g_small={g_small}, g_large={g_large}"
         );
     }
 }
