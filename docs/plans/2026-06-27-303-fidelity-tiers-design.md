@@ -378,3 +378,69 @@ path, click-free to switch, PDC-reported. `cargo test -p plugin303`: 65 passed, 
 **Deferred (optional Ultra headroom):** active VCF stages (T20/T21 readout + Q9 resonance) to clear
 the ~600 Hz corner ceiling + per-note VCO pitch secant — would tighten Ultra's residual 4.4 dB LSD
 and lift High with it. Not required to ship the three-tier axis.
+
+### F6 — Ultra active-stage headroom: Q9 resonance + corner clear + VCO pitch (DONE)
+
+Closed most of Ultra's residual ~4.4 dB LSD by modelling the vcf303's **active** stages — the
+inverting Q9 resonance feedback (the real "cutoff"/resonance mechanism, VCF_MAP §11) — plus a
+per-note VCO pitch secant.
+
+**F6.1 — ngspice resonance fixture.** `eval/303/vcf303_reso_gold.json` (gen `gen_reso_gold.py`,
+gate `test_reso_gold.py`): peak frequency vs bias at the Rreso≈47 k Q optimum —
+532 Hz @16 µA → 1002 @32 → 1683 @64 → 2668 @128. This is the F6.3 target.
+
+**F6.2 — input split.** `LadderVcf` grew two input nodes `IN_L`/`IN_R` (the T38 pair's bases),
+`N` 10→12. The differential drive is now a VCCS controlled by `(v[IN_L] − v[IN_R])` into the bottom
+rails; with `IN_R` grounded it reproduces the prior scalar-`vin` Norton to machine precision
+(behavior-preserving guard `input_split_is_behavior_preserving`, corner held at ~98 Hz).
+
+**F6.3 — inverting AC-coupled Q9 feedback into `in_r`, solved IN-LOOP (zero delay).** Output diff
+`tl−tr` → DC-block (one-pole high-pass, corner `RESO_HP_HZ`=2 Hz ≪ fc) → inverting gain → `in_r`.
+Because Q9 inverts and injects the *other* diff input, the loop is −ve at DC (flat, stable) and +ve
+near fc once the ladder's phase lag rotates the sign — the §11 mechanism. The feedback is stamped
+**inside** the Newton solve (`v[IN_R] = kfb·(v[TL]−v[TR]) + cfb`, with `cfb` the DC-block term from
+the previous sample), so the peak regenerates near fc exactly as ngspice does, replacing the old
+1-sample-delayed `k_reso·out_prev` hack.
+
+  *Convergence (the plan's stop-and-ask):* Q9 is modelled **linear** (class-A, constant gain), so
+  the feedback is a *linear matrix augmentation* — Newton still only iterates the diode
+  nonlinearity. This is NOT a nonlinear algebraic loop; it converges cleanly and, above the
+  calibrated gain, **self-limits gracefully** (collapses to the DC pole via the homotopy hold — no
+  NaN, no divergence), mirroring the stock 303's non-self-oscillating loop. The delayed-feedback
+  fallback was therefore not needed; `N` stayed at 12 (the plan's FB/coupling nodes folded into the
+  reused `IN_R` + a per-sample DC-block state — cheaper LU, better conditioning).
+
+  *Calibration vs ground truth:* `RESO_GAIN=12` (sign **positive** — verified empirically against
+  the fixture, the opposite of the naive derivation). Resulting peak vs the §11 gold: set fc
+  500/1000/2000 → 514/951/1757 Hz vs 532/1002/1683 (~5 %). Gate `tests/vcf_resonance.rs` (peak
+  tracks fc; gain rises with reso) + `reso_calibration` diagnostic.
+
+**F6.4 — corner clears the ~600 Hz ceiling.** With the active resonance the *audible* corner = the
+resonance peak, which tracks fc into the kHz range (gate `corner_clears_600hz_ceiling`), clearing
+the passive ladder's structural ceiling (V4) without raising the bias. Level is set by a unity-DC
+`out_gain` normalisation (`LADDER_DC_GAIN`) + the `tier_levels.rs` parity gate; no high-pass readout
+was added — the power-normalised spectral gates are level-blind, and a readout HP only brightens
+(the wrong direction for the LSD).
+
+**F6.5 — brightness retune.** The active resonance over-brightens unless the corner bias is lowered,
+so per-tier VCF brightness was re-tuned: **Ultra 0.70, High 0.50** (`brightness_sweep`/
+`high_brightness_sweep` diagnostics). RESO_GAIN=14 reached LSD 2.70 but sat at the resonance-collapse
+edge (fragile across rate/param); 12 (LSD 3.87) was kept for stability margin.
+
+**F6.6 — per-note VCO pitch LUT.** `Vco303::set_freq` now lerps a refined-CV LUT (17 anchors, MIDI
+24–72) secant-calibrated at construction against the solver's *own* realized pitch — replacing the
+~1.4 % (−6 % at the low end) `CV_FIT` quadratic. Lookup is alloc-free (RT-safe); the expensive build
+is gated behind a process-global per-sr cache (`LUT_CACHE`) so it runs once per sample rate, not per
+voice / per `reset()`. Gate `tests/vco_pitch.rs`: within 0.3 % at 110/220/440 Hz.
+
+**Before → after (gold op note 57 / 1002 Hz / reso 0.85):**
+
+| Tier  | LSD before | LSD after | corr after | budget | ns/sample | %core@48k |
+|-------|-----------:|----------:|-----------:|-------:|----------:|----------:|
+| High  | 28.78      | **28.35** | 0.964      | ≤29    | 8714      | 41.8 %    |
+| Ultra | 4.42       | **3.87**  | 0.979      | ≤4.0   | 30737     | 147.5 %   |
+
+Cost rose with `N` 10→12 (O(N³) LU) + the in-loop Q9 stamps: High 29→42 % (still RT-viable, <1
+core), Ultra 117→147 % (further offline-grade — it was already offline per F4). No tier silently
+degraded; the active stages ship on both High and Ultra (shared `LadderVcf`). Resonance tracks the
+ngspice fixture to ~5 %. Full suite green incl. no-alloc, stability, tier-switch, PDC.

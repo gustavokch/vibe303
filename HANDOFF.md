@@ -1,4 +1,4 @@
-# HANDOFF — 303 Fidelity Tiers, F1–F5 COMPLETE (Low / High / Ultra)
+# HANDOFF — 303 Fidelity Tiers, F1–F6 COMPLETE (Low / High / Ultra)
 
 **Branch:** `feat/phase2-303-fidelity-tiers` (clean, all work committed; remote
 `gustavokch/vibe303`, base `main`).
@@ -10,9 +10,10 @@ F1-granularity; F4/F5 still outlined.
 > codebase; the project pivoted to the ESR-gated **fidelity-tier** axis). Phase-1 SPICE reference
 > is complete — see the appendix.
 
-**To continue:** F1, F2, F3 + F3-VCO, **F4 (High)**, and **F5 (tune + ship)** are DONE. The three-
-tier axis is complete, gated, and shippable. Only the **optional Ultra active-stage headroom**
-remains (deferred) — see Next Steps. Use `superpowers:executing-plans` against the plan above.
+**To continue:** F1, F2, F3 + F3-VCO, **F4 (High)**, **F5 (tune + ship)**, and **F6 (Ultra active-
+stage headroom)** are DONE. The three-tier axis is complete, gated, shippable, and the active Q9
+resonance + per-note VCO pitch now ship on High/Ultra. Only the manual **DAW smoke-test (F6.9)** and
+the separate accent/glide/decay levers remain — see Next Steps. Use `superpowers:executing-plans`.
 
 ---
 
@@ -87,6 +88,24 @@ VCO Newton, keeps the nonlinear diode-ladder filter). Sits between Low and Ultra
   on tier change in `process` (guarded on prev). Low 0 / High 2×OS / Ultra 4×OS delay.
 - `cargo test -p plugin303`: **65 passed, 8 ignored.**
 
+**F6 (Ultra active-stage headroom) — DONE.** Modeled the active VCF stages so the corner clears its
+ceiling and the resonance tracks fc; closed most of Ultra's residual LSD.
+- F6.1 `eval/303/vcf303_reso_gold.json` (+`gen_reso_gold.py`/`test_reso_gold.py`) — ngspice reso
+  peak-freq fixture (532→1002→1683→2668 Hz @ 16/32/64/128 µA, Rreso≈47 k).
+- F6.2 `LadderVcf` input split into `IN_L`/`IN_R` (N 10→12); VCCS drive, behavior-preserving.
+- F6.3 **inverting AC-coupled Q9 feedback into `in_r`, solved IN-LOOP** (zero delay) — the §11
+  mechanism. Q9 modeled linear ⇒ a linear matrix stamp, NOT a nonlinear algebraic loop: converges
+  cleanly, self-limits gracefully above the calibrated gain (no divergence — the delayed-feedback
+  fallback was NOT needed). `RESO_GAIN=12` (sign +ve, verified vs fixture); peak tracks fixture ~5 %.
+  Gate `tests/vcf_resonance.rs`. Dropped the old `k_reso·out_prev` hack.
+- F6.4 corner clears ~600 Hz ceiling via the resonance peak (`corner_clears_600hz_ceiling`); unity-DC
+  `out_gain` level fix + `tier_levels.rs` parity gate (no readout HP — it would only brighten).
+- F6.5 per-tier brightness retune (Ultra 0.70 / High 0.50); budgets tightened (Ultra 5.5→4.0,
+  High 32→29). **Ultra LSD 4.42→3.87, High 28.78→28.35.**
+- F6.6 `Vco303` per-note pitch LUT (secant vs solver, MIDI 24–72, process-global per-sr cache;
+  alloc-free `set_freq`). Gate `tests/vco_pitch.rs`: <0.3 % at 110/220/440 (was −6 % at 110).
+- **Cost:** High 29→42 % core, Ultra 117→147 % core (N 10→12 + in-loop Q9; Ultra further offline).
+
 ## What Worked
 
 - **PySpice `.simulator` DOES drive ngspice-46 for `.tran`** (VCO self-starts with ramped rails).
@@ -113,16 +132,18 @@ VCO Newton, keeps the nonlinear diode-ladder filter). Sits between Low and Ultra
 
 ## Next Steps
 
-F1–F5 are DONE. The three-tier fidelity axis (Low / High / Ultra) is complete, gated, click-free,
-and PDC-reported. Only optional polish remains:
+F1–F6 are DONE. The three-tier fidelity axis (Low / High / Ultra) is complete, gated, click-free,
+PDC-reported, and now carries the active Q9 resonance + per-note VCO pitch. Remaining:
 
-1. **Ultra headroom (optional, deferred)** — close the residual ~4.4 dB LSD by modeling the
-   **active VCF stages** (T20/T21 readout + Q9 resonance) so the corner clears its ~600 Hz ceiling,
-   plus a **per-note VCO pitch secant** (this solver runs ~1.4× fast vs ngspice). This is the
-   "expand VCF active stages" path. Only needed if a tighter spectral match is wanted; would lift
-   High with it (shared `LadderVcf` core). 8× OS for Ultra would ride on this work.
-2. **Ship** — finish-branch / PR (in progress), then host-test in a DAW (VST3/CLAP), wire the
-   accent/glide/decay levers (M4/M6, separate axis from fidelity tiers).
+1. **F6.9 DAW smoke-test (manual)** — `docs/DAW_SMOKE_TEST.md` checklist; load the VST3/CLAP bundle
+   in a host and run it by ear (tier switch click-free, cutoff/reso sweeps, PDC, A/B vs the gold).
+   The only non-TDD task; produce the artifacts, the listening is human-in-the-loop.
+2. **Ship** — finish-branch / PR, then wire the accent/glide/decay levers (M4/M6, a separate axis
+   from the fidelity tiers).
+
+**Note on Ultra cost:** Ultra is now ~147 % of one core (offline-grade per voice); High is ~42 %
+(RT-viable). If Ultra-at-RT is ever required, the active stages could ship **High-only** with Ultra
+kept as the offline reference — the number is documented, not silently degraded.
 
 **Key gotchas for the next session:**
 - VCF corner has a **~600 Hz structural ceiling** at 48 kHz (passive ladder only) — raising
