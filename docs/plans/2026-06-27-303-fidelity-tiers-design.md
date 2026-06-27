@@ -147,3 +147,59 @@ sweeps — the operating points that exercise the nonlinear ladder.
   but don't eliminate convergence risk. F1 proves the reference pipeline before any tier work.
 - **TPT Low may not reach −12 dB** — if calibration plateaus high, Low's target is revised from
   measured F1 data rather than asserted up front.
+
+---
+
+## F1 Findings (measured 2026-06-27)
+
+Harness: `eval/303/compare_voice.py` — chained-deck SPICE reference (`voice_ref_spice.py`,
+vco303 `.tran` → vcf303 `.tran` → linear AD VCA) vs the Rust Low/TPT voice (`render303`),
+RMS-normalised and lag-aligned ESR (BA283). Baseline JSON: `eval/303/voice_esr_baseline.json`.
+
+### The gap (current Low/TPT voice)
+
+| metric        | value                              |
+|---------------|------------------------------------|
+| ESR mean      | **+2.29 dB**                       |
+| ESR worst     | **+2.79 dB** (A3, bright/open)     |
+| NRMSE         | 0.45 – 0.52                        |
+
+Positive ESR ⇒ error energy *exceeds* signal energy: after RMS-norm + lag-align, ref and voice
+are near-uncorrelated (ESR ≈ 2(1−corr) ⇒ corr ≈ 0.27). Expected — cutoff/reso are unwired in
+the voice (every corner renders the same fixed-cutoff TPT voice) and TPT ≠ diode ladder. This is
+the floor every tier improves on.
+
+> Note: plan's "note 57 ≈ 110 Hz (A2)" was off by an octave; Rust `midi_to_freq(57)` = 220 Hz.
+> The reference is pitched to the Rust voice via a secant CV solve, else the ESR is meaningless.
+> Op-points are notes 45/57/69 × {mid 32 µA/47 k, bright 128 µA/open}; accent omitted (not on
+> either side until F2/F4).
+
+### Aliasing contribution
+
+Isolated by rendering the whole voice at 8× (384 kHz) and AA-decimating back to 48 kHz, then ESR
+vs the native 48 kHz render (`/tmp/alias.py` probe):
+
+| note | aliasing ESR | nrmse  |
+|------|--------------|--------|
+| A1 (45) | −10.1 dB  | 0.065  |
+| A2 (57) | −11.7 dB  | 0.053  |
+| A3 (69) | −15.4 dB  | 0.034  |
+
+The native voice already aliases at **−10 dB worst** (low notes, dense harmonics) — and that is
+the *linear* path (polyBLEP saw + TPT ladder, no nonlinearity). The WDF diode ladder is a hard
+nonlinearity that will generate far more out-of-band energy.
+
+### Decision: F3 ADAA vs OS
+
+Aliasing is the dominant non-topology error and sits an order of magnitude above the Ultra
+−30 dB target. Conclusions:
+
+1. **Oversampling is mandatory for Ultra regardless of topology** — 2× is insufficient; the
+   linear path alone aliases at −10 dB. Implement **≥4× OS** as the Ultra baseline.
+2. **ADAA on the diode nonlinearity, not as an OS substitute.** Pair **1st-order ADAA** on the
+   diode pair *with* 4× OS for F3.1/F3.2; bench **2nd-order ADAA @ 2×** as the cheaper candidate
+   (F3.2 keeps the loser behind a bench). The F1 numbers say OS carries the alias budget and ADAA
+   trims the residual — not either/or.
+3. **Low/TPT target revised from data:** at +2.3 dB ESR the original −12 dB Low goal is
+   unreachable by calibration alone. Once F2 wires cutoff/reso and 2× OS, re-measure; set Low's
+   gate to the *post-F2* number, not −12 dB asserted up front.
