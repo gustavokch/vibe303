@@ -1,0 +1,58 @@
+{
+  "_source": "eval/303/compare_voice.py (F1.4); SPICE chained decks vs Rust Low/TPT voice",
+  "_method": "RMS-normalised, lag-aligned ESR (BA283); cutoff/reso unwired in voice (F1)",
+  "sr": 48000.0,
+  "secs": 0.2,
+  "esr_db_mean": 2.2927965421893806,
+  "esr_db_worst": 2.7916473528458985,
+  "op_points": {
+    "A1_mid": {
+      "note": 45,
+      "cutoff_itail": 3.2e-05,
+      "rreso": 47000.0,
+      "esr_db": 2.0909156846933747,
+      "nrmse": 0.4507935349854533,
+      "lag": -98
+    },
+    "A1_bright_open": {
+      "note": 45,
+      "cutoff_itail": 0.000128,
+      "rreso": 1000000000000.0,
+      "esr_db": 1.949113607011391,
+      "nrmse": 0.4424006280345012,
+      "lag": -75
+    },
+    "A2_mid": {
+      "note": 57,
+      "cutoff_itail": 3.2e-05,
+      "rreso": 47000.0,
+      "esr_db": 2.0503796972622554,
+      "nrmse": 0.4354165311362909,
+      "lag": 203
+    },
+    "A2_bright_open": {
+      "note": 57,
+      "cutoff_itail": 0.000128,
+      "rreso": 1000000000000.0,
+      "esr_db": 2.4865689633772896,
+      "nrmse": 0.4844054650658501,
+      "lag": 202
+    },
+    "A3_mid": {
+      "note": 69,
+      "cutoff_itail": 3.2e-05,
+      "rreso": 47000.0,
+      "esr_db": 2.388153947946073,
+      "nrmse": 0.4666001863729599,
+      "lag": 241
+    },
+    "A3_bright_open": {
+      "note": 69,
+      "cutoff_itail": 0.000128,
+      "rreso": 1000000000000.0,
+      "esr_db": 2.7916473528458985,
+      "nrmse": 0.5192941030995579,
+      "lag": 236
+    }
+  }
+}
