@@ -28,8 +28,8 @@ advanced ADSR.
 
 ## Current progress (Phase 2)
 
-**M1 walking skeleton — IN PROGRESS on `feat/phase2-303-m1`.** Each task TDD (red→green),
-committed separately.
+**M1 walking skeleton — COMPLETE on `feat/phase2-303-m1`.** Each task TDD (red→green),
+committed separately. Next: finish the branch (PR/merge) → M2.
 
 - ✅ **M1.1 (9e7094c)** — `plugin303` workspace crate. Silent nih-plug synth: output-only
   IO layout, `MidiConfig::Basic`, Vst3/Clap exports, empty `Plugin303Params`. `cargo build
@@ -39,11 +39,17 @@ committed separately.
 - ✅ **M1.3 (d97eaed)** — `plugin303/src/dsp/ladder.rs` `TptLadder`: linear 4-pole TPT
   (4 cascaded 1-pole stages, sin/tan-coeff `g`; resonance/tanh/tap come in M2). 1 test
   (passband>0.6 / stopband<0.05).
-- ⏳ **M1.4–M1.7 remaining:** AD envelope (`dsp/env.rs`), `voice.rs` wiring
-  (osc→ladder→VCA + MIDI pitch), plugin `process()` rendering from NoteEvents,
-  assert_no_alloc gate (`tests/no_alloc.rs`).
+- ✅ **M1.4 (d7f205b)** — `plugin303/src/dsp/env.rs` `AdEnv`: gate-triggered attack-decay,
+  linear ramps, Idle/Attack/Decay state machine (exp decay + accent in M4). 3 tests.
+- ✅ **M1.5 (7e667ba)** — `plugin303/src/dsp/voice.rs` `Voice`: osc(Saw)→TptLadder→VCA(AdEnv);
+  `note_on` maps equal-tempered MIDI→Hz (A4=69=440) + triggers env. 3 tests.
+- ✅ **M1.6 (85eb7d8)** — `process()` holds a `Voice`; `initialize()` builds at
+  `cfg.sample_rate`, `reset()` clears tail; drains `NoteEvents` sample-accurately
+  (`NoteOn`→`note_on`), writes mono voice to all channels. Note now audible in a host.
+- ✅ **M1.7 (f0f98d3)** — `plugin303/tests/no_alloc.rs`: `AllocDisabler` gate asserts the
+  `voice.tick` 4096-sample hot path allocates 0× (`dsp` made `pub` for the test).
 
-**Full plugin303 test suite: 3 passed.**
+**Full plugin303 test suite: 10 passed (3 suites).**
 
 **Phase 1 — COMPLETE (reference, see appendix + `eval/303/VCF_MAP.md`).** VCO core
 oscillates + 1 V/oct (ngspice); VCF = 4-pole LP + bias-tracking cutoff + fc-tracking
