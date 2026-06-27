@@ -9,6 +9,7 @@ use assert_no_alloc::*;
 use plugin303::dsp::filter::Filter303;
 use plugin303::dsp::ladder_wdf::LadderVcf;
 use plugin303::dsp::oversample::Os4x;
+use plugin303::dsp::vco::Vco303;
 use plugin303::dsp::voice::Voice;
 
 #[global_allocator]
@@ -46,6 +47,24 @@ fn ladder_vcf_hot_path_is_alloc_free() {
         core::hint::black_box(acc);
     });
     assert_eq!(violation_count(), 0, "LadderVcf::tick allocated on the audio path");
+}
+
+#[test]
+fn vco_hot_path_is_alloc_free() {
+    let mut osc = Vco303::new(48_000.0);
+    osc.set_freq(231.0);
+    for _ in 0..128 {
+        osc.tick(); // self-start ramp + warm-start, outside the guard
+    }
+    reset_violation_count();
+    assert_no_alloc(|| {
+        let mut acc = 0.0f32;
+        for _ in 0..4_096 {
+            acc += osc.tick();
+        }
+        core::hint::black_box(acc);
+    });
+    assert_eq!(violation_count(), 0, "Vco303::tick allocated on the audio path");
 }
 
 #[test]
