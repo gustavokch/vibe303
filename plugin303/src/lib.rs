@@ -3,7 +3,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 pub mod dsp;
-mod params;
+pub mod params;
 use dsp::voice::Voice;
 use params::Plugin303Params;
 
@@ -67,6 +67,9 @@ impl Plugin for Plugin303 {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        // Block-rate read of the fidelity tier (a field write on the voice).
+        self.voice.set_tier(self.params.tier.value());
+
         let mut next_event = context.next_event();
         for (sample_idx, mut frame) in buffer.iter_samples().enumerate() {
             // Apply every event scheduled for this sample (sample-accurate).
