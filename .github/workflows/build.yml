@@ -1,10 +1,32 @@
 name: build-plugins
 
-# Manual trigger only. Builds VST3 + CLAP bundles and uploads them as zips.
+# Manual trigger only. Builds VST3 + CLAP bundles, uploads them as zips, and
+# (optionally) attaches the zips to a GitHub Release.
 #  - linux-x86_64-v3 : native build on a self-hosted Ubuntu 24.04 x64 runner (AVX2).
 #  - macos-arm64     : cross-compiled on the SAME linux runner via zig + cargo-zigbuild.
+#  - release         : downloads both zips and publishes a GitHub Release.
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (blank = build-<sha8>, no release published if 'release' input is false)"
+        required: false
+        default: ""
+      release:
+        description: "Publish a GitHub Release with the zips"
+        type: boolean
+        default: true
+      prerelease:
+        description: "Mark the release as a pre-release"
+        type: boolean
+        default: true
+      draft:
+        description: "Create the release as a draft"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # required for the release job to create tags/releases
 
 env:
   PKG: plugin303
@@ -138,3 +160,34 @@ jobs:
           name: ${{ env.BUNDLE_NAME }}-macos-arm64
           path: ${{ env.ZIP }}
           if-no-files-found: error
+
+  release:
+    if: ${{ inputs.release }}
+    needs: [linux-x86_64-v3, macos-arm64]
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Compute release tag
+        id: meta
+        env:
+          IN_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="$IN_TAG"
+          [ -n "$TAG" ] || TAG="build-${GITHUB_SHA::8}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/**/*.zip
