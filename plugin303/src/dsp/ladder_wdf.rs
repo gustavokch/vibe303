@@ -124,6 +124,12 @@ pub struct LadderVcf {
     diode: Diode1N4148,
     /// Bias (tail) current; sets the diode operating point ⇒ corner.
     i0: f64,
+    /// Brightness calibration on the cutoff→bias map (spectral V5). Default 1.0
+    /// keeps the F3.3 ladder tests in their tracking regime; the voice raises it
+    /// to brighten the corner toward the SPICE envelope.
+    cal: f64,
+    /// Last cutoff (Hz), so `set_cal` can recompute `i0`.
+    fc: f64,
     /// Resonance feedback gain (1-sample-delayed differential feedback).
     k_reso: f64,
     /// Drive source conductance (1/R_drive) into the bottom rails.
@@ -147,6 +153,8 @@ impl LadderVcf {
             sr: sr as f64,
             diode: Diode1N4148::new(),
             i0: 0.0,
+            cal: CAL,
+            fc: 1_000.0,
             k_reso: 0.0,
             g_drive: 1e-3,
             vscale: 0.02,
@@ -158,6 +166,13 @@ impl LadderVcf {
         };
         f.set_cutoff(1_000.0);
         f
+    }
+
+    /// Brightness calibration on the cutoff→bias map (spectral V5). Recomputes
+    /// the bias at the current cutoff.
+    pub fn set_cal(&mut self, cal: f64) {
+        self.cal = cal;
+        self.i0 = self.diode.n_vt * TAU * self.fc * C_REF * self.cal;
     }
 
     /// One Newton solve at a fixed `gmin`, warm-started from `v0`. Returns the
@@ -289,9 +304,9 @@ impl LadderVcf {
 
 impl Filter303 for LadderVcf {
     fn set_cutoff(&mut self, hz: f32) {
-        // I_tail = nVt · 2π · fc · C_ref ⇒ r_d = nVt/I ⇒ corner ∝ fc.
-        let fc = hz.max(1.0) as f64;
-        self.i0 = self.diode.n_vt * TAU * fc * C_REF * CAL;
+        // I_tail = nVt · 2π · fc · C_ref · cal ⇒ r_d = nVt/I ⇒ corner ∝ fc.
+        self.fc = hz.max(1.0) as f64;
+        self.i0 = self.diode.n_vt * TAU * self.fc * C_REF * self.cal;
     }
 
     fn set_reso(&mut self, r: f32) {

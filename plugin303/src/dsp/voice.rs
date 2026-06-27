@@ -83,6 +83,13 @@ impl Voice {
         self.ladder.set_reso(r);
     }
 
+    /// Ultra-tier VCF brightness calibration (spectral V5). Default is the
+    /// ladder's built-in 1.0; the spectral gate raises it toward the SPICE
+    /// envelope. No effect on Low/High.
+    pub fn set_ultra_brightness(&mut self, cal: f64) {
+        self.ladder.set_cal(cal);
+    }
+
     pub fn tick(&mut self) -> f32 {
         let f = match self.tier {
             // F4: High gets the cheaper WDF-lite solver; on TPT for now.
