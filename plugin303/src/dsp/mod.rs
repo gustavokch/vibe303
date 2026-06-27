@@ -1,4 +1,5 @@
 pub mod adaa;
+pub mod bjt;
 pub mod diode;
 pub mod env;
 pub mod expmath;
