@@ -1,0 +1,140 @@
+name: build-plugins
+
+# Manual trigger only. Builds VST3 + CLAP bundles and uploads them as zips.
+#  - linux-x86_64-v3 : native build on a self-hosted Ubuntu 24.04 x64 runner (AVX2).
+#  - macos-arm64     : cross-compiled on the SAME linux runner via zig + cargo-zigbuild.
+on:
+  workflow_dispatch:
+
+env:
+  PKG: plugin303
+  BUNDLE_NAME: TB303
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux-x86_64-v3:
+    runs-on: [self-hosted, linux, x64]   # Ubuntu 24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (x86_64 host)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build + bundle (x86-64-v3 / AVX2)
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v3"
+        run: |
+          cargo xtask bundle "$PKG" --release --target x86_64-unknown-linux-gnu
+
+      - name: Locate bundles
+        id: find
+        run: |
+          DIR="target/x86_64-unknown-linux-gnu/bundled"
+          [ -d "$DIR" ] || DIR="target/bundled"
+          test -e "$DIR/${BUNDLE_NAME}.vst3"
+          test -e "$DIR/${BUNDLE_NAME}.clap"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Package zip
+        run: |
+          OUT="${BUNDLE_NAME}-linux-x86_64-v3-${GITHUB_SHA::8}"
+          STAGE="$RUNNER_TEMP/$OUT"
+          mkdir -p "$STAGE"
+          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.vst3" "$STAGE/"
+          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.clap" "$STAGE/"
+          ( cd "$RUNNER_TEMP" && zip -r "$OUT.zip" "$OUT" )
+          echo "ZIP=$RUNNER_TEMP/$OUT.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUNDLE_NAME }}-linux-x86_64-v3
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+  macos-arm64:
+    runs-on: [self-hosted, linux, x64]   # cross-compile from Ubuntu 24.04
+    env:
+      TARGET: aarch64-apple-darwin
+      # macOS SDK is needed so coreaudio-sys etc. can link the system frameworks.
+      MACOSX_SDK_VERSION: "14.5"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (+ macOS arm64 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+
+      - name: Fetch macOS SDK
+        run: |
+          SDK_TARBALL="MacOSX${MACOSX_SDK_VERSION}.sdk.tar.xz"
+          URL="https://github.com/joseluisq/macosx-sdks/releases/download/${MACOSX_SDK_VERSION}/${SDK_TARBALL}"
+          mkdir -p "$RUNNER_TEMP/sdk"
+          curl -fL "$URL" -o "$RUNNER_TEMP/$SDK_TARBALL"
+          tar -xf "$RUNNER_TEMP/$SDK_TARBALL" -C "$RUNNER_TEMP/sdk"
+          echo "SDKROOT=$RUNNER_TEMP/sdk/MacOSX${MACOSX_SDK_VERSION}.sdk" >> "$GITHUB_ENV"
+
+      - name: Install cargo shim (routes `cargo build` -> cargo-zigbuild)
+        run: |
+          # nih_plug_xtask hardcodes `Command::new("cargo") build ...`; this shim
+          # intercepts the build subcommand and runs it through cargo-zigbuild so
+          # the macOS link step is handled by zig. All other subcommands (and the
+          # cargo-metadata call via $CARGO) pass through to the real cargo.
+          REAL_CARGO="$(command -v cargo)"
+          echo "CARGO=$REAL_CARGO" >> "$GITHUB_ENV"   # cargo-metadata bypasses shim
+          SHIM_DIR="$RUNNER_TEMP/shim"
+          mkdir -p "$SHIM_DIR"
+          cat > "$SHIM_DIR/cargo" <<EOF
+          #!/usr/bin/env bash
+          set -euo pipefail
+          REAL_CARGO="$REAL_CARGO"
+          if [ "\${1:-}" = "build" ]; then
+            shift
+            exec "\$REAL_CARGO" zigbuild "\$@"
+          fi
+          exec "\$REAL_CARGO" "\$@"
+          EOF
+          chmod +x "$SHIM_DIR/cargo"
+          echo "$SHIM_DIR" >> "$GITHUB_PATH"   # prepended to PATH
+
+      - name: Build + bundle (arm64, cross via zig)
+        env:
+          RUSTFLAGS: "-C target-cpu=apple-m1"
+        run: |
+          which cargo
+          cargo xtask bundle "$PKG" --release --target "$TARGET"
+
+      - name: Locate bundles
+        id: find
+        run: |
+          DIR="target/${TARGET}/bundled"
+          [ -d "$DIR" ] || DIR="target/bundled"
+          test -e "$DIR/${BUNDLE_NAME}.vst3"
+          test -e "$DIR/${BUNDLE_NAME}.clap"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Package zip
+        run: |
+          OUT="${BUNDLE_NAME}-macos-arm64-${GITHUB_SHA::8}"
+          STAGE="$RUNNER_TEMP/$OUT"
+          mkdir -p "$STAGE"
+          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.vst3" "$STAGE/"
+          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.clap" "$STAGE/"
+          ( cd "$RUNNER_TEMP" && zip -r "$OUT.zip" "$OUT" )
+          echo "ZIP=$RUNNER_TEMP/$OUT.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUNDLE_NAME }}-macos-arm64
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
