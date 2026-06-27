@@ -1,5 +1,6 @@
 pub mod adaa;
 pub mod env;
+pub mod expmath;
 pub mod filter;
 pub mod ladder;
 pub mod oversample;
