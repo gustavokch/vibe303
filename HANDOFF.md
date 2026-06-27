@@ -10,16 +10,18 @@ F1-granularity; F4/F5 still outlined.
 > codebase; the project pivoted to the ESR-gated **fidelity-tier** axis). Phase-1 SPICE reference
 > is complete — see the appendix.
 
-**To continue:** fresh session → `superpowers:executing-plans` against the plan above, starting at
-**Phase F3** (F1 and F2 are DONE). Batch = F3.1–F3.3 first.
+**To continue:** F1, F2, F3 + F3-VCO are DONE. Next is **F4 (High)** or the optional Ultra active-
+stage headroom — see Next Steps. Use `superpowers:executing-plans` against the plan above.
 
 ---
 
 ## Goal
 
-A 3-tier 303 voice fidelity axis gated by a time-domain ESR harness vs a whole-voice SPICE
-reference. Low=TPT (ships), High=WDF-lite, Ultra=nodal diode-ladder. Ultra must be
-ear-indistinguishable from SPICE (ESR ≤ −30 dB). All tiers ≥2× oversampled + ADAA, zero-alloc.
+A 3-tier 303 voice fidelity axis vs a whole-voice SPICE reference. Low=TPT (ships), High=WDF-lite,
+Ultra=nodal circuit (VCO + diode-ladder VCF). **Ultra acceptance redefined (F3-VCO V5):** a
+*spectral character* match (Welch LSD + dB-spectrum correlation), not sample-exact ESR ≤ −30 dB —
+that is structurally unreachable for a real-time bespoke chain vs ngspice's adaptive solver. All
+tiers ≥2× oversampled, zero-alloc.
 
 ## Current Progress
 
@@ -42,7 +44,27 @@ ear-indistinguishable from SPICE (ESR ≤ −30 dB). All tiers ≥2× oversample
 - `tests/voice_esr.rs` — Rust ESR gate vs committed gold `eval/303/gold/voice_A2_mid.f32`
   (measured 2.44 dB, budget 3.5). `eval/303/gen_gold.py` regenerates gold.
 
-**F3 (Ultra) — PLANNED (F3.1–F3.6 full granularity), not started.**
+**F3 (Ultra) — DONE. Ships under a spectral gate. `cargo test -p plugin303` = 57 passed, 5 ignored.**
+- F3.1 `dsp/expmath.rs` — `fast_exp/fast_log/fast_pow_pos` (BA283 port).
+- F3.2 `dsp/diode.rs` — 1N4148 `stamp`/`charge`.
+- F3.3 `dsp/ladder_wdf.rs` — nodal diode-ladder VCF (`LadderVcf impl Filter303`), Newton+gmin,
+  trapezoidal caps, stack LU, zero-alloc. **Structural limit:** corner saturates ~600 Hz ceiling
+  (no active stages) — see design doc.
+- F3.4 `tests/ladder_alias.rs` — OS-only decision (ADAA N/A for the implicit solve); ladder
+  self-anti-aliases for steady tones.
+- F3.5 — `Tier::Ultra` wired voice → `Os4x` → `LadderVcf`; `render303 --tier`.
+
+**F3-VCO (V1–V5) — DONE.** User pivoted Ultra to model the **circuit VCO** (whole-voice gold =
+circuit-VCO saw → VCF; polyBLEP saw can't reach it).
+- V1 `dsp/bjt.rs` (Gummel-Poon NPN/PNP), V2 `dsp/jfet.rs` (MPF104), V3 `dsp/vco.rs` (21-node nodal
+  relaxation oscillator, `dsp/linalg.rs` generic LU). Self-oscillates, zero-alloc.
+- V4: `Vco303` chained into Ultra voice + pitch cal (~1.4 %). **Two structural walls** (design doc):
+  VCO ~1.4× fast vs ngspice + reset-shape diff; VCF corner ceiling.
+- **V5 (acceptance redefined → spectral, user decision):** sample-exact ESR vs ngspice is
+  unreachable for a real-time bespoke chain. New gate `tests/ultra_spectral.rs` (+ offline
+  `eval/303/coherence.py`): Welch gold-power-weighted LSD + dB-spectrum corr. **Achieved LSD =
+  4.42 dB, corr = 0.977** (budget LSD≤5.5, corr≥0.95). Ultra ships circuit-faithful.
+- F3.6: Ultra-chain no-alloc gate + NaN/bounded sweep guard.
 
 ## What Worked
 
@@ -68,28 +90,35 @@ ear-indistinguishable from SPICE (ESR ≤ −30 dB). All tiers ≥2× oversample
   corrects this.
 - **mem0 MCP quota-exhausted** (resets 2026-07-01) — search/save error; ignore.
 
-## Next Steps (F3, in order)
+## Next Steps
 
-1. **F3.1** `dsp/expmath.rs` — port `fast_exp`/`fast_log` (`~/Git/ba283_wdf/main.cpp:129-160`).
-   `f64::to_bits/from_bits`; critical underflow guard `k<=-1023 => 0.0`. Tests vs `std` <1e-9.
-2. **F3.2** `dsp/diode.rs` — 1N4148 `stamp(v)->(I,g)` (vcrit-linearized) + `charge(v)->(Q,C)`
-   (FC=0.5). Params in `eval/303/_vcf303_netlist_gen.py` (IS=1.42e-11, N=1.7, CJO=1.74e-12,
-   VJ=0.75, M=0.333).
-3. **F3.3 (RISK)** `dsp/ladder_wdf.rs` — nodal MNA + Newton, 8-diode + 4-cap ladder (topology in
-   plan), gmin homotopy, fixed-N dense LU on stack, zero-alloc, warm-start. `impl Filter303`.
-   Validate corner-tracks-bias + slope ≈ −21 dB/oct vs `eval/303/vcf303_gold.json`.
-4. **F3.4** ADAA-vs-4×OS bench (resolves F1.5); implement winner.
-5. **F3.5** wire `Tier::Ultra` → `LadderVcf` inside `Os4x`; `render303 --tier`;
-   `tests/ultra_esr.rs` gate ≤ −30 dB (Ultra gold = same SPICE waveform as Low gold); coherence.
-6. **F3.6** no-alloc/denormal guard, tune, F3 findings + F4 cost budget.
+F3 + F3-VCO are DONE (Ultra ships under the spectral gate, corr 0.977). Remaining:
 
-**Gating risk:** F3.3 per-sample Newton convergence in the RT path. Fallbacks if 4×OS misses
-−30 dB: 8×OS (switch exists), ADAA2 (F3.4), or expand scope to active-stage nonlinearities.
+1. **Ultra headroom (optional, deferred)** — close the residual ~4.4 dB LSD by modeling the
+   **active VCF stages** (T20/T21 readout + Q9 resonance) so the corner clears its ~600 Hz ceiling,
+   plus a **per-note VCO pitch secant** (this solver runs ~1.4× fast vs ngspice). This is the
+   "expand VCF active stages" path. Only needed if a tighter spectral match is wanted.
+2. **F4 — High (WDF-lite):** cheaper solver over the F3 core (fewer Newton iters; `fast_exp`
+   already in). Spectral budget looser than Ultra; added-error vs Ultra ≤ budget.
+3. **F5 — tune + ship:** all-tier targets, click-free tier switching (settle-then-crossfade),
+   finalize the 2×/4×/8× OS switch param, host PDC (Ultra latency = `voice.latency_samples()`),
+   finish-branch / PR.
+
+**Key gotchas for the next session:**
+- VCF corner has a **~600 Hz structural ceiling** at 48 kHz (passive ladder only) — raising
+  `LadderVcf::set_cal` past ~1 distorts the spectral envelope (it's the LSD optimum at 1.0). Don't
+  chase corner via bias; it needs the active stages.
+- VCO pitch cal `CV_FIT` is fit to **this solver** (not SPICE) — re-run `characterize_freq_cv` if
+  the VCO solver changes. `dump_trajectory`, `measure_pitch_map`, `corner_vs_cutoff`,
+  `brightness_sweep` are `#[ignore]` diagnostics.
+- Spectral gate: `tests/ultra_spectral.rs` (binding) + `eval/303/coherence.py` (offline). The
+  `ultra_esr.rs` −30 dB ESR test is `#[ignore]` informational — sample-exact vs ngspice is NOT the
+  gate (structurally unreachable for a real-time chain).
 
 ## Commands
 
 ```bash
-cargo test -p plugin303                                  # 28 tests (will grow)
+cargo test -p plugin303                                  # 57 passed, 5 ignored
 cargo run --bin render303 -p plugin303 -- --out /tmp/r.f32
 uv run --no-project --with PySpice --with numpy --with pytest python -m pytest eval/303/test_*.py -q
 uv run --no-project --with PySpice --with numpy python eval/303/compare_voice.py   # ~3 min
