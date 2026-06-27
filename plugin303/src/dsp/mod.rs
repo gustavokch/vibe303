@@ -1,4 +1,14 @@
+pub mod adaa;
+pub mod bjt;
+pub mod diode;
 pub mod env;
+pub mod expmath;
+pub mod filter;
+pub mod jfet;
 pub mod ladder;
+pub mod ladder_wdf;
+pub mod linalg;
 pub mod osc;
+pub mod oversample;
+pub mod vco;
 pub mod voice;

@@ -8,7 +8,10 @@ pub struct Saw {
 
 impl Saw {
     pub fn new() -> Self {
-        Self { phase: 0.0, inc: 0.0 }
+        Self {
+            phase: 0.0,
+            inc: 0.0,
+        }
     }
 
     pub fn set_freq(&mut self, hz: f32, sr: f32) {
