@@ -260,24 +260,378 @@ Commit: `docs(plan): F1 ESR findings + F3 ADAA/OS decision`.
 
 ---
 
-## Phase F2 — Tier scaffold (EnumParam, 2× OS, ADAA, VoiceEngine trait, TPT as Low)
+## Phase F2 — Tier scaffold (Filter303 trait, 2× OS, ADAA, Tier param, TPT as Low)
 
-Solid-but-summary tasks (expand to F1-granularity at execution):
+Outcome: a `Tier` enum + `EnumParam`, a tested oversampler and ADAA wrapper (the F3/F4
+building blocks), cutoff/reso wired end-to-end (`render303` args become real), and a Rust-side
+ESR gate replacing the loose M2.4 shape test. Low stays TPT; High/Ultra are placeholders routed
+to TPT until F3/F4. **OS/ADAA are landed + unit-tested as modules in F2; they are not folded into
+the voice render path until tiers diverge (F3), so the F2 ESR gate measures the plain TPT Low.**
 
-- **F2.1** `trait VoiceEngine { fn render(&mut self, note, params) -> f32 }` (or block form);
-  `trait Filter303` per design. Refactor `Voice` to hold a boxed/enum engine. TDD: existing voice
-  tests pass through the trait.
-- **F2.2** `dsp/oversample.rs` — polyphase FIR 2×/4×/8× up/down. TDD: (a) up→down round-trips a
-  band-limited signal within tolerance; (b) a tone above Nyquist/2 is attenuated. Pre-size buffers;
-  report latency.
-- **F2.3** `dsp/adaa.rs` — 1st-order antiderivative AA wrapper for a static nonlinearity
-  (`tanh`). TDD: alias-bin energy for a hot sine drops vs naive `tanh` at 2×.
-- **F2.4** Wire cutoff/reso into `Voice` + `render303` (the F1.2 pass-through args become real);
-  calibrate Low/TPT `set_cutoff` mapping to the SPICE corner (use F1 harness to minimise ESR).
-- **F2.5** `EnumParam<Tier>` in `Plugin303Params` (`#[id="tier"]`); block-rate read in `process()`;
-  settle-then-crossfade on change. assert_no_alloc per tier path.
-- **F2.6** ESR gate test (`tests/voice_esr.rs`): load committed gold; assert Low ≤ its (F1-derived)
-  budget + added-error vs reference bound. Replaces the M2.4 loose shape test as the fidelity gate.
+Design notes baked in from F1.5: Low's gate is the *post-F2 measured* number (cutoff wiring should
+beat the +2.3 dB baseline), not −12 dB asserted up front. The voice uses **enum dispatch over
+preallocated filters** (no `Box`, no per-sample vtable, no audio-thread alloc on tier switch); the
+`Filter303` trait exists so F3/F4 backends slot in.
+
+---
+
+### Task F2.1: `Filter303` trait + `Tier` enum; `TptLadder` impls the trait
+
+**Files:**
+- Create: `plugin303/src/dsp/filter.rs`
+- Modify: `plugin303/src/dsp/mod.rs` (add `pub mod filter;`)
+- Modify: `plugin303/src/dsp/ladder.rs` (impl trait for `TptLadder`)
+
+**Step 1: Write the failing test** — drive a `TptLadder` through `&mut dyn Filter303`.
+
+```rust
+// plugin303/src/dsp/filter.rs  (#[cfg(test)] mod tests)
+#[test]
+fn tpt_ladder_runs_through_trait_object() {
+    use crate::dsp::ladder::TptLadder;
+    let mut f = TptLadder::new(48_000.0);
+    let dynf: &mut dyn Filter303 = &mut f;
+    dynf.set_cutoff(1_000.0);
+    dynf.set_reso(0.5);
+    let mut acc = 0.0f32;
+    for i in 0..2_000 { acc += dynf.tick(((i as f32) * 0.01).sin()); }
+    assert!(acc.is_finite());
+}
+```
+
+**Step 2: Run, verify fail.** `cargo test -p plugin303 filter::` → FAIL (no trait).
+
+**Step 3: Implement.**
+
+```rust
+// plugin303/src/dsp/filter.rs
+//! Tier-swappable filter interface. TPT (Low) impls it now; WDF (High/Ultra) in F3/F4.
+
+/// A 303 filter core: cutoff in Hz, resonance in [0,1], per-sample `tick`.
+pub trait Filter303 {
+    fn set_cutoff(&mut self, hz: f32);
+    fn set_reso(&mut self, r: f32);
+    fn tick(&mut self, x: f32) -> f32;
+    fn reset(&mut self);
+}
+
+/// Fidelity tier. Low = TPT; High = WDF-lite (F4); Ultra = WDF (F3).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Tier {
+    #[default]
+    Low,
+    High,
+    Ultra,
+}
+```
+
+Add to `ladder.rs` (keep the inherent methods; the trait just forwards):
+
+```rust
+impl crate::dsp::filter::Filter303 for TptLadder {
+    fn set_cutoff(&mut self, hz: f32) { TptLadder::set_cutoff(self, hz); }
+    fn set_reso(&mut self, r: f32) { TptLadder::set_reso(self, r); }
+    fn tick(&mut self, x: f32) -> f32 { TptLadder::tick(self, x) }
+    fn reset(&mut self) { self.z = [0.0; 4]; }
+}
+```
+
+**Step 4: Run, verify pass.** `cargo test -p plugin303` → all green (existing ladder/voice tests + new).
+
+**Step 5: Commit.** `git commit -m "feat(303): Filter303 trait + Tier enum; TptLadder impls it (F2.1)"`
+
+---
+
+### Task F2.2: `dsp/oversample.rs` — polyphase FIR 2× up/down (cascade for 4×/8×)
+
+A zero-alloc 2× oversampler from a Kaiser-windowed-sinc half-band-style FIR. 4×/8× = cascaded 2×
+stages. Coeffs computed in `new()`; `tick` uses fixed-size arrays only.
+
+**Files:**
+- Create: `plugin303/src/dsp/oversample.rs`
+- Modify: `plugin303/src/dsp/mod.rs` (`pub mod oversample;`)
+
+**Design:** FIR length `L = 64` (even), cutoff `0.45 * f_base` (normalised 0.225 at the 2× rate).
+Upsampler splits `h` into 2 polyphase branches (`h[0::2]`, `h[1::2]`); each base input pushes to an
+`L/2`-tap history ring and emits 2 hi-rate samples (one per branch). Downsampler runs the same `h`
+over the hi-rate stream and decimates by 2. Group delay `(L-1)/2` hi-rate samples ⇒ report
+`latency_samples()` at base rate (`(L-1)/2/2` per 2× stage, summed across the cascade).
+
+**Step 1: Write the failing tests.**
+
+```rust
+// oversample.rs tests
+fn tone(freq: f32, sr: f32, n: usize) -> Vec<f32> {
+    (0..n).map(|i| (2.0*std::f32::consts::PI*freq*i as f32/sr).sin()).collect()
+}
+
+#[test]
+fn up_then_down_roundtrips_band_limited_tone() {
+    let sr = 48_000.0; let mut os = Os2x::new();
+    let x = tone(1_000.0, sr, 8_192);
+    let mut y = vec![0.0; x.len()];
+    for i in 0..x.len() {
+        let hi = os.up(x[i]);          // [f32; 2]
+        y[i] = os.down(hi);            // back to base rate
+    }
+    // compare past the FIR latency; band-limited tone returns ~itself
+    let lat = os.latency_samples();
+    let a = &x[..x.len()-lat]; let b = &y[lat..];
+    let err: f32 = a.iter().zip(b).map(|(p,q)| (p-q)*(p-q)).sum();
+    let sig: f32 = a.iter().map(|p| p*p).sum();
+    assert!(10.0*(err/sig).log10() < -40.0, "roundtrip ESR too high");
+}
+
+#[test]
+fn upsampler_attenuates_above_base_nyquist() {
+    // a tone the upsampler must NOT image: feed a hi-rate tone above f_base/2 via down()
+    let sr = 96_000.0; let mut os = Os2x::new();
+    let hot = tone(36_000.0, sr, 8_192); // 0.75 * hi-Nyquist, above base Nyquist
+    let mut out = vec![0.0; hot.len()/2];
+    for i in 0..out.len() { out[i] = os.down([hot[2*i], hot[2*i+1]]); }
+    let e: f32 = out.iter().map(|v| v*v).sum::<f32>() / out.len() as f32;
+    assert!(e.sqrt() < 0.05, "alias not attenuated: {}", e.sqrt());
+}
+```
+
+**Step 2: Run, verify fail** (`No Os2x`).
+
+**Step 3: Implement** — `struct Os2x { h: [f32; 64], hist: [f32; 32], pos: usize }` (or two
+half-length phase arrays). `fn new()` fills `h` with windowed sinc: `h[i] = sinc(2*fc*(i-c)) *
+kaiser(i, beta=8.0)`, then normalise DC gain to 1. `up(&mut self, x) -> [f32;2]` and
+`down(&mut self, hi:[f32;2]) -> f32` run the polyphase dot products against the ring. `Os4x`/`Os8x`
+= `Os2x` cascades. Add `latency_samples()`. **No heap in `up`/`down`.**
+
+**Step 4: Run, verify pass.** `cargo test -p plugin303 oversample::`
+
+**Step 5: no-alloc gate.** Extend `tests/no_alloc.rs` with an `Os4x` up→down loop inside
+`assert_no_alloc`. Run `cargo test -p plugin303 --test no_alloc`.
+
+**Step 6: Commit.** `git commit -m "feat(303): polyphase 2x oversampler + cascade, zero-alloc (F2.2)"`
+
+---
+
+### Task F2.3: `dsp/adaa.rs` — 1st-order antiderivative-AA `tanh`
+
+ADAA1 on a static nonlinearity `f`: `y = (F(x) - F(x₁)) / (x - x₁)` with `F = ∫f`; fall back to
+`f((x+x₁)/2)` when `|x - x₁| < ε`. For `f = tanh`, `F(x) = ln(cosh x)` (computed stably).
+
+**Files:**
+- Create: `plugin303/src/dsp/adaa.rs`
+- Modify: `plugin303/src/dsp/mod.rs` (`pub mod adaa;`)
+
+**Step 1: Write the failing test** — alias energy of a hot sine drops vs naive `tanh` at 2×.
+
+```rust
+// adaa.rs tests — measure energy in bins that ALIAS (mirror of harmonics above Nyquist)
+#[test]
+fn adaa_reduces_aliasing_vs_naive_tanh() {
+    let sr = 48_000.0; let f0 = 6_000.0; let n = 16_384; let drive = 5.0;
+    let naive: Vec<f32> = (0..n).map(|i| (drive*(2.0*std::f32::consts::PI*f0*i as f32/sr).sin()).tanh()).collect();
+    let mut a = Adaa1Tanh::new(); let mut adaa = vec![0.0; n];
+    for i in 0..n { adaa[i] = a.tick(drive*(2.0*std::f32::consts::PI*f0*i as f32/sr).sin()); }
+    // crude alias proxy: energy NOT at harmonics of f0 (see helper in test mod)
+    assert!(alias_energy(&adaa, sr, f0) < 0.5 * alias_energy(&naive, sr, f0));
+}
+```
+
+> `alias_energy` = total spectral energy minus the energy in ±1 bin of each harmonic `k*f0` whose
+> *true* position is below Nyquist; folded harmonics land off-grid and count as alias. Implement it
+> in the test module with a naive DFT over the `n`-point buffer (test-only, allocation OK).
+
+**Step 2: Run, verify fail.**
+
+**Step 3: Implement.**
+
+```rust
+// plugin303/src/dsp/adaa.rs
+//! 1st-order antiderivative anti-aliasing for static nonlinearities (Parker et al.).
+
+/// ADAA1 wrapper around tanh. `F(x)=ln(cosh x)`, stable via `|x| - ln 2 + ln(1+e^-2|x|)`.
+pub struct Adaa1Tanh { x1: f32, f1: f32 }
+
+fn ln_cosh(x: f32) -> f32 {
+    let a = x.abs();
+    a + (-2.0 * a).exp().ln_1p() - std::f32::consts::LN_2
+}
+
+impl Adaa1Tanh {
+    pub fn new() -> Self { Self { x1: 0.0, f1: ln_cosh(0.0) } }
+    pub fn reset(&mut self) { self.x1 = 0.0; self.f1 = ln_cosh(0.0); }
+    pub fn tick(&mut self, x: f32) -> f32 {
+        let f = ln_cosh(x);
+        let dx = x - self.x1;
+        let y = if dx.abs() < 1e-5 { (0.5 * (x + self.x1)).tanh() } else { (f - self.f1) / dx };
+        self.x1 = x; self.f1 = f;
+        y
+    }
+}
+
+impl Default for Adaa1Tanh { fn default() -> Self { Self::new() } }
+```
+
+**Step 4: Run, verify pass.**
+
+**Step 5: Commit.** `git commit -m "feat(303): ADAA1 tanh anti-aliasing wrapper (F2.3)"`
+
+---
+
+### Task F2.4: Wire cutoff/reso into `Voice` + `render303`; calibrate Low cutoff to SPICE
+
+The F1.2 pass-through args become real, and the Low `set_cutoff(Hz)` is calibrated so its ESR
+against the SPICE `I_tail` corner is minimised.
+
+**Files:**
+- Modify: `plugin303/src/dsp/voice.rs` (add `set_cutoff`/`set_reso`)
+- Modify: `plugin303/src/bin/render303.rs` (use the args)
+- Modify: `eval/303/voice_ref_spice.py` (add `itail_to_hz()` mapping)
+- Modify: `eval/303/compare_voice.py` (drive `render303` with the Hz-equivalent cutoff)
+
+**Step 1: Write the failing Rust test** — cutoff changes the spectrum.
+
+```rust
+// voice.rs tests
+#[test]
+fn cutoff_setter_changes_brightness() {
+    fn hf_rms(cut: f32) -> f32 {
+        let mut v = Voice::new(48_000.0);
+        v.set_cutoff(cut); v.note_on(57);
+        for _ in 0..400 { v.tick(); }
+        let mut acc = 0.0; for _ in 0..4_000 { let s = v.tick(); acc += s*s; }
+        (acc/4_000.0).sqrt()
+    }
+    assert!(hf_rms(4_000.0) > hf_rms(300.0) * 1.5, "cutoff did not change output energy");
+}
+```
+
+**Step 2: Run, verify fail.**
+
+**Step 3: Implement.** Add to `Voice`:
+
+```rust
+pub fn set_cutoff(&mut self, hz: f32) { self.filter.set_cutoff(hz); }
+pub fn set_reso(&mut self, r: f32) { self.filter.set_reso(r); }
+```
+
+And in `render303.rs` replace `let _ = (cutoff, reso);` with `v.set_cutoff(cutoff);
+v.set_reso(reso / 100.0);` (reso arg is %, mapped to 0..1).
+
+**Step 4: Run, verify pass** (`cargo test -p plugin303 voice::`).
+
+**Step 5: Calibrate.** Add `itail_to_hz()` to `voice_ref_spice.py` from the vcf303 `f_deep`
+relationship (reuse `run_vcf303_spice.cutoff_and_slope`; e.g. 32 µA ≈ its measured `f_deep`).
+Re-point `compare_voice.render_rust` to pass `itail_to_hz(cutoff_itail)` as `--cutoff`. Re-run
+`compare_voice.py`; record the new (improved) ESR in `voice_esr_baseline.json` and note the value.
+
+**Step 6: Commit.** `git commit -m "feat(303): wire cutoff/reso into voice + render303; calibrate Low to SPICE (F2.4)"`
+
+---
+
+### Task F2.5: `EnumParam<Tier>` in params; block-rate read in `process()`
+
+**Files:**
+- Modify: `plugin303/src/params.rs`
+- Modify: `plugin303/src/lib.rs` (`process()`, `Voice` gains `set_tier`)
+- Modify: `plugin303/src/dsp/voice.rs` (`tier` field + `set_tier`)
+
+**Step 1: Write the failing test** — params default to `Tier::Low`, and the id is stable.
+
+```rust
+// plugin303/tests/params_tier.rs
+use plugin303::dsp::filter::Tier;
+#[test]
+fn tier_param_defaults_low() {
+    let p = plugin303::params::Plugin303Params::default();
+    assert_eq!(p.tier.value(), Tier::Low);
+}
+```
+
+> Requires `pub mod params;` in `lib.rs` and `#[derive(Enum)]` on `Tier` (nih-plug). Add a
+> `nih_plug::params::enums::Enum` derive to `Tier` (it already derives the std traits).
+
+**Step 2: Run, verify fail.**
+
+**Step 3: Implement.**
+
+```rust
+// params.rs
+use nih_plug::prelude::*;
+use crate::dsp::filter::Tier;
+
+#[derive(Params)]
+pub struct Plugin303Params {
+    #[id = "tier"]
+    pub tier: EnumParam<Tier>,
+}
+impl Default for Plugin303Params {
+    fn default() -> Self { Self { tier: EnumParam::new("Tier", Tier::Low) } }
+}
+```
+
+Add `#[derive(Enum)]` to `Tier` in `filter.rs`. In `process()`, read once per block before the
+sample loop and push to the voice:
+
+```rust
+self.voice.set_tier(self.params.tier.value());
+```
+
+`Voice::set_tier` stores the tier; `tick` matches on it (High/Ultra route to the TPT path for now
+— leave a `// F3/F4: WDF` marker). **No alloc** — all filters preallocated as fields.
+
+**Step 4: Run, verify pass** (`cargo test -p plugin303`). Confirm `cargo test --test no_alloc`
+still green (tier switch is a field write).
+
+**Step 5: Commit.** `git commit -m "feat(303): EnumParam<Tier>, block-rate read in process (F2.5)"`
+
+---
+
+### Task F2.6: ESR gate test `tests/voice_esr.rs` (replaces M2.4 loose shape test)
+
+A Rust integration test that loads a **committed SPICE gold waveform** + renders the Low voice and
+asserts ESR ≤ the post-F2 budget. No ngspice at test time.
+
+**Files:**
+- Create (committed gold): `eval/303/gold/voice_A2_mid.f32` (+ a `.json` sidecar: note, cutoff_hz, sr, secs)
+- Create: `plugin303/tests/voice_esr.rs`
+- Delete/replace: the loose M2.4 shape assert it supersedes (identify in `tests/vcf303_fit.rs` or voice tests during execution)
+
+**Step 1: Generate the gold.** Add a `--dump-gold` path to `compare_voice.py` (or a tiny script)
+that writes `voice_reference(note=57, cutoff_itail=32e-6, rreso=47e3)` RMS-normalised to
+`eval/303/gold/voice_A2_mid.f32` (`<f4`) plus the sidecar. Commit the artifact.
+
+**Step 2: Write the failing test.**
+
+```rust
+// plugin303/tests/voice_esr.rs
+use plugin303::dsp::voice::Voice;
+
+fn esr_db(reference: &[f32], model: &[f32]) -> f32 {
+    // RMS-normalise both, brute-force best lag in ±256, then sum(err^2)/sum(ref^2).
+    // (port of eval/303/esr.py::metrics; lag search + normalise inline)
+    // ... implemented in the test ...
+}
+
+#[test]
+fn low_voice_esr_within_budget() {
+    let gold = load_f32("../eval/303/gold/voice_A2_mid.f32"); // sidecar: note57, cutoff_hz, 48k, 0.2s
+    let mut v = Voice::new(48_000.0);
+    v.set_cutoff(CUTOFF_HZ_FROM_SIDECAR); v.set_reso(0.0);
+    v.note_on(57);
+    let model: Vec<f32> = (0..gold.len()).map(|_| v.tick()).collect();
+    let e = esr_db(&gold, &model);
+    assert!(e <= LOW_BUDGET_DB, "Low ESR {e} dB exceeds budget {LOW_BUDGET_DB} dB");
+}
+```
+
+> `LOW_BUDGET_DB` and `CUTOFF_HZ_FROM_SIDECAR` are set from the F2.4 measurement (the improved
+> baseline + a small margin, e.g. measured + 1.0 dB). This is the **fidelity gate** going forward.
+
+**Step 3: Run, verify fail** (no gold / no test) → implement gold + esr_db → **Step 4: pass.**
+
+**Step 5: Commit.** `git commit -m "test(303): Rust-side ESR gate vs SPICE gold; retire M2.4 shape test (F2.6)"`
+
+**F2 close:** re-run `compare_voice.py`; append the post-F2 Low ESR to the design doc's F1 findings
+(the number F3's High/Ultra budgets are set relative to).
 
 ## Phase F3 — WDF Ultra
 
