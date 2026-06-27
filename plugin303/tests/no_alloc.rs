@@ -1,5 +1,9 @@
 //! Realtime-safety gate: the voice's per-sample hot path must never allocate.
 //! `AllocDisabler` (warn features) counts any allocation inside `assert_no_alloc`.
+//!
+//! deferred: this gates `voice.tick` only. The full RT path (`process()` event
+//! drain + `buffer.iter_samples()`) gets its own gate once a nih-plug test-buffer
+//! harness exists; the wrapper layers above `voice.tick` are nih-plug-owned.
 
 use assert_no_alloc::*;
 use plugin303::dsp::voice::Voice;

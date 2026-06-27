@@ -74,6 +74,8 @@ impl Plugin for Plugin303 {
                 if event.timing() != sample_idx as u32 {
                     break;
                 }
+                // deferred (M4/M6): NoteOff gate-off + velocity→accent/VCA. The AD
+                // env auto-decays, so a held note is audible without them at M1.
                 if let NoteEvent::NoteOn { note, .. } = event {
                     self.voice.note_on(note);
                 }
