@@ -81,6 +81,21 @@ impl TptLadder {
     }
 }
 
+impl crate::dsp::filter::Filter303 for TptLadder {
+    fn set_cutoff(&mut self, hz: f32) {
+        TptLadder::set_cutoff(self, hz);
+    }
+    fn set_reso(&mut self, r: f32) {
+        TptLadder::set_reso(self, r);
+    }
+    fn tick(&mut self, x: f32) -> f32 {
+        TptLadder::tick(self, x)
+    }
+    fn reset(&mut self) {
+        self.z = [0.0; 4];
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
