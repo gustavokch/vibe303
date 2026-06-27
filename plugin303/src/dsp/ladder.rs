@@ -1,15 +1,18 @@
-//! Diode-ladder VCF. M1: a linear 4-pole TPT lowpass (4 cascaded 1-pole stages).
-//! Resonance, per-stage tanh, tap-select and the vco/vcf303 fit come in M2.
+//! Diode-ladder VCF. M2: zero-delay-feedback 4-pole TPT ladder with resonance.
+//! 4 cascaded 1-pole TPT stages closed by a `k`-weighted global feedback loop,
+//! solved instantaneously (Zavalishin/Cytomic). Per-stage tanh saturation,
+//! 2/3/4-pole tap select and the vcf303 ngspice fit come in M2.2–M2.4.
 
 pub struct TptLadder {
-    g: f32,
-    z: [f32; 4],
+    g: f32,       // prewarped per-stage coefficient, tan(pi*fc/sr)
+    k: f32,       // resonance feedback gain, 0..4 (4 = self-oscillation threshold)
+    z: [f32; 4],  // per-stage integrator states
     sr: f32,
 }
 
 impl TptLadder {
     pub fn new(sr: f32) -> Self {
-        let mut s = Self { g: 0.0, z: [0.0; 4], sr };
+        let mut s = Self { g: 0.0, k: 0.0, z: [0.0; 4], sr };
         s.set_cutoff(1_000.0);
         s
     }
@@ -19,16 +22,37 @@ impl TptLadder {
         self.g = wd.tan(); // per-stage 1-pole TPT coefficient
     }
 
+    /// Resonance in [0, 1]; 1.0 maps to the `k = 4` self-oscillation threshold.
+    pub fn set_reso(&mut self, r: f32) {
+        self.k = 4.0 * r.clamp(0.0, 1.0);
+    }
+
     pub fn tick(&mut self, x: f32) -> f32 {
-        let mut v = x;
+        let g = self.g;
+        // Per-stage gain a = g/(1+g), complement b = 1/(1+g) (= 1 - a).
+        let a = g / (1.0 + g);
+        let b = 1.0 / (1.0 + g);
+        // Stage output is y_i = a*x_i + b*s_i, so expanding the 4-stage cascade
+        // gives y4 = a^4 * u + Sigma, where u is the resonance-fed input and Sigma
+        // collects the state contributions.
+        let sigma = a * a * a * b * self.z[0]
+            + a * a * b * self.z[1]
+            + a * b * self.z[2]
+            + b * self.z[3];
+        let a4 = a * a * a * a;
+        // Close the loop instantaneously (ZDF): u = x - k*y4, y4 = a^4*u + Sigma.
+        let y4 = (a4 * x + sigma) / (1.0 + self.k * a4);
+        let u = x - self.k * y4;
+
+        // Forward pass: advance every integrator state with the resolved input.
+        let mut v = u;
         for z in self.z.iter_mut() {
-            // 1-pole TPT: hp = (in - state) / (1 + g); lp = hp*g + state; state += 2*hp*g.
-            let hp = (v - *z) / (1.0 + self.g);
-            let lp = hp * self.g + *z;
-            *z = lp + hp * self.g;
+            let hp = (v - *z) * a; // = g*(in - state)/(1+g)
+            let lp = hp + *z;
+            *z = lp + hp;
             v = lp;
         }
-        v
+        v // v == y4 (the 4-pole tap)
     }
 }
 
@@ -63,5 +87,25 @@ mod tests {
         let hi = rms(&mut f2, 8_000.0, sr); // 3 octaves above
         assert!(lo > 0.6, "passband too low: {lo}");
         assert!(hi < 0.05, "stopband too high: {hi}");
+    }
+
+    #[test]
+    fn resonance_lifts_gain_at_cutoff() {
+        let sr = 48_000.0;
+        let fc = 1_000.0;
+        // Flat (no resonance): gain at cutoff is the gentle -3dB-ish ladder corner.
+        let mut flat = TptLadder::new(sr);
+        flat.set_cutoff(fc);
+        flat.set_reso(0.0);
+        let g_flat = rms(&mut flat, fc, sr);
+        // High resonance: the feedback loop builds a peak at the cutoff.
+        let mut reso = TptLadder::new(sr);
+        reso.set_cutoff(fc);
+        reso.set_reso(0.9);
+        let g_reso = rms(&mut reso, fc, sr);
+        assert!(
+            g_reso > g_flat * 2.0,
+            "resonance did not peak at cutoff: flat={g_flat}, reso={g_reso}"
+        );
     }
 }
