@@ -10,7 +10,9 @@ use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 
 fn max_step(s: &[f32]) -> f32 {
-    s.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max)
+    s.windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max)
 }
 
 /// Steady-state max per-sample step for a tier, measured over the same env phase
@@ -34,8 +36,12 @@ fn switch_test(from: Tier, to: Tier) {
     let win = 800usize; // ≈10 ms fade + margin, in samples around the switch
 
     // Reference slew: the louder of the two tiers, at the switch's env phase.
-    let ref_step = steady_max_step(from, sr, switch_at - win / 2, win)
-        .max(steady_max_step(to, sr, switch_at - win / 2, win));
+    let ref_step = steady_max_step(from, sr, switch_at - win / 2, win).max(steady_max_step(
+        to,
+        sr,
+        switch_at - win / 2,
+        win,
+    ));
 
     // Switch render: play `from`, flip to `to` at `switch_at`.
     let mut v = Voice::new(sr);
@@ -58,7 +64,10 @@ fn switch_test(from: Tier, to: Tier) {
         switch_step <= 2.5 * ref_step + 1e-6,
         "{from:?}->{to:?} click: switch step {switch_step:.4} vs steady {ref_step:.4}"
     );
-    assert!(buf.iter().all(|y| y.is_finite()), "{from:?}->{to:?} produced non-finite");
+    assert!(
+        buf.iter().all(|y| y.is_finite()),
+        "{from:?}->{to:?} produced non-finite"
+    );
 }
 
 #[test]
@@ -92,8 +101,12 @@ fn switch_step_report() {
         (Tier::Low, Tier::Ultra),
         (Tier::Ultra, Tier::Low),
     ] {
-        let ref_step = steady_max_step(from, sr, switch_at - win / 2, win)
-            .max(steady_max_step(to, sr, switch_at - win / 2, win));
+        let ref_step = steady_max_step(from, sr, switch_at - win / 2, win).max(steady_max_step(
+            to,
+            sr,
+            switch_at - win / 2,
+            win,
+        ));
         let mut v = Voice::new(sr);
         v.set_tier_immediate(from);
         v.set_cutoff(1_000.0);

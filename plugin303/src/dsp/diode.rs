@@ -63,6 +63,10 @@ impl Diode1N4148 {
 
     /// Junction depletion charge companion: returns `(Q, C)` with the standard
     /// FC=0.5 linear extrapolation above `FC·Vj` so it stays finite forward-biased.
+    ///
+    /// Not wired into the current ladder solver (its cap companions come from the
+    /// explicit shunt `CAPS`, not diode junction caps). Retained + unit-tested as
+    /// a validated model for the deferred active-stage Ultra headroom.
     #[inline]
     pub fn charge(&self, v: f64) -> (f64, f64) {
         const FC: f64 = 0.5;

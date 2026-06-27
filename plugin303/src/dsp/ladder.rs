@@ -4,10 +4,10 @@
 //! 2/3/4-pole tap select and the vcf303 ngspice fit come in M2.2–M2.4.
 
 pub struct TptLadder {
-    g: f32,        // prewarped per-stage coefficient, tan(pi*fc/sr)
-    k: f32,        // resonance feedback gain, 0..4 (4 = self-oscillation threshold)
-    z: [f32; 4],   // per-stage integrator states
-    poles: usize,  // output tap: 2 | 3 | 4 (-12/-18/-24 dB/oct)
+    g: f32,       // prewarped per-stage coefficient, tan(pi*fc/sr)
+    k: f32,       // resonance feedback gain, 0..4 (4 = self-oscillation threshold)
+    z: [f32; 4],  // per-stage integrator states
+    poles: usize, // output tap: 2 | 3 | 4 (-12/-18/-24 dB/oct)
     sr: f32,
 }
 
@@ -23,7 +23,13 @@ fn sat(x: f32) -> f32 {
 
 impl TptLadder {
     pub fn new(sr: f32) -> Self {
-        let mut s = Self { g: 0.0, k: 0.0, z: [0.0; 4], poles: 4, sr };
+        let mut s = Self {
+            g: 0.0,
+            k: 0.0,
+            z: [0.0; 4],
+            poles: 4,
+            sr,
+        };
         s.set_cutoff(1_000.0);
         s
     }
@@ -54,10 +60,8 @@ impl TptLadder {
         // Stage output is y_i = a*x_i + b*s_i, so expanding the 4-stage cascade
         // gives y4 = a^4 * u + Sigma, where u is the resonance-fed input and Sigma
         // collects the state contributions.
-        let sigma = a * a * a * b * self.z[0]
-            + a * a * b * self.z[1]
-            + a * b * self.z[2]
-            + b * self.z[3];
+        let sigma =
+            a * a * a * b * self.z[0] + a * a * b * self.z[1] + a * b * self.z[2] + b * self.z[3];
         let a4 = a * a * a * a;
         // Close the loop instantaneously (ZDF): u = x - k*y4, y4 = a^4*u + Sigma.
         let y4 = (a4 * x + sigma) / (1.0 + self.k * a4);
@@ -167,7 +171,7 @@ mod tests {
     fn saturation_compresses_large_signals() {
         let sr = 48_000.0;
         let f0 = 100.0; // passband, gain ~1 so the stage drive tracks input amplitude
-        // Small-signal gain (effectively linear).
+                        // Small-signal gain (effectively linear).
         let mut small = TptLadder::new(sr);
         small.set_cutoff(1_000.0);
         let g_small = rms_amp(&mut small, f0, sr, 0.05) / 0.05;

@@ -35,7 +35,13 @@ impl Jfet {
     pub fn mpf104() -> Self {
         let is = 1.813e-13;
         let vcrit = VT * (VT / (is * std::f64::consts::SQRT_2)).ln();
-        Self { beta: 4.889e-4, vto: -1.45, lambda: 3.83e-3, is, vcrit }
+        Self {
+            beta: 4.889e-4,
+            vto: -1.45,
+            lambda: 3.83e-3,
+            is,
+            vcrit,
+        }
     }
 
     /// Channel drain current `(Id, gm, gds)` for true terminal voltages
@@ -46,11 +52,14 @@ impl Jfet {
         } else {
             // Swap drain/source: effective gate-source ref becomes vgs - vds = vgd.
             let r = self.channel_fwd(vgs - vds, -vds);
-            // Reverse-mode drain current flows the other way; conductances re-map:
-            // dId/dVgs and dId/dVds transform under (vgs'→vgs-vds, vds'→-vds).
+            // Reverse-mode drain current flows the other way; conductances re-map
+            // under the chain rule with (vgs'→vgs−vds, vds'→−vds):
+            //   Id  = −Idf,                       so id  = −r.id
+            //   dId/dVgs = −(r.gm·1)            = −r.gm
+            //   dId/dVds = −(r.gm·(−1)+r.gds·(−1)) = r.gm + r.gds
             JfetCh {
                 id: -r.id,
-                gm: r.gm,
+                gm: -r.gm,
                 gds: r.gm + r.gds,
             }
         }
@@ -133,8 +142,34 @@ mod tests {
         // Small vds (< vgst=1.45) ⇒ triode region: gds > 0 and rises with vds toward sat.
         let lo = j.channel(0.0, 0.2);
         let hi = j.channel(0.0, 0.6);
-        assert!(lo.gds > 0.0 && hi.gds > 0.0, "gds must be positive in triode");
+        assert!(
+            lo.gds > 0.0 && hi.gds > 0.0,
+            "gds must be positive in triode"
+        );
         assert!(hi.id > lo.id, "Id must rise with vds in triode");
+    }
+
+    #[test]
+    fn reverse_mode_gm_matches_finite_difference() {
+        // For vds < 0 the channel runs in reverse; the returned gm = dId/dVgs
+        // must match a numeric derivative (regression for the dropped sign).
+        let j = Jfet::mpf104();
+        let vgs = 0.3;
+        let vds = -0.4; // reverse mode
+        let h = 1e-6;
+        let c = j.channel(vgs, vds);
+        let num_gm = (j.channel(vgs + h, vds).id - j.channel(vgs - h, vds).id) / (2.0 * h);
+        let num_gds = (j.channel(vgs, vds + h).id - j.channel(vgs, vds - h).id) / (2.0 * h);
+        assert!(
+            (c.gm - num_gm).abs() < 1e-4 * num_gm.abs().max(1e-6),
+            "gm {} != d/dVgs {num_gm}",
+            c.gm
+        );
+        assert!(
+            (c.gds - num_gds).abs() < 1e-4 * num_gds.abs().max(1e-6),
+            "gds {} != d/dVds {num_gds}",
+            c.gds
+        );
     }
 
     #[test]

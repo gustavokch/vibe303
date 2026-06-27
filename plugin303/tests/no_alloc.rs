@@ -27,7 +27,11 @@ fn voice_hot_path_is_alloc_free() {
         }
         core::hint::black_box(acc);
     });
-    assert_eq!(violation_count(), 0, "voice.tick allocated on the audio path");
+    assert_eq!(
+        violation_count(),
+        0,
+        "voice.tick allocated on the audio path"
+    );
 }
 
 #[test]
@@ -49,7 +53,11 @@ fn ultra_voice_hot_path_is_alloc_free() {
         }
         core::hint::black_box(acc);
     });
-    assert_eq!(violation_count(), 0, "Ultra voice.tick allocated on the audio path");
+    assert_eq!(
+        violation_count(),
+        0,
+        "Ultra voice.tick allocated on the audio path"
+    );
 }
 
 #[test]
@@ -71,7 +79,11 @@ fn high_voice_hot_path_is_alloc_free() {
         }
         core::hint::black_box(acc);
     });
-    assert_eq!(violation_count(), 0, "High voice.tick allocated on the audio path");
+    assert_eq!(
+        violation_count(),
+        0,
+        "High voice.tick allocated on the audio path"
+    );
 }
 
 #[test]
@@ -96,7 +108,11 @@ fn tier_crossfade_hot_path_is_alloc_free() {
         }
         core::hint::black_box(acc);
     });
-    assert_eq!(violation_count(), 0, "tier crossfade allocated on the audio path");
+    assert_eq!(
+        violation_count(),
+        0,
+        "tier crossfade allocated on the audio path"
+    );
 }
 
 #[test]
@@ -115,7 +131,11 @@ fn ladder_vcf_hot_path_is_alloc_free() {
         }
         core::hint::black_box(acc);
     });
-    assert_eq!(violation_count(), 0, "LadderVcf::tick allocated on the audio path");
+    assert_eq!(
+        violation_count(),
+        0,
+        "LadderVcf::tick allocated on the audio path"
+    );
 }
 
 #[test]
@@ -133,7 +153,11 @@ fn vco_hot_path_is_alloc_free() {
         }
         core::hint::black_box(acc);
     });
-    assert_eq!(violation_count(), 0, "Vco303::tick allocated on the audio path");
+    assert_eq!(
+        violation_count(),
+        0,
+        "Vco303::tick allocated on the audio path"
+    );
 }
 
 #[test]
@@ -148,5 +172,9 @@ fn oversampler_hot_path_is_alloc_free() {
         }
         core::hint::black_box(acc);
     });
-    assert_eq!(violation_count(), 0, "Os4x up/down allocated on the audio path");
+    assert_eq!(
+        violation_count(),
+        0,
+        "Os4x up/down allocated on the audio path"
+    );
 }

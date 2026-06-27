@@ -16,7 +16,10 @@ fn ln_cosh(x: f32) -> f32 {
 
 impl Adaa1Tanh {
     pub fn new() -> Self {
-        Self { x1: 0.0, f1: ln_cosh(0.0) }
+        Self {
+            x1: 0.0,
+            f1: ln_cosh(0.0),
+        }
     }
 
     pub fn reset(&mut self) {

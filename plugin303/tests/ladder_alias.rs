@@ -162,7 +162,10 @@ fn os_factor_alias_decision() {
         ("8x OS", render_8x),
     ];
     println!("\n  Ultra alias bench: {F0:.0} Hz sine, drive {DRIVE}, cutoff wide-open");
-    println!("  {:<12} {:>14} {:>14}", "path", "alias/total dB", "alias energy");
+    println!(
+        "  {:<12} {:>14} {:>14}",
+        "path", "alias/total dB", "alias energy"
+    );
     let mut alias_db = [0.0f64; 4];
     for (k, (name, render)) in cases.iter().enumerate() {
         let y = render();

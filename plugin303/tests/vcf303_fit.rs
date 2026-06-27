@@ -153,7 +153,10 @@ fn tap_select_per_pole_step_matches_gold() {
     };
     let (p4, p3, p2) = (atten(4), atten(3), atten(2));
     // Monotone: fewer poles -> less attenuation.
-    assert!(p4 < p3 && p3 < p2, "taps not monotone: p4={p4:.1} p3={p3:.1} p2={p2:.1}");
+    assert!(
+        p4 < p3 && p3 < p2,
+        "taps not monotone: p4={p4:.1} p3={p3:.1} p2={p2:.1}"
+    );
 
     let step_43 = p3 - p4;
     let step_32 = p2 - p3;

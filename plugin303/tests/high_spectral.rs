@@ -50,8 +50,15 @@ fn render_tier(tier: Tier, op: &common::GoldOp, n: usize) -> Vec<f32> {
 fn high_spectral_report() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let op = load_gold_op("voice_A2_mid.json");
-    println!("note={} cutoff={:.0}Hz reso={:.2} sr={:.0}", op.note, op.cutoff, op.reso, op.sr);
-    for (name, tier) in [("Low", Tier::Low), ("High", Tier::High), ("Ultra", Tier::Ultra)] {
+    println!(
+        "note={} cutoff={:.0}Hz reso={:.2} sr={:.0}",
+        op.note, op.cutoff, op.reso, op.sr
+    );
+    for (name, tier) in [
+        ("Low", Tier::Low),
+        ("High", Tier::High),
+        ("Ultra", Tier::Ultra),
+    ] {
         let m = render_tier(tier, &op, gold.len());
         let (lsd, corr) = spectral_match(&gold, &m, op.sr);
         println!("{name:5}  LSD = {lsd:6.2} dB   corr = {corr:.3}");
@@ -64,7 +71,11 @@ fn cost_bench() {
     use std::time::Instant;
     let op = load_gold_op("voice_A2_mid.json");
     let n = (op.sr as usize) * 2; // 2 s
-    for (name, tier) in [("Low", Tier::Low), ("High", Tier::High), ("Ultra", Tier::Ultra)] {
+    for (name, tier) in [
+        ("Low", Tier::Low),
+        ("High", Tier::High),
+        ("Ultra", Tier::Ultra),
+    ] {
         let mut v = Voice::new(op.sr);
         v.set_tier_immediate(tier);
         v.set_cutoff(op.cutoff);
@@ -81,7 +92,11 @@ fn cost_bench() {
         let ns = t0.elapsed().as_nanos() as f64 / n as f64;
         std::hint::black_box(acc);
         let rt = ns * op.sr as f64 / 1e9; // CPU fraction of one core at real time
-        println!("{name:5}  {ns:7.1} ns/sample   {:5.2}% of one core @ {:.0} Hz", rt * 100.0, op.sr);
+        println!(
+            "{name:5}  {ns:7.1} ns/sample   {:5.2}% of one core @ {:.0} Hz",
+            rt * 100.0,
+            op.sr
+        );
     }
 }
 
@@ -93,6 +108,12 @@ fn high_voice_spectral_match() {
     let model = render_high(op.sr, op.cutoff, op.reso, op.note, gold.len());
     let (lsd, corr) = spectral_match(&gold, &model, op.sr);
     println!("High spectral match: LSD = {lsd:.2} dB, corr = {corr:.3}");
-    assert!(lsd <= LSD_BUDGET_DB, "High LSD {lsd:.2} dB exceeds budget {LSD_BUDGET_DB} dB");
-    assert!(corr >= CORR_MIN, "High spectral corr {corr:.3} below {CORR_MIN}");
+    assert!(
+        lsd <= LSD_BUDGET_DB,
+        "High LSD {lsd:.2} dB exceeds budget {LSD_BUDGET_DB} dB"
+    );
+    assert!(
+        corr >= CORR_MIN,
+        "High spectral corr {corr:.3} below {CORR_MIN}"
+    );
 }

@@ -58,8 +58,8 @@ fn build_lp(beta: f64, fc: f64) -> [f32; L] {
 /// 2× polyphase oversampler. `up` zero-stuff-interpolates one base sample into two
 /// high-rate samples; `down` lowpass-decimates two high-rate samples into one.
 pub struct Os2x {
-    he: [f32; P],     // even polyphase branch (33 taps)
-    ho: [f32; P],     // odd polyphase branch (32 taps, last padded 0)
+    he: [f32; P], // even polyphase branch (33 taps)
+    ho: [f32; P], // odd polyphase branch (32 taps, last padded 0)
     hist_up: [f32; P],
     h: [f32; L],
     hist_dn: [f32; L + 1], // +1: decimator output reads the even phase (index 2n)
@@ -74,7 +74,13 @@ impl Os2x {
             he[k] = h[2 * k]; // indices 0,2,..,62
             ho[k] = if 2 * k + 1 < L { h[2 * k + 1] } else { 0.0 }; // 1,3,..,61
         }
-        Self { he, ho, hist_up: [0.0; P], h, hist_dn: [0.0; L + 1] }
+        Self {
+            he,
+            ho,
+            hist_up: [0.0; P],
+            h,
+            hist_dn: [0.0; L + 1],
+        }
     }
 
     /// One base sample -> two high-rate samples. ×2 compensates the zero-stuff loss.
@@ -108,7 +114,7 @@ impl Os2x {
 
     /// Base-rate round-trip group delay of one 2× stage.
     pub fn latency_samples(&self) -> usize {
-        (L - 1) / 2 // 31 base samples (up + down each (L-1)/2 hi = (L-1)/2 base total)
+        (L - 1) / 2 // 32 base samples (up + down each (L-1)/2 hi = (L-1)/2 base total)
     }
 }
 
@@ -130,7 +136,12 @@ pub struct Os4x {
 
 impl Os4x {
     pub fn new() -> Self {
-        Self { a: Os2x::new(), b: Os2x::new(), db: Os2x::new(), da: Os2x::new() }
+        Self {
+            a: Os2x::new(),
+            b: Os2x::new(),
+            db: Os2x::new(),
+            da: Os2x::new(),
+        }
     }
     pub fn up(&mut self, x: f32) -> [f32; 4] {
         let s = self.a.up(x); // 2× stream: s[0], s[1]
@@ -158,6 +169,10 @@ impl Default for Os4x {
 
 /// 8× = three 2× stages in series (each inner stage processes its input stream
 /// sequentially, like `Os4x`).
+///
+/// NOT on any current ship path — F5 fixed OS per tier (High 2×, Ultra 4×) and
+/// dropped the OS-switch param. Retained + exercised by `tests/ladder_alias.rs`
+/// as the 8× alias-rejection reference and as headroom for a future 8× tier.
 pub struct Os8x {
     a: Os2x,
     b: Os2x,
@@ -281,6 +296,10 @@ mod tests {
             .min_by(|&i, &j| esr(i).total_cmp(&esr(j)))
             .unwrap();
         assert_eq!(best, report, "latency_samples() mis-reports alignment");
-        assert!(esr(report) < -35.0, "os4x roundtrip ESR {:.2} dB too high", esr(report));
+        assert!(
+            esr(report) < -35.0,
+            "os4x roundtrip ESR {:.2} dB too high",
+            esr(report)
+        );
     }
 }

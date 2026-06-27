@@ -69,6 +69,10 @@ impl Plugin for Plugin303 {
     fn reset(&mut self) {
         // Clear the voice tail so transport stop / loop-jump doesn't bleed.
         self.voice = Voice::new(self.sample_rate);
+        // Re-apply the persisted tier immediately (no fade) — otherwise the voice
+        // would silently revert to Low and the next block would crossfade up to
+        // the user's tier on every transport start / loop-jump.
+        self.voice.set_tier_immediate(self.params.tier.value());
     }
 
     fn process(

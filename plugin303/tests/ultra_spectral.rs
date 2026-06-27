@@ -45,9 +45,22 @@ fn ultra_voice_spectral_match() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let op = load_gold_op("voice_A2_mid.json");
 
-    let model = render_ultra(op.sr, op.cutoff, op.reso, op.note, gold.len(), ULTRA_BRIGHTNESS);
+    let model = render_ultra(
+        op.sr,
+        op.cutoff,
+        op.reso,
+        op.note,
+        gold.len(),
+        ULTRA_BRIGHTNESS,
+    );
     let (lsd, corr) = spectral_match(&gold, &model, op.sr);
     println!("Ultra spectral match: LSD = {lsd:.2} dB, corr = {corr:.3}");
-    assert!(lsd <= LSD_BUDGET_DB, "Ultra LSD {lsd:.2} dB exceeds budget {LSD_BUDGET_DB} dB");
-    assert!(corr >= CORR_MIN, "Ultra spectral corr {corr:.3} below {CORR_MIN}");
+    assert!(
+        lsd <= LSD_BUDGET_DB,
+        "Ultra LSD {lsd:.2} dB exceeds budget {LSD_BUDGET_DB} dB"
+    );
+    assert!(
+        corr >= CORR_MIN,
+        "Ultra spectral corr {corr:.3} below {CORR_MIN}"
+    );
 }

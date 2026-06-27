@@ -30,7 +30,16 @@ pub struct BjtParams {
 impl BjtParams {
     fn make(is: f64, bf: f64, br: f64, vaf: f64, var: f64, ikf: f64, ikr: f64) -> Self {
         let vcrit = VT * (VT / (is * std::f64::consts::SQRT_2)).ln();
-        Self { is, bf, br, vaf, var, ikf, ikr, vcrit }
+        Self {
+            is,
+            bf,
+            br,
+            vaf,
+            var,
+            ikf,
+            ikr,
+            vcrit,
+        }
     }
 
     /// 2N3904 NPN.
@@ -121,12 +130,19 @@ impl Bjt {
         let inv_af = if p.vaf > 0.0 { 1.0 / p.vaf } else { 0.0 };
         let inv_ar = if p.var > 0.0 { 1.0 / p.var } else { 0.0 };
         let mut inv1 = 1.0 - vbc * inv_af - vbe * inv_ar;
-        if inv1 < 0.1 {
+        let inv1_clamped = inv1 < 0.1;
+        if inv1_clamped {
             inv1 = 0.1; // guard against blow-up in saturation
         }
         let q1 = 1.0 / inv1;
-        let dq1_vbe = q1 * q1 * inv_ar;
-        let dq1_vbc = q1 * q1 * inv_af;
+        // When inv1 is clamped, q1 is frozen ⇒ its derivatives vanish. Keeping
+        // the unclamped derivatives would feed Newton a Jacobian that disagrees
+        // with the clamped residual, stalling convergence in deep saturation.
+        let (dq1_vbe, dq1_vbc) = if inv1_clamped {
+            (0.0, 0.0)
+        } else {
+            (q1 * q1 * inv_ar, q1 * q1 * inv_af)
+        };
         let inv_kf = if p.ikf > 0.0 { 1.0 / p.ikf } else { 0.0 };
         let inv_kr = if p.ikr > 0.0 { 1.0 / p.ikr } else { 0.0 };
         let q2 = itf * inv_kf + itr * inv_kr;
@@ -186,7 +202,12 @@ mod tests {
         let q = Bjt::npn(BjtParams::n2n3904());
         // vbe = 0.65 forward, collector reverse-biased (vbc = -2).
         let o = q.solve(0.65, -2.0);
-        assert!(o.ic > 0.0 && o.ib > 0.0, "should conduct: ic {} ib {}", o.ic, o.ib);
+        assert!(
+            o.ic > 0.0 && o.ib > 0.0,
+            "should conduct: ic {} ib {}",
+            o.ic,
+            o.ib
+        );
         let beta = o.ic / o.ib;
         assert!(
             beta > 0.7 * 416.4 && beta < 1.05 * 416.4,
@@ -219,7 +240,10 @@ mod tests {
         // PNP forward = base below emitter ⇒ vbe < 0; collector reverse ⇒ vbc > 0.
         let on = n.solve(0.65, -2.0);
         let op = p.solve(-0.65, 2.0);
-        assert!(op.ic < 0.0 && op.ib < 0.0, "PNP currents should be negative");
+        assert!(
+            op.ic < 0.0 && op.ib < 0.0,
+            "PNP currents should be negative"
+        );
         assert!(op.dic_b > 0.0, "PNP node gm sign should match NPN");
         assert!(on.ic > 0.0);
     }

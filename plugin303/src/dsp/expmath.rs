@@ -58,7 +58,9 @@ pub fn fast_log(x: f64) -> f64 {
     let s2 = s * s; // log(m) = 2*atanh(s)
     let poly = 2.0
         * s
-        * (1.0 + s2 * (1.0 / 3.0 + s2 * (1.0 / 5.0 + s2 * (1.0 / 7.0 + s2 * (1.0 / 9.0 + s2 / 11.0)))));
+        * (1.0
+            + s2 * (1.0 / 3.0
+                + s2 * (1.0 / 5.0 + s2 * (1.0 / 7.0 + s2 * (1.0 / 9.0 + s2 / 11.0)))));
     poly + e as f64 * LN2
 }
 
@@ -95,7 +97,10 @@ mod tests {
     #[test]
     fn fast_pow_pos_matches_std() {
         for &(b, e) in &[(0.5, -0.333), (1.2, 0.667), (0.75, 1.5), (1.0, -2.0)] {
-            assert!((fast_pow_pos(b, e) - b.powf(e)).abs() < 1e-9, "pow({b},{e})");
+            assert!(
+                (fast_pow_pos(b, e) - b.powf(e)).abs() < 1e-9,
+                "pow({b},{e})"
+            );
         }
     }
 }

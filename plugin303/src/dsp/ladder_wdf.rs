@@ -19,6 +19,7 @@
 
 use super::diode::Diode1N4148;
 use super::filter::Filter303;
+use super::linalg::lu_solve;
 use std::f64::consts::TAU;
 
 // Node indices into the 10-node rail system.
@@ -32,7 +33,15 @@ const AR: usize = 6;
 const BR: usize = 7;
 const CR: usize = 8;
 const DR: usize = 9;
-const N: usize = 10;
+/// Split input nodes (F6.2): the T38 differential pair's two bases. `IN_L` takes
+/// the signal, `IN_R` the inverting Q9 resonance feedback (F6.3); held at 0 here.
+const IN_L: usize = 10;
+const IN_R: usize = 11;
+const N: usize = 12;
+
+/// Pin conductance for the voltage-set input nodes. Huge vs `g_drive`/diode
+/// conductances so `v[IN_L]→vin`, `v[IN_R]→vin_r` to machine precision at gmin=0.
+const G_PIN: f64 = 1e3;
 
 /// Diode rungs as (anode, cathode), current flowing down each rail.
 const DIODES: [(usize, usize); 8] = [
@@ -74,49 +83,6 @@ const C_REF: f64 = 3.3e-8;
 /// (physical bias, F3.3 tracking + slope green). See `corner_vs_cutoff` diagnostic
 /// and the V4 finding in the design doc. Closing this needs the active stages.
 const CAL: f64 = 1.0;
-
-/// Solve `A·x = b` by dense LU with partial pivoting on the stack. Returns
-/// `None` if the matrix is singular. Zero-alloc.
-fn solve(mut a: [[f64; N]; N], mut b: [f64; N]) -> Option<[f64; N]> {
-    for col in 0..N {
-        // Partial pivot.
-        let mut piv = col;
-        let mut max = a[col][col].abs();
-        for r in (col + 1)..N {
-            if a[r][col].abs() > max {
-                max = a[r][col].abs();
-                piv = r;
-            }
-        }
-        if max < 1e-300 {
-            return None;
-        }
-        if piv != col {
-            a.swap(piv, col);
-            b.swap(piv, col);
-        }
-        let d = a[col][col];
-        for r in (col + 1)..N {
-            let f = a[r][col] / d;
-            if f != 0.0 {
-                for c in col..N {
-                    a[r][c] -= f * a[col][c];
-                }
-                b[r] -= f * b[col];
-            }
-        }
-    }
-    // Back-substitution.
-    let mut x = [0.0; N];
-    for i in (0..N).rev() {
-        let mut s = b[i];
-        for c in (i + 1)..N {
-            s -= a[i][c] * x[c];
-        }
-        x[i] = s / a[i][i];
-    }
-    Some(x)
-}
 
 /// Ultra-tier nodal diode-ladder filter.
 pub struct LadderVcf {
@@ -182,6 +148,7 @@ impl LadderVcf {
         gmin: f64,
         v0: [f64; N],
         vin: f64,
+        vin_r: f64,
         cgeq: &[f64; 4],
         cieq: &[f64; 4],
     ) -> Option<[f64; N]> {
@@ -219,18 +186,32 @@ impl LadderVcf {
             b[TL] += self.i0;
             b[TR] += self.i0;
 
-            // Differential drive (Norton): dl → +vin, dr → −vin.
-            g[DL][DL] += self.g_drive;
-            b[DL] += self.g_drive * vin;
-            g[DR][DR] += self.g_drive;
-            b[DR] += self.g_drive * (-vin);
+            // Voltage-set input nodes: pin IN_L ← vin (signal), IN_R ← vin_r
+            // (feedback; 0 until F6.3) via a stiff conductance to the source value.
+            g[IN_L][IN_L] += G_PIN;
+            b[IN_L] += G_PIN * vin;
+            g[IN_R][IN_R] += G_PIN;
+            b[IN_R] += G_PIN * vin_r;
+
+            // Differential drive: a VCCS controlled by the input differential
+            // (v[IN_L] − v[IN_R]) sourced into the bottom rails (dl → +, dr → −)
+            // through g_drive, with the Norton internal conductance to ground.
+            // Ideal VCCS — does not load the control nodes, so at gmin=0 this
+            // reproduces the prior scalar `vin` Norton to machine precision.
+            let gd = self.g_drive;
+            g[DL][DL] += gd;
+            g[DL][IN_L] -= gd;
+            g[DL][IN_R] += gd;
+            g[DR][DR] += gd;
+            g[DR][IN_L] += gd;
+            g[DR][IN_R] -= gd;
 
             // gmin homotopy + always-on base leakage.
             for d in 0..N {
                 g[d][d] += gmin + GMIN_BASE;
             }
 
-            let sol = solve(g, b)?;
+            let sol = lu_solve::<N>(g, b)?;
             let mut dmax = 0.0f64;
             for d in 0..N {
                 let dd = (sol[d] - v[d]).abs();
@@ -266,13 +247,14 @@ impl LadderVcf {
 
         // Fast path: warm-started Newton at gmin = 0. On stall, descend a gmin
         // homotopy carrying the solution forward, ending at gmin = 0.
-        let v = match self.newton(0.0, self.v, vin, &cgeq, &cieq) {
+        let vin_r = 0.0;
+        let v = match self.newton(0.0, self.v, vin, vin_r, &cgeq, &cieq) {
             Some(v) => v,
             None => {
                 let mut vh = self.v;
                 let mut ok = None;
                 for &gmin in &[1e-1, 1e-2, 1e-3, 1e-4, 0.0] {
-                    match self.newton(gmin, vh, vin, &cgeq, &cieq) {
+                    match self.newton(gmin, vh, vin, vin_r, &cgeq, &cieq) {
                         Some(v) => {
                             vh = v;
                             ok = Some(v);
@@ -378,6 +360,22 @@ mod tests {
     }
 
     #[test]
+    fn input_split_is_behavior_preserving() {
+        // With in_r grounded, the split-input ladder must match the prior 10-node
+        // differential drive to the bit (same corner, same slope). Regression guard
+        // across the F6.2 input refactor.
+        // Baseline (pre-refactor, CAL=1.0, vscale=0.02) corner ≈ 97.7 Hz — the
+        // depressed dominant pole of the passive ladder (VCF_MAP §9). The split must
+        // not move it. (Plan's 250..650 guess predates the measured baseline.)
+        let mut f = LadderVcf::new(48_000.0);
+        let c = corner(&mut f, 1_000.0);
+        assert!(
+            (80.0..120.0).contains(&c),
+            "corner regressed after input split: {c}"
+        );
+    }
+
+    #[test]
     fn dc_operating_point_converges() {
         let mut f = LadderVcf::new(48_000.0);
         f.set_cutoff(1_000.0);
@@ -393,7 +391,10 @@ mod tests {
         let mut f = LadderVcf::new(48_000.0);
         let a = corner(&mut f, 500.0);
         let b = corner(&mut f, 2_000.0);
-        assert!(b > a * 2.5 && b < a * 5.0, "cutoff does not track bias: {a} -> {b}");
+        assert!(
+            b > a * 2.5 && b < a * 5.0,
+            "cutoff does not track bias: {a} -> {b}"
+        );
     }
 
     #[test]

@@ -29,6 +29,39 @@ const VCO_GAIN: f32 = 2.0;
 /// instant.
 const XFADE_SECS: f32 = 0.010;
 
+/// Compensating-delay ring size. Must exceed the largest tier OS group delay
+/// (Os4x = 48 base samples) so every tier can be padded up to the common max.
+const COMP_BUF: usize = 64;
+
+/// Fixed integer-sample delay line (zero-alloc) used to pad each tier's output
+/// to the common reported latency, so the host PDC value never changes at
+/// runtime and a crossfade blends time-aligned paths.
+#[derive(Clone)]
+struct CompDelay {
+    buf: [f32; COMP_BUF],
+    pos: usize,
+    delay: usize,
+}
+
+impl CompDelay {
+    fn new(delay: usize) -> Self {
+        Self {
+            buf: [0.0; COMP_BUF],
+            pos: 0,
+            delay,
+        }
+    }
+
+    #[inline]
+    fn process(&mut self, x: f32) -> f32 {
+        self.buf[self.pos] = x;
+        let rd = (self.pos + COMP_BUF - self.delay) % COMP_BUF;
+        let y = self.buf[rd];
+        self.pos = (self.pos + 1) % COMP_BUF;
+        y
+    }
+}
+
 pub struct Voice {
     /// Low-tier polyBLEP saw.
     osc: Saw,
@@ -54,11 +87,27 @@ pub struct Voice {
     xfade_pos: f32,
     /// Per-sample crossfade increment (= 1 / fade-length-samples).
     xfade_step: f32,
+    /// Tier requested while a fade was still in flight — applied as the next fade
+    /// once the current one completes, so a fast multi-tier sweep never hard-cuts
+    /// a still-weighted path.
+    pending_tier: Option<Tier>,
+    /// Per-tier output delays that pad each path up to `max_latency`, so the
+    /// reported host PDC is constant and the crossfade blends aligned signals.
+    comp_low: CompDelay,
+    comp_high: CompDelay,
+    comp_ultra: CompDelay,
+    /// Common reported latency (base samples) = max OS group delay over all tiers.
+    max_latency: usize,
     sr: f32,
 }
 
 impl Voice {
     pub fn new(sr: f32) -> Self {
+        // Per-tier intrinsic OS group delays; pad each up to the common max.
+        let lat_low = 0;
+        let lat_high = Os2x::new().latency_samples();
+        let lat_ultra = Os4x::new().latency_samples();
+        let max_latency = lat_ultra.max(lat_high).max(lat_low);
         Self {
             osc: Saw::new(),
             osc_hi: Saw::new(),
@@ -73,6 +122,11 @@ impl Voice {
             xfade_from: None,
             xfade_pos: 1.0,
             xfade_step: 1.0 / (sr * XFADE_SECS).max(1.0),
+            pending_tier: None,
+            comp_low: CompDelay::new(max_latency - lat_low),
+            comp_high: CompDelay::new(max_latency - lat_high),
+            comp_ultra: CompDelay::new(max_latency - lat_ultra),
+            max_latency,
             sr,
         }
     }
@@ -92,28 +146,32 @@ impl Voice {
         self.tier = tier;
         self.xfade_from = None;
         self.xfade_pos = 1.0;
+        self.pending_tier = None;
     }
 
     pub fn set_tier(&mut self, tier: Tier) {
+        // If a fade is already in flight, queue the new target instead of
+        // clobbering the outgoing path (which would hard-cut a still-weighted
+        // tier → click on a fast multi-tier sweep). The queued tier starts its
+        // fade when the current one completes (see `tick`).
+        if self.xfade_from.is_some() {
+            self.pending_tier = if tier == self.tier { None } else { Some(tier) };
+            return;
+        }
         if tier == self.tier {
             return;
         }
-        // Snapshot the outgoing tier and (re)start the fade. If a fade was
-        // already mid-flight, the current target becomes the new outgoing path —
-        // a tiny level wobble at worst, and only when the user spins the param.
         self.xfade_from = Some(self.tier);
         self.xfade_pos = 0.0;
         self.tier = tier;
     }
 
-    /// Added latency (base samples) of the current tier. High/Ultra add their OS
-    /// round-trip group delay; Low is zero-latency. Host PDC wiring is F5.
+    /// Reported host latency (base samples). Constant across tiers: every tier is
+    /// padded to the max OS group delay (Ultra's 4×), so the PDC value never
+    /// changes at runtime — no host graph re-init on a tier switch, and the
+    /// crossfade blends paths that share the same total latency.
     pub fn latency_samples(&self) -> usize {
-        match self.tier {
-            Tier::Low => 0,
-            Tier::High => self.os2.latency_samples(),
-            Tier::Ultra => self.os.latency_samples(),
-        }
+        self.max_latency
     }
 
     pub fn note_on(&mut self, note: u8) {
@@ -152,17 +210,29 @@ impl Voice {
     /// without interfering.
     fn render_tier(&mut self, tier: Tier) -> f32 {
         match tier {
-            // Low: polyBLEP saw → TPT ladder (cheap, ships).
-            Tier::Low => self.filter.tick(self.osc.tick()),
+            // Low: polyBLEP saw → TPT ladder (cheap, ships). Padded to the common
+            // latency so the host PDC is constant across tiers.
+            Tier::Low => {
+                let y = self.filter.tick(self.osc.tick());
+                self.comp_low.process(y)
+            }
             // High (F4.1): polyBLEP saw → nodal diode-ladder at 2× oversample.
             // Skips the costly nodal VCO Newton but keeps the circuit-filter
             // character — sits between Low and Ultra at a fraction of Ultra cost.
             Tier::High => {
                 let hi = self.os2.up(self.osc_hi.tick());
                 let o = [self.ladder_hi.tick(hi[0]), self.ladder_hi.tick(hi[1])];
-                self.os2.down(o)
+                self.comp_high.process(self.os2.down(o))
             }
             // Ultra: circuit VCO saw → nodal diode-ladder at 4× oversample.
+            // KNOWN LIMITATION: the nodal VCO runs at base rate, so its sharp
+            // relaxation reset edge is already aliased before `os.up` (4× OS only
+            // band-limits the downstream ladder nonlinearity, not the source). At
+            // high notes Ultra's saw can therefore alias more than the band-limited
+            // polyBLEP saws of Low/High. Generating the VCO at OS rate would 4× its
+            // Newton cost and break the tier's real-time budget — deferred to the
+            // Ultra-headroom work (active stages + per-note pitch secant). See the
+            // design doc "Deferred Ultra headroom" note.
             Tier::Ultra => {
                 let s = self.vco.tick() * VCO_GAIN;
                 let hi = self.os.up(s);
@@ -172,7 +242,7 @@ impl Voice {
                     self.ladder.tick(hi[2]),
                     self.ladder.tick(hi[3]),
                 ];
-                self.os.down(o)
+                self.comp_ultra.process(self.os.down(o))
             }
         }
     }
@@ -195,6 +265,14 @@ impl Voice {
                 self.xfade_pos += self.xfade_step;
                 if self.xfade_pos >= 1.0 {
                     self.xfade_from = None;
+                    // Fade complete: launch any tier queued mid-fade.
+                    if let Some(next) = self.pending_tier.take() {
+                        if next != self.tier {
+                            self.xfade_from = Some(self.tier);
+                            self.xfade_pos = 0.0;
+                            self.tier = next;
+                        }
+                    }
                 }
                 out
             }
@@ -252,18 +330,51 @@ mod tests {
     }
 
     #[test]
-    fn latency_matches_tier_oversampler() {
-        // PDC contract (F5.2): Low is zero-latency; High/Ultra report their OS
-        // round-trip group delay, and Ultra (4×) ≥ High (2×).
+    fn latency_is_constant_across_tiers() {
+        // PDC contract (F5.2, revised): all tiers are padded to the max OS group
+        // delay so the reported host latency never changes at runtime (no graph
+        // re-init on a switch). It equals Ultra's 4× round-trip group delay.
+        use super::super::oversample::Os4x;
+        let expect = Os4x::new().latency_samples();
         let mut v = Voice::new(48_000.0);
-        v.set_tier(Tier::Low);
-        assert_eq!(v.latency_samples(), 0, "Low must be zero-latency");
-        v.set_tier(Tier::High);
-        let high = v.latency_samples();
-        v.set_tier(Tier::Ultra);
-        let ultra = v.latency_samples();
-        assert!(high > 0, "High OS must report latency");
-        assert!(ultra >= high, "Ultra (4×) latency must be ≥ High (2×)");
+        assert!(expect > 0, "Ultra OS must add latency");
+        for tier in [Tier::Low, Tier::High, Tier::Ultra] {
+            v.set_tier_immediate(tier);
+            assert_eq!(
+                v.latency_samples(),
+                expect,
+                "tier {tier:?} latency must equal the common max"
+            );
+        }
+    }
+
+    #[test]
+    fn fast_tier_sweep_queues_without_clobbering() {
+        // Low→High→Ultra within one fade window must not hard-cut the still-
+        // weighted path: the second change is queued, not applied instantly.
+        let mut v = Voice::new(48_000.0);
+        v.note_on(45);
+        v.set_tier_immediate(Tier::Low);
+        v.tick();
+        v.set_tier(Tier::High); // starts Low→High fade
+        v.tick();
+        v.set_tier(Tier::Ultra); // mid-fade → queued
+        assert_eq!(
+            v.tier,
+            Tier::High,
+            "second change must not pre-empt the fade"
+        );
+        assert_eq!(v.pending_tier, Some(Tier::Ultra), "Ultra must be queued");
+        // Run past the fade; the queued Ultra fade should then take over.
+        for _ in 0..1_000 {
+            v.tick();
+        }
+        assert_eq!(
+            v.tier,
+            Tier::Ultra,
+            "queued tier must engage after the fade"
+        );
+        assert_eq!(v.pending_tier, None, "queue cleared once applied");
     }
 
     #[test]

@@ -26,5 +26,8 @@ fn ultra_voice_is_finite_and_bounded_under_sweep() {
     }
     // The voice is enveloped (AD decay) and RMS-scaled internally; a loose bound
     // catches runaway Newton without over-constraining the legitimate level.
-    assert!(peak < 50.0, "Ultra output unbounded under sweep: peak {peak}");
+    assert!(
+        peak < 50.0,
+        "Ultra output unbounded under sweep: peak {peak}"
+    );
 }

@@ -54,6 +54,9 @@ const MAX_ITERS: usize = 100;
 const TOL: f64 = 1e-7;
 const GMIN_BASE: f64 = 1e-12;
 const RAMP_S: f64 = 1e-3; // rail ramp time for self-start
+/// DC-blocker highpass corner (Hz). ~7.6 Hz reproduces the legacy hardcoded
+/// `0.999` pole at 48 kHz, but is now scaled by `sr` so the corner is invariant.
+const DC_BLOCK_HZ: f32 = 7.6;
 /// Per-iteration node-voltage step limit (damped Newton): bounds the exponential
 /// overshoot that otherwise diverges on this stiff relaxation core.
 const VLIM: f64 = 0.5;
@@ -89,7 +92,14 @@ fn stamp_res(a: &mut [[f64; NU]; NU], rhs: &mut [f64; NU], p: Node, q: Node, g: 
 
 /// Two-terminal companion with branch current `Geq·(Vp−Vq) + ieq` leaving `p`.
 #[inline]
-fn stamp_branch(a: &mut [[f64; NU]; NU], rhs: &mut [f64; NU], p: Node, q: Node, geq: f64, ieq: f64) {
+fn stamp_branch(
+    a: &mut [[f64; NU]; NU],
+    rhs: &mut [f64; NU],
+    p: Node,
+    q: Node,
+    geq: f64,
+    ieq: f64,
+) {
     stamp(a, rhs, p, &[(p, geq), (q, -geq)], ieq);
     stamp(a, rhs, q, &[(q, geq), (p, -geq)], -ieq);
 }
@@ -127,6 +137,8 @@ pub struct Vco303 {
     /// DC blocker state for the `o_r` saw output.
     dc_x1: f32,
     dc_y1: f32,
+    /// DC-blocker pole, derived from `sr` so the HP corner is rate-invariant.
+    dc_r: f32,
     /// Diagnostics: Newton iters used + whether the last sample fell to homotopy.
     pub dbg_iters: u32,
     pub dbg_homotopy: bool,
@@ -147,6 +159,9 @@ impl Vco303 {
             t_samples: 0,
             dc_x1: 0.0,
             dc_y1: 0.0,
+            // ~7.6 Hz HP corner (matches the legacy 0.999 @ 48 kHz) made
+            // rate-invariant: r = exp(-2π·f_hp/sr).
+            dc_r: (-2.0 * std::f32::consts::PI * DC_BLOCK_HZ / sr).exp(),
             dbg_iters: 0,
             dbg_homotopy: false,
         }
@@ -191,11 +206,31 @@ impl Vco303 {
     /// Cap definitions for this sample's rail values.
     fn caps(&self, vp: f64) -> [CapDef; 5] {
         [
-            CapDef { p: Fix(vp), q: Unk(CP), c: 1e-8 },   // C3 integrator
-            CapDef { p: Unk(BF), q: Unk(N17), c: 1e-8 },  // C1
-            CapDef { p: Unk(PSI), q: GND, c: 1e-6 },      // C2
-            CapDef { p: Unk(D_R), q: Unk(O_R), c: 1e-7 }, // C90
-            CapDef { p: Unk(D_P), q: Unk(O_P), c: 1e-7 }, // C80
+            CapDef {
+                p: Fix(vp),
+                q: Unk(CP),
+                c: 1e-8,
+            }, // C3 integrator
+            CapDef {
+                p: Unk(BF),
+                q: Unk(N17),
+                c: 1e-8,
+            }, // C1
+            CapDef {
+                p: Unk(PSI),
+                q: GND,
+                c: 1e-6,
+            }, // C2
+            CapDef {
+                p: Unk(D_R),
+                q: Unk(O_R),
+                c: 1e-7,
+            }, // C90
+            CapDef {
+                p: Unk(D_P),
+                q: Unk(O_P),
+                c: 1e-7,
+            }, // C80
         ]
     }
 
@@ -247,12 +282,12 @@ impl Vco303 {
 
         // BJTs: (device, base, collector, emitter).
         let bjts: [(Bjt, Node, Node, Node); 6] = [
-            (Bjt::pnp(self.pnp), Unk(II), GND, Unk(IB)),     // Q6
-            (Bjt::npn(self.npn), Unk(IB), Unk(IR), GND),     // Q7
-            (Bjt::pnp(self.pnp), Unk(N12), Unk(N4), Fix(vp)),// Q4
-            (Bjt::npn(self.npn), Unk(N5), Unk(N5), Unk(N10)),// Q5 (diode-connected)
-            (Bjt::npn(self.npn), Unk(N5), Unk(N12), Unk(CP)),// Q3
-            (Bjt::pnp(self.pnp), Unk(SH_IN), Unk(PL), Unk(PSI)),// Q2
+            (Bjt::pnp(self.pnp), Unk(II), GND, Unk(IB)),         // Q6
+            (Bjt::npn(self.npn), Unk(IB), Unk(IR), GND),         // Q7
+            (Bjt::pnp(self.pnp), Unk(N12), Unk(N4), Fix(vp)),    // Q4
+            (Bjt::npn(self.npn), Unk(N5), Unk(N5), Unk(N10)),    // Q5 (diode-connected)
+            (Bjt::npn(self.npn), Unk(N5), Unk(N12), Unk(CP)),    // Q3
+            (Bjt::pnp(self.pnp), Unk(SH_IN), Unk(PL), Unk(PSI)), // Q2
         ];
         for (dev, nb, nc, ne) in bjts {
             let vb = vof(nb, v);
@@ -264,9 +299,27 @@ impl Vco303 {
             let i_eq_b = o.ib - (o.dib_b * vb + o.dib_c * vc + o.dib_e * ve);
             let i_eq_c = o.ic - (o.dic_b * vb + o.dic_c * vc + o.dic_e * ve);
             let i_eq_e = o.ie - (o.die_b * vb + o.die_c * vc + o.die_e * ve);
-            stamp(&mut a, &mut rhs, nb, &[(nb, o.dib_b), (nc, o.dib_c), (ne, o.dib_e)], i_eq_b);
-            stamp(&mut a, &mut rhs, nc, &[(nb, o.dic_b), (nc, o.dic_c), (ne, o.dic_e)], i_eq_c);
-            stamp(&mut a, &mut rhs, ne, &[(nb, o.die_b), (nc, o.die_c), (ne, o.die_e)], i_eq_e);
+            stamp(
+                &mut a,
+                &mut rhs,
+                nb,
+                &[(nb, o.dib_b), (nc, o.dib_c), (ne, o.dib_e)],
+                i_eq_b,
+            );
+            stamp(
+                &mut a,
+                &mut rhs,
+                nc,
+                &[(nb, o.dic_b), (nc, o.dic_c), (ne, o.dic_e)],
+                i_eq_c,
+            );
+            stamp(
+                &mut a,
+                &mut rhs,
+                ne,
+                &[(nb, o.die_b), (nc, o.die_c), (ne, o.die_e)],
+                i_eq_e,
+            );
         }
 
         // JFET Q1: drain=vp, gate=cp, source=bf.
@@ -284,8 +337,20 @@ impl Vco303 {
             let gm = ch.gm;
             let gds = ch.gds;
             let i_eq = ch.id - (gm * vgs + gds * vds);
-            stamp(&mut a, &mut rhs, nd, &[(ng, gm), (nd, gds), (ns, -(gm + gds))], i_eq);
-            stamp(&mut a, &mut rhs, ns, &[(ng, -gm), (nd, -gds), (ns, gm + gds)], -i_eq);
+            stamp(
+                &mut a,
+                &mut rhs,
+                nd,
+                &[(ng, gm), (nd, gds), (ns, -(gm + gds))],
+                i_eq,
+            );
+            stamp(
+                &mut a,
+                &mut rhs,
+                ns,
+                &[(ng, -gm), (nd, -gds), (ns, gm + gds)],
+                -i_eq,
+            );
             // Gate junction diodes: gate->source, gate->drain.
             let vgsj = vg - vs;
             let (igs, ggs) = self.jfet.gate_diode(vgsj);
@@ -360,19 +425,30 @@ impl Vco303 {
             None => {
                 self.dbg_homotopy = true;
                 let mut vh = self.v;
-                let mut ok = self.v;
                 let mut its = 0;
+                let mut converged0 = false;
                 for &gmin in &[1e-1, 1e-2, 1e-3, 1e-4, 0.0] {
-                    if let Some((s, it)) = self.newton(gmin, vh, rails, &cgeq, &cieq) {
-                        vh = s;
-                        ok = s;
-                        its += it;
-                    } else {
-                        break;
+                    match self.newton(gmin, vh, rails, &cgeq, &cieq) {
+                        Some((s, it)) => {
+                            vh = s;
+                            its += it;
+                            // Only the final gmin=0 step is a physical operating
+                            // point; the intermediate steps carry artificial
+                            // leakage (≥1e-4 S ≈ R8 conductance) that would emit a
+                            // materially wrong sample.
+                            converged0 = gmin == 0.0;
+                        }
+                        None => break,
                     }
                 }
                 self.dbg_iters = its;
-                ok
+                if converged0 {
+                    vh
+                } else {
+                    // Homotopy never reached gmin=0: hold the previous converged
+                    // operating point rather than emit a leakage-contaminated one.
+                    self.v
+                }
             }
         };
         self.v = v;
@@ -386,9 +462,9 @@ impl Vco303 {
         }
         self.t_samples += 1;
 
-        // o_r saw, DC-blocked (R=0.999 one-pole highpass).
+        // o_r saw, DC-blocked (one-pole highpass, rate-invariant pole `dc_r`).
         let x = v[O_R] as f32;
-        let y = x - self.dc_x1 + 0.999 * self.dc_y1;
+        let y = x - self.dc_x1 + self.dc_r * self.dc_y1;
         self.dc_x1 = x;
         self.dc_y1 = y;
         y
@@ -504,8 +580,14 @@ mod tests {
         let sr = 96_000.0;
         let f_low = measure_freq(&render(231.0, sr, 0.1), sr);
         let f_hi = measure_freq(&render(462.0, sr, 0.1), sr);
-        assert!(f_low > 50.0 && f_low < 4_000.0, "low pitch out of range: {f_low}");
+        assert!(
+            f_low > 50.0 && f_low < 4_000.0,
+            "low pitch out of range: {f_low}"
+        );
         // An octave CV step should raise pitch (~tracking; not exact yet).
-        assert!(f_hi > f_low * 1.4, "pitch does not track CV: {f_low} -> {f_hi}");
+        assert!(
+            f_hi > f_low * 1.4,
+            "pitch does not track CV: {f_low} -> {f_hi}"
+        );
     }
 }
