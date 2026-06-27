@@ -1,0 +1,9 @@
+{
+  "note": 57,
+  "cutoff_hz": 1002.0,
+  "reso": 0.85,
+  "sr": 48000.0,
+  "secs": 0.2,
+  "samples": 9600,
+  "_source": "eval/303/gen_gold.py \u2014 whole-voice SPICE ref, RMS-normalised"
+}
