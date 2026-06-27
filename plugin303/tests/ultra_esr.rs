@@ -85,7 +85,7 @@ fn ultra_voice_esr_within_budget() {
     let sr = sc["sr"].as_f64().unwrap() as f32;
 
     let mut v = Voice::new(sr);
-    v.set_tier(Tier::Ultra);
+    v.set_tier_immediate(Tier::Ultra);
     v.set_cutoff(cutoff);
     v.set_reso(reso);
     v.note_on(note);

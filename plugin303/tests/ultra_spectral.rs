@@ -20,7 +20,7 @@ const ULTRA_BRIGHTNESS: f64 = 1.0; // VCF brightness cal (cal=1.0 is the LSD opt
 
 fn render_ultra(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: f64) -> Vec<f32> {
     let mut v = Voice::new(sr);
-    v.set_tier(Tier::Ultra);
+    v.set_tier_immediate(Tier::Ultra);
     v.set_ultra_brightness(cal);
     v.set_cutoff(cutoff);
     v.set_reso(reso);

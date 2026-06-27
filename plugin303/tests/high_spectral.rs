@@ -29,7 +29,7 @@ const CORR_MIN: f32 = 0.95; // achieved 0.971; Low's 0.931 fails → real discri
 
 fn render_high(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize) -> Vec<f32> {
     let mut v = Voice::new(sr);
-    v.set_tier(Tier::High);
+    v.set_tier_immediate(Tier::High);
     v.set_cutoff(cutoff);
     v.set_reso(reso);
     v.note_on(note);
@@ -38,7 +38,7 @@ fn render_high(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize) -> Vec<f32> 
 
 fn render_tier(tier: Tier, op: &common::GoldOp, n: usize) -> Vec<f32> {
     let mut v = Voice::new(op.sr);
-    v.set_tier(tier);
+    v.set_tier_immediate(tier);
     v.set_cutoff(op.cutoff);
     v.set_reso(op.reso);
     v.note_on(op.note);
@@ -66,7 +66,7 @@ fn cost_bench() {
     let n = (op.sr as usize) * 2; // 2 s
     for (name, tier) in [("Low", Tier::Low), ("High", Tier::High), ("Ultra", Tier::Ultra)] {
         let mut v = Voice::new(op.sr);
-        v.set_tier(tier);
+        v.set_tier_immediate(tier);
         v.set_cutoff(op.cutoff);
         v.set_reso(op.reso);
         v.note_on(op.note);

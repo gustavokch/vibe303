@@ -32,7 +32,7 @@ fn main() {
     let out = arg_s("--out", "render.f32");
 
     let mut v = Voice::new(sr);
-    v.set_tier(match tier {
+    v.set_tier_immediate(match tier {
         1 => Tier::High,
         2 => Tier::Ultra,
         _ => Tier::Low,

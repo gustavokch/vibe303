@@ -75,6 +75,31 @@ fn high_voice_hot_path_is_alloc_free() {
 }
 
 #[test]
+fn tier_crossfade_hot_path_is_alloc_free() {
+    use plugin303::dsp::filter::Tier;
+    // A crossfade renders BOTH tiers per sample — the heaviest hot path. Must
+    // stay alloc-free while the fade is in flight.
+    let mut voice = Voice::new(48_000.0);
+    voice.set_tier(Tier::Low);
+    voice.set_cutoff(1_000.0);
+    voice.set_reso(0.5);
+    voice.note_on(57);
+    for _ in 0..128 {
+        voice.tick(); // warm-start both backends outside the guard
+    }
+    reset_violation_count();
+    assert_no_alloc(|| {
+        voice.set_tier(Tier::Ultra); // kicks off Low→Ultra crossfade
+        let mut acc = 0.0f32;
+        for _ in 0..4_096 {
+            acc += voice.tick();
+        }
+        core::hint::black_box(acc);
+    });
+    assert_eq!(violation_count(), 0, "tier crossfade allocated on the audio path");
+}
+
+#[test]
 fn ladder_vcf_hot_path_is_alloc_free() {
     let mut f = LadderVcf::new(48_000.0); // setup (may allocate) before the guard
     f.set_cutoff(1_000.0);

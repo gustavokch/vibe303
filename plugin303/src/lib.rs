@@ -11,6 +11,9 @@ pub struct Plugin303 {
     params: Arc<Plugin303Params>,
     sample_rate: f32,
     voice: Voice,
+    /// Last latency reported to the host (samples). Tracked so we only notify on
+    /// change — Ultra/High oversampling adds group delay the host must PDC.
+    reported_latency: u32,
 }
 
 impl Default for Plugin303 {
@@ -20,6 +23,7 @@ impl Default for Plugin303 {
             params: Arc::new(Plugin303Params::default()),
             sample_rate,
             voice: Voice::new(sample_rate),
+            reported_latency: 0,
         }
     }
 }
@@ -49,10 +53,16 @@ impl Plugin for Plugin303 {
         &mut self,
         _layout: &AudioIOLayout,
         cfg: &BufferConfig,
-        _ctx: &mut impl InitContext<Self>,
+        ctx: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = cfg.sample_rate;
         self.voice = Voice::new(self.sample_rate);
+        // Apply the persisted tier (no fade — this is the initial state, not a
+        // user change) and report its latency so the host can PDC the
+        // oversampling group delay from the first block.
+        self.voice.set_tier_immediate(self.params.tier.value());
+        self.reported_latency = self.voice.latency_samples() as u32;
+        ctx.set_latency_samples(self.reported_latency);
         true
     }
 
@@ -67,8 +77,16 @@ impl Plugin for Plugin303 {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // Block-rate read of the fidelity tier (a field write on the voice).
+        // Block-rate read of the fidelity tier (starts a crossfade on change).
         self.voice.set_tier(self.params.tier.value());
+
+        // Report PDC only when the tier's latency actually changes, so the host
+        // isn't spammed with redundant restarts every block.
+        let latency = self.voice.latency_samples() as u32;
+        if latency != self.reported_latency {
+            context.set_latency_samples(latency);
+            self.reported_latency = latency;
+        }
 
         let mut next_event = context.next_event();
         for (sample_idx, mut frame) in buffer.iter_samples().enumerate() {
