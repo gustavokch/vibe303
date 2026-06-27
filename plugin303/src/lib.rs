@@ -2,7 +2,7 @@ use nih_plug::prelude::*;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-mod dsp;
+pub mod dsp;
 mod params;
 use dsp::voice::Voice;
 use params::Plugin303Params;
