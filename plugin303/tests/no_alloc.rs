@@ -6,6 +6,7 @@
 //! harness exists; the wrapper layers above `voice.tick` are nih-plug-owned.
 
 use assert_no_alloc::*;
+use plugin303::dsp::oversample::Os4x;
 use plugin303::dsp::voice::Voice;
 
 #[global_allocator]
@@ -24,4 +25,19 @@ fn voice_hot_path_is_alloc_free() {
         core::hint::black_box(acc);
     });
     assert_eq!(violation_count(), 0, "voice.tick allocated on the audio path");
+}
+
+#[test]
+fn oversampler_hot_path_is_alloc_free() {
+    let mut os = Os4x::new(); // coeff build (may allocate) happens before the guard
+    reset_violation_count();
+    assert_no_alloc(|| {
+        let mut acc = 0.0f32;
+        for i in 0..4_096 {
+            let hi = os.up((i as f32 * 0.01).sin());
+            acc += os.down(hi);
+        }
+        core::hint::black_box(acc);
+    });
+    assert_eq!(violation_count(), 0, "Os4x up/down allocated on the audio path");
 }
