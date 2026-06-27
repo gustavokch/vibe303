@@ -97,9 +97,11 @@ fn resonance_peaks_at_cutoff_and_reaches_gold_height() {
     let f_peak = g["reso"]["f_peak_hz"].as_f64().unwrap() as f32;
     let gold_peak_db = g["reso"]["max_peak_db"].as_f64().unwrap() as f32;
 
+    // Reso tuned so the ideal TPT peak height matches the gold ~20 dB; this lets
+    // the height check below be two-sided (k chosen empirically: 0.85 -> ~20.5 dB).
     let cfg = |f: &mut TptLadder| {
         f.set_cutoff(f_peak);
-        f.set_reso(0.97);
+        f.set_reso(0.85);
         f.set_poles(4);
     };
     let pb = gain_at(&cfg, 50.0);
@@ -112,16 +114,19 @@ fn resonance_peaks_at_cutoff_and_reaches_gold_height() {
             best_f = fr;
         }
     }
-    // Peak sits at the cutoff (within 30%), like the gold fc-tracking resonance.
+    // Peak sits at the cutoff (within 30%). NB: the TPT ladder peaks at its
+    // configured cutoff by construction, so this gates `set_cutoff` calibration
+    // more than gold fidelity — the height check below carries the fidelity claim.
     let f_rel = best_f / f_peak;
     assert!(
         (0.7..1.3).contains(&f_rel),
         "resonance peak at {best_f:.0} Hz, cutoff {f_peak:.0} Hz (rel {f_rel:.2})"
     );
-    // Plugin is at least as resonant as the real circuit (gold ~20 dB).
+    // Two-sided: the plugin must match the real circuit's resonant height, not
+    // merely exceed it — a runaway / self-oscillating peak fails here too.
     assert!(
-        best_db >= gold_peak_db - 5.0,
-        "resonance peak {best_db:.1} dB below gold {gold_peak_db:.1} dB"
+        (best_db - gold_peak_db).abs() < 3.0,
+        "resonance peak {best_db:.1} dB vs gold {gold_peak_db:.1} dB"
     );
 }
 
@@ -149,15 +154,30 @@ fn tap_select_per_pole_step_matches_gold() {
     let (p4, p3, p2) = (atten(4), atten(3), atten(2));
     // Monotone: fewer poles -> less attenuation.
     assert!(p4 < p3 && p3 < p2, "taps not monotone: p4={p4:.1} p3={p3:.1} p2={p2:.1}");
-    // Per-pole step matches the gold ~one-pole-per-tap ladder (within 5 dB).
+
     let step_43 = p3 - p4;
     let step_32 = p2 - p3;
+
+    // The per-pole step of any identical-1-pole cascade is `20*log10(f_ref/fc)` per
+    // tap — the diode ladder shares this, and the gold steps (~13.7/14.5 dB) sit on
+    // it. So this also gates `set_cutoff` calibration: a mistuned effective cutoff
+    // shifts `f_ref/fc` and the step with it. Probe at the gold corner ratio
+    // (cutoff = f_peak, measured at f_ref) and hold both the analytic value and the
+    // gold to a tight 2.5 dB — that caps the tolerated cutoff error at
+    // 10^(2.5/20) ~ 1.33x (~0.4 octave) instead of the old 5 dB / ~0.83 octave.
+    let analytic_step = 20.0 * (f_ref / f_peak).log10();
+    for (label, step) in [("4->3", step_43), ("3->2", step_32)] {
+        assert!(
+            (step - analytic_step).abs() < 2.5,
+            "{label} step {step:.1} dB off analytic identical-cascade {analytic_step:.1} dB"
+        );
+    }
     assert!(
-        (step_43 - gold_step_43).abs() < 5.0,
+        (step_43 - gold_step_43).abs() < 2.5,
         "4->3 step {step_43:.1} dB vs gold {gold_step_43:.1} dB"
     );
     assert!(
-        (step_32 - gold_step_32).abs() < 5.0,
+        (step_32 - gold_step_32).abs() < 2.5,
         "3->2 step {step_32:.1} dB vs gold {gold_step_32:.1} dB"
     );
 }
