@@ -214,3 +214,19 @@ near-uncorrelated with the circuit saw + diode ladder regardless of cutoff/reso 
 hard-confirms F1.5 — Low cannot be calibrated toward SPICE; audible fidelity requires the WDF
 backends (F3 Ultra / F4 High). Low's ESR gate (F2.6) is therefore the *measured* number
 (~+2.5 dB) + margin: a regression guard on the TPT path, not a fidelity target.
+
+### F3.4 update — ADAA-vs-OS bench on the nodal ladder (`tests/ladder_alias.rs`)
+
+The design's plan (point 2 above) was to pair ADAA1 on the diode with 4× OS. **That is not
+applicable to this topology and is dropped.** ADAA (Parker et al.) requires an *explicit* static
+map `y = f(x)` to antidifference; the F3.3 diode is solved *implicitly* inside the per-sample
+Newton (rung currents are the coupled MNA unknowns), so there is no closed-form `F = ∫f`. The
+residual trimmer is therefore the **oversampling factor**, full stop.
+
+Bench (hot 1.7 kHz sine, off-grid, Hann-windowed alias metric, 1×/2×/4×/8× OS) shows the aliased
+fold-down energy sits at a **flat ~−53 dB floor across all OS factors** for a *steady tone*, even
+at hard drive. Reason: the VCF is itself a lowpass, so it attenuates the diode's HF products before
+they fold — **the ladder is self-anti-aliasing for static tones.** OS therefore matters for the
+*dynamic* cases this bench can't isolate: fast cutoff sweeps (303 accent/decay) and resonance
+near Nyquist. The binding arbiter is F3.5's whole-voice SPICE ESR gate (≤ −30 dB), which stresses
+exactly those. **Decision: start Ultra at 4× OS; escalate to 8× only if the F3.5 ESR gate misses.**
