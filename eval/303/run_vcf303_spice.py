@@ -272,7 +272,42 @@ def poles_sweep() -> int:
     return 0 if ok else 1
 
 
+def dump_json() -> int:
+    """Emit the bias-robust gold metrics (at the reference bias I_tail = 32 uA) as
+    JSON for the plugin's TptLadder fit test (`plugin303/tests/vcf303_fit.rs`).
+    Re-run after any circuit change: `... run_vcf303_spice.py --json > eval/303/vcf303_gold.json`."""
+    import json
+
+    i_tail = 32e-6
+    # Cutoff/slope at the reference bias.
+    f, mag = ac_response(i_tail)
+    _, f_deep, slope = cutoff_and_slope(f, mag)
+    # Resonance: strongest peak across the Rreso sweep (height + frequency).
+    best = (0.0, float("nan"))
+    for rr in [220e3, 100e3, 47e3, 22e3, 10e3]:
+        fr, mr = ac_response(i_tail, rr)
+        pk, fpk = resonance_peak(fr, mr)
+        if pk > best[0]:
+            best = (pk, fpk)
+    # Tap attenuation @ F_REF (souped 4/3/2-pole = taps tl/bl/cl).
+    ft, taps = tap_response(i_tail)
+    atten = {name: _tap_metrics(ft, taps[name])[1] for name, _ in TAPS}
+    gold = {
+        "_source": "eval/303/run_vcf303_spice.py --json (ngspice-46, vcf303.toml)",
+        "i_tail_uA": i_tail * 1e6,
+        "f_ref_hz": F_REF,
+        "cutoff": {"f_deep_hz": f_deep, "slope_db_oct": slope},
+        "reso": {"max_peak_db": best[0], "f_peak_hz": best[1]},
+        "taps_atten_db": {"p4_tl": atten["tl"], "p3_bl": atten["bl"], "p2_cl": atten["cl"]},
+    }
+    print(json.dumps(gold, indent=2))
+    return 0
+
+
 def main() -> int:
+    if "--json" in sys.argv:
+        return dump_json()
+
     # `--op` prints the DC operating point (active-stage convergence sanity check).
     if "--op" in sys.argv:
         for it in [2e-6, 32e-6, 128e-6]:

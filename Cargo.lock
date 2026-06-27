@@ -1280,6 +1280,7 @@ version = "0.1.0"
 dependencies = [
  "assert_no_alloc",
  "nih_plug",
+ "serde_json",
 ]
 
 [[package]]
