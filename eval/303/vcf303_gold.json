@@ -1,0 +1,18 @@
+{
+  "_source": "eval/303/run_vcf303_spice.py --json (ngspice-46, vcf303.toml)",
+  "i_tail_uA": 32.0,
+  "f_ref_hz": 5000.0,
+  "cutoff": {
+    "f_deep_hz": 6024.645135102812,
+    "slope_db_oct": -20.937481011189853
+  },
+  "reso": {
+    "max_peak_db": 19.87715410584906,
+    "f_peak_hz": 1002.26559
+  },
+  "taps_atten_db": {
+    "p4_tl": -70.92487044524347,
+    "p3_bl": -57.24965459076735,
+    "p2_cl": -42.774245986644424
+  }
+}

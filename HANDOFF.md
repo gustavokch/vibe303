@@ -28,8 +28,26 @@ advanced ADSR.
 
 ## Current progress (Phase 2)
 
-**M1 walking skeleton — COMPLETE on `feat/phase2-303-m1`.** Each task TDD (red→green),
-committed separately. Next: finish the branch (PR/merge) → M2.
+**M2 filter fidelity — COMPLETE on `feat/phase2-303-m2`.** Each task TDD (red→green),
+committed separately. Next: finish the branch (PR/merge) → M3 osc fidelity.
+
+- ✅ **M2.1 (a701daa)** — ZDF resonance feedback in `TptLadder`: 4-pole TPT closed by a
+  `k`-weighted global loop solved instantaneously (`y4=a^4*u+Σ`, `u=x−k*y4`, `a=g/(1+g)`).
+  `set_reso(r∈0..1)`→`k∈0..4` (4=self-osc); `k=0` reduces to the M1 cascade.
+- ✅ **M2.2 (5aaf5cd)** — per-stage tanh saturation: each integrator state soft-clipped
+  `H*tanh(x/H)` (H=8), ~linear small-signal (AC fit untouched), bounds self-osc/overdrive.
+- ✅ **M2.3 (aa7ede9)** — `set_poles(2|3|4)` output tap (−12/−18/−24 dB/oct); forward pass
+  captures each stage's LP output. Test rms warms up before measuring deep stopband.
+- ✅ **M2.4 (ead8fd6)** — `run_vcf303_spice.py --json` → committed `eval/303/vcf303_gold.json`;
+  `plugin303/tests/vcf303_fit.rs` asserts bias-robust invariants within bound (corner ratio
+  ~6.0, fc-tracking resonance peak at cutoff reaching gold ~20 dB, per-pole tap step ~14 dB).
+  Absolute dB not compared (SPICE passband peaks with bias). serde_json dev-dep.
+
+**Full plugin303 test suite: 16 passed (4 suites).** (Voice still uses the default 1 kHz
+cutoff; wiring cutoff/reso/env-mod to params lands in M4/M6/M7.)
+
+**M1 walking skeleton — COMPLETE (merged, PR #2 `a589b96`→`ad6495a`).** Each task TDD,
+committed separately.
 
 - ✅ **M1.1 (9e7094c)** — `plugin303` workspace crate. Silent nih-plug synth: output-only
   IO layout, `MidiConfig::Basic`, Vst3/Clap exports, empty `Plugin303Params`. `cargo build
@@ -48,8 +66,6 @@ committed separately. Next: finish the branch (PR/merge) → M2.
   (`NoteOn`→`note_on`), writes mono voice to all channels. Note now audible in a host.
 - ✅ **M1.7 (f0f98d3)** — `plugin303/tests/no_alloc.rs`: `AllocDisabler` gate asserts the
   `voice.tick` 4096-sample hot path allocates 0× (`dsp` made `pub` for the test).
-
-**Full plugin303 test suite: 10 passed (3 suites).**
 
 **Phase 1 — COMPLETE (reference, see appendix + `eval/303/VCF_MAP.md`).** VCO core
 oscillates + 1 V/oct (ngspice); VCF = 4-pole LP + bias-tracking cutoff + fc-tracking
