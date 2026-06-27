@@ -30,9 +30,8 @@ fn main() {
     let out = arg_s("--out", "render.f32");
 
     let mut v = Voice::new(sr);
-    // NOTE: cutoff/reso wiring into Voice lands in F2; until then this renders the
-    // default-cutoff voice. Pass-through args are accepted now so the harness CLI is stable.
-    let _ = (cutoff, reso);
+    v.set_cutoff(cutoff);
+    v.set_reso(reso / 100.0); // --reso is a percentage; the voice wants 0..1
     v.note_on(note);
     let n = (secs * sr) as usize;
     let mut buf = Vec::with_capacity(n);

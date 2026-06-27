@@ -59,6 +59,23 @@ def note_to_freq(note: float) -> float:
     return 440.0 * 2.0 ** ((note - 69.0) / 12.0)
 
 
+def itail_to_hz(i_tail: float) -> float:
+    """Map the vcf303 cutoff tail current to the TPT cutoff (Hz). The audible corner
+    is the resonance-peak frequency, NOT `f_deep` (the diode ladder's gentle skirt
+    reaches −60 dB an octave+ higher). Fit from `run_vcf303_spice.reso_sweep`:
+    532 Hz @16 µA, 1002 @32, 1700 @64, 2700 @128 ⇒ f ≈ 1002·(I/32µA)^0.78."""
+    return 1002.0 * (i_tail / 32e-6) ** 0.78
+
+
+def rreso_to_reso(rreso: float) -> float:
+    """Coarse vcf303 resonance-leg (Ω) -> TPT resonance [0,1]. Open leg = no feedback;
+    47 k is near the stock peak (~20 dB), ≈0.85 on the TPT k-axis. Only the op-points
+    used by `compare_voice` are mapped; a faithful reso fit is an F4/F5 axis."""
+    if rreso >= 1e11:
+        return 0.0
+    return 0.85
+
+
 def cv_for_freq(freq: float) -> float:
     """VCO control voltage that yields `freq` (inverse of the measured calibration).
     This is only a seed — the 5-point fit is ~10% off, so `solve_cv` refines it to

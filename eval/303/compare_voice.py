@@ -78,7 +78,10 @@ def main() -> int:
         if note not in cv_cache:
             cv_cache[note] = vr.solve_cv(vr.note_to_freq(note), SR)
         ref = vr.voice_reference(note, cutoff_itail, rreso, sr=SR, secs=SECS, cv=cv_cache[note])
-        rust = render_rust(note, 1_000.0, 0.0)  # cutoff/reso ignored by the voice in F1
+        # F2.4: drive the Rust voice at the SPICE corner's equivalent cutoff/reso.
+        cutoff_hz = vr.itail_to_hz(cutoff_itail)
+        reso01 = vr.rreso_to_reso(rreso)
+        rust = render_rust(note, cutoff_hz, reso01 * 100.0)  # render303 --reso is a %
         m = esr.metrics(_norm(ref), _norm(rust))
         results[label] = {
             "note": note, "cutoff_itail": cutoff_itail, "rreso": rreso,

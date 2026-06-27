@@ -2,6 +2,7 @@
 //! Accent, glide, sub/detune and the souped levers come in M4/M6.
 
 use super::env::AdEnv;
+use super::filter::Tier;
 use super::ladder::TptLadder;
 use super::osc::Saw;
 
@@ -14,6 +15,7 @@ pub struct Voice {
     osc: Saw,
     filter: TptLadder,
     env: AdEnv,
+    tier: Tier,
     sr: f32,
 }
 
@@ -23,8 +25,15 @@ impl Voice {
             osc: Saw::new(),
             filter: TptLadder::new(sr),
             env: AdEnv::new(sr),
+            tier: Tier::Low,
             sr,
         }
+    }
+
+    /// Select the fidelity tier. F2: High/Ultra route to the TPT path until the WDF
+    /// backends land (F3/F4). A plain field write — no allocation, RT-safe.
+    pub fn set_tier(&mut self, tier: Tier) {
+        self.tier = tier;
     }
 
     pub fn note_on(&mut self, note: u8) {
@@ -32,9 +41,22 @@ impl Voice {
         self.env.trigger();
     }
 
+    /// Filter cutoff in Hz.
+    pub fn set_cutoff(&mut self, hz: f32) {
+        self.filter.set_cutoff(hz);
+    }
+
+    /// Filter resonance in [0, 1].
+    pub fn set_reso(&mut self, r: f32) {
+        self.filter.set_reso(r);
+    }
+
     pub fn tick(&mut self) -> f32 {
         let s = self.osc.tick();
-        let f = self.filter.tick(s);
+        // F3/F4: route High/Ultra to the WDF backends. All tiers use TPT for now.
+        let f = match self.tier {
+            Tier::Low | Tier::High | Tier::Ultra => self.filter.tick(s),
+        };
         f * self.env.tick()
     }
 }
@@ -63,6 +85,28 @@ mod tests {
     fn silent_before_note_on() {
         let mut v = Voice::new(48_000.0);
         assert_eq!(rms(&mut v, 1_000), 0.0);
+    }
+
+    #[test]
+    fn cutoff_setter_changes_brightness() {
+        fn hf_rms(cut: f32) -> f32 {
+            let mut v = Voice::new(48_000.0);
+            v.set_cutoff(cut);
+            v.note_on(57);
+            for _ in 0..400 {
+                v.tick();
+            }
+            let mut acc = 0.0f32;
+            for _ in 0..4_000 {
+                let s = v.tick();
+                acc += s * s;
+            }
+            (acc / 4_000.0).sqrt()
+        }
+        assert!(
+            hf_rms(4_000.0) > hf_rms(300.0) * 1.5,
+            "cutoff did not change output energy"
+        );
     }
 
     #[test]

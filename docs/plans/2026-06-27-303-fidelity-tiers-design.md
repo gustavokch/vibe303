@@ -203,3 +203,14 @@ Aliasing is the dominant non-topology error and sits an order of magnitude above
 3. **Low/TPT target revised from data:** at +2.3 dB ESR the original −12 dB Low goal is
    unreachable by calibration alone. Once F2 wires cutoff/reso and 2× OS, re-measure; set Low's
    gate to the *post-F2* number, not −12 dB asserted up front.
+
+### Post-F2.4 update (cutoff/reso wired)
+
+Wiring the SPICE-calibrated cutoff (`itail_to_hz`, resonance-peak corner) and a coarse resonance
+map into the Rust voice moved the ESR **not at all** — mean +2.53 dB / worst +2.86 dB, vs the
++2.29 / +2.79 dB pre-calibration baseline (the slight rise is the crude resonance map adding a
+ring mismatch). **The gap is topological, not parametric:** polyBLEP saw + TPT ladder is
+near-uncorrelated with the circuit saw + diode ladder regardless of cutoff/reso tuning. This
+hard-confirms F1.5 — Low cannot be calibrated toward SPICE; audible fidelity requires the WDF
+backends (F3 Ultra / F4 High). Low's ESR gate (F2.6) is therefore the *measured* number
+(~+2.5 dB) + margin: a regression guard on the TPT path, not a fidelity target.
