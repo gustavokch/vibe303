@@ -4,9 +4,10 @@
 //! 2/3/4-pole tap select and the vcf303 ngspice fit come in M2.2–M2.4.
 
 pub struct TptLadder {
-    g: f32,       // prewarped per-stage coefficient, tan(pi*fc/sr)
-    k: f32,       // resonance feedback gain, 0..4 (4 = self-oscillation threshold)
-    z: [f32; 4],  // per-stage integrator states
+    g: f32,        // prewarped per-stage coefficient, tan(pi*fc/sr)
+    k: f32,        // resonance feedback gain, 0..4 (4 = self-oscillation threshold)
+    z: [f32; 4],   // per-stage integrator states
+    poles: usize,  // output tap: 2 | 3 | 4 (-12/-18/-24 dB/oct)
     sr: f32,
 }
 
@@ -22,9 +23,14 @@ fn sat(x: f32) -> f32 {
 
 impl TptLadder {
     pub fn new(sr: f32) -> Self {
-        let mut s = Self { g: 0.0, k: 0.0, z: [0.0; 4], sr };
+        let mut s = Self { g: 0.0, k: 0.0, z: [0.0; 4], poles: 4, sr };
         s.set_cutoff(1_000.0);
         s
+    }
+
+    /// Output tap: 2, 3 or 4 poles (-12 / -18 / -24 dB/oct). Other values clamp.
+    pub fn set_poles(&mut self, n: usize) {
+        self.poles = n.clamp(2, 4);
     }
 
     pub fn set_cutoff(&mut self, hz: f32) {
@@ -57,15 +63,18 @@ impl TptLadder {
         // Forward pass: advance every integrator state with the resolved input.
         // Each stage's integrator state is soft-clipped (per-stage tanh): linear
         // for |state| << HEADROOM, asymptotic to ±HEADROOM — the diode-ladder
-        // squelch and the bound that keeps self-oscillation finite.
+        // squelch and the bound that keeps self-oscillation finite. Each stage's
+        // lowpass output is captured so the tap can pick a 2/3/4-pole slope.
         let mut v = u;
-        for z in self.z.iter_mut() {
+        let mut taps = [0.0f32; 4];
+        for (i, z) in self.z.iter_mut().enumerate() {
             let hp = (v - *z) * a; // = g*(in - state)/(1+g)
             let lp = hp + *z;
             *z = sat(lp + hp);
             v = lp;
+            taps[i] = v;
         }
-        v // v ~= y4 (the 4-pole tap)
+        taps[self.poles - 1] // -12/-18/-24 dB/oct at 2/3/4 poles
     }
 }
 
@@ -78,13 +87,16 @@ mod tests {
     }
 
     fn rms_amp(f: &mut TptLadder, freq: f32, sr: f32, amp: f32) -> f32 {
-        let mut acc = 0.0f32;
+        let warmup = 4_000; // let the ringing settle before measuring
         let n = 20_000;
+        let mut acc = 0.0f32;
         let mut ph = 0.0f32;
-        for _ in 0..n {
+        for i in 0..(warmup + n) {
             let x = amp * (2.0 * std::f32::consts::PI * ph).sin();
             let y = f.tick(x);
-            acc += y * y;
+            if i >= warmup {
+                acc += y * y;
+            }
             ph += freq / sr;
             if ph >= 1.0 {
                 ph -= 1.0;
@@ -142,5 +154,31 @@ mod tests {
             g_large < 0.8 * g_small,
             "no saturation: g_small={g_small}, g_large={g_large}"
         );
+    }
+
+    /// Stopband slope (dB/oct) measured one octave apart, well above cutoff.
+    fn slope_db_per_oct(poles: usize) -> f32 {
+        let sr = 48_000.0;
+        let mut f = TptLadder::new(sr);
+        f.set_cutoff(1_000.0);
+        f.set_poles(poles);
+        let a = rms(&mut f, 2_000.0, sr);
+        let mut f2 = TptLadder::new(sr);
+        f2.set_cutoff(1_000.0);
+        f2.set_poles(poles);
+        let b = rms(&mut f2, 4_000.0, sr);
+        20.0 * (a / b).log10()
+    }
+
+    #[test]
+    fn tap_select_sets_slope() {
+        // n poles -> ~6*n dB/oct asymptotic stopband rolloff.
+        for (poles, expect) in [(2usize, 12.0f32), (3, 18.0), (4, 24.0)] {
+            let s = slope_db_per_oct(poles);
+            assert!(
+                (s - expect).abs() < 3.0,
+                "{poles}-pole slope {s} dB/oct, expected ~{expect}"
+            );
+        }
     }
 }
