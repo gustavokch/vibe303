@@ -1,4 +1,3 @@
-# nih-plug bundler metadata. The TB-303 voice plugin entry is added by the
-# Phase-2 plan (M1.1) as:
-#   [plugin303]
-#   name = "TB303"
+# nih-plug bundler metadata.
+[plugin303]
+name = "TB303"
