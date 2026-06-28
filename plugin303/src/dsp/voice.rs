@@ -23,6 +23,27 @@ pub const HIGH_OS_FACTOR: f32 = 2.0;
 /// Level trim to bring the DC-blocked VCO saw to ~unit (polyBLEP-saw) amplitude.
 const VCO_GAIN: f32 = 2.0;
 
+/// Per-tier VCF brightness (cutoff→bias scale on the shared `LadderVcf`). With
+/// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
+/// gold sits *below* 1.0 — the resonance peak otherwise over-brightens. Tuned
+/// per tier (different OS rate ⇒ different optimum): Ultra (4×) at 0.70 minimises
+/// LSD to 3.87 dB; High (2×) at 0.50 keeps corr ≥ 0.95 while beating its prior
+/// LSD. See `brightness_sweep`/`high_brightness_sweep` diagnostics (F6.5).
+const ULTRA_BRIGHT: f64 = 0.70;
+const HIGH_BRIGHT: f64 = 0.50;
+
+/// High-tier output level trim so High tracks Ultra's loudness on a tier switch.
+/// High's polyBLEP-saw path sits below Ultra's nodal-VCO path through the
+/// (faithfully depressed-corner) ladder by a *resonance-dependent* amount:
+/// ~3 dB in the resonant regime a 303 actually plays in (reso ≳ 0.2), shrinking
+/// to ~0 dB near reso 0.85 and widening to ~6 dB only at reso 0 (no peak to
+/// dominate). A constant +3.2 dB makeup centres High on Ultra to within ±0.5 dB
+/// across the resonant regime; the reso-0 residual is left (a constant trim
+/// cannot flatten a reso-dependent gap, and reso 0 is the darkest/least-used
+/// setting). The spectral gates power-normalise, so this trim is invisible to
+/// them (no fidelity-gate impact); it only equalises perceived loudness.
+const HIGH_LEVEL_TRIM: f32 = 1.45; // +3.2 dB
+
 /// Tier-switch crossfade length in seconds (equal-power settle-then-crossfade).
 /// Long enough to mask the incoming path's cold-start transient (VCO 1 ms self-
 /// start, ladder warm-up) and any oscillator phase jump, short enough to feel
@@ -59,6 +80,12 @@ impl CompDelay {
         let y = self.buf[rd];
         self.pos = (self.pos + 1) % COMP_BUF;
         y
+    }
+
+    /// Clear the delay line to silence, keeping the configured `delay`.
+    fn reset(&mut self) {
+        self.buf = [0.0; COMP_BUF];
+        self.pos = 0;
     }
 }
 
@@ -108,14 +135,18 @@ impl Voice {
         let lat_high = Os2x::new().latency_samples();
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
+        let mut ladder = LadderVcf::new(sr * ULTRA_OS_FACTOR);
+        ladder.set_cal(ULTRA_BRIGHT);
+        let mut ladder_hi = LadderVcf::new(sr * HIGH_OS_FACTOR);
+        ladder_hi.set_cal(HIGH_BRIGHT);
         Self {
             osc: Saw::new(),
             osc_hi: Saw::new(),
             vco: Vco303::new(sr),
             filter: TptLadder::new(sr),
-            ladder: LadderVcf::new(sr * ULTRA_OS_FACTOR),
+            ladder,
             os: Os4x::new(),
-            ladder_hi: LadderVcf::new(sr * HIGH_OS_FACTOR),
+            ladder_hi,
             os2: Os2x::new(),
             env: AdEnv::new(sr),
             tier: Tier::Low,
@@ -147,6 +178,37 @@ impl Voice {
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
+    }
+
+    /// Clear all runtime state to silence, **in place** — the host reset path.
+    ///
+    /// nih-plug's `reset()` may fire from the audio thread and must not allocate
+    /// (`plugin.rs` `reset` contract). Reconstructing the Voice (`Voice::new`)
+    /// would re-enter the VCO pitch-LUT cache: on a warm cache that is only a
+    /// `Mutex` lock, but on a cold cache it runs the secant LUT build (heavy) +
+    /// a `Vec::push` allocation — both illegal here. So the LUT-bearing VCO and
+    /// the nodal ladders are reset *in place* (dynamic state cleared; calibration
+    /// and the cached LUT preserved), and the remaining fixed-array components
+    /// are cheap, alloc-free `new()`s. The cache is therefore touched only from
+    /// `initialize()` (non-RT). Leaves a clean steady Low; the caller re-applies
+    /// the persisted tier via [`set_tier_immediate`].
+    pub fn reset(&mut self) {
+        self.osc = Saw::new();
+        self.osc_hi = Saw::new();
+        self.vco.reset(); // preserves cv_lut — no cache lock, no rebuild, no alloc
+        self.filter.reset();
+        self.ladder.reset(); // preserves cutoff / reso / brightness
+        self.ladder_hi.reset();
+        self.os = Os4x::new();
+        self.os2 = Os2x::new();
+        self.env = AdEnv::new(self.sr);
+        self.tier = Tier::Low;
+        self.xfade_from = None;
+        self.xfade_pos = 1.0;
+        self.pending_tier = None;
+        self.comp_low.reset();
+        self.comp_high.reset();
+        self.comp_ultra.reset();
     }
 
     pub fn set_tier(&mut self, tier: Tier) {
@@ -204,6 +266,19 @@ impl Voice {
         self.ladder.set_cal(cal);
     }
 
+    /// Diagnostic: override the Ultra ladder's Q9 resonance feedback gain (for
+    /// spectral calibration sweeps against the gold). Not used at runtime.
+    pub fn set_ultra_reso_gain(&mut self, g: f64) {
+        self.ladder.set_reso_gain(g);
+    }
+
+    /// High-tier VCF brightness calibration. High shares the `LadderVcf` core but
+    /// runs at 2× (vs Ultra's 4×); with the active Q9 resonance the brightness
+    /// optimum differs, so it is tuned independently of `set_ultra_brightness`.
+    pub fn set_high_brightness(&mut self, cal: f64) {
+        self.ladder_hi.set_cal(cal);
+    }
+
     /// One pre-envelope sample from a single tier's signal path, advancing only
     /// that tier's backend state. Each tier owns independent oscillator/filter
     /// state, so two tiers can be rendered in the same sample (for a crossfade)
@@ -222,7 +297,10 @@ impl Voice {
             Tier::High => {
                 let hi = self.os2.up(self.osc_hi.tick());
                 let o = [self.ladder_hi.tick(hi[0]), self.ladder_hi.tick(hi[1])];
-                self.comp_high.process(self.os2.down(o))
+                // HIGH_LEVEL_TRIM equalises High's loudness to Ultra (tier-switch
+                // is then timbre-only). Pre-comp-delay so the crossfade blends
+                // level-matched paths.
+                self.comp_high.process(self.os2.down(o) * HIGH_LEVEL_TRIM)
             }
             // Ultra: circuit VCO saw → nodal diode-ladder at 4× oversample.
             // KNOWN LIMITATION: the nodal VCO runs at base rate, so its sharp

@@ -67,8 +67,11 @@ impl Plugin for Plugin303 {
     }
 
     fn reset(&mut self) {
-        // Clear the voice tail so transport stop / loop-jump doesn't bleed.
-        self.voice = Voice::new(self.sample_rate);
+        // Clear the voice tail so transport stop / loop-jump doesn't bleed. Reset
+        // is in place (not `Voice::new`): nih-plug may call this from the audio
+        // thread, where allocating / rebuilding the VCO pitch LUT is illegal —
+        // see `Voice::reset`. The LUT cache is warmed once in `initialize`.
+        self.voice.reset();
         // Re-apply the persisted tier immediately (no fade) — otherwise the voice
         // would silently revert to Low and the next block would crossfade up to
         // the user's tier on every transport start / loop-jump.

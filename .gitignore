@@ -24,6 +24,7 @@ runs/
 *.npz
 *.wav
 *.flac
+*.f32
 
 # Allow committed reference WAVs (Git LFS) — re-include after the broad exclude
 !tests/regression/refs/*.wav

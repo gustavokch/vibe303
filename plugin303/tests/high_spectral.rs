@@ -24,8 +24,12 @@ use common::{gold_dir, load_f32, load_gold_op, spectral_match};
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 
-const LSD_BUDGET_DB: f32 = 32.0; // achieved 28.78 dB + margin; Low's 42.16 fails
-const CORR_MIN: f32 = 0.95; // achieved 0.971; Low's 0.931 fails → real discriminator
+// F6.5: shared LadderVcf gained active Q9 resonance (F6.3); High re-tuned to
+// brightness 0.50 (corr-preserving) ⇒ LSD 28.78 → 28.35. Budget tightened below 32.
+// High uses the polyBLEP saw (not the circuit VCO), so its LSD floor is set by the
+// VCO mismatch, not the filter — this gate is a discriminator (Low fails worse).
+const LSD_BUDGET_DB: f32 = 29.0; // achieved 28.35 dB (deterministic) + margin
+const CORR_MIN: f32 = 0.95; // achieved 0.964; Low's 0.931 fails → real discriminator
 
 fn render_high(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize) -> Vec<f32> {
     let mut v = Voice::new(sr);
@@ -43,6 +47,24 @@ fn render_tier(tier: Tier, op: &common::GoldOp, n: usize) -> Vec<f32> {
     v.set_reso(op.reso);
     v.note_on(op.note);
     (0..n).map(|_| v.tick()).collect()
+}
+
+#[test]
+#[ignore = "diagnostic: sweep High VCF brightness to minimise spectral LSD"]
+fn high_brightness_sweep() {
+    let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
+    let op = load_gold_op("voice_A2_mid.json");
+    for cal in [0.4f64, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2] {
+        let mut v = Voice::new(op.sr);
+        v.set_tier_immediate(Tier::High);
+        v.set_high_brightness(cal);
+        v.set_cutoff(op.cutoff);
+        v.set_reso(op.reso);
+        v.note_on(op.note);
+        let m: Vec<f32> = (0..gold.len()).map(|_| v.tick()).collect();
+        let (lsd, corr) = spectral_match(&gold, &m, op.sr);
+        println!("cal={cal:5.2}  LSD={lsd:.2} dB  corr={corr:.3}");
+    }
 }
 
 #[test]

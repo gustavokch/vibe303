@@ -83,6 +83,26 @@ const C_REF: f64 = 3.3e-8;
 /// (physical bias, F3.3 tracking + slope green). See `corner_vs_cutoff` diagnostic
 /// and the V4 finding in the design doc. Closing this needs the active stages.
 const CAL: f64 = 1.0;
+/// Q9 CE-amp feedback gain at full resonance (`reso=1`). Calibrated against the
+/// ngspice resonance fixture (VCF_MAP §11): at +12 the in-loop peak tracks the
+/// fixture to ~5% (set fc 500/1000/2000 → 514/951/1757 Hz vs gold 532/1002/1683)
+/// at ~20 dB. Above ~+14 the loop self-limits (collapses to the DC pole via the
+/// homotopy hold — no divergence), mirroring the stock 303's non-self-oscillating
+/// loop. See the `reso_calibration` diagnostic in `tests/vcf_resonance.rs`.
+const RESO_GAIN: f64 = 12.0;
+/// AC-coupling high-pass corner for the resonance loop (Hz). Well below any
+/// audio fc, so it only blocks DC (loop flat/stable at DC) — near fc it is
+/// transparent. Reproduces the Q9 `C23`/`C_out` coupling role.
+const RESO_HP_HZ: f64 = 2.0;
+/// Small-signal DC passband gain of the differential ladder at `out_gain = 1`
+/// (with `vscale = 0.02`). Measured ~0.0401 and cutoff-independent (the
+/// depressed dominant pole rolls off above the corner, but the DC anchor is
+/// flat). `out_gain` is set to its reciprocal so the nodal ladder presents a
+/// **unity DC passband**, matching the Low/TPT path (also unity-DC) — without it
+/// Ultra/High sit ~28 dB below Low. Residual musical-level difference above the
+/// corner is the depressed-corner limitation (active stages, deferred), not a
+/// gain-staging bug.
+const LADDER_DC_GAIN: f64 = 0.040_13;
 
 /// Ultra-tier nodal diode-ladder filter.
 pub struct LadderVcf {
@@ -96,8 +116,12 @@ pub struct LadderVcf {
     cal: f64,
     /// Last cutoff (Hz), so `set_cal` can recompute `i0`.
     fc: f64,
-    /// Resonance feedback gain (1-sample-delayed differential feedback).
-    k_reso: f64,
+    /// Resonance amount, 0..1 (the VR4 pot). Scales the Q9 feedback gain.
+    reso: f64,
+    /// Q9 common-emitter feedback gain at `reso=1` (signed: the inversion that
+    /// makes the loop −ve at DC / +ve near fc lives in the sign). Tunable for
+    /// calibration against `eval/303/vcf303_reso_gold.json`; default `RESO_GAIN`.
+    reso_gain: f64,
     /// Drive source conductance (1/R_drive) into the bottom rails.
     g_drive: f64,
     /// Differential drive voltage scale.
@@ -109,8 +133,12 @@ pub struct LadderVcf {
     /// Per-cap trapezoidal state (v_prev, i_prev).
     vc_prev: [f64; 4],
     i_prev: [f64; 4],
-    /// Previous-sample raw differential output (resonance feedback tap).
-    out_prev: f64,
+    /// AC-coupling DC tracker for the output diff (Q9 `C23`/`C_out` high-pass,
+    /// corner `RESO_HP_HZ` ≪ fc). Blocks DC from the resonance loop (loop flat &
+    /// stable at DC); near fc it is transparent. One-pole, updated per sample.
+    dc_lp: f64,
+    /// High-pass pole coefficient for `dc_lp`, derived from `sr`.
+    dc_alpha: f64,
 }
 
 impl LadderVcf {
@@ -121,17 +149,25 @@ impl LadderVcf {
             i0: 0.0,
             cal: CAL,
             fc: 1_000.0,
-            k_reso: 0.0,
+            reso: 0.0,
+            reso_gain: RESO_GAIN,
             g_drive: 1e-3,
             vscale: 0.02,
-            out_gain: 1.0,
+            out_gain: 1.0 / LADDER_DC_GAIN, // unity DC passband (matches Low/TPT)
             v: [0.0; N],
             vc_prev: [0.0; 4],
             i_prev: [0.0; 4],
-            out_prev: 0.0,
+            dc_lp: 0.0,
+            dc_alpha: 1.0 - (-TAU * RESO_HP_HZ / sr as f64).exp(),
         };
         f.set_cutoff(1_000.0);
         f
+    }
+
+    /// Diagnostic: override the Q9 feedback gain (sign + magnitude) for
+    /// calibration against the ngspice resonance fixture. Not used at runtime.
+    pub fn set_reso_gain(&mut self, g: f64) {
+        self.reso_gain = g;
     }
 
     /// Brightness calibration on the cutoff→bias map (spectral V5). Recomputes
@@ -148,7 +184,8 @@ impl LadderVcf {
         gmin: f64,
         v0: [f64; N],
         vin: f64,
-        vin_r: f64,
+        kfb: f64,
+        cfb: f64,
         cgeq: &[f64; 4],
         cieq: &[f64; 4],
     ) -> Option<[f64; N]> {
@@ -186,12 +223,22 @@ impl LadderVcf {
             b[TL] += self.i0;
             b[TR] += self.i0;
 
-            // Voltage-set input nodes: pin IN_L ← vin (signal), IN_R ← vin_r
-            // (feedback; 0 until F6.3) via a stiff conductance to the source value.
+            // Voltage-set input nodes. IN_L ← vin (signal) via a stiff pin.
             g[IN_L][IN_L] += G_PIN;
             b[IN_L] += G_PIN * vin;
+
+            // IN_R ← the inverting AC-coupled Q9 resonance feedback, solved
+            // IN-LOOP (zero delay): v[IN_R] = kfb·(v[TL]−v[TR]) + cfb, where
+            // kfb = reso·reso_gain (signed: Q9 inversion) and cfb = −kfb·dc_lp
+            // is the DC-block (high-pass) term carried from the previous sample.
+            // The kfb·diff coupling closes the loop within this solve, so the
+            // peak regenerates near fc exactly as ngspice does (VCF_MAP §11).
+            // Q9 is linear (class-A) ⇒ this is a linear stamp, not a nonlinear
+            // algebraic loop: Newton still only iterates the diode nonlinearity.
             g[IN_R][IN_R] += G_PIN;
-            b[IN_R] += G_PIN * vin_r;
+            g[IN_R][TL] -= G_PIN * kfb;
+            g[IN_R][TR] += G_PIN * kfb;
+            b[IN_R] += G_PIN * cfb;
 
             // Differential drive: a VCCS controlled by the input differential
             // (v[IN_L] − v[IN_R]) sourced into the bottom rails (dl → +, dr → −)
@@ -233,7 +280,11 @@ impl LadderVcf {
     /// Solve one sample at the filter's working rate.
     fn solve_sample(&mut self, x_in: f32) -> f32 {
         let dt = 1.0 / self.sr;
-        let vin = (x_in as f64 + self.k_reso * self.out_prev) * self.vscale;
+        let vin = (x_in as f64) * self.vscale;
+        // Q9 feedback coefficients for this sample (linear, in-loop). kfb scales
+        // the output diff into in_r; cfb is the DC-block constant (high-pass).
+        let kfb = self.reso * self.reso_gain;
+        let cfb = -kfb * self.dc_lp;
 
         // Cap companion constants (fixed across Newton iterations this sample).
         let mut cgeq = [0.0f64; 4];
@@ -247,14 +298,13 @@ impl LadderVcf {
 
         // Fast path: warm-started Newton at gmin = 0. On stall, descend a gmin
         // homotopy carrying the solution forward, ending at gmin = 0.
-        let vin_r = 0.0;
-        let v = match self.newton(0.0, self.v, vin, vin_r, &cgeq, &cieq) {
+        let v = match self.newton(0.0, self.v, vin, kfb, cfb, &cgeq, &cieq) {
             Some(v) => v,
             None => {
                 let mut vh = self.v;
                 let mut ok = None;
                 for &gmin in &[1e-1, 1e-2, 1e-3, 1e-4, 0.0] {
-                    match self.newton(gmin, vh, vin, vin_r, &cgeq, &cieq) {
+                    match self.newton(gmin, vh, vin, kfb, cfb, &cgeq, &cieq) {
                         Some(v) => {
                             vh = v;
                             ok = Some(v);
@@ -279,7 +329,8 @@ impl LadderVcf {
         }
 
         let diff = v[TL] - v[TR];
-        self.out_prev = diff;
+        // Update the AC-coupling DC tracker (high-pass state) for next sample.
+        self.dc_lp += self.dc_alpha * (diff - self.dc_lp);
         (diff * self.out_gain) as f32
     }
 }
@@ -292,7 +343,7 @@ impl Filter303 for LadderVcf {
     }
 
     fn set_reso(&mut self, r: f32) {
-        self.k_reso = (r.clamp(0.0, 1.0) as f64) * 0.9;
+        self.reso = r.clamp(0.0, 1.0) as f64;
     }
 
     fn tick(&mut self, x: f32) -> f32 {
@@ -303,7 +354,7 @@ impl Filter303 for LadderVcf {
         self.v = [0.0; N];
         self.vc_prev = [0.0; 4];
         self.i_prev = [0.0; 4];
-        self.out_prev = 0.0;
+        self.dc_lp = 0.0;
     }
 }
 
@@ -328,6 +379,53 @@ mod tests {
             }
         }
         ((sout_e / sin_e).sqrt()) as f32
+    }
+
+    /// AC gain at a given working `sr` (the filter must be built at that `sr`).
+    fn ac_gain_at(f: &mut LadderVcf, sr: f32, freq: f32) -> f32 {
+        f.reset();
+        let n = 16_384usize;
+        let amp = 0.05f32;
+        let warm = (n * 6) / 10;
+        let (mut si, mut so) = (0.0f64, 0.0f64);
+        for i in 0..n {
+            let x = amp * (TAU as f32 * freq * i as f32 / sr).sin();
+            let y = f.tick(x);
+            if i >= warm {
+                si += (x as f64) * (x as f64);
+                so += (y as f64) * (y as f64);
+            }
+        }
+        ((so / si).sqrt()) as f32
+    }
+
+    /// Frequency of max AC gain over [lo, hi] (the resonance peak when reso > 0).
+    fn peak_freq(f: &mut LadderVcf, sr: f32, lo: f32, hi: f32) -> f32 {
+        let steps = 50usize;
+        let (mut bf, mut bg) = (lo, 0.0f32);
+        for k in 0..=steps {
+            let t = k as f32 / steps as f32;
+            let fr = lo * (hi / lo).powf(t);
+            let g = ac_gain_at(f, sr, fr);
+            if g > bg {
+                bg = g;
+                bf = fr;
+            }
+        }
+        bf
+    }
+
+    #[test]
+    fn corner_clears_600hz_ceiling() {
+        // With the active Q9 resonance (F6.3) the audible corner = the resonance
+        // peak, which tracks fc into the kHz range — clearing the passive ladder's
+        // ~600 Hz structural ceiling (V4, impossible for the passive ladder alone).
+        let sr = 192_000.0f32;
+        let mut f = LadderVcf::new(sr);
+        f.set_reso(0.7);
+        f.set_cutoff(2_000.0);
+        let pk = peak_freq(&mut f, sr, 200.0, 6_000.0);
+        assert!(pk >= 1_000.0, "corner still ceiling-limited: {pk}");
     }
 
     #[test]
