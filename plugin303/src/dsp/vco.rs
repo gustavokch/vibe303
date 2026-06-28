@@ -173,7 +173,9 @@ pub struct Vco303 {
     /// construction. `set_freq` lerps it — no render, no alloc (RT-safe).
     cv_lut: [f64; LUT_K],
     /// Diagnostics: Newton iters used + whether the last sample fell to homotopy.
+    #[doc(hidden)]
     pub dbg_iters: u32,
+    #[doc(hidden)]
     pub dbg_homotopy: bool,
 }
 
@@ -702,7 +704,10 @@ mod tests {
         let nnz: usize = pattern.iter().flatten().filter(|&&b| b).count();
         let fnnz: usize = fp.iter().flatten().filter(|&&b| b).count();
         eprintln!("\n== VCO 17×17 Jacobian ==");
-        eprintln!("  structural nnz : {nnz}/{}  factored L+U : {fnnz}", NU * NU);
+        eprintln!(
+            "  structural nnz : {nnz}/{}  factored L+U : {fnnz}",
+            NU * NU
+        );
         eprintln!("  worst |natural − dense| rel : {worst_err:.2e} (vs TOL {TOL:.0e})");
         eprintln!("  worst growth factor         : {worst_growth:.2e}");
 
@@ -719,7 +724,9 @@ mod tests {
                 if !fp[r][col] {
                     continue;
                 }
-                s.push_str(&format!("    let f{r}_{col} = a[{r}][{col}] / a[{col}][{col}];\n"));
+                s.push_str(&format!(
+                    "    let f{r}_{col} = a[{r}][{col}] / a[{col}][{col}];\n"
+                ));
                 for c in (col + 1)..NU {
                     if fp[col][c] && fp[r][c] {
                         s.push_str(&format!("    a[{r}][{c}] -= f{r}_{col} * a[{col}][{c}];\n"));
@@ -740,10 +747,17 @@ mod tests {
             s.push_str(&line);
         }
         s.push_str("    x\n}\n");
-        let path = "/tmp/claude-1000/-home-gustavo-Git-vibe303/f46b4eac-7ebe-4ff3-956a-0fd45ab4a3a2/scratchpad/vco_lu_gen.rs";
-        std::fs::write(path, &s).unwrap();
-        eprintln!("  generated mul-adds ≈ {} (dense ~{})", s.matches("-=").count() + s.matches(" - a[").count(), NU * NU * NU / 3);
-        eprintln!("  wrote {path}");
+        eprintln!(
+            "  generated mul-adds ≈ {} (dense ~{})",
+            s.matches("-=").count() + s.matches(" - a[").count(),
+            NU * NU * NU / 3
+        );
+        // Write to a portable temp path so anyone running `--ignored` regen
+        // can paste the output into `linalg_static.rs` without a session-
+        // specific path hardcoded here.
+        let path = std::env::temp_dir().join("vco_lu_gen.rs");
+        std::fs::write(&path, &s).unwrap();
+        eprintln!("  wrote {}", path.display());
         // Safe iff the no-pivot error is ≪ the Newton TOL it feeds (1e-7), so it
         // can't perturb convergence. Margin ~90× here (growth factor 1.0).
         assert!(
@@ -785,7 +799,10 @@ mod tests {
             }
         }
         // ≪ Newton TOL (1e-7): the static solve cannot perturb convergence.
-        assert!(worst < 0.1 * TOL, "vco static LU diverged: rel err {worst:.2e}");
+        assert!(
+            worst < 0.1 * TOL,
+            "vco static LU diverged: rel err {worst:.2e}"
+        );
     }
 
     #[test]

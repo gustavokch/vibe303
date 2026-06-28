@@ -144,6 +144,7 @@ pub struct LadderVcf {
     dc_alpha: f64,
     /// Diagnostic: Newton iters used on the last `solve_sample` (max over the
     /// homotopy descent if the fast path stalled). Touched per sample; not a gate.
+    #[doc(hidden)]
     pub dbg_iters: u32,
 }
 
@@ -729,9 +730,7 @@ mod tests {
                         let dense = lu_solve::<N>(al, b).unwrap();
                         let stat = ladder_lu_solve(al, b);
                         let rel = (0..N)
-                            .map(|k| {
-                                (stat[k] - dense[k]).abs() / dense[k].abs().max(1e-9)
-                            })
+                            .map(|k| (stat[k] - dense[k]).abs() / dense[k].abs().max(1e-9))
                             .fold(0.0, f64::max);
                         worst = worst.max(rel);
                     }

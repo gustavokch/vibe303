@@ -161,7 +161,16 @@ mod tests {
         // The batched kernel must be value-identical to 8 scalar stamps, incl.
         // the vcrit-frozen branch, or the ladder spectral gates would drift.
         let d = Diode1N4148::new();
-        let vds = [-0.5, 0.0, 0.3, 0.6, d.vcrit - 0.01, d.vcrit + 0.05, 0.9, -2.0];
+        let vds = [
+            -0.5,
+            0.0,
+            0.3,
+            0.6,
+            d.vcrit - 0.01,
+            d.vcrit + 0.05,
+            0.9,
+            -2.0,
+        ];
         let (ids, gds) = d.stamp8(&vds);
         for (i, &v) in vds.iter().enumerate() {
             let (is, gs) = d.stamp(v);
