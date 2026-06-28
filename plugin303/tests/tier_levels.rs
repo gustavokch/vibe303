@@ -46,12 +46,15 @@ fn tier_rms(tier: Tier, note: u8, cutoff: f32, reso: f32) -> f32 {
     (acc / n as f64).sqrt() as f32
 }
 
-/// Passband-anchor parity: resonance off, bright patches where the nodal corner
-/// still passes the bulk of the saw. Tiers must sit within ±9 dB of the Low/TPT
-/// reference. (Not ±0: the nodal corner is depressed/rate-dependent, so High at
-/// 2× passes fewer harmonics than Ultra at 4× even here — a spectral-shape
-/// difference, not a gain bug. The ±9 band confirms the `out_gain` DC
-/// normalisation holds and the gross ~28 dB deficit is gone.)
+/// Passband-anchor **regression floor** (not tight parity): resonance off, bright
+/// patches where the nodal corner still passes the bulk of the saw. Tiers must
+/// sit within ±9 dB of the Low/TPT reference. The wide band is deliberate — it
+/// only catches the gross ~28 dB regression (the un-normalised `out_gain` deficit
+/// returning), NOT drift: the nodal corner is depressed/rate-dependent, so High
+/// at 2× passes fewer harmonics than Ultra at 4× even here — a spectral-shape
+/// difference, not a gain bug. Tight High↔Ultra loudness parity is gated
+/// separately by `high_tracks_ultra_level` (±1.5 dB); this test just guards that
+/// the DC normalisation holds and no tier collapses.
 #[test]
 fn tiers_match_at_passband() {
     for &(note, cutoff) in &[(45u8, 2_000.0f32), (45, 3_000.0), (57, 3_000.0)] {

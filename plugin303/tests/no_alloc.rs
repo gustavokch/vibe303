@@ -116,6 +116,38 @@ fn tier_crossfade_hot_path_is_alloc_free() {
 }
 
 #[test]
+fn voice_reset_is_alloc_free() {
+    use plugin303::dsp::filter::Tier;
+    // nih-plug's `reset()` may fire from the audio thread, so `Voice::reset` must
+    // not allocate. It resets in place (no `Voice::new` reconstruction) precisely
+    // so the VCO pitch-LUT cache — warmed once by the first `Voice::new` below —
+    // is never rebuilt here. Guards against a regression to the old
+    // `self.voice = Voice::new(..)` reset, which would `Vec::push` on a cold cache.
+    let mut voice = Voice::new(48_000.0); // warms the per-sr LUT cache (may allocate)
+    voice.set_tier(Tier::Ultra);
+    voice.set_cutoff(1_000.0);
+    voice.set_reso(0.5);
+    voice.note_on(57);
+    for _ in 0..128 {
+        voice.tick();
+    }
+    reset_violation_count();
+    assert_no_alloc(|| {
+        for _ in 0..16 {
+            voice.reset(); // repeated, to catch any per-call alloc
+            voice.set_tier_immediate(Tier::Ultra);
+            voice.note_on(57);
+            voice.tick();
+        }
+    });
+    assert_eq!(
+        violation_count(),
+        0,
+        "Voice::reset allocated (audio-thread path)"
+    );
+}
+
+#[test]
 fn ladder_vcf_hot_path_is_alloc_free() {
     let mut f = LadderVcf::new(48_000.0); // setup (may allocate) before the guard
     f.set_cutoff(1_000.0);

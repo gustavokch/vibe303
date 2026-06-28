@@ -81,6 +81,12 @@ impl CompDelay {
         self.pos = (self.pos + 1) % COMP_BUF;
         y
     }
+
+    /// Clear the delay line to silence, keeping the configured `delay`.
+    fn reset(&mut self) {
+        self.buf = [0.0; COMP_BUF];
+        self.pos = 0;
+    }
 }
 
 pub struct Voice {
@@ -172,6 +178,37 @@ impl Voice {
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
+    }
+
+    /// Clear all runtime state to silence, **in place** — the host reset path.
+    ///
+    /// nih-plug's `reset()` may fire from the audio thread and must not allocate
+    /// (`plugin.rs` `reset` contract). Reconstructing the Voice (`Voice::new`)
+    /// would re-enter the VCO pitch-LUT cache: on a warm cache that is only a
+    /// `Mutex` lock, but on a cold cache it runs the secant LUT build (heavy) +
+    /// a `Vec::push` allocation — both illegal here. So the LUT-bearing VCO and
+    /// the nodal ladders are reset *in place* (dynamic state cleared; calibration
+    /// and the cached LUT preserved), and the remaining fixed-array components
+    /// are cheap, alloc-free `new()`s. The cache is therefore touched only from
+    /// `initialize()` (non-RT). Leaves a clean steady Low; the caller re-applies
+    /// the persisted tier via [`set_tier_immediate`].
+    pub fn reset(&mut self) {
+        self.osc = Saw::new();
+        self.osc_hi = Saw::new();
+        self.vco.reset(); // preserves cv_lut — no cache lock, no rebuild, no alloc
+        self.filter.reset();
+        self.ladder.reset(); // preserves cutoff / reso / brightness
+        self.ladder_hi.reset();
+        self.os = Os4x::new();
+        self.os2 = Os2x::new();
+        self.env = AdEnv::new(self.sr);
+        self.tier = Tier::Low;
+        self.xfade_from = None;
+        self.xfade_pos = 1.0;
+        self.pending_tier = None;
+        self.comp_low.reset();
+        self.comp_high.reset();
+        self.comp_ultra.reset();
     }
 
     pub fn set_tier(&mut self, tier: Tier) {
