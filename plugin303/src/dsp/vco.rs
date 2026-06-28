@@ -18,8 +18,11 @@
 use super::bjt::{Bjt, BjtParams};
 use super::diode::Diode1N4148;
 use super::jfet::Jfet;
-use super::linalg::lu_solve;
+use super::linalg_static::vco_lu_solve;
 use std::sync::Mutex;
+
+#[cfg(test)]
+use super::linalg::lu_solve;
 
 // --- unknown node indices ---------------------------------------------------
 const II: usize = 0;
@@ -79,9 +82,13 @@ fn midi_hz(m: f64) -> f64 {
 }
 
 /// Process-global LUT cache keyed by sample rate (`f32` bits). The secant build
-/// renders the VCO many times, so it must NOT run per-`Vco303` (the host's
-/// `reset()` rebuilds the voice). Built once per sr; reused thereafter. Touched
-/// only at construction — never on the audio thread.
+/// renders the VCO many times, so it must NOT run per-`Vco303`. Built once per
+/// sr and reused thereafter; touched only from `Vco303::new` (reached via the
+/// plugin's non-RT `initialize`, never from the audio-thread `reset`, which
+/// clears the VCO in place — see `Voice::reset`). Grows by one `[f64; LUT_K]`
+/// entry per *distinct* sample rate and is never freed: bounded by the handful
+/// of rates a host runs in a process lifetime, so the unbounded `Vec` is a
+/// non-issue (a few hundred bytes), not a leak worth a cap.
 static LUT_CACHE: Mutex<Vec<(u32, [f64; LUT_K])>> = Mutex::new(Vec::new());
 
 /// Add a current `Σ termsⱼ·Vⱼ + constant` *leaving* `node` to the KCL system.
@@ -507,7 +514,10 @@ impl Vco303 {
         let mut v = v0;
         for it in 0..MAX_ITERS {
             let (a, rhs) = self.assemble(&v, rails, cgeq, cieq, gmin);
-            let sol = lu_solve::<NU>(a, rhs)?;
+            // Static-pattern, no-pivot LU (validated vs dense `lu_solve::<NU>`,
+            // rel err ≪ TOL; ~10× fewer ops). NaN from a singular diagonal is
+            // caught by the `is_finite` guard below → drops to the gmin homotopy.
+            let sol = vco_lu_solve(a, rhs);
             let mut dmax = 0.0f64;
             for d in 0..NU {
                 if !sol[d].is_finite() {
@@ -615,8 +625,241 @@ fn cv_for_freq(freq: f64) -> f64 {
 const CV_FIT: [f64; 3] = [0.011_078_504_3, 0.844_571_322_2, -3.808_754_753_1];
 
 #[cfg(test)]
+impl Vco303 {
+    /// Test hook: assemble the gmin=0 system at the current warm state (mirrors
+    /// `tick`'s companion setup). Feeds the structure/codegen analysis real
+    /// runtime matrices.
+    fn capture_system(&self) -> ([[f64; NU]; NU], [f64; NU]) {
+        let dt = 1.0 / self.sr;
+        let rails = self.rails();
+        let vp = rails.0;
+        let cdefs = self.caps(vp);
+        let mut cgeq = [0.0f64; 5];
+        let mut cieq = [0.0f64; 5];
+        for (j, cd) in cdefs.iter().enumerate() {
+            let geq = 2.0 * cd.c / dt;
+            cgeq[j] = geq;
+            cieq[j] = geq * self.cvp[j] + self.cip[j];
+        }
+        self.assemble(&self.v, rails, &cgeq, &cieq, 0.0)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Capture VCO Jacobians over several pitches, build the static fill pattern,
+    /// check no-pivot safety (natural-order vs dense partial-pivot), and emit the
+    /// straight-line static LU to scratchpad for paste into `linalg_static`.
+    #[test]
+    #[ignore = "codegen: emit + check static sparse LU for the VCO 17×17 pattern"]
+    fn emit_and_check_vco_lu() {
+        let sr = 48_000.0f32;
+        let mut pattern = [[false; NU]; NU];
+        let mut worst_err = 0.0f64;
+        let mut worst_growth = 0.0f64;
+        // Sweep CVs (pitches) + capture across the relaxation cycle (incl. the
+        // stiff reset edge) so the pattern is the true topological union.
+        for &cv in &[2.5f64, 3.5, 4.5, 5.5, 6.5] {
+            let mut o = Vco303::raw(sr);
+            o.set_cv(cv);
+            for i in 0..4000 {
+                o.tick();
+                if i >= 1000 && i % 7 == 0 {
+                    let (a, b) = o.capture_system();
+                    for r in 0..NU {
+                        for c in 0..NU {
+                            if a[r][c] != 0.0 {
+                                pattern[r][c] = true;
+                            }
+                        }
+                    }
+                    // No-pivot vs dense check.
+                    if let Some(dense) = lu_solve::<NU>(a, b) {
+                        let (nat, gr) = natural_solve(&a, &b);
+                        let err = (0..NU)
+                            .map(|k| (nat[k] - dense[k]).abs() / dense[k].abs().max(1e-9))
+                            .fold(0.0, f64::max);
+                        worst_err = worst_err.max(err);
+                        worst_growth = worst_growth.max(gr);
+                    }
+                }
+            }
+        }
+        let mut fp = pattern;
+        for col in 0..NU {
+            for r in (col + 1)..NU {
+                if fp[r][col] {
+                    for c in (col + 1)..NU {
+                        if fp[col][c] {
+                            fp[r][c] = true;
+                        }
+                    }
+                }
+            }
+        }
+        let nnz: usize = pattern.iter().flatten().filter(|&&b| b).count();
+        let fnnz: usize = fp.iter().flatten().filter(|&&b| b).count();
+        eprintln!("\n== VCO 17×17 Jacobian ==");
+        eprintln!("  structural nnz : {nnz}/{}  factored L+U : {fnnz}", NU * NU);
+        eprintln!("  worst |natural − dense| rel : {worst_err:.2e} (vs TOL {TOL:.0e})");
+        eprintln!("  worst growth factor         : {worst_growth:.2e}");
+
+        let mut s = String::new();
+        s.push_str("/// Generated by `vco::tests emit_and_check_vco_lu` — natural-order,\n");
+        s.push_str("/// no-pivot LU specialized to the VCO Jacobian's static fill pattern.\n");
+        s.push_str("/// DO NOT hand-edit; regenerate if the VCO topology changes.\n");
+        s.push_str("#[inline]\n");
+        s.push_str(&format!(
+            "pub fn vco_lu_solve(mut a: [[f64; {NU}]; {NU}], mut b: [f64; {NU}]) -> [f64; {NU}] {{\n"
+        ));
+        for col in 0..NU {
+            for r in (col + 1)..NU {
+                if !fp[r][col] {
+                    continue;
+                }
+                s.push_str(&format!("    let f{r}_{col} = a[{r}][{col}] / a[{col}][{col}];\n"));
+                for c in (col + 1)..NU {
+                    if fp[col][c] && fp[r][c] {
+                        s.push_str(&format!("    a[{r}][{c}] -= f{r}_{col} * a[{col}][{c}];\n"));
+                    }
+                }
+                s.push_str(&format!("    b[{r}] -= f{r}_{col} * b[{col}];\n"));
+            }
+        }
+        s.push_str(&format!("    let mut x = [0.0f64; {NU}];\n"));
+        for i in (0..NU).rev() {
+            let mut line = format!("    x[{i}] = (b[{i}]");
+            for c in (i + 1)..NU {
+                if fp[i][c] {
+                    line.push_str(&format!(" - a[{i}][{c}] * x[{c}]"));
+                }
+            }
+            line.push_str(&format!(") / a[{i}][{i}];\n"));
+            s.push_str(&line);
+        }
+        s.push_str("    x\n}\n");
+        let path = "/tmp/claude-1000/-home-gustavo-Git-vibe303/f46b4eac-7ebe-4ff3-956a-0fd45ab4a3a2/scratchpad/vco_lu_gen.rs";
+        std::fs::write(path, &s).unwrap();
+        eprintln!("  generated mul-adds ≈ {} (dense ~{})", s.matches("-=").count() + s.matches(" - a[").count(), NU * NU * NU / 3);
+        eprintln!("  wrote {path}");
+        // Safe iff the no-pivot error is ≪ the Newton TOL it feeds (1e-7), so it
+        // can't perturb convergence. Margin ~90× here (growth factor 1.0).
+        assert!(
+            worst_err < 0.1 * TOL,
+            "VCO no-pivot unsafe: rel err {worst_err:.2e} vs 0.1·TOL {:.0e}",
+            0.1 * TOL
+        );
+    }
+
+    #[test]
+    fn vco_static_lu_matches_dense() {
+        // The generated `vco_lu_solve` must reproduce dense partial-pivot
+        // `lu_solve` across pitches, the relaxation cycle (incl. reset edge), and
+        // the gmin-homotopy diagonal loading. Permanent guard on the codegen.
+        use super::super::linalg_static::vco_lu_solve;
+        let sr = 48_000.0f32;
+        let mut worst = 0.0f64;
+        for &cv in &[2.5f64, 3.5, 4.5, 5.5, 6.5] {
+            let mut o = Vco303::raw(sr);
+            o.set_cv(cv);
+            for i in 0..4000 {
+                o.tick();
+                if i >= 800 && i % 11 == 0 {
+                    let (a, b) = o.capture_system();
+                    for extra in [0.0f64, 1e-4, 1e-1] {
+                        let mut al = a;
+                        for d in 0..NU {
+                            al[d][d] += extra;
+                        }
+                        if let Some(dense) = lu_solve::<NU>(al, b) {
+                            let stat = vco_lu_solve(al, b);
+                            let rel = (0..NU)
+                                .map(|k| (stat[k] - dense[k]).abs() / dense[k].abs().max(1e-9))
+                                .fold(0.0, f64::max);
+                            worst = worst.max(rel);
+                        }
+                    }
+                }
+            }
+        }
+        // ≪ Newton TOL (1e-7): the static solve cannot perturb convergence.
+        assert!(worst < 0.1 * TOL, "vco static LU diverged: rel err {worst:.2e}");
+    }
+
+    #[test]
+    #[ignore = "microbench: static vs dense VCO LU throughput"]
+    fn bench_vco_static_vs_dense() {
+        use super::super::linalg_static::vco_lu_solve;
+        use std::hint::black_box;
+        use std::time::Instant;
+        let sr = 48_000.0f32;
+        let mut o = Vco303::raw(sr);
+        o.set_cv(4.5);
+        for _ in 0..2000 {
+            o.tick();
+        }
+        let (a, b) = o.capture_system();
+        const REPS: usize = 5_000_000;
+        let t0 = Instant::now();
+        let mut acc = 0.0f64;
+        for k in 0..REPS {
+            let mut bb = b;
+            bb[0] += (k & 0xff) as f64 * 1e-12;
+            acc += lu_solve::<NU>(black_box(a), black_box(bb)).unwrap()[0];
+        }
+        let dense = t0.elapsed();
+        let t1 = Instant::now();
+        let mut acc2 = 0.0f64;
+        for k in 0..REPS {
+            let mut bb = b;
+            bb[0] += (k & 0xff) as f64 * 1e-12;
+            acc2 += vco_lu_solve(black_box(a), black_box(bb))[0];
+        }
+        let stat = t1.elapsed();
+        black_box(acc);
+        black_box(acc2);
+        let dn = dense.as_nanos() as f64 / REPS as f64;
+        let sn = stat.as_nanos() as f64 / REPS as f64;
+        eprintln!("\n== VCO LU microbench ({REPS} reps) ==");
+        eprintln!("  dense  lu_solve<17> : {dn:6.2} ns/solve");
+        eprintln!("  static vco_lu       : {sn:6.2} ns/solve");
+        eprintln!("  speedup             : {:.2}×", dn / sn);
+    }
+
+    /// Natural-order (no-pivot) solve + growth factor, for the no-pivot safety check.
+    fn natural_solve(a0: &[[f64; NU]; NU], b0: &[f64; NU]) -> ([f64; NU], f64) {
+        let mut a = *a0;
+        let mut b = *b0;
+        let a0max = a0
+            .iter()
+            .flat_map(|r| r.iter())
+            .fold(0.0f64, |m, &x| m.max(x.abs()));
+        let mut growth = a0max;
+        for col in 0..NU {
+            let d = a[col][col];
+            for r in (col + 1)..NU {
+                let f = a[r][col] / d;
+                if f != 0.0 {
+                    for c in col..NU {
+                        a[r][c] -= f * a[col][c];
+                        growth = growth.max(a[r][c].abs());
+                    }
+                    b[r] -= f * b[col];
+                }
+            }
+        }
+        let mut x = [0.0; NU];
+        for i in (0..NU).rev() {
+            let mut s = b[i];
+            for c in (i + 1)..NU {
+                s -= a[i][c] * x[c];
+            }
+            x[i] = s / a[i][i];
+        }
+        (x, growth / a0max)
+    }
 
     /// Rising zero-crossings → fundamental of a centered saw.
     fn measure_freq(buf: &[f32], sr: f32) -> f32 {

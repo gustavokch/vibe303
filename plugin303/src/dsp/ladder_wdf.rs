@@ -19,8 +19,11 @@
 
 use super::diode::Diode1N4148;
 use super::filter::Filter303;
-use super::linalg::lu_solve;
+use super::linalg_static::ladder_lu_solve;
 use std::f64::consts::TAU;
+
+#[cfg(test)]
+use super::linalg::lu_solve;
 
 // Node indices into the 10-node rail system.
 const TL: usize = 0;
@@ -139,6 +142,9 @@ pub struct LadderVcf {
     dc_lp: f64,
     /// High-pass pole coefficient for `dc_lp`, derived from `sr`.
     dc_alpha: f64,
+    /// Diagnostic: Newton iters used on the last `solve_sample` (max over the
+    /// homotopy descent if the fast path stalled). Touched per sample; not a gate.
+    pub dbg_iters: u32,
 }
 
 impl LadderVcf {
@@ -159,6 +165,7 @@ impl LadderVcf {
             i_prev: [0.0; 4],
             dc_lp: 0.0,
             dc_alpha: 1.0 - (-TAU * RESO_HP_HZ / sr as f64).exp(),
+            dbg_iters: 0,
         };
         f.set_cutoff(1_000.0);
         f
@@ -177,6 +184,91 @@ impl LadderVcf {
         self.i0 = self.diode.n_vt * TAU * self.fc * C_REF * self.cal;
     }
 
+    /// Assemble the MNA system `(G, b)` at iterate `v`, fixed cap companions, the
+    /// Q9 feedback coefficients `(kfb, cfb)`, and `gmin` on the diagonal. The only
+    /// `v`-dependent stamps are the 8 diode companions; everything else (caps,
+    /// bias, pins, feedback, VCCS drive, gmin) is iteration-invariant — the seam
+    /// the skeleton-cache lever will exploit.
+    #[inline]
+    fn assemble(
+        &self,
+        v: &[f64; N],
+        vin: f64,
+        kfb: f64,
+        cfb: f64,
+        cgeq: &[f64; 4],
+        cieq: &[f64; 4],
+        gmin: f64,
+    ) -> ([[f64; N]; N], [f64; N]) {
+        let mut g = [[0.0f64; N]; N];
+        let mut b = [0.0f64; N];
+
+        // Diode companion stamps (Geq = dI/dV, Ieq = I − g·v).
+        for &(a, k) in &DIODES {
+            let vd = v[a] - v[k];
+            let (id, gd) = self.diode.stamp(vd);
+            let ieq = id - gd * vd;
+            g[a][a] += gd;
+            g[k][k] += gd;
+            g[a][k] -= gd;
+            g[k][a] -= gd;
+            b[a] -= ieq;
+            b[k] += ieq;
+        }
+
+        // Cap trapezoidal companions.
+        for j in 0..4 {
+            let (p, n, _) = CAPS[j];
+            let geq = cgeq[j];
+            g[p][p] += geq;
+            g[n][n] += geq;
+            g[p][n] -= geq;
+            g[n][p] -= geq;
+            b[p] += cieq[j];
+            b[n] -= cieq[j];
+        }
+
+        // Bias tail current into both rail tops.
+        b[TL] += self.i0;
+        b[TR] += self.i0;
+
+        // Voltage-set input nodes. IN_L ← vin (signal) via a stiff pin.
+        g[IN_L][IN_L] += G_PIN;
+        b[IN_L] += G_PIN * vin;
+
+        // IN_R ← the inverting AC-coupled Q9 resonance feedback, solved
+        // IN-LOOP (zero delay): v[IN_R] = kfb·(v[TL]−v[TR]) + cfb, where
+        // kfb = reso·reso_gain (signed: Q9 inversion) and cfb = −kfb·dc_lp
+        // is the DC-block (high-pass) term carried from the previous sample.
+        // The kfb·diff coupling closes the loop within this solve, so the
+        // peak regenerates near fc exactly as ngspice does (VCF_MAP §11).
+        // Q9 is linear (class-A) ⇒ this is a linear stamp, not a nonlinear
+        // algebraic loop: Newton still only iterates the diode nonlinearity.
+        g[IN_R][IN_R] += G_PIN;
+        g[IN_R][TL] -= G_PIN * kfb;
+        g[IN_R][TR] += G_PIN * kfb;
+        b[IN_R] += G_PIN * cfb;
+
+        // Differential drive: a VCCS controlled by the input differential
+        // (v[IN_L] − v[IN_R]) sourced into the bottom rails (dl → +, dr → −)
+        // through g_drive, with the Norton internal conductance to ground.
+        // Ideal VCCS — does not load the control nodes, so at gmin=0 this
+        // reproduces the prior scalar `vin` Norton to machine precision.
+        let gd = self.g_drive;
+        g[DL][DL] += gd;
+        g[DL][IN_L] -= gd;
+        g[DL][IN_R] += gd;
+        g[DR][DR] += gd;
+        g[DR][IN_L] += gd;
+        g[DR][IN_R] -= gd;
+
+        // gmin homotopy + always-on base leakage.
+        for d in 0..N {
+            g[d][d] += gmin + GMIN_BASE;
+        }
+        (g, b)
+    }
+
     /// One Newton solve at a fixed `gmin`, warm-started from `v0`. Returns the
     /// converged node voltages, or `None` if it stalled within `MAX_ITERS`.
     fn newton(
@@ -188,77 +280,15 @@ impl LadderVcf {
         cfb: f64,
         cgeq: &[f64; 4],
         cieq: &[f64; 4],
-    ) -> Option<[f64; N]> {
+    ) -> Option<([f64; N], u32)> {
         let mut v = v0;
-        for _ in 0..MAX_ITERS {
-            let mut g = [[0.0f64; N]; N];
-            let mut b = [0.0f64; N];
-
-            // Diode companion stamps (Geq = dI/dV, Ieq = I − g·v).
-            for &(a, k) in &DIODES {
-                let vd = v[a] - v[k];
-                let (id, gd) = self.diode.stamp(vd);
-                let ieq = id - gd * vd;
-                g[a][a] += gd;
-                g[k][k] += gd;
-                g[a][k] -= gd;
-                g[k][a] -= gd;
-                b[a] -= ieq;
-                b[k] += ieq;
-            }
-
-            // Cap trapezoidal companions.
-            for j in 0..4 {
-                let (p, n, _) = CAPS[j];
-                let geq = cgeq[j];
-                g[p][p] += geq;
-                g[n][n] += geq;
-                g[p][n] -= geq;
-                g[n][p] -= geq;
-                b[p] += cieq[j];
-                b[n] -= cieq[j];
-            }
-
-            // Bias tail current into both rail tops.
-            b[TL] += self.i0;
-            b[TR] += self.i0;
-
-            // Voltage-set input nodes. IN_L ← vin (signal) via a stiff pin.
-            g[IN_L][IN_L] += G_PIN;
-            b[IN_L] += G_PIN * vin;
-
-            // IN_R ← the inverting AC-coupled Q9 resonance feedback, solved
-            // IN-LOOP (zero delay): v[IN_R] = kfb·(v[TL]−v[TR]) + cfb, where
-            // kfb = reso·reso_gain (signed: Q9 inversion) and cfb = −kfb·dc_lp
-            // is the DC-block (high-pass) term carried from the previous sample.
-            // The kfb·diff coupling closes the loop within this solve, so the
-            // peak regenerates near fc exactly as ngspice does (VCF_MAP §11).
-            // Q9 is linear (class-A) ⇒ this is a linear stamp, not a nonlinear
-            // algebraic loop: Newton still only iterates the diode nonlinearity.
-            g[IN_R][IN_R] += G_PIN;
-            g[IN_R][TL] -= G_PIN * kfb;
-            g[IN_R][TR] += G_PIN * kfb;
-            b[IN_R] += G_PIN * cfb;
-
-            // Differential drive: a VCCS controlled by the input differential
-            // (v[IN_L] − v[IN_R]) sourced into the bottom rails (dl → +, dr → −)
-            // through g_drive, with the Norton internal conductance to ground.
-            // Ideal VCCS — does not load the control nodes, so at gmin=0 this
-            // reproduces the prior scalar `vin` Norton to machine precision.
-            let gd = self.g_drive;
-            g[DL][DL] += gd;
-            g[DL][IN_L] -= gd;
-            g[DL][IN_R] += gd;
-            g[DR][DR] += gd;
-            g[DR][IN_L] += gd;
-            g[DR][IN_R] -= gd;
-
-            // gmin homotopy + always-on base leakage.
-            for d in 0..N {
-                g[d][d] += gmin + GMIN_BASE;
-            }
-
-            let sol = lu_solve::<N>(g, b)?;
+        for it in 0..MAX_ITERS {
+            let (g, b) = self.assemble(&v, vin, kfb, cfb, cgeq, cieq, gmin);
+            // Static-pattern, no-pivot LU (validated bit-equal to dense
+            // `lu_solve::<N>` over the operating range; ~2.5× faster). A singular
+            // diagonal would yield NaN — caught by the `is_finite` guard below,
+            // dropping this Newton step to the gmin homotopy as the dense path did.
+            let sol = ladder_lu_solve(g, b);
             let mut dmax = 0.0f64;
             for d in 0..N {
                 let dd = (sol[d] - v[d]).abs();
@@ -271,7 +301,7 @@ impl LadderVcf {
             }
             v = sol;
             if dmax < TOL {
-                return Some(v);
+                return Some((v, it as u32 + 1));
             }
         }
         None
@@ -299,19 +329,25 @@ impl LadderVcf {
         // Fast path: warm-started Newton at gmin = 0. On stall, descend a gmin
         // homotopy carrying the solution forward, ending at gmin = 0.
         let v = match self.newton(0.0, self.v, vin, kfb, cfb, &cgeq, &cieq) {
-            Some(v) => v,
+            Some((v, it)) => {
+                self.dbg_iters = it;
+                v
+            }
             None => {
                 let mut vh = self.v;
                 let mut ok = None;
+                let mut its = 0;
                 for &gmin in &[1e-1, 1e-2, 1e-3, 1e-4, 0.0] {
                     match self.newton(gmin, vh, vin, kfb, cfb, &cgeq, &cieq) {
-                        Some(v) => {
+                        Some((v, it)) => {
                             vh = v;
+                            its += it;
                             ok = Some(v);
                         }
                         None => break,
                     }
                 }
+                self.dbg_iters = its;
                 ok.unwrap_or(self.v)
             }
         };
@@ -355,6 +391,29 @@ impl Filter303 for LadderVcf {
         self.vc_prev = [0.0; 4];
         self.i_prev = [0.0; 4];
         self.dc_lp = 0.0;
+        self.dbg_iters = 0;
+    }
+}
+
+#[cfg(test)]
+impl LadderVcf {
+    /// Test hook: assemble the gmin=0 system at the current warm state for `x_in`
+    /// (mirrors `solve_sample`'s parameter setup). Lets the structure/pivot
+    /// analysis see *real* runtime matrices, not synthetic ones.
+    fn capture_system(&self, x_in: f32) -> ([[f64; N]; N], [f64; N]) {
+        let dt = 1.0 / self.sr;
+        let vin = (x_in as f64) * self.vscale;
+        let kfb = self.reso * self.reso_gain;
+        let cfb = -kfb * self.dc_lp;
+        let mut cgeq = [0.0f64; 4];
+        let mut cieq = [0.0f64; 4];
+        for j in 0..4 {
+            let (_, _, cap) = CAPS[j];
+            let geq = 2.0 * cap / dt;
+            cgeq[j] = geq;
+            cieq[j] = geq * self.vc_prev[j] + self.i_prev[j];
+        }
+        self.assemble(&self.v, vin, kfb, cfb, &cgeq, &cieq, 0.0)
     }
 }
 
@@ -413,6 +472,270 @@ mod tests {
             }
         }
         bf
+    }
+
+    /// Natural-order (no-pivot) LU on a copy; returns the solution plus the count
+    /// of columns where the diagonal was NOT the column max (i.e. partial pivoting
+    /// WOULD have swapped) and the pivot growth factor. Decides whether a static
+    /// (fixed-order, fill-pattern) factorization is numerically safe here.
+    fn natural_lu_probe(a0: &[[f64; N]; N], b0: &[f64; N]) -> ([f64; N], usize, f64) {
+        let mut a = *a0;
+        let mut b = *b0;
+        let a0max = a0
+            .iter()
+            .flat_map(|r| r.iter())
+            .fold(0.0f64, |m, &x| m.max(x.abs()));
+        let mut would_swap = 0usize;
+        let mut growth = a0max;
+        for col in 0..N {
+            // Would partial pivoting move off the diagonal?
+            let mut pmax = a[col][col].abs();
+            for r in (col + 1)..N {
+                if a[r][col].abs() > pmax {
+                    pmax = a[r][col].abs();
+                }
+            }
+            if pmax > a[col][col].abs() * (1.0 + 1e-12) {
+                would_swap += 1;
+            }
+            let d = a[col][col];
+            for r in (col + 1)..N {
+                let f = a[r][col] / d;
+                if f != 0.0 {
+                    for c in col..N {
+                        a[r][c] -= f * a[col][c];
+                        growth = growth.max(a[r][c].abs());
+                    }
+                    b[r] -= f * b[col];
+                }
+            }
+        }
+        let mut x = [0.0; N];
+        for i in (0..N).rev() {
+            let mut s = b[i];
+            for c in (i + 1)..N {
+                s -= a[i][c] * x[c];
+            }
+            x[i] = s / a[i][i];
+        }
+        (x, would_swap, growth / a0max)
+    }
+
+    #[test]
+    #[ignore = "diagnostic: ladder Jacobian structure + pivot stability for static LU"]
+    fn ladder_matrix_structure() {
+        let sr = 192_000.0f32;
+        let mut f = LadderVcf::new(sr);
+        f.set_cal(0.70);
+        f.set_cutoff(1_200.0);
+        f.set_reso(0.7);
+        // Warm up with a sine so the captured systems are real operating points.
+        let mut worst_swap = 0usize;
+        let mut worst_growth = 0.0f64;
+        let mut worst_err = 0.0f64;
+        let mut pattern = [[false; N]; N];
+        let mut samples = 0;
+        for i in 0..6000 {
+            let x = 0.3 * (TAU as f32 * 800.0 * i as f32 / sr).sin();
+            let _ = f.tick(x);
+            if i >= 2000 && i % 200 == 0 {
+                let (a, b) = f.capture_system(x);
+                for r in 0..N {
+                    for c in 0..N {
+                        if a[r][c] != 0.0 {
+                            pattern[r][c] = true;
+                        }
+                    }
+                }
+                let dense = lu_solve::<N>(a, b).unwrap();
+                let (nat, sw, gr) = natural_lu_probe(&a, &b);
+                let err = (0..N)
+                    .map(|k| (nat[k] - dense[k]).abs())
+                    .fold(0.0, f64::max);
+                worst_swap = worst_swap.max(sw);
+                worst_growth = worst_growth.max(gr);
+                worst_err = worst_err.max(err);
+                samples += 1;
+            }
+        }
+        // Symbolic natural-order factorization: which structural zeros fill in.
+        let mut fill = pattern;
+        for col in 0..N {
+            for r in (col + 1)..N {
+                if fill[r][col] {
+                    for c in (col + 1)..N {
+                        if fill[col][c] {
+                            fill[r][c] = true;
+                        }
+                    }
+                }
+            }
+        }
+        let fnnz: usize = fill.iter().flatten().filter(|&&b| b).count();
+        let new_fill = fnnz - pattern.iter().flatten().filter(|&&b| b).count();
+
+        // Fill under alternative orderings (permutation of node→position). Lower
+        // fill ⇒ cheaper static factorization. Try rail-interleaved (block-tridiag)
+        // with IN_L/IN_R pushed last, and the same but IN_L/IN_R first.
+        let perm_fill = |perm: &[usize; N]| -> usize {
+            let mut p = [[false; N]; N];
+            for r in 0..N {
+                for c in 0..N {
+                    if pattern[perm[r]][perm[c]] {
+                        p[r][c] = true;
+                    }
+                }
+            }
+            for col in 0..N {
+                for r in (col + 1)..N {
+                    if p[r][col] {
+                        for c in (col + 1)..N {
+                            if p[col][c] {
+                                p[r][c] = true;
+                            }
+                        }
+                    }
+                }
+            }
+            p.iter().flatten().filter(|&&b| b).count()
+        };
+        // current node indices: TL0 AL1 BL2 CL3 DL4 TR5 AR6 BR7 CR8 DR9 INL10 INR11
+        let interleave_last = [0, 5, 1, 6, 2, 7, 3, 8, 4, 9, 10, 11];
+        let interleave_first = [10, 11, 0, 5, 1, 6, 2, 7, 3, 8, 4, 9];
+        eprintln!(
+            "  fill: natural={fnnz}  interleave(IN last)={}  interleave(IN first)={}",
+            perm_fill(&interleave_last),
+            perm_fill(&interleave_first),
+        );
+
+        let nnz: usize = pattern.iter().flatten().filter(|&&b| b).count();
+        eprintln!("\n== ladder 12×12 Jacobian, {samples} captured operating points ==");
+        eprintln!(
+            "  factored L+U nnz       : {fnnz} / {} (fill-in adds {new_fill})",
+            N * N
+        );
+        eprintln!(
+            "  structural nnz (union) : {nnz} / {} ({:.1}% fill)",
+            N * N,
+            100.0 * nnz as f64 / (N * N) as f64
+        );
+        eprintln!(
+            "  worst would-swap cols  : {worst_swap}  (0 ⇒ natural order = partial-pivot order)"
+        );
+        eprintln!("  worst growth factor    : {worst_growth:.2e}");
+        eprintln!("  worst |natural − dense|: {worst_err:.2e}  (vs TOL {TOL:.0e})");
+        eprintln!("\n  nonzero pattern (row = KCL eqn, X = nonzero), order TL AL BL CL DL TR AR BR CR DR IN_L IN_R:");
+        let names = [
+            "TL", "AL", "BL", "CL", "DL", "TR", "AR", "BR", "CR", "DR", "IL", "IR",
+        ];
+        for r in 0..N {
+            let row: String = (0..N)
+                .map(|c| {
+                    if pattern[r][c] {
+                        'X'
+                    } else if fill[r][c] {
+                        '+'
+                    } else {
+                        '.'
+                    }
+                })
+                .collect();
+            eprintln!("    {:>2} {row}", names[r]);
+        }
+    }
+
+    #[test]
+    #[ignore = "microbench: static vs dense ladder LU throughput"]
+    fn bench_static_vs_dense_lu() {
+        use super::super::linalg_static::ladder_lu_solve;
+        use std::hint::black_box;
+        use std::time::Instant;
+        let sr = 192_000.0f32;
+        let mut f = LadderVcf::new(sr);
+        f.set_cal(0.70);
+        f.set_cutoff(1_200.0);
+        f.set_reso(0.7);
+        for i in 0..2000 {
+            let x = 0.3 * (TAU as f32 * 800.0 * i as f32 / sr).sin();
+            let _ = f.tick(x);
+        }
+        let (a, b) = f.capture_system(0.1);
+        const REPS: usize = 5_000_000;
+        // Vary the input slightly each rep so nothing folds to a constant.
+        let t0 = Instant::now();
+        let mut acc = 0.0f64;
+        for k in 0..REPS {
+            let mut bb = b;
+            bb[0] += (k & 0xff) as f64 * 1e-12;
+            let x = lu_solve::<N>(black_box(a), black_box(bb)).unwrap();
+            acc += x[0];
+        }
+        let dense = t0.elapsed();
+        let t1 = Instant::now();
+        let mut acc2 = 0.0f64;
+        for k in 0..REPS {
+            let mut bb = b;
+            bb[0] += (k & 0xff) as f64 * 1e-12;
+            let x = ladder_lu_solve(black_box(a), black_box(bb));
+            acc2 += x[0];
+        }
+        let stat = t1.elapsed();
+        black_box(acc);
+        black_box(acc2);
+        let dn = dense.as_nanos() as f64 / REPS as f64;
+        let sn = stat.as_nanos() as f64 / REPS as f64;
+        eprintln!("\n== ladder LU microbench ({REPS} reps) ==");
+        eprintln!("  dense  lu_solve<12> : {dn:6.2} ns/solve");
+        eprintln!("  static ladder_lu    : {sn:6.2} ns/solve");
+        eprintln!("  speedup             : {:.2}×", dn / sn);
+    }
+
+    #[test]
+    fn static_lu_matches_dense_over_operating_points() {
+        // The static-pattern (no-pivot) ladder solver must reproduce the dense
+        // partial-pivot `lu_solve` across real operating points — many cutoffs,
+        // resonances, and drive levels, plus the gmin-homotopy diagonal loading.
+        use super::super::linalg_static::ladder_lu_solve;
+        let sr = 192_000.0f32;
+        let mut worst = 0.0f64;
+        for &(fc, reso, cal) in &[
+            (300.0f32, 0.0f32, 1.0f64),
+            (1_000.0, 0.5, 0.70),
+            (2_000.0, 0.9, 0.70),
+            (5_000.0, 0.7, 0.50),
+            (120.0, 0.3, 1.0),
+        ] {
+            let mut f = LadderVcf::new(sr);
+            f.set_cal(cal);
+            f.set_cutoff(fc);
+            f.set_reso(reso);
+            for i in 0..3000 {
+                let x = 0.4 * (TAU as f32 * 700.0 * i as f32 / sr).sin();
+                let _ = f.tick(x);
+                if i >= 1000 && i % 50 == 0 {
+                    let (a, b) = f.capture_system(x);
+                    // Test both gmin=0 (captured) and a homotopy-loaded diagonal.
+                    for extra in [0.0f64, 1e-3, 1e-1] {
+                        let mut al = a;
+                        for d in 0..N {
+                            al[d][d] += extra;
+                        }
+                        let dense = lu_solve::<N>(al, b).unwrap();
+                        let stat = ladder_lu_solve(al, b);
+                        let rel = (0..N)
+                            .map(|k| {
+                                (stat[k] - dense[k]).abs() / dense[k].abs().max(1e-9)
+                            })
+                            .fold(0.0, f64::max);
+                        worst = worst.max(rel);
+                    }
+                }
+            }
+        }
+        assert!(
+            worst < 1e-9,
+            "static LU diverged from dense: worst rel err {worst:.2e}"
+        );
     }
 
     #[test]

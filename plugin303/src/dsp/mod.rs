@@ -8,6 +8,7 @@ pub mod jfet;
 pub mod ladder;
 pub mod ladder_wdf;
 pub mod linalg;
+pub mod linalg_static;
 pub mod osc;
 pub mod oversample;
 pub mod vco;
