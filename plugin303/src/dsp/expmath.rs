@@ -41,6 +41,37 @@ pub fn fast_exp(x: f64) -> f64 {
     p * f64::from_bits(u)
 }
 
+/// Branchless `exp(x)` for the batched diode kernel (`Diode1N4148::stamp8`).
+///
+/// Identical math to [`fast_exp`] but the two scalar guard branches are folded
+/// into a single `k` clamp so an 8-wide loop calling this autovectorizes under
+/// x86-64-v3 (the early `return`s otherwise pin LLVM to scalar codegen).
+///
+/// The clamp is value-exact on the diode domain: clamping `k` to `-1023` yields
+/// `(k+1023)<<52 == 0`, so `from_bits(0) == 0.0` reproduces the underflow guard
+/// (`k <= -1023 -> 0`) for free. The overflow guard (`k >= 1024`) is unreachable
+/// here — the stamp freezes the exp at `vcrit` before the arg can grow that far —
+/// so the upper clamp is a no-op safety rail, not a behavior change.
+#[inline]
+pub fn fast_exp_branchless(x: f64) -> f64 {
+    const LN2: f64 = 0.6931471805599453;
+    const INV_LN2: f64 = 1.4426950408889634;
+    let kf = (x * INV_LN2 + 0.5).floor();
+    let k = (kf as i64).clamp(-1023, 1023);
+    let r = x - kf * LN2; // unclamped kf keeps r in [-ln2/2, ln2/2]
+    let p = 1.0
+        + r * (1.0
+            + r * (1.0 / 2.0
+                + r * (1.0 / 6.0
+                    + r * (1.0 / 24.0
+                        + r * (1.0 / 120.0
+                            + r * (1.0 / 720.0
+                                + r * (1.0 / 5040.0
+                                    + r * (1.0 / 40320.0 + r * (1.0 / 362880.0)))))))));
+    let u = ((k + 1023) as u64) << 52;
+    p * f64::from_bits(u)
+}
+
 /// `ln(x)` via IEEE-754 exponent decompose `x = m·2^e`, `log(m) = 2·atanh(s)`.
 #[inline]
 pub fn fast_log(x: f64) -> f64 {
@@ -84,6 +115,20 @@ mod tests {
             assert!(rel < 1e-9 || b < 1e-300, "exp({x}) rel err {rel}");
         }
         assert_eq!(fast_exp(-800.0), 0.0); // deep reverse bias underflows cleanly, no NaN
+    }
+
+    #[test]
+    fn fast_exp_branchless_matches_scalar() {
+        // Must be value-exact vs the scalar guard path across the diode domain
+        // (deep reverse bias through forward conduction) so the batched stamp
+        // keeps the spectral gates. Bitwise-identical on the in-range part;
+        // underflow falls out as a clean 0 via the k clamp.
+        for i in -2000..=200 {
+            let x = i as f64 * 0.05;
+            let (a, b) = (fast_exp_branchless(x), fast_exp(x));
+            assert_eq!(a.to_bits(), b.to_bits(), "branchless exp({x}) != scalar");
+        }
+        assert_eq!(fast_exp_branchless(-800.0), 0.0);
     }
 
     #[test]
