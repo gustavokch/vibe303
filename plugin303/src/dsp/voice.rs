@@ -32,6 +32,18 @@ const VCO_GAIN: f32 = 2.0;
 const ULTRA_BRIGHT: f64 = 0.70;
 const HIGH_BRIGHT: f64 = 0.50;
 
+/// High-tier output level trim so High tracks Ultra's loudness on a tier switch.
+/// High's polyBLEP-saw path sits below Ultra's nodal-VCO path through the
+/// (faithfully depressed-corner) ladder by a *resonance-dependent* amount:
+/// ~3 dB in the resonant regime a 303 actually plays in (reso ≳ 0.2), shrinking
+/// to ~0 dB near reso 0.85 and widening to ~6 dB only at reso 0 (no peak to
+/// dominate). A constant +3.2 dB makeup centres High on Ultra to within ±0.5 dB
+/// across the resonant regime; the reso-0 residual is left (a constant trim
+/// cannot flatten a reso-dependent gap, and reso 0 is the darkest/least-used
+/// setting). The spectral gates power-normalise, so this trim is invisible to
+/// them (no fidelity-gate impact); it only equalises perceived loudness.
+const HIGH_LEVEL_TRIM: f32 = 1.45; // +3.2 dB
+
 /// Tier-switch crossfade length in seconds (equal-power settle-then-crossfade).
 /// Long enough to mask the incoming path's cold-start transient (VCO 1 ms self-
 /// start, ladder warm-up) and any oscillator phase jump, short enough to feel
@@ -248,7 +260,10 @@ impl Voice {
             Tier::High => {
                 let hi = self.os2.up(self.osc_hi.tick());
                 let o = [self.ladder_hi.tick(hi[0]), self.ladder_hi.tick(hi[1])];
-                self.comp_high.process(self.os2.down(o))
+                // HIGH_LEVEL_TRIM equalises High's loudness to Ultra (tier-switch
+                // is then timbre-only). Pre-comp-delay so the crossfade blends
+                // level-matched paths.
+                self.comp_high.process(self.os2.down(o) * HIGH_LEVEL_TRIM)
             }
             // Ultra: circuit VCO saw → nodal diode-ladder at 4× oversample.
             // KNOWN LIMITATION: the nodal VCO runs at base rate, so its sharp

@@ -79,6 +79,35 @@ fn tiers_match_at_passband() {
     }
 }
 
+/// High must track Ultra's loudness (the faithful reference) so a High↔Ultra
+/// tier switch is a timbre change, not a volume jump — **in the resonant regime
+/// a 303 actually plays in** (reso ≳ 0.2). High's polyBLEP-saw path sits below
+/// Ultra's nodal-VCO path through the depressed-corner ladder by a
+/// resonance-dependent amount; `HIGH_LEVEL_TRIM` (voice.rs) is centred on the
+/// resonant regime, landing ±1.5 dB there. The gap widens to a few dB only at
+/// literally reso = 0 (no peak to dominate — the source/OS-rate passband
+/// difference is exposed); that is irreducible without a reso-dependent makeup
+/// and is the darkest, least-used setting, so it is intentionally not gated
+/// tightly (the passband test bounds it loosely vs Low instead).
+#[test]
+fn high_tracks_ultra_level() {
+    for &(note, cutoff, reso) in &[
+        (45u8, 1_500.0f32, 0.3f32),
+        (33, 800.0, 0.5),
+        (57, 3_000.0, 0.2),
+        (57, 1_002.0, 0.85), // the gold patch
+    ] {
+        let high = tier_rms(Tier::High, note, cutoff, reso);
+        let ultra = tier_rms(Tier::Ultra, note, cutoff, reso);
+        let db = 20.0 * (high / ultra).log10();
+        eprintln!("note{note} fc{cutoff:.0} r{reso}  High vs Ultra = {db:+.1} dB");
+        assert!(
+            db.abs() <= 1.5,
+            "High off Ultra by {db:.1} dB at note{note}/fc{cutoff:.0}/r{reso} (expect within ±1.5 dB)"
+        );
+    }
+}
+
 /// Regression floor: across the full patch space (incl. resonance and dark
 /// cutoffs where the depressed corner bites hardest), no tier may collapse to
 /// the old ~28 dB-below-Low failure. The bound is loose (−24 dB) on purpose: the
