@@ -4,7 +4,7 @@
 //! Model params from `eval/303/_vcf303_netlist_gen.py` `TRANSISTOR_MODELS`:
 //! `IS=1.42e-11`, `N=1.7`, `CJO=1.74e-12`, `VJ=0.75`, `M=0.333`, `RS=4.2`.
 
-use super::expmath::{fast_exp, fast_pow_pos};
+use super::expmath::{fast_exp, fast_exp_branchless, fast_pow_pos};
 
 /// Thermal voltage at 300 K.
 const VT: f64 = 0.025_852;
@@ -59,6 +59,37 @@ impl Diode1N4148 {
             let i = icrit + gcrit * (v - self.vcrit);
             (i, gcrit)
         }
+    }
+
+    /// Batched [`stamp`] over 8 junctions of the *same* model (the ladder's 8
+    /// diodes). Returns `(I, g)` arrays. Branchless on purpose: both the
+    /// conducting Shockley branch and the `vcrit` linear extension are computed
+    /// for every lane and blended with a `select`, so the inner exp loop carries
+    /// no data-dependent control flow and LLVM packs it 4-wide under x86-64-v3.
+    /// Value-identical to calling [`stamp`] per lane (uses [`fast_exp_branchless`],
+    /// which matches [`fast_exp`] bit-for-bit on the junction domain).
+    #[inline]
+    pub fn stamp8(&self, vds: &[f64; 8]) -> ([f64; 8], [f64; 8]) {
+        // Mirror the scalar `stamp` arithmetic op-for-op (division, not
+        // reciprocal-multiply) so the result is bit-identical, not just close.
+        let g_scale = self.is / self.n_vt;
+        // vcrit-frozen branch constants (loop-invariant).
+        let ec = fast_exp_branchless(self.vcrit / self.n_vt);
+        let icrit = self.is * (ec - 1.0);
+        let gcrit = g_scale * ec;
+        let mut id = [0.0f64; 8];
+        let mut gd = [0.0f64; 8];
+        for i in 0..8 {
+            let v = vds[i];
+            let e = fast_exp_branchless(v / self.n_vt);
+            let i_lo = self.is * (e - 1.0);
+            let g_lo = g_scale * e;
+            let i_hi = icrit + gcrit * (v - self.vcrit);
+            let below = v < self.vcrit;
+            id[i] = if below { i_lo } else { i_hi };
+            gd[i] = if below { g_lo } else { gcrit };
+        }
+        (id, gd)
     }
 
     /// Junction depletion charge companion: returns `(Q, C)` with the standard
@@ -123,6 +154,20 @@ mod tests {
         let (_, g1) = d.stamp(d.vcrit + 0.1);
         let (_, g2) = d.stamp(d.vcrit + 0.2);
         assert!((g1 - g2).abs() < 1e-6, "conductance not frozen past vcrit");
+    }
+
+    #[test]
+    fn stamp8_matches_scalar_stamp() {
+        // The batched kernel must be value-identical to 8 scalar stamps, incl.
+        // the vcrit-frozen branch, or the ladder spectral gates would drift.
+        let d = Diode1N4148::new();
+        let vds = [-0.5, 0.0, 0.3, 0.6, d.vcrit - 0.01, d.vcrit + 0.05, 0.9, -2.0];
+        let (ids, gds) = d.stamp8(&vds);
+        for (i, &v) in vds.iter().enumerate() {
+            let (is, gs) = d.stamp(v);
+            assert_eq!(ids[i].to_bits(), is.to_bits(), "I lane {i} (v={v})");
+            assert_eq!(gds[i].to_bits(), gs.to_bits(), "g lane {i} (v={v})");
+        }
     }
 
     #[test]

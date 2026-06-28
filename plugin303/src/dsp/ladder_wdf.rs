@@ -203,11 +203,17 @@ impl LadderVcf {
         let mut g = [[0.0f64; N]; N];
         let mut b = [0.0f64; N];
 
-        // Diode companion stamps (Geq = dI/dV, Ieq = I − g·v).
-        for &(a, k) in &DIODES {
-            let vd = v[a] - v[k];
-            let (id, gd) = self.diode.stamp(vd);
-            let ieq = id - gd * vd;
+        // Diode companion stamps (Geq = dI/dV, Ieq = I − g·v). Gather the 8
+        // junction voltages, evaluate the exps in one branchless batch (LLVM
+        // packs it 4-wide under x86-64-v3), then scatter the companions.
+        let mut vds = [0.0f64; 8];
+        for (j, &(a, k)) in DIODES.iter().enumerate() {
+            vds[j] = v[a] - v[k];
+        }
+        let (ids, gds) = self.diode.stamp8(&vds);
+        for (j, &(a, k)) in DIODES.iter().enumerate() {
+            let gd = gds[j];
+            let ieq = ids[j] - gd * vds[j];
             g[a][a] += gd;
             g[k][k] += gd;
             g[a][k] -= gd;
