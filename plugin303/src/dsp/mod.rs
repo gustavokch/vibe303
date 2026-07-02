@@ -1,6 +1,7 @@
 pub mod adaa;
 pub mod bjt;
 pub mod diode;
+pub mod drift;
 pub mod env;
 pub mod expmath;
 pub mod filter;
@@ -11,5 +12,6 @@ pub mod linalg;
 pub mod linalg_static;
 pub mod osc;
 pub mod oversample;
+pub mod sequencer;
 pub mod vco;
 pub mod voice;

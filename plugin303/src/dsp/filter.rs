@@ -8,6 +8,7 @@ pub trait Filter303 {
     fn set_reso(&mut self, r: f32);
     fn tick(&mut self, x: f32) -> f32;
     fn reset(&mut self);
+    fn set_poles(&mut self, _n: usize) {}
 }
 
 /// Fidelity tier. Low = TPT; High = WDF-lite (F4); Ultra = WDF (F3).
