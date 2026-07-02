@@ -7,13 +7,20 @@ pub mod params;
 use dsp::voice::Voice;
 use dsp::sequencer::{Sequencer, TransportInfo};
 use params::Plugin303Params;
-
+/// The main plugin structure implementing the nih-plug VST3/CLAP synth interface.
 pub struct Plugin303 {
+    /// Shared parameters object.
     params: Arc<Plugin303Params>,
+    /// Active sample rate.
     sample_rate: f32,
+    /// Monophonic synth voice.
     voice: Voice,
+    /// Last latency reported to the host (samples). Tracked so we only notify on
+    /// change — Ultra/High oversampling adds group delay the host must PDC.
     reported_latency: u32,
+    /// Built-in 16-step sequencer.
     sequencer: Sequencer,
+    /// Tracked active MIDI note to manage note priority.
     active_midi_note: Option<u8>,
 }
 
@@ -72,12 +79,18 @@ impl Plugin for Plugin303 {
     }
 
     fn reset(&mut self) {
+        // Clear the voice tail so transport stop / loop-jump doesn't bleed. Reset
+        // is in place (not `Voice::new`): nih-plug may call this from the audio
+        // thread, where allocating / rebuilding the VCO pitch LUT is illegal —
+        // see `Voice::reset`. The LUT cache is warmed once in `initialize`.
         self.voice.reset();
         self.sequencer.reset();
         self.active_midi_note = None;
+        // Re-apply the persisted tier immediately (no fade) — otherwise the voice
+        // would silently revert to Low and the next block would crossfade up to
+        // the user's tier on every transport start / loop-jump.
         self.voice.set_tier_immediate(self.params.tier.value());
     }
-
     fn process(
         &mut self,
         buffer: &mut Buffer,

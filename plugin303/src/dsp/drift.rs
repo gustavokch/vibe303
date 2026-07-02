@@ -1,11 +1,18 @@
 //! Component drift low-frequency random walk generator.
 
+/// A slow random walk generator simulating thermal fluctuations in resistors and capacitors.
+///
+/// Uses a Linear Congruential Generator (LCG) to generate pseudo-random noise, which is then
+/// smoothed with a 1-pole lowpass filter to produce a continuous random walk.
 pub struct DriftGenerator {
+    /// Internal LCG state seed.
     state: u32,
+    /// Smoothed random walk value.
     value: f32,
 }
 
 impl DriftGenerator {
+    /// Creates a new drift generator initialized with a seed.
     pub fn new(seed: u32) -> Self {
         Self {
             state: seed,

@@ -2,28 +2,46 @@
 
 use crate::params::{SequencerStep, StepGate};
 
+/// A 16-step sequencer tracking step playback position, timing phases,
+/// and generating frequency/trigger/gate/accent modulation signals.
 pub struct Sequencer {
+    /// Active playing step index.
     step_idx: usize,
+    /// Counter tracking sample ticks inside the current step (for internal clock).
     sample_counter: f64,
+    /// Previously processed step index (used to detect step boundary crossings).
     prev_step_idx: usize,
+    /// Previously computed gate state.
     prev_gate: bool,
+    /// Tracks if host was playing in the previous block.
     was_playing: bool,
     
     // Pitch slew state for slide/glide
+    /// Current slewed pitch frequency.
     current_freq: f32,
+    /// target pitch frequency of the active step.
     target_freq: f32,
     
     // Output control values
+    /// Output slewed note frequency.
     pub freq: f32,
+    /// Output envelope gate state.
     pub gate: bool,
+    /// Output step accent modifier.
     pub accent: bool,
+    /// Output step velocity.
     pub velocity: f32,
+    /// Output envelope note trigger indicator.
     pub trigger: bool,
 }
 
+/// Host transport and synchronization data passed to the sequencer.
 pub struct TransportInfo {
+    /// True if the host transport is currently playing.
     pub playing: bool,
+    /// Current host playback position in beats (PPQ).
     pub pos_beats: Option<f64>,
+    /// Current host tempo in BPM.
     pub tempo: Option<f64>,
 }
 

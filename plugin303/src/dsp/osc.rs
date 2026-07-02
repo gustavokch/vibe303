@@ -3,15 +3,25 @@
 
 use crate::params::OscWave;
 
+/// A band-limited polyphase BLEP (first-order antiderivative) oscillator.
+///
+/// Supports classic Sawtooth, Square wave with pulse-width modulation (PWM),
+/// and Sweep morphing between Sawtooth and Square waveforms.
 pub struct BlepOsc {
+    /// Active phase of the oscillator in [0, 1].
     phase: f32,
+    /// Phase increment per sample (= frequency / sample_rate).
     inc: f32,
+    /// Duty cycle / pulse width for the square wave in [0.01, 0.99].
     pw: f32,
+    /// Waveform target configuration.
     wave: OscWave,
+    /// Sweep morph position in [0, 1] (0 = Saw, 1 = Square).
     sweep_pos: f32,
 }
 
 impl BlepOsc {
+    /// Creates a new band-limited BLEP oscillator.
     pub fn new() -> Self {
         Self {
             phase: 0.0,

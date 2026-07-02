@@ -55,65 +55,114 @@ impl CompDelay {
     }
 }
 
+/// Monophonic voice structure managing the different fidelity paths, modulation sources, and envelopes.
 pub struct Voice {
     // --- Low Tier ---
+    /// Primary polyBLEP oscillator for Low tier.
     osc: BlepOsc,
+    /// Detunable secondary oscillator for Low tier.
     osc2: BlepOsc,
+    /// Sub-oscillator for Low tier (always a square wave, one octave below).
     sub_osc: BlepOsc,
+    /// Textbook coincident-pole zero-delay-feedback VCF for Low tier.
     filter: TptLadder,
 
     // --- High Tier ---
+    /// Primary polyBLEP oscillator for High tier.
     osc_hi: BlepOsc,
+    /// Detunable secondary oscillator for High tier.
     osc2_hi: BlepOsc,
+    /// Sub-oscillator for High tier (always a square wave, one octave below).
     sub_osc_hi: BlepOsc,
+    /// High-tier nodal diode-ladder (polyBLEP saw source), run inside `os2` at 2x.
     ladder_hi: LadderVcf,
+    /// High-tier oversampling filter (2x Kaiser FIR).
     os2: Os2x,
 
     // --- Ultra Tier ---
+    /// Ultra-tier nodal circuit VCO (replaces the polyBLEP saw for Ultra only).
     vco: Vco303,
+    /// Secondary Ultra-tier nodal circuit VCO.
     vco2: Vco303,
-    // Reuse sub_osc_hi for Ultra oversampling input
+    /// Ultra-tier nodal diode-ladder, preallocated, run inside `os` at 4x.
     ladder: LadderVcf,
+    /// Ultra-tier oversampling filter (4x Kaiser FIR).
     os: Os4x,
 
     // --- Envelopes & Modulators ---
+    /// Filter envelope (MEG), ADSR structure collapsing to classic AD.
     meg: AdsrEnv,
+    /// Amplitude envelope (VEG), ADSR structure.
     veg: AdsrEnv,
+    /// Pitch random walk drift generator.
     drift_pitch: DriftGenerator,
+    /// VCF cutoff random walk drift generator.
     drift_cutoff: DriftGenerator,
+    /// Accent decay integrator accumulator.
     accent_acc: f32,
 
     // --- Tier Switch/Crossfade ---
+    /// Active (target) tier.
     tier: Tier,
+    /// Tier being faded *out*, if a crossfade is in progress. `None` = steady.
     xfade_from: Option<Tier>,
+    /// Crossfade position in [0, 1] (0 = all `xfade_from`, 1 = all `tier`).
     xfade_pos: f32,
+    /// Per-sample crossfade increment (= 1 / fade-length-samples).
     xfade_step: f32,
+    /// Tier requested while a fade was still in flight — applied as the next fade
+    /// once the current one completes, so a fast multi-tier sweep never hard-cuts
+    /// a still-weighted path.
     pending_tier: Option<Tier>,
+    /// Compensation delay line for Low tier to align latency with Ultra.
     comp_low: CompDelay,
+    /// Compensation delay line for High tier to align latency with Ultra.
     comp_high: CompDelay,
+    /// Compensation delay line for Ultra tier (typically 0 delay).
     comp_ultra: CompDelay,
+    /// Common reported latency (base samples) = max OS group delay over all tiers.
     max_latency: usize,
+    /// Sample rate.
     sr: f32,
 
     // --- Parameter States ---
+    /// Currently triggered MIDI note.
     current_note: u8,
+    /// Base note frequency in Hz.
     base_hz: f32,
+    /// Master fine tuning offset (cents).
     tuning_offset: f32,
+    /// Pitch offset for Oscillator 1 (semitones).
     osc1_pitch_st: f32,
+    /// Pitch offset for Oscillator 2 (semitones).
     osc2_pitch_st: f32,
+    /// Relative volume of Oscillator 2 in [0, 1].
     osc2_vol: f32,
+    /// Relative volume of sub-oscillator in [0, 1].
     sub_vol: f32,
+    /// Normalised VCF Cutoff knob setting.
     cutoff_knob: f32,
+    /// Normalised VCF Resonance knob setting.
     reso_knob: f32,
+    /// Normalised VCF Envelope Modulation intensity knob setting.
     env_mod: f32,
+    /// Normalised Envelope Decay knob setting.
     decay_knob: f32,
+    /// Normalised Accent intensity knob setting.
     accent_knob_val: f32,
+    /// Master output volume (dB).
     master_volume: f32,
+    /// Main VCF drive factor.
     drive: f32,
+    /// Component age wear level in [0, 1].
     age: f32,
+    /// Component temperature drift amount in [0, 1].
     drift: f32,
+    /// VCA envelope trigger mode.
     vca_env_mode: VcaEnvMode,
+    /// Current gate-on state of the voice.
     pub gate: bool,
+    /// Current active step accent modifier.
     accent_active: bool,
 }
 
@@ -190,6 +239,7 @@ impl Voice {
         }
     }
 
+    /// Update the internal voice states with block-rate parameter readings from the host.
     pub fn update_params(
         &mut self,
         tuning_cents: f32,
@@ -292,6 +342,9 @@ impl Voice {
         }
     }
 
+    /// Set the tier with no crossfade — for the initial/persisted selection at
+    /// construction or `initialize`, where there is no prior audio to fade from.
+    /// Runtime changes go through [`set_tier`] (faded).
     pub fn set_tier_immediate(&mut self, tier: Tier) {
         self.tier = tier;
         self.xfade_from = None;
@@ -299,6 +352,18 @@ impl Voice {
         self.pending_tier = None;
     }
 
+    /// Clear all runtime state to silence, **in place** — the host reset path.
+    ///
+    /// nih-plug's `reset()` may fire from the audio thread and must not allocate
+    /// (`plugin.rs` `reset` contract). Reconstructing the Voice (`Voice::new`)
+    /// would re-enter the VCO pitch-LUT cache: on a warm cache that is only a
+    /// `Mutex` lock, but on a cold cache it runs the secant LUT build (heavy) +
+    /// a `Vec::push` allocation — both illegal here. So the LUT-bearing VCO and
+    /// the nodal ladders are reset *in place* (dynamic state cleared; calibration
+    /// and the cached LUT preserved), and the remaining fixed-array components
+    /// are cheap, alloc-free `new()`s. The cache is therefore touched only from
+    /// `initialize()` (non-RT). Leaves a clean steady Low; the caller re-applies
+    /// the persisted tier via [`set_tier_immediate`].
     pub fn reset(&mut self) {
         self.osc = BlepOsc::new();
         self.osc2 = BlepOsc::new();
@@ -310,10 +375,10 @@ impl Voice {
         self.sub_osc_hi = BlepOsc::new();
         self.sub_osc_hi.set_wave(OscWave::Square);
 
-        self.vco.reset();
+        self.vco.reset(); // preserves cv_lut — no cache lock, no rebuild, no alloc
         self.vco2.reset();
         self.filter.reset();
-        self.ladder.reset();
+        self.ladder.reset(); // preserves cutoff / reso / brightness
         self.ladder_hi.reset();
         self.os = Os4x::new();
         self.os2 = Os2x::new();
@@ -331,8 +396,20 @@ impl Voice {
         self.comp_ultra.reset();
     }
 
+    /// Select the fidelity tier. Low routes to the TPT path; High routes to the
+    /// nodal diode-ladder inside the 2× oversampler (polyBLEP saw, F4.1); Ultra
+    /// routes to the circuit VCO → nodal ladder at 4× (F3.5).
+    ///
+    /// A change starts a short equal-power crossfade (F5.1) from the previous
+    /// tier so the path switch is click-free — the tiers have different timbre
+    /// and the incoming path starts cold, so a hard switch would pop. No
+    /// allocation, RT-safe (plain field writes).
     pub fn set_tier(&mut self, tier: Tier) {
         if self.xfade_from.is_some() {
+            // If a fade is already in flight, queue the new target instead of
+            // clobbering the outgoing path (which would hard-cut a still-weighted
+            // tier → click on a fast multi-tier sweep). The queued tier starts its
+            // fade when the current one completes (see `tick`).
             self.pending_tier = if tier == self.tier { None } else { Some(tier) };
             return;
         }
@@ -344,6 +421,10 @@ impl Voice {
         self.tier = tier;
     }
 
+    /// Reported host latency (base samples). Constant across tiers: every tier is
+    /// padded to the max OS group delay (Ultra's 4×), so the PDC value never
+    /// changes at runtime — no host graph re-init on a tier switch, and the
+    /// crossfade blends paths that share the same total latency.
     pub fn latency_samples(&self) -> usize {
         self.max_latency
     }
@@ -372,8 +453,11 @@ impl Voice {
         self.base_hz = hz;
     }
 
+    /// Renders a single sample for a specific tier, advancing its state.
     fn render_tier(&mut self, tier: Tier) -> f32 {
         match tier {
+            // Low: polyBLEP saw → TPT ladder (cheap, ships). Padded to the common
+            // latency so the host PDC is constant across tiers.
             Tier::Low => {
                 let osc1 = self.osc.tick();
                 let sub = self.sub_osc.tick() * self.sub_vol;
@@ -383,6 +467,9 @@ impl Voice {
                 let y = self.filter.tick(mix * self.drive) / self.drive;
                 self.comp_low.process(y)
             }
+            // High (F4.1): polyBLEP saw → nodal diode-ladder at 2× oversample.
+            // Skips the costly nodal VCO Newton but keeps the circuit-filter
+            // character — sits between Low and Ultra at a fraction of Ultra cost.
             Tier::High => {
                 let osc1 = self.osc_hi.tick();
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
@@ -394,8 +481,20 @@ impl Voice {
                     self.ladder_hi.tick(hi[0]),
                     self.ladder_hi.tick(hi[1])
                 ];
+                // HIGH_LEVEL_TRIM equalises High's loudness to Ultra (tier-switch
+                // is then timbre-only). Pre-comp-delay so the crossfade blends
+                // level-matched paths.
                 self.comp_high.process(self.os2.down(o) * (HIGH_LEVEL_TRIM / self.drive))
             }
+            // Ultra: circuit VCO saw → nodal diode-ladder at 4× oversample.
+            // KNOWN LIMITATION: the nodal VCO runs at base rate, so its sharp
+            // relaxation reset edge is already aliased before `os.up` (4× OS only
+            // band-limits the downstream ladder nonlinearity, not the source). At
+            // high notes Ultra's saw can therefore alias more than the band-limited
+            // polyBLEP saws of Low/High. Generating the VCO at OS rate would 4× its
+            // Newton cost and break the tier's real-time budget — deferred to the
+            // Ultra-headroom work (active stages + per-note pitch secant). See the
+            // design doc "Deferred Ultra headroom" note.
             Tier::Ultra => {
                 let osc1 = self.vco.tick() * VCO_GAIN;
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
@@ -414,6 +513,8 @@ impl Voice {
         }
     }
 
+    /// Advances the voice by one sample, computing modulations, rendering the active
+    /// tier (or crossfading), and applying the VCA envelope and master volume.
     pub fn tick(&mut self) -> f32 {
         // --- 1. Compute Pitch & Cutoff Modulations ---
         // Pitch drift (LFO random walk)
@@ -482,15 +583,22 @@ impl Voice {
 
         // --- 3. Render Tier audio ---
         let f = match self.xfade_from {
+            // Steady state: render the active tier only.
             None => self.render_tier(self.tier),
+            // Crossfade: render both paths and blend equal-power. The outgoing
+            // path keeps running until the fade completes, then is dropped.
             Some(from) => {
                 let a = self.render_tier(from);
                 let b = self.render_tier(self.tier);
                 let g = self.xfade_pos.min(1.0);
+                // Equal-power (constant-energy) weights: the tiers are largely
+                // uncorrelated in timbre, so equal-power avoids the mid-fade dip
+                // a linear blend would give.
                 let theta = g * std::f32::consts::FRAC_PI_2;
                 let out = a * theta.cos() + b * theta.sin();
                 self.xfade_pos += self.xfade_step;
                 if self.xfade_pos >= 1.0 {
+                    // Fade complete: launch any tier queued mid-fade.
                     self.xfade_from = None;
                     if let Some(next) = self.pending_tier.take() {
                         if next != self.tier {

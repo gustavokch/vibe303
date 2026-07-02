@@ -8,6 +8,7 @@ pub trait Filter303 {
     fn set_reso(&mut self, r: f32);
     fn tick(&mut self, x: f32) -> f32;
     fn reset(&mut self);
+    /// Sets the number of poles for tap selection: 2, 3, or 4 poles.
     fn set_poles(&mut self, _n: usize) {}
 }
 

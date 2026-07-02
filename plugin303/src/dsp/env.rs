@@ -1,5 +1,9 @@
 //! Envelope generators (ADSR). Supports classic AD and advanced ADSR.
+//!
+//! Faithful 303 AD shape (exp decay, accent) is emulated dynamically in `voice.rs`
+//! by combining `AdsrEnv` (with sustain=0) with the accent integration capacitor value.
 
+/// ADSR stage tracker.
 #[derive(Clone, Copy, PartialEq)]
 enum Stage {
     Idle,
@@ -9,13 +13,22 @@ enum Stage {
     Release,
 }
 
+/// A standard ADSR envelope generator that collapses back to a pure AD envelope
+/// when `sustain` is set to `0.0`.
 pub struct AdsrEnv {
+    /// Current stage of the envelope contour.
     stage: Stage,
+    /// Current output level of the envelope in [0, 1].
     level: f32,
+    /// Sample rate.
     sr: f32,
+    /// Per-sample envelope level increment during the attack stage.
     atk_inc: f32,
+    /// Per-sample envelope level decrement during the decay stage.
     dec_inc: f32,
+    /// Sustain level in [0, 1].
     sus_level: f32,
+    /// Per-sample envelope level decrement during the release stage.
     rel_inc: f32,
 }
 
