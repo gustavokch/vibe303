@@ -125,9 +125,22 @@ def _ad_envelope(n: int, sr: float, atk_ms: float = 3.0, dec_ms: float = 200.0) 
 
 
 # --- Stage 1: VCO .tran ------------------------------------------------------
-def render_vco(cv: float, sr: float, secs: float, settle: float = 0.03) -> np.ndarray:
+def render_vco(cv: float, sr: float, secs: float, settle: float = 0.03,
+               step: float = 5e-6, return_cp: bool = False
+               ) -> "np.ndarray | tuple[np.ndarray, np.ndarray, np.ndarray]":
     """Run a vco303 .tran at control voltage `cv`; return the ramp output `o_r`
-    resampled to `sr` over `secs` (after a `settle` warm-up)."""
+    resampled to `sr` over `secs` (after a `settle` warm-up).
+
+    Parameters
+    ----------
+    step:
+        ngspice internal timestep (default 5e-6 = 200 kHz grid). Use 1.25e-6
+        for a 4× finer grid when measuring the reset-edge thresholds.
+    return_cp:
+        If True, return a 3-tuple ``(o_r, t_raw, cp_raw)`` where ``t_raw`` and
+        ``cp_raw`` are the raw ngspice time/voltage arrays for the integrator
+        cap node ``cp`` (before settling). Useful for measuring CP_HIGH / CP_LOW.
+    """
     c = Circuit("vco303")
     c.raw_spice += vco_gen.TRANSISTOR_MODELS
     # Ramp the rails 0->V over 1ms (PWL) so the relaxation core self-starts.
@@ -137,17 +150,46 @@ def render_vco(cv: float, sr: float, secs: float, settle: float = 0.03) -> np.nd
     c.raw_spice += "Vcv cv 0 0\n"
     vco_gen.add_elements(c)
 
-    sim = c.simulator(temperature=25, nominal_temperature=25)
-    sim.options(method="gear", rshunt=1e12, gmin=1e-10,
-                reltol=1e-3, abstol=1e-9, vntol=1e-6, itl4=1000, trtol=7)
-    step = 5e-6  # 200 kHz internal grid — capture the ramp edges before decimating
-    an = sim.transient(step_time=step, end_time=settle + secs)
+    end_time = settle + secs
 
-    t = np.array(an.time)
-    o_r = np.array(an["o_r"])
+    with tempfile.TemporaryDirectory() as d:
+        out_or = Path(d) / "vco_or.dat"
+        out_cp = Path(d) / "vco_cp.dat"
+        cir = Path(d) / "vco.cir"
+        control_str = (
+            "\n.options method=gear rshunt=1e12 gmin=1e-10 reltol=1e-3 abstol=1e-9 vntol=1e-6 itl4=1000 trtol=7\n"
+            + ".control\n"
+            + f"tran {step:.8e} {end_time:.8e}\n"
+            + f"wrdata {out_or} v(o_r)\n"
+        )
+        if return_cp:
+            control_str += f"wrdata {out_cp} v(cp)\n"
+        control_str += ".endc\n.end\n"
+
+        cir.write_text(str(c) + control_str)
+        result = subprocess.run(
+            ["ngspice", "-b", str(cir)],
+            capture_output=True, timeout=300
+        )
+        if not out_or.exists():
+            print("ngspice stderr:", result.stderr.decode()[:2000])
+            raise RuntimeError("ngspice did not produce output (see stderr)")
+
+        data_or = np.loadtxt(out_or)
+        t = data_or[:, 0]
+        o_r = data_or[:, 1]
+
+        if return_cp:
+            data_cp = np.loadtxt(out_cp)
+            cp_raw = data_cp[:, 1]
+
     grid = settle + np.arange(int(secs * sr)) / sr
     y = np.interp(grid, t, o_r)
-    return y - y.mean()  # center the saw (drop the DC operating point)
+    y -= y.mean()  # center the saw (drop the DC operating point)
+
+    if return_cp:
+        return y, t, cp_raw
+    return y
 
 
 # --- Stage 2: VCF .tran (subprocess ngspice, inline PWL drive) ---------------

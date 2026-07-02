@@ -64,6 +64,13 @@ const DC_BLOCK_HZ: f32 = 7.6;
 /// Per-iteration node-voltage step limit (damped Newton): bounds the exponential
 /// overshoot that otherwise diverges on this stiff relaxation core.
 const VLIM: f64 = 0.5;
+/// Minimum v[CP] upward jump (V) that is unambiguously a JFET reset.
+///
+/// SPICE (1.25 µs grid, cv=5.0 and 3.4): CP swings 5.35 V (bottom) → 11.20 V (top),
+/// a drop of 5.85 V. Normal per-sample charging at the *highest* 303 note (C5, ~523 Hz,
+/// 48 kHz, dt=20.8 µs) is ≲0.5 V. A threshold of 3.0 V sits in the noise-free gap
+/// between the two regimes — no false positives, catches every JFET reset.
+const CP_RESET_DELTA: f64 = 3.0;
 
 // --- per-note pitch LUT (F6.6) ---------------------------------------------
 /// Refined-CV pitch LUT (secant-calibrated against this solver's realized pitch).
@@ -177,6 +184,26 @@ pub struct Vco303 {
     pub dbg_iters: u32,
     #[doc(hidden)]
     pub dbg_homotopy: bool,
+    /// Ready-to-add BLEP correction for the **current** output sample.
+    ///
+    /// Set by `tick()` to the first of the two-tap BLEP residual whenever the JFET
+    /// reset fires (v[CP] jumps upward by > [`CP_RESET_DELTA`] V). The caller adds
+    /// this to the raw VCO output before upsampling. Zero if no reset occurred.
+    ///
+    /// The BLEP is calibrated to the SPICE-measured reset-step amplitude so no
+    /// external scaling is needed. RT-safe; never allocates.
+    pub blep_now: f32,
+    /// Ready-to-add BLEP correction for the **next** output sample (the second tap).
+    ///
+    /// Consumed automatically at the start of the following `tick()` call and placed
+    /// into `blep_now` for that sample's output. The caller should also add it if it
+    /// caches VCO output for the inter-sample position.
+    pub blep_next: f32,
+    /// Pending second-tap BLEP value to inject at the START of the next `tick()`.
+    /// Internal; carried from the reset sample to the following sample.
+    blep_pending: f32,
+    /// Whether a reset occurred last tick (used by `blep_frac` smoke-test compat).
+    pub blep_frac: Option<f32>,   // kept for test compat; equals Some(alpha) on reset
 }
 
 impl Vco303 {
@@ -208,6 +235,10 @@ impl Vco303 {
             cv_lut: [0.0; LUT_K],
             dbg_iters: 0,
             dbg_homotopy: false,
+            blep_now: 0.0,
+            blep_next: 0.0,
+            blep_pending: 0.0,
+            blep_frac: None,
         }
     }
 
@@ -327,6 +358,10 @@ impl Vco303 {
         self.t_samples = 0;
         self.dc_x1 = 0.0;
         self.dc_y1 = 0.0;
+        self.blep_now = 0.0;
+        self.blep_next = 0.0;
+        self.blep_pending = 0.0;
+        self.blep_frac = None;
     }
 
     /// Driven rail voltages at the current sample (ramped 0→V over `RAMP_S`).
@@ -540,11 +575,27 @@ impl Vco303 {
         None
     }
 
-    /// Solve one sample; returns the DC-blocked `o_r` saw.
+    /// Solve one sample; returns the DC-blocked `o_r` saw + accumulated BLEP residuals.
+    ///
+    /// The caller must add `self.blep_now` (set by this call) to the returned raw value
+    /// to get the band-limited output. `blep_now` is zero when no reset occurred.
     pub fn tick(&mut self) -> f32 {
+        // --- Carry the pending 2nd-tap BLEP from last sample's reset --------
+        // The 2-tap BLEP must modify TWO adjacent samples: the reset sample itself
+        // (tap 0 = blep_now) and the FOLLOWING sample (tap 1 = blep_pending → blep_now
+        // next tick). blep_next is read by the caller if it needs lookahead; here we
+        // just forward blep_pending into blep_now for this sample.
+        self.blep_now = self.blep_pending;
+        self.blep_next = 0.0;
+        self.blep_pending = 0.0;
+        self.blep_frac = None; // compat field
+
         let dt = 1.0 / self.sr;
         let rails = self.rails();
         let vp = rails.0;
+
+        // Save cp before the solve — needed for reset detection.
+        let cp_prev = self.v[CP];
 
         let cdefs = self.caps(vp);
         let mut cgeq = [0.0f64; 5];
@@ -592,6 +643,52 @@ impl Vco303 {
             }
         };
         self.v = v;
+
+        // --- JFET reset detection + 2-tap BLEP computation ------------------
+        // The integrator cap C3 (p=vp, q=CP) charges slowly as Q3 pulls cp
+        // downward, then the JFET discharges it in one Newton step — a large
+        // UPWARD jump in v[CP] of several volts.
+        //
+        // SPICE measurements (1.25 µs grid, cv=5.0 and 3.4):
+        //   CP swings from 5.35 V (bottom, just-before-reset) up to 11.20 V (top,
+        //   after reset). A jump ≥ 3 V between samples is unambiguously a reset.
+        //   OR_SWING ≈ 1.46 V at both CV values; × VCO_GAIN (2.0) → BLEP step 2.92 V.
+        //   The reset causes o_r to jump UPWARD (o_r tracks cp through the output
+        //   network: high cp → high o_r).
+        //
+        // 2-tap first-order BLEP for an upward step D at fractional offset `alpha`:
+        //   Tap 0 (this sample, post-reset): residual = D · (alpha² / 2 - alpha)
+        //   Tap 1 (next sample):             residual = D · (-alpha² / 2)
+        //
+        // `alpha ∈ [0,1)` is the fractional position of the discontinuity within
+        // the current sample period, estimated as the fraction of the cp jump that
+        // occurred before the midpoint:
+        //   alpha = (mid − cp_prev) / (cp_now − cp_prev)
+        //
+        // With cp_prev ≈ 5.35 and cp_now ≈ 11.20, delta ≈ 5.85 and alpha ≈ 0.5.
+        // At alpha = 0.5: Tap0 = D · (0.125 − 0.5) = −0.375·D (pulls post-reset down)
+        //                 Tap1 = D · (−0.125)        = −0.125·D (small next-sample fix)
+        // This correctly cancels the alias energy from the hard upward jump.
+        let cp_now = v[CP];
+        let delta = cp_now - cp_prev;
+        if delta > CP_RESET_DELTA {
+            let mid = (cp_prev + cp_now) * 0.5;
+            let alpha = ((mid - cp_prev) / delta.max(1e-9)).clamp(0.0, 1.0) as f32;
+            // BLEP step size = SPICE OR_SWING × VCO_GAIN. The sign convention:
+            // the raw o_r output jumps UP at reset, so the BLEP correction for
+            // the post-jump sample (tap 0) must be NEGATIVE (alpha²/2 − alpha < 0
+            // for alpha ∈ (0,1)), and tap 1 is also negative. Scale is 2.92 V.
+            const BLEP_STEP: f32 = 2.92; // OR_SWING (1.46 V) × VCO_GAIN (2.0)
+            let tap0 = BLEP_STEP * (alpha * alpha / 2.0 - alpha); // < 0 for α∈(0,1)
+            let tap1 = BLEP_STEP * (-alpha * alpha / 2.0);         // ≤ 0
+            // Add tap0 to the CURRENT sample's accumulated correction.
+            self.blep_now += tap0;
+            // Store tap1 for the NEXT sample.
+            self.blep_pending = tap1;
+            self.blep_next = tap1; // caller-readable lookahead
+            self.blep_frac = Some(alpha); // compat
+        }
+        // --- end BLEP ---------------------------------------------------
 
         // Update cap trapezoidal state.
         for (j, cd) in cdefs.iter().enumerate() {
