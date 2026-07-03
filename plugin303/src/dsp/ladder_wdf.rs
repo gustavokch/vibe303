@@ -142,6 +142,8 @@ pub struct LadderVcf {
     dc_lp: f64,
     /// High-pass pole coefficient for `dc_lp`, derived from `sr`.
     dc_alpha: f64,
+    /// Output tap selection (2 | 3 | 4 poles)
+    pub poles: usize,
     /// Diagnostic: Newton iters used on the last `solve_sample` (max over the
     /// homotopy descent if the fast path stalled). Touched per sample; not a gate.
     #[doc(hidden)]
@@ -166,6 +168,7 @@ impl LadderVcf {
             i_prev: [0.0; 4],
             dc_lp: 0.0,
             dc_alpha: 1.0 - (-TAU * RESO_HP_HZ / sr as f64).exp(),
+            poles: 4,
             dbg_iters: 0,
         };
         f.set_cutoff(1_000.0);
@@ -371,10 +374,15 @@ impl LadderVcf {
             self.i_prev[j] = iif;
         }
 
-        let diff = v[TL] - v[TR];
+        let diff_feedback = v[TL] - v[TR];
         // Update the AC-coupling DC tracker (high-pass state) for next sample.
-        self.dc_lp += self.dc_alpha * (diff - self.dc_lp);
-        (diff * self.out_gain) as f32
+        self.dc_lp += self.dc_alpha * (diff_feedback - self.dc_lp);
+        let diff_out = match self.poles {
+            2 => v[BL] - v[BR],
+            3 => v[AL] - v[AR],
+            _ => diff_feedback,
+        };
+        (diff_out * self.out_gain) as f32
     }
 }
 
@@ -399,6 +407,10 @@ impl Filter303 for LadderVcf {
         self.i_prev = [0.0; 4];
         self.dc_lp = 0.0;
         self.dbg_iters = 0;
+    }
+
+    fn set_poles(&mut self, n: usize) {
+        self.poles = n.clamp(2, 4);
     }
 }
 
