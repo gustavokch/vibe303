@@ -1,0 +1,104 @@
+name: build-plugins-macos-gh
+
+# Manual trigger only. Builds VST3 + CLAP bundles on GitHub-hosted macOS runners,
+# uploads them as zips, and (optionally) attaches the zips to a GitHub Release.
+#  - macos-arm64     : native build on GitHub-hosted macOS (ARM64).
+#  - release         : downloads both zips and publishes a GitHub Release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (blank = build-<sha8>, no release published if 'release' input is false)"
+        required: false
+        default: ""
+      release:
+        description: "Publish a GitHub Release with the zips"
+        type: boolean
+        default: true
+      prerelease:
+        description: "Mark the release as a pre-release"
+        type: boolean
+        default: true
+      draft:
+        description: "Create the release as a draft"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # required for the release job to create tags/releases
+
+env:
+  PKG: plugin303
+  BUNDLE_NAME: TB303
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  macos-arm64:
+    runs-on: macos-latest-large
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build + bundle (arm64, native)
+        run: |
+          cargo xtask bundle "$PKG" --release
+
+      - name: Locate bundles
+        id: find
+        run: |
+          DIR="target/bundled"
+          [ -d "$DIR" ] || DIR="target/release/bundled"
+          test -e "$DIR/${BUNDLE_NAME}.vst3"
+          test -e "$DIR/${BUNDLE_NAME}.clap"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Package zip
+        run: |
+          OUT="${BUNDLE_NAME}-macos-arm64-${GITHUB_SHA::8}"
+          STAGE="$RUNNER_TEMP/$OUT"
+          mkdir -p "$STAGE"
+          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.vst3" "$STAGE/"
+          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.clap" "$STAGE/"
+          ( cd "$RUNNER_TEMP" && zip -r "$OUT.zip" "$OUT" )
+          echo "ZIP=$RUNNER_TEMP/$OUT.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUNDLE_NAME }}-macos-arm64
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+  release:
+    if: ${{ inputs.release }}
+    needs: [macos-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Compute release tag
+        id: meta
+        env:
+          IN_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="$IN_TAG"
+          [ -n "$TAG" ] || TAG="build-${GITHUB_SHA::8}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/**/*.zip
+            
