@@ -2,6 +2,7 @@
 //! Args: --note --sr --secs --cutoff --reso --tier --out
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
+use plugin303::params::OscWave;
 use std::io::Write;
 
 fn arg(flag: &str, default: f32) -> f32 {
@@ -29,6 +30,7 @@ fn main() {
     let cutoff = arg("--cutoff", 1_000.0);
     let reso = arg("--reso", 0.0);
     let tier = arg("--tier", 0.0) as i32; // 0=Low 1=High 2=Ultra; default keeps F2 golds valid
+    let wave = arg("--wave", 0.0) as i32; // 0=Saw, 1=Square, 2=Sweep
     let out = arg_s("--out", "render.f32");
 
     let mut v = Voice::new(sr);
@@ -36,6 +38,11 @@ fn main() {
         1 => Tier::High,
         2 => Tier::Ultra,
         _ => Tier::Low,
+    });
+    v.set_wave(match wave {
+        1 => OscWave::Square,
+        2 => OscWave::Sweep,
+        _ => OscWave::Saw,
     });
     v.set_cutoff(cutoff);
     v.set_reso(reso / 100.0); // --reso is a percentage; the voice wants 0..1

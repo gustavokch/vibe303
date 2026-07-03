@@ -556,7 +556,7 @@ impl Voice {
                 let hi = self.os2.up(mix * self.drive);
                 let o = [
                     self.ladder_hi.tick(hi[0]),
-                    self.ladder_hi.tick(hi[1])
+                    self.ladder_hi.tick(hi[1]),
                 ];
                 // HIGH_LEVEL_TRIM equalises High's loudness to Ultra (tier-switch
                 // is then timbre-only). Pre-comp-delay so the crossfade blends
@@ -575,14 +575,12 @@ impl Voice {
             // reset. Option A (full 4× VCO, future `Tier::UltraHd`) gives complete alias
             // freedom at ~4× the CPU cost.
             Tier::Ultra => {
-                let osc1 = self.vco.tick() * VCO_GAIN;
+                let osc1 = self.vco.tick() * VCO_GAIN + self.vco.blep_now;
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
-                let osc2 = if self.osc2_vol > 0.0 { self.vco2.tick() * VCO_GAIN } else { 0.0 };
+                let osc2 = if self.osc2_vol > 0.0 { self.vco2.tick() * VCO_GAIN + self.vco2.blep_now } else { 0.0 };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
                 let hi = self.os.up(mix * self.drive);
-                let s = self.vco.tick() * VCO_GAIN + self.vco.blep_now;
-                let hi = self.os.up(s);
                 let o = [
                     self.ladder.tick(hi[0]),
                     self.ladder.tick(hi[1]),
@@ -717,6 +715,15 @@ impl Voice {
 
     pub fn set_reso(&mut self, r: f32) {
         self.reso_knob = r.clamp(0.0, 1.0);
+    }
+
+    pub fn set_wave(&mut self, wave: OscWave) {
+        self.osc.set_wave(wave);
+        self.osc2.set_wave(wave);
+        self.osc_hi.set_wave(wave);
+        self.osc2_hi.set_wave(wave);
+        self.vco.set_wave(wave);
+        self.vco2.set_wave(wave);
     }
 
     pub fn set_ultra_brightness(&mut self, cal: f64) {
