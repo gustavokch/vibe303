@@ -18,8 +18,10 @@ pub fn midi_to_freq(note: u8) -> f32 {
 pub const ULTRA_OS_FACTOR: f32 = 4.0;
 pub const HIGH_OS_FACTOR: f32 = 2.0;
 
-/// Level trim to bring the DC-blocked VCO saw to ~unit (polyBLEP-saw) amplitude.
-pub const VCO_GAIN: f32 = 2.0;
+/// VCO output gain. The Ultra MNA solver outputs a raw saw wave with ~1.12 V p-p swing.
+/// SPICE gold has a ~1.46 V p-p swing which after its own gain stages gives ~2.92 V p-p.
+/// `VCO_GAIN = 2.92 / 1.120 = 2.607` matches the SPICE drive level into the VCF.
+pub const VCO_GAIN: f32 = 2.607;
 
 
 /// Per-tier VCF brightness (cutoff→bias scale on the shared `LadderVcf`). With
@@ -30,7 +32,7 @@ pub const VCO_GAIN: f32 = 2.0;
 /// LSD. See `brightness_sweep`/`high_brightness_sweep` diagnostics (F6.5).
 const ULTRA_BRIGHT: f64 = 0.70;
 const HIGH_BRIGHT: f64 = 0.50;
-const HIGH_LEVEL_TRIM: f32 = 1.45; // +3.2 dB
+const HIGH_LEVEL_TRIM: f32 = 1.890; // +5.5 dB
 const XFADE_SECS: f32 = 0.010;
 const COMP_BUF: usize = 64;
 
@@ -575,9 +577,25 @@ impl Voice {
             // reset. Option A (full 4× VCO, future `Tier::UltraHd`) gives complete alias
             // freedom at ~4× the CPU cost.
             Tier::Ultra => {
-                let osc1 = self.vco.tick() * VCO_GAIN + self.vco.blep_now;
+                let raw = self.vco.tick() * VCO_GAIN;
+                let blep = match self.vco.wave {
+                    OscWave::Saw => self.vco.blep_now,
+                    OscWave::Sweep => self.vco.blep_now * (1.0 - self.vco.sweep_pos as f32),
+                    OscWave::Square => 0.0,
+                };
+                let osc1 = raw + blep;
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
-                let osc2 = if self.osc2_vol > 0.0 { self.vco2.tick() * VCO_GAIN + self.vco2.blep_now } else { 0.0 };
+                let osc2 = if self.osc2_vol > 0.0 {
+                    let raw2 = self.vco2.tick() * VCO_GAIN;
+                    let blep2 = match self.vco2.wave {
+                        OscWave::Saw => self.vco2.blep_now,
+                        OscWave::Sweep => self.vco2.blep_now * (1.0 - self.vco2.sweep_pos as f32),
+                        OscWave::Square => 0.0,
+                    };
+                    raw2 + blep2
+                } else {
+                    0.0
+                };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
                 let hi = self.os.up(mix * self.drive);

@@ -206,7 +206,11 @@ pub struct Vco303 {
     /// Internal; carried from the reset sample to the following sample.
     blep_pending: f32,
     /// Whether a reset occurred last tick (used by `blep_frac` smoke-test compat).
-    pub blep_frac: Option<f32>,   // kept for test compat; equals Some(alpha) on reset
+    pub blep_frac: Option<f32>,
+
+    // Synthesized square wave state
+    sq_y_prev: f32,
+    sq_blep_pending: f32,
 }
 
 impl Vco303 {
@@ -244,6 +248,8 @@ impl Vco303 {
             blep_next: 0.0,
             blep_pending: 0.0,
             blep_frac: None,
+            sq_y_prev: 0.0,
+            sq_blep_pending: 0.0,
         }
     }
 
@@ -658,52 +664,33 @@ impl Vco303 {
         self.v = v;
 
         // --- JFET reset detection + 2-tap BLEP computation ------------------
-        // The integrator cap C3 (p=vp, q=CP) charges slowly as Q3 pulls cp
-        // downward, then the JFET discharges it in one Newton step — a large
-        // UPWARD jump in v[CP] of several volts.
-        //
-        // SPICE measurements (1.25 µs grid, cv=5.0 and 3.4):
-        //   CP swings from 5.35 V (bottom, just-before-reset) up to 11.20 V (top,
-        //   after reset). A jump ≥ 3 V between samples is unambiguously a reset.
-        //   OR_SWING ≈ 1.46 V at both CV values; × VCO_GAIN (2.0) → BLEP step 2.92 V.
-        //   The reset causes o_r to jump UPWARD (o_r tracks cp through the output
-        //   network: high cp → high o_r).
-        //
-        // 2-tap first-order BLEP for an upward step D at fractional offset `alpha`:
-        //   Tap 0 (this sample, post-reset): residual = D · (alpha² / 2 - alpha)
-        //   Tap 1 (next sample):             residual = D · (-alpha² / 2)
-        //
-        // `alpha ∈ [0,1)` is the fractional position of the discontinuity within
-        // the current sample period, estimated as the fraction of the cp jump that
-        // occurred before the midpoint:
-        //   alpha = (mid − cp_prev) / (cp_now − cp_prev)
-        //
-        // With cp_prev ≈ 5.35 and cp_now ≈ 11.20, delta ≈ 5.85 and alpha ≈ 0.5.
-        // At alpha = 0.5: Tap0 = D · (0.125 − 0.5) = −0.375·D (pulls post-reset down)
-        //                 Tap1 = D · (−0.125)        = −0.125·D (small next-sample fix)
-        // This correctly cancels the alias energy from the hard upward jump.
         let cp_now = v[CP];
         let delta = cp_now - cp_prev;
+        
+        let mut sq_blep0 = self.sq_blep_pending;
+        self.sq_blep_pending = 0.0;
+
         if delta > CP_RESET_DELTA {
             let mid = (cp_prev + cp_now) * 0.5;
             let alpha = ((mid - cp_prev) / delta.max(1e-9)).clamp(0.0, 1.0) as f32;
-            // BLEP step size = SPICE OR_SWING × VCO_GAIN. The sign convention:
-            // the raw o_r output jumps UP at reset, so the BLEP correction for
-            // the post-jump sample (tap 0) must be NEGATIVE (alpha²/2 − alpha < 0
-            // for alpha ∈ (0,1)), and tap 1 is also negative. Scale is 2.92 V.
             const BLEP_STEP: f32 = 2.92; // OR_SWING (1.46 V) × VCO_GAIN (2.0)
             let tap0 = BLEP_STEP * (alpha * alpha / 2.0 - alpha); // < 0 for α∈(0,1)
             let tap1 = BLEP_STEP * (-alpha * alpha / 2.0);         // ≤ 0
-            // Add tap0 to the CURRENT sample's accumulated correction.
             self.blep_now += tap0;
-            // Store tap1 for the NEXT sample.
             self.blep_pending = tap1;
-            self.blep_next = tap1; // caller-readable lookahead
-            self.blep_frac = Some(alpha); // compat
+            self.blep_next = tap1;
+            self.blep_frac = Some(alpha);
+            
+            // Square wave downward step at JFET reset (matching saw)
+            // We're synthesizing a pulse that swings -0.56 to +0.56 (p-p 1.12V)
+            // VCO_GAIN (2.607) brings this to 2.92V p-p.
+            // Step size is -1.12V (downward)
+            const SQ_DOWN_STEP: f32 = -1.12;
+            sq_blep0 += SQ_DOWN_STEP * (alpha * alpha / 2.0 - alpha);
+            self.sq_blep_pending += SQ_DOWN_STEP * (-alpha * alpha / 2.0);
         }
         // --- end BLEP ---------------------------------------------------
 
-        // Update cap trapezoidal state.
         for (j, cd) in cdefs.iter().enumerate() {
             let vc = vof(cd.p, &v) - vof(cd.q, &v);
             let inew = cgeq[j] * vc - cieq[j];
@@ -712,20 +699,29 @@ impl Vco303 {
         }
         self.t_samples += 1;
 
-        // Read raw voltage based on selected waveform
-        let saw_raw = v[O_R];
-        let pulse_raw = v[O_P];
+        let saw_raw = v[O_R] as f32;
+        let y_saw = saw_raw - self.dc_x1 + self.dc_r * self.dc_y1;
+        self.dc_x1 = saw_raw;
+        self.dc_y1 = y_saw;
 
-        let x = match self.wave {
-            OscWave::Saw => saw_raw,
+        // Upward zero crossing detection (smooth ramp crossing zero)
+        if self.sq_y_prev <= 0.0 && y_saw > 0.0 {
+            // alpha is the fraction of the sample BEFORE the crossing
+            let alpha = (self.sq_y_prev / (self.sq_y_prev - y_saw)).clamp(0.0, 1.0);
+            const SQ_UP_STEP: f32 = 1.12;
+            sq_blep0 += SQ_UP_STEP * (alpha * alpha / 2.0 - alpha);
+            self.sq_blep_pending += SQ_UP_STEP * (-alpha * alpha / 2.0);
+        }
+        self.sq_y_prev = y_saw;
+
+        // Synthesize the square wave (±0.56V) + BLEP
+        let pulse_raw = if y_saw > 0.0 { 0.56 } else { -0.56 } + sq_blep0;
+
+        match self.wave {
+            OscWave::Saw => y_saw,
             OscWave::Square => pulse_raw,
-            OscWave::Sweep => saw_raw * (1.0 - self.sweep_pos) + pulse_raw * self.sweep_pos,
-        } as f32;
-
-        let y = x - self.dc_x1 + self.dc_r * self.dc_y1;
-        self.dc_x1 = x;
-        self.dc_y1 = y;
-        y
+            OscWave::Sweep => y_saw * (1.0 - self.sweep_pos as f32) + pulse_raw * self.sweep_pos as f32,
+        }
     }
 }
 
