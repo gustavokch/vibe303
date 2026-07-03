@@ -11,20 +11,34 @@ feedback (F6.3) must reproduce. Writes ``vcf303_reso_gold.json``.
 from __future__ import annotations
 
 import json
+import sys
+import argparse
 from pathlib import Path
 
 from run_vcf303_spice import ac_response, resonance_peak
+from parallel import run_parallel_with_fallback
 
 RRESO_OPT = 47e3  # the §11 Q optimum (stock loop self-limits, no self-oscillation)
 ITAILS_UA = [16, 32, 64, 128]
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate VCF reso gold.")
+    parser.add_argument("-w", "--workers", type=int, default=4,
+                        help="Number of workers for parallel execution")
+    args = parser.parse_args()
+
     peak_hz: dict[str, float] = {}
     peak_db: dict[str, float] = {}
-    for ua in ITAILS_UA:
+    
+    def eval_ua(ua):
         f, mag = ac_response(ua * 1e-6, RRESO_OPT)
         pk, fpk = resonance_peak(f, mag)
+        return ua, pk, fpk
+        
+    results = run_parallel_with_fallback(eval_ua, ITAILS_UA, desc="gen_reso_gold", max_workers=args.workers)
+    
+    for ua, pk, fpk in results:
         peak_hz[str(ua)] = round(fpk, 1)
         peak_db[str(ua)] = round(pk, 2)
         print(f"I_tail={ua:4d}uA  peak {pk:6.2f}dB @ {fpk:8.1f}Hz")

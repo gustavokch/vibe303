@@ -41,6 +41,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _vcf303_netlist_gen as gen  # noqa: E402
+from parallel import run_parallel_with_fallback  # noqa: E402
 
 from PySpice.Spice.Netlist import Circuit  # noqa: E402
 
@@ -193,7 +194,7 @@ def resonance_peak(f, mag_db):
     return peak - pb, f_peak
 
 
-def reso_sweep() -> int:
+def reso_sweep(workers: int) -> int:
     """Sweep the resonance leg Rreso at a fixed cutoff (I_tail = 32 µA) and report
     the peak height + peak frequency. Smaller Rreso = stronger positive feedback =
     higher resonance; the peak diverges at the self-oscillation threshold."""
@@ -201,9 +202,15 @@ def reso_sweep() -> int:
     print(f"resonance sweep @ I_tail = {i_tail*1e6:.0f} uA  (smaller Rreso = more Q)")
     print(f"{'Rreso':>10} {'peak':>9} {'f_peak':>10}")
     legs = [RRESO_OFF, 220e3, 100e3, 47e3, 22e3, 10e3, 4.7e3, 2.2e3, 1e3]
-    for rr in legs:
+    
+    def eval_leg(rr):
         f, mag = ac_response(i_tail, rr)
         pk, fpk = resonance_peak(f, mag)
+        return rr, pk, fpk
+        
+    results = run_parallel_with_fallback(eval_leg, legs, desc="reso sweep", max_workers=workers)
+    
+    for rr, pk, fpk in results:
         label = "open" if rr >= 1e11 else f"{rr/1e3:.1f}k"
         print(f"{label:>10} {pk:7.2f}dB {fpk:9.1f}Hz")
     print(
@@ -272,7 +279,7 @@ def poles_sweep() -> int:
     return 0 if ok else 1
 
 
-def dump_json() -> int:
+def dump_json(workers: int) -> int:
     """Emit the bias-robust gold metrics (at the reference bias I_tail = 32 uA) as
     JSON for the plugin's TptLadder fit test (`plugin303/tests/vcf303_fit.rs`).
     Re-run after any circuit change: `... run_vcf303_spice.py --json > eval/303/vcf303_gold.json`."""
@@ -283,10 +290,14 @@ def dump_json() -> int:
     f, mag = ac_response(i_tail)
     _, f_deep, slope = cutoff_and_slope(f, mag)
     # Resonance: strongest peak across the Rreso sweep (height + frequency).
-    best = (0.0, float("nan"))
-    for rr in [220e3, 100e3, 47e3, 22e3, 10e3]:
+    legs = [220e3, 100e3, 47e3, 22e3, 10e3]
+    def eval_reso(rr):
         fr, mr = ac_response(i_tail, rr)
-        pk, fpk = resonance_peak(fr, mr)
+        return resonance_peak(fr, mr)
+        
+    peaks = run_parallel_with_fallback(eval_reso, legs, desc="json reso", max_workers=workers)
+    best = (0.0, float("nan"))
+    for pk, fpk in peaks:
         if pk > best[0]:
             best = (pk, fpk)
     # Tap attenuation @ F_REF (souped 4/3/2-pole = taps tl/bl/cl).
@@ -305,18 +316,27 @@ def dump_json() -> int:
 
 
 def main() -> int:
+    workers = 4
+    for i, arg in enumerate(sys.argv):
+        if arg in ("-w", "--workers") and i + 1 < len(sys.argv):
+            workers = int(sys.argv[i + 1])
+
     if "--json" in sys.argv:
-        return dump_json()
+        return dump_json(workers)
 
     # `--op` prints the DC operating point (active-stage convergence sanity check).
     if "--op" in sys.argv:
-        for it in [2e-6, 32e-6, 128e-6]:
+        biases = [2e-6, 32e-6, 128e-6]
+        def get_op(it):
+            return it, op_point(it)
+        ops = run_parallel_with_fallback(get_op, biases, desc="DC op", max_workers=workers)
+        for it, out in ops:
             print(f"=== I_tail = {it*1e6:.1f} uA ===")
-            print(op_point(it))
+            print(out)
         return 0
 
     if "--reso" in sys.argv:
-        return reso_sweep()
+        return reso_sweep(workers)
 
     if "--poles" in sys.argv:
         return poles_sweep()
@@ -324,9 +344,14 @@ def main() -> int:
     biases = [2e-6, 8e-6, 32e-6, 128e-6]  # tail (total); per-rail = I/2, f_c ~ I/(2 Vt C)
     print(f"{'I_tail':>8} {'passband':>9} {'f_-60dB':>10} {'slope':>12}")
     fcs = []
-    for ib in biases:
+    
+    def eval_bias(ib):
         f, mag = ac_response(ib)
         pb, fc, slope = cutoff_and_slope(f, mag)
+        return ib, pb, fc, slope
+        
+    results = run_parallel_with_fallback(eval_bias, biases, desc="bias sweep", max_workers=workers)
+    for ib, pb, fc, slope in results:
         fcs.append(fc)
         print(f"{ib*1e6:6.1f}uA {pb:7.2f}dB {fc:9.1f}Hz {slope:8.1f}dB/oct")
 
