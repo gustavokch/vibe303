@@ -23,7 +23,7 @@ CLAP_DIR="${CLAP_DIR:-$HOME/Library/Audio/Plug-Ins/CLAP}"
 # apple-m1 == ARMv8.4-A + NEON; safe across all Apple Silicon. Override to
 # apple-m2/m3 to tune for a specific host.
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
-export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=apple-m1"
+export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=apple-m3"
 
 echo ">> ensuring rust target $TARGET"
 rustup target add "$TARGET" 2>/dev/null || true
