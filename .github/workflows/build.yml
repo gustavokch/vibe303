@@ -80,56 +80,9 @@ jobs:
           path: ${{ env.ZIP }}
           if-no-files-found: error
 
-  macos-arm64:
-    runs-on: [self-hosted, linux, x64]   # Ubuntu 24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install zig + cargo-zigbuild
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zig
-          cargo install cargo-zigbuild
-
-      - name: Install Rust (arm64 target)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
-
-      - name: Build + bundle (macOS ARM64 cross-compile)
-        env:
-          CARGO_BUILD_TARGET: aarch64-apple-darwin
-        run: |
-          cargo zigbuild xtask bundle "$PKG" --release --target aarch64-apple-darwin
-
-      - name: Locate bundles
-        id: find
-        run: |
-          DIR="target/aarch64-apple-darwin/bundled"
-          [ -d "$DIR" ] || DIR="target/bundled"
-          test -e "$DIR/${BUNDLE_NAME}.vst3"
-          test -e "$DIR/${BUNDLE_NAME}.clap"
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-
-      - name: Package zip
-        run: |
-          OUT="${BUNDLE_NAME}-macos-arm64-${GITHUB_SHA::8}"
-          STAGE="$RUNNER_TEMP/$OUT"
-          mkdir -p "$STAGE"
-          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.vst3" "$STAGE/"
-          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.clap" "$STAGE/"
-          ( cd "$RUNNER_TEMP" && zip -r "$OUT.zip" "$OUT" )
-          echo "ZIP=$RUNNER_TEMP/$OUT.zip" >> "$GITHUB_ENV"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.BUNDLE_NAME }}-macos-arm64
-          path: ${{ env.ZIP }}
-          if-no-files-found: error
-
   release:
     if: ${{ inputs.release }}
-    needs: [linux-x86_64-v3, macos-arm64]
+    needs: [linux-x86_64-v3]
     runs-on: [self-hosted, linux, x64]
     steps:
       - name: Download all artifacts

@@ -17,7 +17,17 @@ pub fn midi_to_freq(note: u8) -> f32 {
 
 pub const ULTRA_OS_FACTOR: f32 = 4.0;
 pub const HIGH_OS_FACTOR: f32 = 2.0;
-const VCO_GAIN: f32 = 2.0;
+
+/// Level trim to bring the DC-blocked VCO saw to ~unit (polyBLEP-saw) amplitude.
+pub const VCO_GAIN: f32 = 2.0;
+
+
+/// Per-tier VCF brightness (cutoff→bias scale on the shared `LadderVcf`). With
+/// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
+/// gold sits *below* 1.0 — the resonance peak otherwise over-brightens. Tuned
+/// per tier (different OS rate ⇒ different optimum): Ultra (4×) at 0.70 minimises
+/// LSD to 3.87 dB; High (2×) at 0.50 keeps corr ≥ 0.95 while beating its prior
+/// LSD. See `brightness_sweep`/`high_brightness_sweep` diagnostics (F6.5).
 const ULTRA_BRIGHT: f64 = 0.70;
 const HIGH_BRIGHT: f64 = 0.50;
 const HIGH_LEVEL_TRIM: f32 = 1.45; // +3.2 dB
@@ -487,14 +497,16 @@ impl Voice {
                 self.comp_high.process(self.os2.down(o) * (HIGH_LEVEL_TRIM / self.drive))
             }
             // Ultra: circuit VCO saw → nodal diode-ladder at 4× oversample.
-            // KNOWN LIMITATION: the nodal VCO runs at base rate, so its sharp
-            // relaxation reset edge is already aliased before `os.up` (4× OS only
-            // band-limits the downstream ladder nonlinearity, not the source). At
-            // high notes Ultra's saw can therefore alias more than the band-limited
-            // polyBLEP saws of Low/High. Generating the VCO at OS rate would 4× its
-            // Newton cost and break the tier's real-time budget — deferred to the
-            // Ultra-headroom work (active stages + per-note pitch secant). See the
-            // design doc "Deferred Ultra headroom" note.
+            // The nodal VCO runs at base rate; its sharp JFET reset edge is corrected
+            // by a 2-tap first-order BLEP computed inside `Vco303::tick()`. `blep_now`
+            // is already calibrated to SPICE OR_SWING × VCO_GAIN (= 2.92 V); tap 1 is
+            // auto-injected on the following tick. The 4× OS + decimation FIR then
+            // band-limits the downstream ladder nonlinearity as before.
+            //
+            // RESIDUAL LIMITATION: the VCO still runs at base rate; higher-order alias
+            // from the smooth ramp (not the reset edge) is negligible relative to the
+            // reset. Option A (full 4× VCO, future `Tier::UltraHd`) gives complete alias
+            // freedom at ~4× the CPU cost.
             Tier::Ultra => {
                 let osc1 = self.vco.tick() * VCO_GAIN;
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
@@ -502,6 +514,8 @@ impl Voice {
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
                 let hi = self.os.up(mix * self.drive);
+                let s = self.vco.tick() * VCO_GAIN + self.vco.blep_now;
+                let hi = self.os.up(s);
                 let o = [
                     self.ladder.tick(hi[0]),
                     self.ladder.tick(hi[1]),

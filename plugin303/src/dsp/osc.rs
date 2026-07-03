@@ -82,8 +82,10 @@ impl BlepOsc {
 }
 
 /// PolyBLEP residual for a single per-sample step `dt`, removing the alias energy
-/// at the wave's wrap discontinuity.
-fn poly_blep(t: f32, dt: f32) -> f32 {
+/// at the saw's wrap discontinuity.
+///
+/// `t` is the normalised phase in [0, 1); `dt` = `freq / sr` (one sample in phase units).
+pub fn poly_blep(t: f32, dt: f32) -> f32 {
     if t < dt {
         let t = t / dt;
         t + t - t * t - 1.0
