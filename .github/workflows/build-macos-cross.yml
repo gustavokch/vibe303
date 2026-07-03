@@ -50,12 +50,9 @@ jobs:
           sudo apt-get install -y libclang-dev
       
       - name: Install Rust (+ macOS arm64 target)
-        uses: actions/setup-rust@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          rust-version: stable
-
-      - name: Add macOS target
-        run: rustup target add aarch64-apple-darwin
+          targets: aarch64-apple-darwin
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
