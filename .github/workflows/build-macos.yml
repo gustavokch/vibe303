@@ -44,9 +44,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install libclang
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev
-
       - name: Install Rust (+ macOS arm64 target)
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -92,38 +89,43 @@ jobs:
           chmod +x "$SHIM_DIR/cargo"
           echo "$SHIM_DIR" >> "$GITHUB_PATH"   # prepended to PATH
 
-      - name: Build + bundle (arm64, cross via zig)
-        env:
-          CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS: "-C target-cpu=apple-m1"
-        run: |
-          which cargo
-          cargo xtask bundle "$PKG" --release --target "$TARGET"
-
-      - name: Locate bundles
-        id: find
-        run: |
-          DIR="target/${TARGET}/bundled"
-          [ -d "$DIR" ] || DIR="target/bundled"
-          test -e "$DIR/${BUNDLE_NAME}.vst3"
-          test -e "$DIR/${BUNDLE_NAME}.clap"
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-
-      - name: Package zip
-        run: |
-          OUT="${BUNDLE_NAME}-macos-arm64-${GITHUB_SHA::8}"
-          STAGE="$RUNNER_TEMP/$OUT"
-          mkdir -p "$STAGE"
-          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.vst3" "$STAGE/"
-          cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.clap" "$STAGE/"
-          ( cd "$RUNNER_TEMP" && zip -r "$OUT.zip" "$OUT" )
-          echo "ZIP=$RUNNER_TEMP/$OUT.zip" >> "$GITHUB_ENV"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.BUNDLE_NAME }}-macos-arm64
-          path: ${{ env.ZIP }}
-          if-no-files-found: error
-
+          - name: Install libclang for build host
+            run: |
+              sudo apt-get update
+              sudo apt-get install -y libclang-dev
+          
+          - name: Build + bundle (arm64, cross via zig)
+            env:
+              CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS: "-C target-cpu=apple-m1"
+              LIBCLANG_PATH: /usr/lib/x86_64-linux-gnu
+            run: |
+              which cargo
+              cargo xtask bundle "$PKG" --release --target "$TARGET"
+                - name: Locate bundles
+                  id: find
+                  run: |
+                    DIR="target/${TARGET}/bundled"
+                    [ -d "$DIR" ] || DIR="target/bundled"
+                    test -e "$DIR/${BUNDLE_NAME}.vst3"
+                    test -e "$DIR/${BUNDLE_NAME}.clap"
+                    echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          
+                - name: Package zip
+                  run: |
+                    OUT="${BUNDLE_NAME}-macos-arm64-${GITHUB_SHA::8}"
+                    STAGE="$RUNNER_TEMP/$OUT"
+                    mkdir -p "$STAGE"
+                    cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.vst3" "$STAGE/"
+                    cp -r "${{ steps.find.outputs.dir }}/${BUNDLE_NAME}.clap" "$STAGE/"
+                    ( cd "$RUNNER_TEMP" && zip -r "$OUT.zip" "$OUT" )
+                    echo "ZIP=$RUNNER_TEMP/$OUT.zip" >> "$GITHUB_ENV"
+          
+                - uses: actions/upload-artifact@v4
+                  with:
+                    name: ${{ env.BUNDLE_NAME }}-macos-arm64
+                    path: ${{ env.ZIP }}
+                    if-no-files-found: error
+          
   release:
     if: ${{ inputs.release }}
     needs: [macos-arm64]
