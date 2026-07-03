@@ -3,6 +3,15 @@ use crate::dsp::filter::Tier;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
+pub enum CircuitTopology {
+    #[default]
+    #[name = "Accurate"]
+    Accurate,
+    #[name = "Fun"]
+    Fun,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
 pub enum OscWave {
     #[default]
     #[name = "Saw"]
@@ -89,6 +98,9 @@ pub struct Plugin303Params {
     #[id = "tier"]
     pub tier: EnumParam<Tier>,
 
+    #[id = "topology"]
+    pub topology: EnumParam<CircuitTopology>,
+
     // --- Classic Front Panel ---
     #[id = "tuning"]
     pub tuning: FloatParam,
@@ -174,10 +186,47 @@ pub struct Plugin303Params {
     pub pattern: std::sync::RwLock<SequencerPattern>,
 }
 
+impl Plugin303Params {
+    pub fn is_param_active(&self, param_id: &str) -> bool {
+        match self.topology.value() {
+            CircuitTopology::Accurate => {
+                match param_id {
+                    "osc1_pitch"
+                    | "osc2_pitch"
+                    | "osc2_vol"
+                    | "osc1_pw"
+                    | "sub_vol"
+                    | "sweep_pos"
+                    | "vcf_taps"
+                    | "vcf_drive"
+                    | "advanced_env"
+                    | "meg_attack"
+                    | "meg_decay_adj"
+                    | "meg_sustain"
+                    | "meg_release"
+                    | "veg_attack"
+                    | "veg_decay_adj"
+                    | "veg_sustain"
+                    | "veg_release"
+                    | "vca_env_mode" => false,
+                    _ => true,
+                }
+            }
+            CircuitTopology::Fun => {
+                match param_id {
+                    "waveform" => false,
+                    _ => true,
+                }
+            }
+        }
+    }
+}
+
 impl Default for Plugin303Params {
     fn default() -> Self {
         Self {
             tier: EnumParam::new("Tier", Tier::Low),
+            topology: EnumParam::new("Circuit Topology", CircuitTopology::Accurate),
 
             tuning: FloatParam::new(
                 "Tuning",

@@ -19,6 +19,7 @@ Notes:
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -32,6 +33,7 @@ ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 import esr  # noqa: E402
 import voice_ref_spice as vr  # noqa: E402
+from parallel import run_parallel_with_fallback  # noqa: E402
 
 RENDER303 = ROOT / "target" / "debug" / "render303"
 SR = 48_000.0
@@ -66,23 +68,41 @@ def render_rust(note: int, cutoff: float, reso: float) -> np.ndarray:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Whole-voice ESR compare.")
+    parser.add_argument("-w", "--workers", type=int, default=4,
+                        help="Number of workers for parallel execution")
+    args = parser.parse_args()
+
     if not RENDER303.exists():
         print(f"missing {RENDER303}; run: cargo build --bin render303 -p plugin303", file=sys.stderr)
         return 1
 
-    cv_cache: dict[int, float] = {}
+    unique_notes = list(set(op[1] for op in OP_POINTS))
+
+    def solve_note(note: int) -> tuple[int, float]:
+        return note, vr.solve_cv(vr.note_to_freq(note), SR)
+
+    solved_cvs = run_parallel_with_fallback(
+        solve_note, unique_notes, desc="Solving CV", max_workers=args.workers
+    )
+    cv_cache = {note: cv for note, cv in solved_cvs}
+
+    def eval_op(label: str, note: int, cutoff_itail: float, rreso: float):
+        ref = vr.voice_reference(note, cutoff_itail, rreso, sr=SR, secs=SECS, cv=cv_cache[note])
+        cutoff_hz = vr.itail_to_hz(cutoff_itail)
+        reso01 = vr.rreso_to_reso(rreso)
+        rust = render_rust(note, cutoff_hz, reso01 * 100.0)
+        m = esr.metrics(_norm(ref), _norm(rust))
+        return label, note, cutoff_itail, rreso, m
+
     results: dict[str, dict] = {}
     print(f"{'op-point':>16} {'note':>4} {'cutoff_uA':>10} {'rreso':>8} "
           f"{'esr_db':>8} {'nrmse':>8} {'lag':>5}")
-    for label, note, cutoff_itail, rreso in OP_POINTS:
-        if note not in cv_cache:
-            cv_cache[note] = vr.solve_cv(vr.note_to_freq(note), SR)
-        ref = vr.voice_reference(note, cutoff_itail, rreso, sr=SR, secs=SECS, cv=cv_cache[note])
-        # F2.4: drive the Rust voice at the SPICE corner's equivalent cutoff/reso.
-        cutoff_hz = vr.itail_to_hz(cutoff_itail)
-        reso01 = vr.rreso_to_reso(rreso)
-        rust = render_rust(note, cutoff_hz, reso01 * 100.0)  # render303 --reso is a %
-        m = esr.metrics(_norm(ref), _norm(rust))
+    
+    evaluated = run_parallel_with_fallback(
+        eval_op, OP_POINTS, desc="Rendering & eval", max_workers=args.workers
+    )
+    for label, note, cutoff_itail, rreso, m in evaluated:
         results[label] = {
             "note": note, "cutoff_itail": cutoff_itail, "rreso": rreso,
             "esr_db": m["esr_db"], "nrmse": m["nrmse"], "lag": m["lag"],

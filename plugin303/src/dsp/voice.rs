@@ -8,7 +8,7 @@ use super::osc::BlepOsc;
 use super::oversample::{Os2x, Os4x};
 use super::vco::Vco303;
 use super::drift::DriftGenerator;
-use crate::params::{OscWave, VcfTaps, VcaEnvMode};
+use crate::params::{OscWave, VcfTaps, VcaEnvMode, CircuitTopology};
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
 pub fn midi_to_freq(note: u8) -> f32 {
@@ -174,6 +174,8 @@ pub struct Voice {
     pub gate: bool,
     /// Current active step accent modifier.
     accent_active: bool,
+    /// Active circuit topology.
+    pub topology: CircuitTopology,
 }
 
 impl Voice {
@@ -246,6 +248,7 @@ impl Voice {
             vca_env_mode: VcaEnvMode::Envelope,
             gate: false,
             accent_active: false,
+            topology: CircuitTopology::Accurate,
         }
     }
 
@@ -279,25 +282,81 @@ impl Voice {
         vca_env_mode: VcaEnvMode,
         comp_age: f32,
         comp_drift: f32,
+        topology: CircuitTopology,
+        sweep_pos: f32,
     ) {
+        self.topology = topology;
         self.tuning_offset = tuning_cents;
-        self.osc1_pitch_st = osc1_pitch_st;
-        self.osc2_pitch_st = osc2_pitch_st;
-        self.osc2_vol = osc2_vol;
-        self.sub_vol = sub_vol;
+        self.age = comp_age;
+        self.drift = comp_drift;
+
+        let (
+            final_osc1_pitch,
+            final_osc2_pitch,
+            final_osc2_vol,
+            final_sub_vol,
+            final_wave,
+            final_pw,
+            final_sweep,
+            final_poles,
+            final_drive_db,
+            final_advanced_env,
+            final_vca_env_mode,
+        ) = match topology {
+            CircuitTopology::Accurate => {
+                // Coerce Sweep waveform to Saw (unsupported in accurate)
+                let wave = match osc1_wave {
+                    OscWave::Sweep => OscWave::Saw,
+                    other => other,
+                };
+                (
+                    0.0,                    // osc1_pitch_st
+                    0.0,                    // osc2_pitch_st
+                    0.0,                    // osc2_vol
+                    0.0,                    // sub_vol
+                    wave,                   // waveform
+                    0.5,                    // osc1_pw (fixed to 50% for standard square)
+                    0.0,                    // sweep_pos
+                    VcfTaps::FourPole,      // vcf_taps
+                    0.0,                    // vcf_drive
+                    false,                  // advanced_env
+                    VcaEnvMode::Envelope,   // vca_env_mode
+                )
+            }
+            CircuitTopology::Fun => {
+                // In fun mode, the oscillator is forced to Sweep (so discrete waveform switch is ignored)
+                // and sweep_pos morphs between Saw and Square.
+                (
+                    osc1_pitch_st,
+                    osc2_pitch_st,
+                    osc2_vol,
+                    sub_vol,
+                    OscWave::Sweep,
+                    osc1_pw,
+                    sweep_pos,
+                    vcf_taps,
+                    vcf_drive_db,
+                    advanced_env,
+                    vca_env_mode,
+                )
+            }
+        };
+
+        self.osc1_pitch_st = final_osc1_pitch;
+        self.osc2_pitch_st = final_osc2_pitch;
+        self.osc2_vol = final_osc2_vol;
+        self.sub_vol = final_sub_vol;
         self.cutoff_knob = cutoff;
         self.reso_knob = resonance;
         self.env_mod = env_mod;
         self.decay_knob = decay_knob;
         self.accent_knob_val = accent_knob;
         self.master_volume = volume_db;
-        self.drive = 10.0f32.powf(vcf_drive_db / 20.0);
-        self.age = comp_age;
-        self.drift = comp_drift;
-        self.vca_env_mode = vca_env_mode;
+        self.drive = 10.0f32.powf(final_drive_db / 20.0);
+        self.vca_env_mode = final_vca_env_mode;
 
         // Propagate tap/pole count
-        let poles_n = match vcf_taps {
+        let poles_n = match final_poles {
             VcfTaps::TwoPole => 2,
             VcfTaps::ThreePole => 3,
             VcfTaps::FourPole => 4,
@@ -307,23 +366,30 @@ impl Voice {
         self.ladder_hi.set_poles(poles_n);
 
         // Update Osc Waveforms & PW parameters
-        self.osc.set_wave(osc1_wave);
-        self.osc.set_pw(osc1_pw);
-        self.osc2.set_wave(osc1_wave); // osc2 mirrors primary wave type
-        self.osc2.set_pw(osc1_pw);
+        self.osc.set_wave(final_wave);
+        self.osc.set_pw(final_pw);
+        self.osc.set_sweep(final_sweep);
+        
+        self.osc2.set_wave(final_wave);
+        self.osc2.set_pw(final_pw);
+        self.osc2.set_sweep(final_sweep);
 
-        self.osc_hi.set_wave(osc1_wave);
-        self.osc_hi.set_pw(osc1_pw);
-        self.osc2_hi.set_wave(osc1_wave);
-        self.osc2_hi.set_pw(osc1_pw);
+        self.osc_hi.set_wave(final_wave);
+        self.osc_hi.set_pw(final_pw);
+        self.osc_hi.set_sweep(final_sweep);
+        
+        self.osc2_hi.set_wave(final_wave);
+        self.osc2_hi.set_pw(final_pw);
+        self.osc2_hi.set_sweep(final_sweep);
 
-        self.vco.set_wave(osc1_wave);
-        self.vco.set_sweep(osc1_pw as f64); // Sweep morph knob maps to PW control
-        self.vco2.set_wave(osc1_wave);
-        self.vco2.set_sweep(osc1_pw as f64);
+        self.vco.set_wave(final_wave);
+        self.vco.set_sweep(final_sweep as f64);
+        
+        self.vco2.set_wave(final_wave);
+        self.vco2.set_sweep(final_sweep as f64);
 
         // Update Envelopes
-        if advanced_env {
+        if final_advanced_env {
             self.meg.set_attack(meg_attack);
             self.meg.set_decay(meg_decay_adj);
             self.meg.set_sustain(meg_sustain);
@@ -398,6 +464,7 @@ impl Voice {
         self.drift_cutoff = DriftGenerator::new(7331);
         self.accent_acc = 0.0;
         self.tier = Tier::Low;
+        self.topology = CircuitTopology::Accurate;
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
@@ -489,7 +556,7 @@ impl Voice {
                 let hi = self.os2.up(mix * self.drive);
                 let o = [
                     self.ladder_hi.tick(hi[0]),
-                    self.ladder_hi.tick(hi[1])
+                    self.ladder_hi.tick(hi[1]),
                 ];
                 // HIGH_LEVEL_TRIM equalises High's loudness to Ultra (tier-switch
                 // is then timbre-only). Pre-comp-delay so the crossfade blends
@@ -508,14 +575,12 @@ impl Voice {
             // reset. Option A (full 4× VCO, future `Tier::UltraHd`) gives complete alias
             // freedom at ~4× the CPU cost.
             Tier::Ultra => {
-                let osc1 = self.vco.tick() * VCO_GAIN;
+                let osc1 = self.vco.tick() * VCO_GAIN + self.vco.blep_now;
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
-                let osc2 = if self.osc2_vol > 0.0 { self.vco2.tick() * VCO_GAIN } else { 0.0 };
+                let osc2 = if self.osc2_vol > 0.0 { self.vco2.tick() * VCO_GAIN + self.vco2.blep_now } else { 0.0 };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
                 let hi = self.os.up(mix * self.drive);
-                let s = self.vco.tick() * VCO_GAIN + self.vco.blep_now;
-                let hi = self.os.up(s);
                 let o = [
                     self.ladder.tick(hi[0]),
                     self.ladder.tick(hi[1]),
@@ -650,6 +715,15 @@ impl Voice {
 
     pub fn set_reso(&mut self, r: f32) {
         self.reso_knob = r.clamp(0.0, 1.0);
+    }
+
+    pub fn set_wave(&mut self, wave: OscWave) {
+        self.osc.set_wave(wave);
+        self.osc2.set_wave(wave);
+        self.osc_hi.set_wave(wave);
+        self.osc2_hi.set_wave(wave);
+        self.vco.set_wave(wave);
+        self.vco2.set_wave(wave);
     }
 
     pub fn set_ultra_brightness(&mut self, cal: f64) {
