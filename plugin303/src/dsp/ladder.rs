@@ -98,6 +98,9 @@ impl crate::dsp::filter::Filter303 for TptLadder {
     fn reset(&mut self) {
         self.z = [0.0; 4];
     }
+    fn set_poles(&mut self, n: usize) {
+        TptLadder::set_poles(self, n);
+    }
 }
 
 #[cfg(test)]

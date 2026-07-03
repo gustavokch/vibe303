@@ -20,6 +20,7 @@ use super::diode::Diode1N4148;
 use super::jfet::Jfet;
 use super::linalg_static::vco_lu_solve;
 use std::sync::Mutex;
+use crate::params::OscWave;
 
 #[cfg(test)]
 use super::linalg::lu_solve;
@@ -179,6 +180,8 @@ pub struct Vco303 {
     /// Per-note refined-CV pitch LUT (F6.6), filled from the per-sr cache at
     /// construction. `set_freq` lerps it — no render, no alloc (RT-safe).
     cv_lut: [f64; LUT_K],
+    pub wave: OscWave,
+    pub sweep_pos: f64,
     /// Diagnostics: Newton iters used + whether the last sample fell to homotopy.
     #[doc(hidden)]
     pub dbg_iters: u32,
@@ -233,6 +236,8 @@ impl Vco303 {
             // rate-invariant: r = exp(-2π·f_hp/sr).
             dc_r: (-2.0 * std::f32::consts::PI * DC_BLOCK_HZ / sr).exp(),
             cv_lut: [0.0; LUT_K],
+            wave: OscWave::Saw,
+            sweep_pos: 0.0,
             dbg_iters: 0,
             dbg_homotopy: false,
             blep_now: 0.0,
@@ -349,6 +354,14 @@ impl Vco303 {
     /// Raw control voltage (diagnostics / calibration).
     pub fn set_cv(&mut self, cv: f64) {
         self.cv = cv;
+    }
+
+    pub fn set_wave(&mut self, wave: OscWave) {
+        self.wave = wave;
+    }
+
+    pub fn set_sweep(&mut self, pos: f64) {
+        self.sweep_pos = pos;
     }
 
     pub fn reset(&mut self) {
@@ -699,8 +712,16 @@ impl Vco303 {
         }
         self.t_samples += 1;
 
-        // o_r saw, DC-blocked (one-pole highpass, rate-invariant pole `dc_r`).
-        let x = v[O_R] as f32;
+        // Read raw voltage based on selected waveform
+        let saw_raw = v[O_R];
+        let pulse_raw = v[O_P];
+
+        let x = match self.wave {
+            OscWave::Saw => saw_raw,
+            OscWave::Square => pulse_raw,
+            OscWave::Sweep => saw_raw * (1.0 - self.sweep_pos) + pulse_raw * self.sweep_pos,
+        } as f32;
+
         let y = x - self.dc_x1 + self.dc_r * self.dc_y1;
         self.dc_x1 = x;
         self.dc_y1 = y;
