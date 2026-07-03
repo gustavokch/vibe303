@@ -67,6 +67,9 @@ jobs:
           echo "SDKROOT=$RUNNER_TEMP/sdk/MacOSX${MACOSX_SDK_VERSION}.sdk" >> "$GITHUB_ENV"
 
       - name: Install cargo shim (routes `cargo build` -> cargo-zigbuild)
+
+
+        
         run: |
           # nih_plug_xtask hardcodes `Command::new("cargo") build ...`; this shim
           # intercepts the build subcommand and runs it through cargo-zigbuild so
@@ -76,15 +79,15 @@ jobs:
           echo "CARGO=$REAL_CARGO" >> "$GITHUB_ENV"   # cargo-metadata bypasses shim
           SHIM_DIR="$RUNNER_TEMP/shim"
           mkdir -p "$SHIM_DIR"
-          cat > "$SHIM_DIR/cargo" <<EOF
+          cat > "$SHIM_DIR/cargo" <<'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
           REAL_CARGO="$REAL_CARGO"
-          if [ "\${1:-}" = "build" ]; then
+          if [ "${1:-}" = "build" ]; then
             shift
-            exec "\$REAL_CARGO" zigbuild "\$@"
+            exec "$REAL_CARGO" zigbuild "$@"
           fi
-          exec "\$REAL_CARGO" "\$@"
+          exec "$REAL_CARGO" "$@"
           EOF
           chmod +x "$SHIM_DIR/cargo"
           echo "$SHIM_DIR" >> "$GITHUB_PATH"   # prepended to PATH
