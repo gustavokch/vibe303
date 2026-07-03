@@ -1,4 +1,5 @@
 use plugin303::dsp::voice::Voice;
+use plugin303::params::CircuitTopology;
 
 #[test]
 fn component_drift_produces_fluctuations() {
@@ -13,6 +14,8 @@ fn component_drift_produces_fluctuations() {
         plugin303::params::VcaEnvMode::Envelope,
         0.0, // age
         1.0, // drift enabled
+        CircuitTopology::Accurate,
+        0.0, // sweep_pos
     );
 
     v.note_on(60);
@@ -45,6 +48,8 @@ fn component_age_affects_tuning_and_cutoff() {
         plugin303::params::VcaEnvMode::Envelope,
         0.0, // age = 0
         0.0, // drift = 0
+        CircuitTopology::Accurate,
+        0.0, // sweep_pos
     );
 
     // Aged (age = 1.0)
@@ -55,6 +60,8 @@ fn component_age_affects_tuning_and_cutoff() {
         plugin303::params::VcaEnvMode::Envelope,
         1.0, // age = 1
         0.0, // drift = 0
+        CircuitTopology::Accurate,
+        0.0, // sweep_pos
     );
 
     v_new.note_on(60);
