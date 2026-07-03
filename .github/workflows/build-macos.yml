@@ -1,4 +1,4 @@
-name: build-plugins
+name: build-plugins-macos
 
 # Manual trigger only. Builds VST3 + CLAP bundles, uploads them as zips, and
 # (optionally) attaches the zips to a GitHub Release.
