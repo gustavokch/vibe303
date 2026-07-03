@@ -78,14 +78,15 @@ jobs:
           # the macOS link step is handled by zig. All other subcommands (and the
           # cargo-metadata call via $CARGO) pass through to the real cargo.
           REAL_CARGO="$(command -v cargo)"
-          echo "CARGO=$REAL_CARGO" >> "$GITHUB_ENV"   # cargo-metadata bypasses shim
+          echo "CARGO=$REAL_CARGO" >> "$GITHUB_ENV"   # cargo-metadata bypasses shim; also read by shim below
           SHIM_DIR="$RUNNER_TEMP/shim"
           mkdir -p "$SHIM_DIR"
-          # Use an unquoted heredoc so $REAL_CARGO is expanded into the file.
-          cat > "$SHIM_DIR/cargo" <<EOF
+          # QUOTED heredoc ('EOF') so $CARGO, $1, $@ stay literal and are only
+          # resolved when the shim script actually runs (later step), not now.
+          cat > "$SHIM_DIR/cargo" <<'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
-          REAL_CARGO="$REAL_CARGO"
+          REAL_CARGO="$CARGO"
           if [ "${1:-}" = "build" ]; then
             shift
             exec "$REAL_CARGO" zigbuild "$@"
