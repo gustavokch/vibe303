@@ -8,7 +8,7 @@ use super::osc::BlepOsc;
 use super::oversample::{Os2x, Os4x};
 use super::vco::Vco303;
 use super::drift::DriftGenerator;
-use crate::params::{OscWave, VcfTaps, VcaEnvMode, CircuitTopology};
+use crate::params::{OscWave, VcfTaps, VcaEnvMode, CircuitTopology, CompTolerance};
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
 pub fn midi_to_freq(note: u8) -> f32 {
@@ -166,10 +166,16 @@ pub struct Voice {
     master_volume: f32,
     /// Main VCF drive factor.
     drive: f32,
-    /// Component age wear level in [0, 1].
-    age: f32,
-    /// Component temperature drift amount in [0, 1].
+    /// Component age wear level in [0, 10].
+    age: i32,
+    /// Component tolerance.
+    tolerance: CompTolerance,
+    /// Thermal noise setting in [0, 21].
+    thermal_noise: i32,
+    /// Voice drift amount in [0.0, 1.0].
     drift: f32,
+    /// Cached thermal state to avoid rebuilding LUTs.
+    thermal_noise_state: i32,
     /// VCA envelope trigger mode.
     vca_env_mode: VcaEnvMode,
     /// Current gate-on state of the voice.
@@ -245,8 +251,11 @@ impl Voice {
             accent_knob_val: 0.0,
             master_volume: 0.0,
             drive: 1.0,
-            age: 0.0,
+            age: 0,
+            tolerance: CompTolerance::Zero,
+            thermal_noise: 0,
             drift: 0.0,
+            thermal_noise_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
             gate: false,
             accent_active: false,
@@ -282,8 +291,10 @@ impl Voice {
         veg_sustain: f32,
         veg_release: f32,
         vca_env_mode: VcaEnvMode,
-        comp_age: f32,
+        comp_age: i32,
         comp_drift: f32,
+        tolerance: CompTolerance,
+        thermal_noise: i32,
         topology: CircuitTopology,
         sweep_pos: f32,
     ) {
@@ -291,6 +302,28 @@ impl Voice {
         self.tuning_offset = tuning_cents;
         self.age = comp_age;
         self.drift = comp_drift;
+        self.tolerance = tolerance;
+        self.thermal_noise = thermal_noise;
+
+        if self.thermal_noise != self.thermal_noise_state {
+            self.ladder.set_thermal(thermal_noise);
+            self.ladder_hi.set_thermal(thermal_noise);
+            self.vco.set_thermal(thermal_noise);
+            self.vco2.set_thermal(thermal_noise);
+            self.thermal_noise_state = thermal_noise;
+        }
+
+        let tol_f64 = match tolerance {
+            CompTolerance::Zero => 0.0,
+            CompTolerance::PointFive => 0.005,
+            CompTolerance::Two => 0.02,
+            CompTolerance::Five => 0.05,
+            CompTolerance::Ten => 0.10,
+        };
+        self.ladder.set_analog_wear(tol_f64, comp_age);
+        self.ladder_hi.set_analog_wear(tol_f64, comp_age);
+        self.vco.set_analog_wear(tol_f64, comp_age);
+        self.vco2.set_analog_wear(tol_f64, comp_age);
 
         let (
             final_osc1_pitch,
@@ -614,15 +647,16 @@ impl Voice {
     /// tier (or crossfading), and applying the VCA envelope and master volume.
     pub fn tick(&mut self) -> f32 {
         // --- 1. Compute Pitch & Cutoff Modulations ---
-        // Pitch drift (LFO random walk)
+        // Pitch drift (LFO pink noise walk)
         let drift_pitch_val = self.drift_pitch.tick(0.2, self.sr); // slow 0.2 Hz walk
-        let pitch_drift_st = drift_pitch_val * self.drift * 0.5; // Up to +-50 cents
+        let pitch_drift_st = drift_pitch_val * 0.02; // Fixed +-2 cents thermal wander
 
         // Tuning offset
         let tuning_st = self.tuning_offset / 100.0; // cents to semitones
 
         // Age-related pitch tracking stretch
-        let stretch_st = self.age * 0.02 * (self.current_note as f32 - 60.0) / 12.0;
+        let age_f32 = self.age as f32 / 100.0;
+        let stretch_st = age_f32 * 0.02 * (self.current_note as f32 - 60.0) / 12.0;
 
         // Apply pitch update
         let osc1_f = self.base_hz * 2.0f32.powf((self.osc1_pitch_st + tuning_st + pitch_drift_st + stretch_st) / 12.0);
@@ -642,13 +676,14 @@ impl Voice {
         }
 
         // --- 2. Filter Cutoff Modulation ---
-        // Cutoff drift (LFO random walk)
+        // Cutoff drift (LFO pink noise walk)
         let drift_cut_val = self.drift_cutoff.tick(0.1, self.sr);
-        let cutoff_drift_factor = 1.0 + drift_cut_val * self.drift * 0.15; // Up to +-15%
+        let cutoff_drift_factor = 1.0 + drift_cut_val * 0.005; // Fixed +-0.5% thermal wander
 
         // Age-related cutoff and resonance scaling
-        let age_cutoff_factor = 1.0 - self.age * 0.15;
-        let age_reso_factor = 1.0 - self.age * 0.20;
+        let age_f32 = self.age as f32 / 100.0;
+        let age_cutoff_factor = 1.0 - age_f32 * 0.15;
+        let age_reso_factor = 1.0 - age_f32 * 0.20;
 
         // Accent accumulator charging
         let target_accent = if self.accent_active { 1.0 } else { 0.0 };

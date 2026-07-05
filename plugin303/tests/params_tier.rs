@@ -15,3 +15,16 @@ fn tier_param_defaults_low() {
 fn tier_enum_has_three_variants() {
     assert_eq!(Tier::variants().len(), 3);
 }
+
+#[test]
+fn test_analog_character_parameter_ranges() {
+    let params = Plugin303Params::default();
+    assert_eq!(params.comp_age.value(), 0);
+    assert_eq!(params.comp_drift.value(), 0.0);
+    assert_eq!(params.tolerance.value(), plugin303::params::CompTolerance::Zero);
+    assert_eq!(params.thermal_noise.value(), 0);
+    
+    // Check formatting of thermal_noise
+    let format_zero = params.thermal_noise.to_string();
+    assert_eq!(format_zero, "Off");
+}

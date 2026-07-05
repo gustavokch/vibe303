@@ -12,8 +12,10 @@ fn component_drift_produces_fluctuations() {
         0.5, 0.5, 0.5, 0.5, 0.5, 0.0, plugin303::params::VcfTaps::FourPole, 0.0,
         false, 3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
         plugin303::params::VcaEnvMode::Envelope,
-        0.0, // age
-        1.0, // drift enabled
+        0, // age
+        0.5, // comp_drift
+        plugin303::params::CompTolerance::Ten, // tolerance (for drift)
+        5, // thermal_noise (for drift)
         CircuitTopology::Accurate,
         0.0, // sweep_pos
     );
@@ -46,8 +48,10 @@ fn component_age_affects_tuning_and_cutoff() {
         0.5, 0.5, 0.5, 0.5, 0.5, 0.0, plugin303::params::VcfTaps::FourPole, 0.0,
         false, 3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
         plugin303::params::VcaEnvMode::Envelope,
-        0.0, // age = 0
-        0.0, // drift = 0
+        0, // age = 0
+        0.0, // comp_drift = 0.0
+        plugin303::params::CompTolerance::Zero,
+        0, // thermal noise
         CircuitTopology::Accurate,
         0.0, // sweep_pos
     );
@@ -58,8 +62,10 @@ fn component_age_affects_tuning_and_cutoff() {
         0.5, 0.5, 0.5, 0.5, 0.5, 0.0, plugin303::params::VcfTaps::FourPole, 0.0,
         false, 3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
         plugin303::params::VcaEnvMode::Envelope,
-        1.0, // age = 1
-        0.0, // drift = 0
+        10, // age = 10
+        0.0, // comp_drift = 0.0
+        plugin303::params::CompTolerance::Zero,
+        0, // thermal noise
         CircuitTopology::Accurate,
         0.0, // sweep_pos
     );
