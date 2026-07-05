@@ -207,8 +207,10 @@ impl Voice {
 
         let mut vco = Vco303::new(sr);
         vco.set_instance_id(1);
+        vco.recalculate_luts_sync(0, 0.0);
         let mut vco2 = Vco303::new(sr);
         vco2.set_instance_id(2);
+        vco2.recalculate_luts_sync(0, 0.0);
 
         Self {
             osc: BlepOsc::new(),
@@ -305,20 +307,15 @@ impl Voice {
         topology: CircuitTopology,
         sweep_pos: f32,
     ) {
+        let age_changed = self.age != comp_age;
+        let tolerance_changed = self.tolerance != tolerance;
+
         self.topology = topology;
         self.tuning_offset = tuning_cents;
         self.age = comp_age;
         self.drift = comp_drift;
         self.tolerance = tolerance;
         self.thermal_noise = thermal_noise;
-
-        if self.thermal_noise != self.thermal_noise_state {
-            self.ladder.set_thermal(thermal_noise);
-            self.ladder_hi.set_thermal(thermal_noise);
-            self.vco.set_thermal(thermal_noise);
-            self.vco2.set_thermal(thermal_noise);
-            self.thermal_noise_state = thermal_noise;
-        }
 
         let tol_f64 = match tolerance {
             CompTolerance::Zero => 0.0,
@@ -327,10 +324,23 @@ impl Voice {
             CompTolerance::Five => 0.05,
             CompTolerance::Ten => 0.10,
         };
-        self.ladder.set_analog_wear(tol_f64, comp_age);
-        self.ladder_hi.set_analog_wear(tol_f64, comp_age);
-        self.vco.set_analog_wear(tol_f64, comp_age);
-        self.vco2.set_analog_wear(tol_f64, comp_age);
+
+        if age_changed || tolerance_changed {
+            self.ladder.set_analog_wear(tol_f64, comp_age);
+            self.ladder_hi.set_analog_wear(tol_f64, comp_age);
+            self.vco.set_analog_wear(tol_f64, comp_age);
+            self.vco2.set_analog_wear(tol_f64, comp_age);
+            self.vco.recalculate_luts_async(comp_age, tol_f64);
+            self.vco2.recalculate_luts_async(comp_age, tol_f64);
+        }
+
+        if self.thermal_noise != self.thermal_noise_state {
+            self.ladder.set_thermal(thermal_noise);
+            self.ladder_hi.set_thermal(thermal_noise);
+            self.vco.set_thermal(thermal_noise);
+            self.vco2.set_thermal(thermal_noise);
+            self.thermal_noise_state = thermal_noise;
+        }
 
         let (
             final_osc1_pitch,

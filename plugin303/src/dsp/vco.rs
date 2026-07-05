@@ -157,6 +157,38 @@ struct CapDef {
     c: f64,
 }
 
+pub struct VcoLutBuffer {
+    buffer_0: *mut [[f64; LUT_K]; 22],
+    buffer_1: *mut [[f64; LUT_K]; 22],
+    pub active_ptr: std::sync::atomic::AtomicPtr<[[f64; LUT_K]; 22]>,
+    pub sequence: std::sync::atomic::AtomicU64,
+}
+
+unsafe impl Send for VcoLutBuffer {}
+unsafe impl Sync for VcoLutBuffer {}
+
+impl VcoLutBuffer {
+    pub fn new(nominal_lut: [f64; LUT_K]) -> Self {
+        let b0 = Box::into_raw(Box::new([nominal_lut; 22]));
+        let b1 = Box::into_raw(Box::new([nominal_lut; 22]));
+        Self {
+            buffer_0: b0,
+            buffer_1: b1,
+            active_ptr: std::sync::atomic::AtomicPtr::new(b0),
+            sequence: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl Drop for VcoLutBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = Box::from_raw(self.buffer_0);
+            let _ = Box::from_raw(self.buffer_1);
+        }
+    }
+}
+
 pub struct Vco303 {
     sr: f64,
     npn: BjtParams,
@@ -179,8 +211,9 @@ pub struct Vco303 {
     dc_y1: f32,
     /// DC-blocker pole, derived from `sr` so the HP corner is rate-invariant.
     dc_r: f32,
-    /// Per-note refined-CV pitch LUT (F6.6), filled from the per-sr cache at
-    /// construction. `set_freq` lerps it — no render, no alloc (RT-safe).
+    /// Double-buffered background LUTs
+    pub lut_buffer: std::sync::Arc<VcoLutBuffer>,
+    /// Per-note refined-CV pitch LUT (F6.6), filled from the active double-buffer
     cv_lut: [f64; LUT_K],
     pub wave: OscWave,
     pub sweep_pos: f64,
@@ -220,6 +253,7 @@ impl Vco303 {
     pub fn new(sr: f32) -> Self {
         let mut o = Self::raw(sr);
         o.cv_lut = Self::cv_lut_for(sr, 0); // Default to thermal_noise=0
+        o.lut_buffer = std::sync::Arc::new(VcoLutBuffer::new(o.cv_lut));
         o
     }
 
@@ -244,6 +278,7 @@ impl Vco303 {
             // ~7.6 Hz HP corner (matches the legacy 0.999 @ 48 kHz) made
             // rate-invariant: r = exp(-2π·f_hp/sr).
             dc_r: (-2.0 * std::f32::consts::PI * DC_BLOCK_HZ / sr).exp(),
+            lut_buffer: std::sync::Arc::new(VcoLutBuffer::new([0.0; LUT_K])),
             cv_lut: [0.0; LUT_K],
             wave: OscWave::Saw,
             sweep_pos: 0.0,
@@ -410,7 +445,65 @@ impl Vco303 {
 
     pub fn set_thermal(&mut self, thermal_noise: i32) {
         self.set_thermal_internal(thermal_noise);
-        self.cv_lut = Self::cv_lut_for(self.sr as f32, thermal_noise);
+        let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+        let noise_idx = thermal_noise.clamp(0, 21) as usize;
+        self.cv_lut = unsafe { (*active_ptr)[noise_idx] };
+    }
+
+    pub fn recalculate_luts_async(&self, age: i32, tolerance: f64) {
+        let lut_buffer = self.lut_buffer.clone();
+        let sr = self.sr;
+        let instance_id = self.instance_id;
+        
+        let seq = lut_buffer.sequence.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        
+        std::thread::spawn(move || {
+            let mut temp_vco = Vco303::raw(sr as f32);
+            temp_vco.set_instance_id(instance_id);
+            temp_vco.set_analog_wear(tolerance, age);
+            
+            let mut local_luts = [[0.0f64; LUT_K]; 22];
+            for noise_step in 0..22 {
+                temp_vco.set_thermal_internal(noise_step);
+                for i in 0..LUT_K {
+                    local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
+                }
+            }
+            
+            let current_active = lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+            let target_inactive = if current_active == lut_buffer.buffer_0 {
+                lut_buffer.buffer_1
+            } else {
+                lut_buffer.buffer_0
+            };
+            
+            unsafe {
+                *target_inactive = local_luts;
+            }
+            
+            if lut_buffer.sequence.load(std::sync::atomic::Ordering::Acquire) == seq {
+                lut_buffer.active_ptr.store(target_inactive, std::sync::atomic::Ordering::Release);
+            }
+        });
+    }
+
+    pub fn recalculate_luts_sync(&self, age: i32, tolerance: f64) {
+        let mut temp_vco = Vco303::raw(self.sr as f32);
+        temp_vco.set_instance_id(self.instance_id);
+        temp_vco.set_analog_wear(tolerance, age);
+        
+        let mut local_luts = [[0.0f64; LUT_K]; 22];
+        for noise_step in 0..22 {
+            temp_vco.set_thermal_internal(noise_step);
+            for i in 0..LUT_K {
+                local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
+            }
+        }
+        
+        let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+        unsafe {
+            *active_ptr = local_luts;
+        }
     }
 
     pub fn set_wave(&mut self, wave: OscWave) {
