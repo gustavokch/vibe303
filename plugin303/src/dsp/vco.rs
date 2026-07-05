@@ -97,7 +97,7 @@ fn midi_hz(m: f64) -> f64 {
 /// entry per *distinct* sample rate and is never freed: bounded by the handful
 /// of rates a host runs in a process lifetime, so the unbounded `Vec` is a
 /// non-issue (a few hundred bytes), not a leak worth a cap.
-static LUT_CACHE: Mutex<Vec<(u32, [f64; LUT_K])>> = Mutex::new(Vec::new());
+static LUT_CACHE: Mutex<Vec<(u64, [f64; LUT_K])>> = Mutex::new(Vec::new());
 
 /// Add a current `Σ termsⱼ·Vⱼ + constant` *leaving* `node` to the KCL system.
 #[inline]
@@ -170,6 +170,8 @@ pub struct Vco303 {
     /// Trapezoidal cap state (v_prev, i_prev) for the 5 caps.
     cvp: [f64; 5],
     cip: [f64; 5],
+    r_mults: [f64; 15],
+    c_mults: [f64; 5],
     /// Samples since note-on (for the rail self-start ramp).
     t_samples: u64,
     /// DC blocker state for the `o_r` saw output.
@@ -182,6 +184,7 @@ pub struct Vco303 {
     cv_lut: [f64; LUT_K],
     pub wave: OscWave,
     pub sweep_pos: f64,
+    instance_id: u32,
     /// Diagnostics: Newton iters used + whether the last sample fell to homotopy.
     #[doc(hidden)]
     pub dbg_iters: u32,
@@ -216,7 +219,7 @@ pub struct Vco303 {
 impl Vco303 {
     pub fn new(sr: f32) -> Self {
         let mut o = Self::raw(sr);
-        o.cv_lut = Self::cv_lut_for(sr);
+        o.cv_lut = Self::cv_lut_for(sr, 0); // Default to thermal_noise=0
         o
     }
 
@@ -233,6 +236,8 @@ impl Vco303 {
             v: [0.0; NU],
             cvp: [0.0; 5],
             cip: [0.0; 5],
+            r_mults: [1.0; 15],
+            c_mults: [1.0; 5],
             t_samples: 0,
             dc_x1: 0.0,
             dc_y1: 0.0,
@@ -242,6 +247,7 @@ impl Vco303 {
             cv_lut: [0.0; LUT_K],
             wave: OscWave::Saw,
             sweep_pos: 0.0,
+            instance_id: 0,
             dbg_iters: 0,
             dbg_homotopy: false,
             blep_now: 0.0,
@@ -256,14 +262,15 @@ impl Vco303 {
     /// Return the refined-CV LUT for `sr`, building (and caching) it once. The
     /// build renders a throwaway VCO per anchor (secant), so it is gated behind
     /// the process-global cache — never repeated per voice / per `reset()`.
-    fn cv_lut_for(sr: f32) -> [f64; LUT_K] {
-        let key = sr.to_bits();
+    fn cv_lut_for(sr: f32, thermal_noise: i32) -> [f64; LUT_K] {
+        let key = ((sr.to_bits() as u64) << 32) | (thermal_noise as u64);
         if let Ok(cache) = LUT_CACHE.lock() {
             if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
                 return lut;
             }
         }
         let mut tmp = Self::raw(sr);
+        tmp.set_thermal_internal(thermal_noise);
         let mut lut = [0.0; LUT_K];
         for (i, slot) in lut.iter_mut().enumerate() {
             *slot = tmp.secant_cv(midi_hz(lut_midi(i)));
@@ -362,12 +369,68 @@ impl Vco303 {
         self.cv = cv;
     }
 
+    pub fn set_analog_wear(&mut self, tolerance: f64, age: i32) {
+        let mut seed = 12345u32.wrapping_add(self.instance_id * 1000);
+        let mut next_f64 = || {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            (seed as f64) / (std::u32::MAX as f64)
+        };
+        let mut next_gauss = || {
+            let mut u1 = next_f64();
+            if u1 < 1e-6 { u1 = 1e-6; }
+            let u2 = next_f64();
+            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+        };
+
+        let systematic_r = (age as f64 * 0.01).min(0.10);
+        let systematic_c = -(age as f64 * 0.01).min(0.10);
+
+        let bjt_age_factor = 1.0 - (age as f64 * 0.01).min(0.10);
+        self.npn.bf = BjtParams::n2n3904().bf * bjt_age_factor;
+        self.npn.br = BjtParams::n2n3904().br * bjt_age_factor;
+        self.pnp.bf = BjtParams::p2n3906().bf * bjt_age_factor;
+        self.pnp.br = BjtParams::p2n3906().br * bjt_age_factor;
+
+        for m in self.r_mults.iter_mut() {
+            let r_dev = next_gauss() * (tolerance / 3.0 + age as f64 * 0.002);
+            *m = (1.0 + systematic_r + r_dev).clamp(0.90, 1.10);
+        }
+        for m in self.c_mults.iter_mut() {
+            let c_dev = next_gauss() * (tolerance / 3.0 + age as f64 * 0.002);
+            *m = (1.0 + systematic_c + c_dev).clamp(0.90, 1.10);
+        }
+    }
+
+    pub fn set_thermal_internal(&mut self, thermal_noise: i32) {
+        let temp_c = 25.0 + thermal_noise as f64 * 10.0;
+        self.npn.set_temp(temp_c);
+        self.pnp.set_temp(temp_c);
+        self.diode.set_temp(temp_c);
+    }
+
+    pub fn set_thermal(&mut self, thermal_noise: i32) {
+        self.set_thermal_internal(thermal_noise);
+        self.cv_lut = Self::cv_lut_for(self.sr as f32, thermal_noise);
+    }
+
     pub fn set_wave(&mut self, wave: OscWave) {
         self.wave = wave;
     }
 
     pub fn set_sweep(&mut self, pos: f64) {
         self.sweep_pos = pos;
+    }
+
+    pub fn set_instance_id(&mut self, id: u32) {
+        self.instance_id = id;
+    }
+
+    pub fn get_c_mults(&self) -> [f64; 5] {
+        self.c_mults
+    }
+
+    pub fn get_r_mults(&self) -> [f64; 15] {
+        self.r_mults
     }
 
     pub fn reset(&mut self) {
@@ -400,27 +463,27 @@ impl Vco303 {
             CapDef {
                 p: Fix(vp),
                 q: Unk(CP),
-                c: 1e-8,
+                c: 1e-8 * self.c_mults[0],
             }, // C3 integrator
             CapDef {
                 p: Unk(BF),
                 q: Unk(N17),
-                c: 1e-8,
+                c: 1e-8 * self.c_mults[1],
             }, // C1
             CapDef {
                 p: Unk(PSI),
                 q: GND,
-                c: 1e-6,
+                c: 1e-6 * self.c_mults[2],
             }, // C2
             CapDef {
                 p: Unk(D_R),
                 q: Unk(O_R),
-                c: 1e-7,
+                c: 1e-7 * self.c_mults[3],
             }, // C90
             CapDef {
                 p: Unk(D_P),
                 q: Unk(O_P),
-                c: 1e-7,
+                c: 1e-7 * self.c_mults[4],
             }, // C80
         ]
     }
@@ -440,21 +503,21 @@ impl Vco303 {
         let mut rhs = [0.0f64; NU];
 
         // Resistors.
-        stamp_res(&mut a, &mut rhs, Fix(cvb), Unk(II), 1.0 / 220e3); // R77
-        stamp_res(&mut a, &mut rhs, Fix(cv), Unk(II), 1.0 / 220e3); // R7
-        stamp_res(&mut a, &mut rhs, Unk(II), GND, 1.0 / 4040.0); // R8
-        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(IB), 1.0 / 100e3); // R9
-        stamp_res(&mut a, &mut rhs, Unk(CP), Unk(IR), 1.0 / 4700.0); // R88
-        stamp_res(&mut a, &mut rhs, Unk(N10), Fix(vh), 1.0 / 10e3); // R6
-        stamp_res(&mut a, &mut rhs, Unk(BF), GND, 1.0 / 10e3); // R1
-        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(SH_IN), 1.0 / 100e3); // R2
-        stamp_res(&mut a, &mut rhs, Unk(N17), Unk(SH_IN), 1.0 / 10e3); // R3
-        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(PSI), 1.0 / 22e3); // R5
-        stamp_res(&mut a, &mut rhs, Fix(vh), Unk(PL), 1.0 / 10e3); // R4
-        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(D_R), 1.0 / 1e6); // R90
-        stamp_res(&mut a, &mut rhs, Unk(O_R), GND, 1.0 / 220e3); // R91
-        stamp_res(&mut a, &mut rhs, Unk(PL), Unk(D_P), 1.0 / 1e6); // R80
-        stamp_res(&mut a, &mut rhs, Unk(O_P), GND, 1.0 / 220e3); // R81
+        stamp_res(&mut a, &mut rhs, Fix(cvb), Unk(II), 1.0 / (220e3 * self.r_mults[0])); // R77
+        stamp_res(&mut a, &mut rhs, Fix(cv), Unk(II), 1.0 / (220e3 * self.r_mults[1])); // R7
+        stamp_res(&mut a, &mut rhs, Unk(II), GND, 1.0 / (4040.0 * self.r_mults[2])); // R8
+        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(IB), 1.0 / (100e3 * self.r_mults[3])); // R9
+        stamp_res(&mut a, &mut rhs, Unk(CP), Unk(IR), 1.0 / (4700.0 * self.r_mults[4])); // R88
+        stamp_res(&mut a, &mut rhs, Unk(N10), Fix(vh), 1.0 / (10e3 * self.r_mults[5])); // R6
+        stamp_res(&mut a, &mut rhs, Unk(BF), GND, 1.0 / (10e3 * self.r_mults[6])); // R1
+        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(SH_IN), 1.0 / (100e3 * self.r_mults[7])); // R2
+        stamp_res(&mut a, &mut rhs, Unk(N17), Unk(SH_IN), 1.0 / (10e3 * self.r_mults[8])); // R3
+        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(PSI), 1.0 / (22e3 * self.r_mults[9])); // R5
+        stamp_res(&mut a, &mut rhs, Fix(vh), Unk(PL), 1.0 / (10e3 * self.r_mults[10])); // R4
+        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(D_R), 1.0 / (1e6 * self.r_mults[11])); // R90
+        stamp_res(&mut a, &mut rhs, Unk(O_R), GND, 1.0 / (220e3 * self.r_mults[12])); // R91
+        stamp_res(&mut a, &mut rhs, Unk(PL), Unk(D_P), 1.0 / (1e6 * self.r_mults[13])); // R80
+        stamp_res(&mut a, &mut rhs, Unk(O_P), GND, 1.0 / (220e3 * self.r_mults[14])); // R81
 
         // Cap companions.
         let cdefs = self.caps(vp);

@@ -85,3 +85,19 @@ fn component_age_affects_tuning_and_cutoff() {
     let sample_old = v_old.tick();
     assert_ne!(sample_new, sample_old, "Aged voice should differ from new voice");
 }
+
+#[test]
+fn test_instance_specific_tolerance_seeds() {
+    use plugin303::dsp::vco::Vco303;
+    
+    let mut vco1 = Vco303::new(48000.0);
+    let mut vco2 = Vco303::new(48000.0);
+    vco1.set_instance_id(1);
+    vco2.set_instance_id(2);
+    vco1.set_analog_wear(0.05, 0); // 5% tolerance
+    vco2.set_analog_wear(0.05, 0); // 5% tolerance
+    
+    // Verify that capacitor multipliers differ due to separate seeds
+    assert_ne!(vco1.get_c_mults(), vco2.get_c_mults());
+    assert_ne!(vco1.get_r_mults(), vco2.get_r_mults());
+}

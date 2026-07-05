@@ -193,8 +193,10 @@ impl Voice {
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
         let mut ladder = LadderVcf::new(sr * ULTRA_OS_FACTOR);
+        ladder.set_instance_id(3);
         ladder.set_cal(ULTRA_BRIGHT);
         let mut ladder_hi = LadderVcf::new(sr * HIGH_OS_FACTOR);
+        ladder_hi.set_instance_id(4);
         ladder_hi.set_cal(HIGH_BRIGHT);
 
         // Sub oscillators are always square waves
@@ -202,6 +204,11 @@ impl Voice {
         sub1.set_wave(OscWave::Square);
         let mut sub2 = BlepOsc::new();
         sub2.set_wave(OscWave::Square);
+
+        let mut vco = Vco303::new(sr);
+        vco.set_instance_id(1);
+        let mut vco2 = Vco303::new(sr);
+        vco2.set_instance_id(2);
 
         Self {
             osc: BlepOsc::new(),
@@ -215,8 +222,8 @@ impl Voice {
             ladder_hi,
             os2: Os2x::new(),
 
-            vco: Vco303::new(sr),
-            vco2: Vco303::new(sr),
+            vco,
+            vco2,
             ladder,
             os: Os4x::new(),
 
