@@ -78,9 +78,9 @@ const CP_RESET_DELTA: f64 = 3.0;
 /// `K` anchors span MIDI `LUT_MIDI_LO`..`+ (K-1)·LUT_MIDI_STEP`; `set_freq` does a
 /// log-frequency lookup + lerp (RT-safe). The `CV_FIT` quadratic alone is ~1.4 %
 /// (worse — ~6 % — at the low end), too coarse for instrument-wide pitch.
-const LUT_K: usize = 17;
+const LUT_K: usize = 25;
 const LUT_MIDI_LO: f64 = 24.0; // C1 ≈ 32.7 Hz
-const LUT_MIDI_STEP: f64 = 3.0; // every 3 semitones → top anchor MIDI 72 (C5 ≈ 523 Hz)
+const LUT_MIDI_STEP: f64 = 3.0; // every 3 semitones → top anchor MIDI 96 (C7 ≈ 2093 Hz)
 
 fn lut_midi(i: usize) -> f64 {
     LUT_MIDI_LO + i as f64 * LUT_MIDI_STEP
@@ -214,7 +214,7 @@ pub struct Vco303 {
     /// Double-buffered background LUTs
     pub lut_buffer: std::sync::Arc<VcoLutBuffer>,
     /// Per-note refined-CV pitch LUT (F6.6), filled from the active double-buffer
-    cv_lut: [f64; LUT_K],
+    pub cv_lut: [f64; LUT_K],
     pub wave: OscWave,
     pub sweep_pos: f64,
     instance_id: u32,

@@ -170,6 +170,8 @@ pub struct Voice {
     age: i32,
     /// Component tolerance.
     tolerance: CompTolerance,
+    /// Seed for component variation.
+    comp_seed: i32,
     /// Thermal noise setting in [0, 21].
     thermal_noise: i32,
     /// Voice drift amount in [0.0, 1.0].
@@ -264,6 +266,7 @@ impl Voice {
             drive: 1.0,
             age: 0,
             tolerance: CompTolerance::Zero,
+            comp_seed: 0,
             thermal_noise: 0,
             drift: 0.0,
             temperature: 20.0,
@@ -309,15 +312,17 @@ impl Voice {
         thermal_noise: i32,
         topology: CircuitTopology,
         sweep_pos: f32,
+        comp_seed: i32,
     ) {
         let age_changed = self.age != comp_age;
-        let tolerance_changed = self.tolerance != tolerance;
+        let tolerance_changed = self.tolerance != tolerance || self.comp_seed != comp_seed;
 
         self.topology = topology;
         self.tuning_offset = tuning_cents;
         self.age = comp_age;
         self.drift = comp_drift;
         self.tolerance = tolerance;
+        self.comp_seed = comp_seed;
         self.thermal_noise = thermal_noise;
 
         let tol_f64 = match tolerance {

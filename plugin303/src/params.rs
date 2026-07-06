@@ -200,6 +200,9 @@ pub struct Plugin303Params {
     #[id = "thermal_noise"]
     pub thermal_noise: IntParam,
 
+    #[id = "comp_seed"]
+    pub comp_seed: IntParam,
+
     // Sequencer pattern persistence
     #[persist = "pattern"]
     pub pattern: std::sync::RwLock<SequencerPattern>,
@@ -437,6 +440,12 @@ impl Default for Plugin303Params {
                     format!("{:.1}", 1.0 + (v - 1) as f32 * 0.2)
                 }
             })),
+
+            comp_seed: IntParam::new(
+                "Component Seed",
+                1337,
+                IntRange::Linear { min: 0, max: 999_999 }
+            ),
 
             pattern: std::sync::RwLock::new(SequencerPattern::default()),
         }

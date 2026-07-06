@@ -130,6 +130,7 @@ impl Plugin for Plugin303 {
             self.params.thermal_noise.value(),
             self.params.topology.value(),
             self.params.sweep_pos.value(),
+            self.params.comp_seed.value(),
         );
 
         // Block-rate read of the fidelity tier (starts a crossfade on change).

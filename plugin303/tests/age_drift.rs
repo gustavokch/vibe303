@@ -18,6 +18,7 @@ fn component_drift_produces_fluctuations() {
         5, // thermal_noise (for drift)
         CircuitTopology::Accurate,
         0.0, // sweep_pos
+        0, // comp_seed
     );
 
     v.note_on(60);
@@ -54,6 +55,7 @@ fn component_age_affects_tuning_and_cutoff() {
         0, // thermal noise
         CircuitTopology::Accurate,
         0.0, // sweep_pos
+        0, // comp_seed
     );
 
     // Aged (age = 1.0)
@@ -68,6 +70,7 @@ fn component_age_affects_tuning_and_cutoff() {
         0, // thermal noise
         CircuitTopology::Accurate,
         0.0, // sweep_pos
+        0, // comp_seed
     );
 
     v_new.note_on(60);
