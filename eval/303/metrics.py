@@ -138,3 +138,50 @@ def norm_signal(x: np.ndarray) -> np.ndarray:
     """Normalize signal to unit RMS."""
     rms = np.sqrt(np.mean(x ** 2))
     return x / rms if rms > 1e-20 else x
+
+
+def pitch_tracking_error_cents(ref_hz: float, sig: np.ndarray, sr: float) -> float:
+    """Calculate pitch tracking error in cents using autocorrelation."""
+    corr = np.correlate(sig, sig, mode='full')
+    corr = corr[len(corr)//2:]
+    peaks, _ = scipy.signal.find_peaks(corr)
+    if len(peaks) == 0:
+        return 0.0
+    
+    p = peaks[0]
+    if 0 < p < len(corr) - 1:
+        alpha = corr[p-1]
+        beta = corr[p]
+        gamma = corr[p+1]
+        p_interp = p + 0.5 * (alpha - gamma) / (alpha - 2*beta + gamma)
+    else:
+        p_interp = p
+        
+    measured_hz = sr / p_interp
+    return 1200.0 * np.log2(measured_hz / ref_hz)
+
+
+def t60_decay_time(env_sig: np.ndarray, sr: float) -> float:
+    """Calculate the T60 decay time (time to drop by 60dB or a factor of 1000)."""
+    peak = np.max(env_sig)
+    if peak <= 1e-10:
+        return 0.0
+    thresh = peak * 0.001
+    
+    # Find the first index after the peak where the envelope drops below thresh
+    peak_idx = np.argmax(env_sig)
+    post_peak = env_sig[peak_idx:]
+    
+    below_thresh = np.where(post_peak < thresh)[0]
+    if len(below_thresh) == 0:
+        # Never dropped below threshold
+        return float(len(post_peak)) / sr
+        
+    return float(below_thresh[0]) / sr
+
+
+def dc_offset_drift(sig: np.ndarray, sr: float = 48000.0) -> np.ndarray:
+    """Calculate the DC offset drift over time using a 5Hz lowpass filter."""
+    b, a = scipy.signal.butter(1, 5.0 / (sr / 2.0), btype='low')
+    return scipy.signal.filtfilt(b, a, sig)
+
