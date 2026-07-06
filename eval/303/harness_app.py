@@ -27,3 +27,20 @@ if st.button("Run VCO Evaluation"):
     fig, ax = plt.subplots()
     ax.set_title(f"{tier} - 3-Octave Sweep Spectrum")
     st.pyplot(fig)
+
+st.header("2. VCF & Envelope Analysis")
+if st.button("Run Filter/Env Evaluation"):
+    st.write("Evaluating Envelope Linearity and T60...")
+    # Trigger render303 for envelope tests
+    # Compute envelope T60 and shape
+    # Plot amplitude envelope
+    fig, ax = plt.subplots()
+    ax.set_title(f"{tier} - Amplitude Envelope Shape")
+    st.pyplot(fig)
+    
+    st.write("Measuring DC Offset Drift...")
+    # Compute DC offset drift
+    # Plot drift over time
+    fig, ax = plt.subplots()
+    ax.set_title(f"{tier} - DC Offset Drift")
+    st.pyplot(fig)
