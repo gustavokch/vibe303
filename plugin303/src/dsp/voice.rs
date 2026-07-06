@@ -174,6 +174,8 @@ pub struct Voice {
     thermal_noise: i32,
     /// Voice drift amount in [0.0, 1.0].
     drift: f32,
+    /// Dynamic operating temperature in degrees Celsius (20.0 to 45.0)
+    temperature: f32,
     /// Cached thermal state to avoid rebuilding LUTs.
     thermal_noise_state: i32,
     /// VCA envelope trigger mode.
@@ -264,6 +266,7 @@ impl Voice {
             tolerance: CompTolerance::Zero,
             thermal_noise: 0,
             drift: 0.0,
+            temperature: 20.0,
             thermal_noise_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
             gate: false,
@@ -515,6 +518,7 @@ impl Voice {
         self.drift_pitch = DriftGenerator::new(1337);
         self.drift_cutoff = DriftGenerator::new(7331);
         self.accent_acc = 0.0;
+        self.temperature = 20.0;
         self.tier = Tier::Low;
         self.topology = CircuitTopology::Accurate;
         self.xfade_from = None;
@@ -663,20 +667,27 @@ impl Voice {
     /// Advances the voice by one sample, computing modulations, rendering the active
     /// tier (or crossfading), and applying the VCA envelope and master volume.
     pub fn tick(&mut self) -> f32 {
+        // Update operating temperature
+        let target_temp = if self.gate {
+            20.0 + 25.0 * self.drift
+        } else {
+            20.0
+        };
+        let tau = if self.gate { 10.0 } else { 30.0 };
+        let alpha = 1.0 - (-1.0 / (tau * self.sr)).exp();
+        self.temperature += alpha * (target_temp - self.temperature);
+
         // --- 1. Compute Pitch & Cutoff Modulations ---
-        // Pitch drift (LFO pink noise walk)
+        // Pitch drift (LFO pink noise walk + systematic temperature drift)
         let drift_pitch_val = self.drift_pitch.tick(0.2, self.sr); // slow 0.2 Hz walk
-        let pitch_drift_st = drift_pitch_val * 0.02; // Fixed +-2 cents thermal wander
+        let pitch_drift_st = drift_pitch_val * 0.2 * self.drift;
+        let pitch_thermal_st = -0.1 * (self.temperature - 20.0) / 25.0; // -10 cents thermal warm-up
 
         // Tuning offset
         let tuning_st = self.tuning_offset / 100.0; // cents to semitones
 
-        // Age-related pitch tracking stretch
-        let age_f32 = self.age as f32 / 100.0;
-        let stretch_st = age_f32 * 0.02 * (self.current_note as f32 - 60.0) / 12.0;
-
-        // Apply pitch update
-        let osc1_f = self.base_hz * 2.0f32.powf((self.osc1_pitch_st + tuning_st + pitch_drift_st + stretch_st) / 12.0);
+        // Apply pitch update (Note: component age/tolerance do NOT affect pitch tracking)
+        let osc1_f = self.base_hz * 2.0f32.powf((self.osc1_pitch_st + tuning_st + pitch_drift_st + pitch_thermal_st) / 12.0);
         self.osc.set_freq(osc1_f, self.sr);
         self.osc_hi.set_freq(osc1_f, self.sr);
         self.vco.set_freq(osc1_f);
@@ -686,19 +697,20 @@ impl Voice {
         self.sub_osc_hi.set_freq(sub_f, self.sr);
 
         if self.osc2_vol > 0.0 {
-            let osc2_f = self.base_hz * 2.0f32.powf((self.osc2_pitch_st + tuning_st + pitch_drift_st + stretch_st) / 12.0);
+            let osc2_f = self.base_hz * 2.0f32.powf((self.osc2_pitch_st + tuning_st + pitch_drift_st + pitch_thermal_st) / 12.0);
             self.osc2.set_freq(osc2_f, self.sr);
             self.osc2_hi.set_freq(osc2_f, self.sr);
             self.vco2.set_freq(osc2_f);
         }
 
         // --- 2. Filter Cutoff Modulation ---
-        // Cutoff drift (LFO pink noise walk)
+        // Cutoff drift (LFO pink noise walk + systematic temperature drift)
         let drift_cut_val = self.drift_cutoff.tick(0.1, self.sr);
-        let cutoff_drift_factor = 1.0 + drift_cut_val * 0.005; // Fixed +-0.5% thermal wander
+        let cutoff_drift_factor = 1.0 + drift_cut_val * 0.05 * self.drift;
+        let cutoff_thermal_factor = 1.0 - 0.05 * (self.temperature - 20.0) / 25.0; // -5% cutoff warm-up
 
-        // Age-related cutoff and resonance scaling
-        let age_f32 = self.age as f32 / 100.0;
+        // Age-related cutoff and resonance scaling (0 to 10 scale)
+        let age_f32 = self.age as f32 / 10.0;
         let age_cutoff_factor = 1.0 - age_f32 * 0.15;
         let age_reso_factor = 1.0 - age_f32 * 0.20;
 
@@ -716,7 +728,7 @@ impl Voice {
         // Modulated Cutoff
         let mod_cutoff_hz = base_cutoff_hz 
             + meg_val * self.env_mod * 4000.0 * (1.0 + self.accent_knob_val * self.accent_acc);
-        let final_cutoff_hz = (mod_cutoff_hz * cutoff_drift_factor * age_cutoff_factor)
+        let final_cutoff_hz = (mod_cutoff_hz * cutoff_drift_factor * cutoff_thermal_factor * age_cutoff_factor)
             .clamp(20.0, self.sr * 0.45);
 
         // VCF Resonance
