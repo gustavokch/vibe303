@@ -145,6 +145,8 @@ pub struct LadderVcf {
     /// Component tolerance and aging multipliers
     c_mults: [f64; 4],
     instance_id: u32,
+    thermal_noise: i32,
+    noise_seed: u32,
     /// Output tap selection (2 | 3 | 4 poles)
     pub poles: usize,
     /// Diagnostic: Newton iters used on the last `solve_sample` (max over the
@@ -173,6 +175,8 @@ impl LadderVcf {
             dc_alpha: 1.0 - (-TAU * RESO_HP_HZ / sr as f64).exp(),
             c_mults: [1.0; 4],
             instance_id: 0,
+            thermal_noise: 0,
+            noise_seed: 54321,
             poles: 4,
             dbg_iters: 0,
         };
@@ -182,6 +186,7 @@ impl LadderVcf {
 
     pub fn set_instance_id(&mut self, id: u32) {
         self.instance_id = id;
+        self.noise_seed = 54321u32.wrapping_add(id * 1000);
     }
 
     /// Diagnostic: override the Q9 feedback gain (sign + magnitude) for
@@ -223,6 +228,7 @@ impl LadderVcf {
     }
 
     pub fn set_thermal(&mut self, thermal_noise: i32) {
+        self.thermal_noise = thermal_noise;
         let temp_c = 25.0 + thermal_noise as f64 * 10.0;
         self.diode.set_temp(temp_c);
         self.set_cal(self.cal); // Recalculate i0
@@ -374,7 +380,16 @@ impl LadderVcf {
             let cap_m = cap * self.c_mults[j];
             let geq = 2.0 * cap_m / dt;
             cgeq[j] = geq;
-            cieq[j] = geq * self.vc_prev[j] + self.i_prev[j];
+            
+            let mut i_noise = 0.0;
+            if self.thermal_noise > 0 {
+                self.noise_seed = self.noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
+                let white = ((self.noise_seed as f64) / (std::u32::MAX as f64)) * 2.0 - 1.0;
+                // Scale companion current noise: max 1.0e-7 A at thermal_noise = 21
+                i_noise = white * 1e-7 * (self.thermal_noise as f64 / 21.0);
+            }
+            
+            cieq[j] = geq * self.vc_prev[j] + self.i_prev[j] + i_noise;
         }
 
         // Fast path: warm-started Newton at gmin = 0. On stall, descend a gmin

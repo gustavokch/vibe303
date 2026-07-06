@@ -218,6 +218,8 @@ pub struct Vco303 {
     pub wave: OscWave,
     pub sweep_pos: f64,
     instance_id: u32,
+    thermal_noise: i32,
+    noise_seed: u32,
     /// Diagnostics: Newton iters used + whether the last sample fell to homotopy.
     #[doc(hidden)]
     pub dbg_iters: u32,
@@ -283,6 +285,8 @@ impl Vco303 {
             wave: OscWave::Saw,
             sweep_pos: 0.0,
             instance_id: 0,
+            thermal_noise: 0,
+            noise_seed: 12345,
             dbg_iters: 0,
             dbg_homotopy: false,
             blep_now: 0.0,
@@ -444,6 +448,7 @@ impl Vco303 {
     }
 
     pub fn set_thermal(&mut self, thermal_noise: i32) {
+        self.thermal_noise = thermal_noise;
         self.set_thermal_internal(thermal_noise);
         let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
         let noise_idx = thermal_noise.clamp(0, 21) as usize;
@@ -516,6 +521,7 @@ impl Vco303 {
 
     pub fn set_instance_id(&mut self, id: u32) {
         self.instance_id = id;
+        self.noise_seed = 12345u32.wrapping_add(id * 1000);
     }
 
     pub fn get_c_mults(&self) -> [f64; 5] {
@@ -590,6 +596,7 @@ impl Vco303 {
         cgeq: &[f64; 5],
         cieq: &[f64; 5],
         gmin: f64,
+        i_noise: f64,
     ) -> ([[f64; NU]; NU], [f64; NU]) {
         let (vp, vh, cvb, cv) = rails;
         let mut a = [[0.0f64; NU]; NU];
@@ -707,6 +714,9 @@ impl Vco303 {
             stamp_branch(&mut a, &mut rhs, ng, nd, ggd, igd - ggd * vgdj);
         }
 
+        // Inject physical noise current into integrator capacitor node CP
+        stamp(&mut a, &mut rhs, Unk(CP), &[], i_noise);
+
         // gmin + base leakage on every diagonal.
         for d in 0..NU {
             a[d][d] += gmin + GMIN_BASE;
@@ -722,10 +732,11 @@ impl Vco303 {
         rails: (f64, f64, f64, f64),
         cgeq: &[f64; 5],
         cieq: &[f64; 5],
+        i_noise: f64,
     ) -> Option<([f64; NU], u32)> {
         let mut v = v0;
         for it in 0..MAX_ITERS {
-            let (a, rhs) = self.assemble(&v, rails, cgeq, cieq, gmin);
+            let (a, rhs) = self.assemble(&v, rails, cgeq, cieq, gmin, i_noise);
             // Static-pattern, no-pivot LU (validated vs dense `lu_solve::<NU>`,
             // rel err ≪ TOL; ~10× fewer ops). NaN from a singular diagonal is
             // caught by the `is_finite` guard below → drops to the gmin homotopy.
@@ -781,8 +792,15 @@ impl Vco303 {
             cieq[j] = geq * self.cvp[j] + self.cip[j];
         }
 
+        let mut i_noise = 0.0;
+        if self.thermal_noise > 0 {
+            self.noise_seed = self.noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
+            let white = ((self.noise_seed as f64) / (std::u32::MAX as f64)) * 2.0 - 1.0;
+            i_noise = white * 5e-8 * (self.thermal_noise as f64 / 21.0);
+        }
+
         // Fast path: warm-started Newton at gmin=0; else descend a homotopy.
-        let v = match self.newton(0.0, self.v, rails, &cgeq, &cieq) {
+        let v = match self.newton(0.0, self.v, rails, &cgeq, &cieq, i_noise) {
             Some((v, it)) => {
                 self.dbg_iters = it;
                 self.dbg_homotopy = false;
@@ -794,7 +812,7 @@ impl Vco303 {
                 let mut its = 0;
                 let mut converged0 = false;
                 for &gmin in &[1e-1, 1e-2, 1e-3, 1e-4, 0.0] {
-                    match self.newton(gmin, vh, rails, &cgeq, &cieq) {
+                    match self.newton(gmin, vh, rails, &cgeq, &cieq, i_noise) {
                         Some((s, it)) => {
                             vh = s;
                             its += it;
@@ -913,7 +931,7 @@ impl Vco303 {
             cgeq[j] = geq;
             cieq[j] = geq * self.cvp[j] + self.cip[j];
         }
-        self.assemble(&self.v, rails, &cgeq, &cieq, 0.0)
+        self.assemble(&self.v, rails, &cgeq, &cieq, 0.0, 0.0)
     }
 }
 
