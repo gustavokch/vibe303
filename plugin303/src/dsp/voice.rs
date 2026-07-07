@@ -299,6 +299,10 @@ impl Voice {
         self.current_pitch_st
     }
 
+    pub fn set_vca_env_mode(&mut self, mode: VcaEnvMode) {
+        self.vca_env_mode = mode;
+    }
+
     fn tolerance_f64(&self) -> f64 {
         match self.tolerance {
             CompTolerance::Zero => 0.0,

@@ -33,19 +33,57 @@ fn main() {
     let wave = arg("--wave", 0.0) as i32; // 0=Saw, 1=Square, 2=Sweep
     let out = arg_s("--out", "render.f32");
 
+    let gate_vca = arg("--gate-vca", 0.0) > 0.5;
+    let env_mod = arg("--env-mod", 0.0); // Default to 0.0 if not specified to allow static cutoff
+
     let mut v = Voice::new(sr);
     v.set_tier_immediate(match tier {
         1 => Tier::High,
         2 => Tier::Ultra,
         _ => Tier::Low,
     });
-    v.set_wave(match wave {
+    let wave_mode = match wave {
         1 => OscWave::Square,
         2 => OscWave::Sweep,
         _ => OscWave::Saw,
-    });
+    };
+    v.set_wave(wave_mode);
     v.set_cutoff(cutoff);
     v.set_reso(reso / 100.0); // --reso is a percentage; the voice wants 0..1
+
+    if gate_vca {
+        v.set_vca_env_mode(plugin303::params::VcaEnvMode::Gate);
+    }
+    v.update_params(
+        0.0, // tuning_cents
+        0.0, // osc1_pitch_st
+        0.0, // osc2_pitch_st
+        0.0, // osc2_vol
+        wave_mode, // osc1_wave (keep wave set by set_wave)
+        0.5, // osc1_pw
+        0.0, // sub_vol
+        cutoff,
+        reso / 100.0,
+        env_mod,
+        0.5, // decay_knob
+        0.0, // accent_knob
+        0.0, // volume_db
+        plugin303::params::VcfTaps::FourPole,
+        0.0, // vcf_drive_db
+        false, // advanced_env
+        0.0, 0.0, 0.0, 0.0, // meg ADSR
+        0.0, 0.0, 0.0, 0.0, // veg ADSR
+        if gate_vca { plugin303::params::VcaEnvMode::Gate } else { plugin303::params::VcaEnvMode::Envelope },
+        0, // comp_age
+        0.0, // comp_drift
+        plugin303::params::CompTolerance::Zero,
+        0, // thermal_noise
+        plugin303::params::CircuitTopology::Accurate,
+        0.0, // sweep_pos
+        0, // comp_seed
+        0.5, // glide_knob
+    );
+
     v.note_on(note);
     let n = (secs * sr) as usize;
     let mut buf = Vec::with_capacity(n);

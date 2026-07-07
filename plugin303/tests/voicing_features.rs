@@ -82,3 +82,35 @@ fn test_midi_legato_glide() {
     assert!(pitch_immediately > 60.0, "Pitch did not start slewing");
     assert!(pitch_immediately < 71.0, "Pitch jumped too fast");
 }
+
+#[test]
+fn test_vca_gate_mode() {
+    let sr = 48000.0;
+    let mut v = Voice::new(sr);
+    
+    // In Gate mode:
+    v.set_vca_env_mode(plugin303::params::VcaEnvMode::Gate);
+    
+    // Gate off -> vca_level is 0, so tick should output 0.0
+    v.set_gate(false, false, false, false);
+    for _ in 0..10 {
+        assert_eq!(v.tick(), 0.0);
+    }
+    
+    // Gate on -> output should be non-zero after a few samples (PDC delay is 48 samples)
+    v.set_gate(true, true, false, false);
+    v.note_on(60);
+    
+    let mut non_zero = false;
+    for _ in 0..100 {
+        if v.tick() != 0.0 {
+            non_zero = true;
+            break;
+        }
+    }
+    assert!(non_zero, "Expected non-zero output in Gate mode when gate is active");
+    
+    // Gate off -> output should immediately return to 0.0
+    v.set_gate(false, false, false, false);
+    assert_eq!(v.tick(), 0.0);
+}
