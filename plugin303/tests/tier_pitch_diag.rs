@@ -46,7 +46,7 @@ fn tier_pitch_comparison() {
                     v.set_cutoff(4000.0);  // bright filter so pitch is clear
                     v.set_reso(0.0);
                     v.note_on(note);
-                    v.set_gate(true, true, false);
+                    v.set_gate(true, true, false, false);
 
                     // Warm up
                     for _ in 0..(sr * 0.1) as usize {
@@ -84,7 +84,7 @@ fn tier_switch_pitch_stability() {
         v.set_cutoff(4000.0);
         v.set_reso(0.0);
         v.note_on(note);
-        v.set_gate(true, true, false);
+        v.set_gate(true, true, false, false);
 
         // Play for a while on the "from" tier
         for _ in 0..24_000 {

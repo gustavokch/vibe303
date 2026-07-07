@@ -72,9 +72,8 @@ fn sequencer_slide_frequency_slew() {
     transport.pos_beats = Some(0.26); // step 1
     seq.tick(sr, &transport, &steps, 16, 120.0, true, 0.5);
     
-    // Since step 0 had Slide, the frequency on step 1 should start slewing and not be instantly C2
-    assert!(seq.freq < freq_step_0 * 2.0, "Frequency should not jump instantly to C2: {} vs {}", seq.freq, freq_step_0 * 2.0);
-    assert!(seq.freq > freq_step_0, "Frequency should have slewed upwards: {} vs {}", seq.freq, freq_step_0);
-    // And envelope should NOT have retriggered because it slides
+    // Since step 0 had Slide, the sequencer outputs slide = true, raw target freq, and does NOT retrigger
+    assert_eq!(seq.slide, true, "Slide should be active on step 1");
+    assert_eq!(seq.freq, freq_step_0 * 2.0, "Sequencer should output target frequency");
     assert_eq!(seq.trigger, false, "Slide should bypass envelope retrigger");
 }

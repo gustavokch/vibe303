@@ -456,6 +456,24 @@ impl Vco303 {
     }
 
     pub fn recalculate_luts_async(&self, age: i32, tolerance: f64) {
+        if age == 0 && tolerance == 0.0 {
+            let mut local_luts = [[0.0f64; LUT_K]; 22];
+            for noise_step in 0..22 {
+                local_luts[noise_step as usize] = Self::cv_lut_for(self.sr as f32, noise_step as i32);
+            }
+            let current_active = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+            let target_inactive = if current_active == self.lut_buffer.buffer_0 {
+                self.lut_buffer.buffer_1
+            } else {
+                self.lut_buffer.buffer_0
+            };
+            unsafe {
+                *target_inactive = local_luts;
+            }
+            self.lut_buffer.active_ptr.store(target_inactive, std::sync::atomic::Ordering::Release);
+            return;
+        }
+
         let lut_buffer = self.lut_buffer.clone();
         let sr = self.sr;
         let instance_id = self.instance_id;
@@ -493,6 +511,18 @@ impl Vco303 {
     }
 
     pub fn recalculate_luts_sync(&self, age: i32, tolerance: f64) {
+        if age == 0 && tolerance == 0.0 {
+            let mut local_luts = [[0.0f64; LUT_K]; 22];
+            for noise_step in 0..22 {
+                local_luts[noise_step as usize] = Self::cv_lut_for(self.sr as f32, noise_step as i32);
+            }
+            let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+            unsafe {
+                *active_ptr = local_luts;
+            }
+            return;
+        }
+
         let mut temp_vco = Vco303::raw(self.sr as f32);
         temp_vco.set_instance_id(self.instance_id);
         temp_vco.set_analog_wear(tolerance, age);

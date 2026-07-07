@@ -19,10 +19,11 @@ fn component_drift_produces_fluctuations() {
         CircuitTopology::Accurate,
         0.0, // sweep_pos
         0, // comp_seed
+        0.5, // glide_knob
     );
 
     v.note_on(60);
-    v.set_gate(true, true, false);
+    v.set_gate(true, true, false, false);
     
     // Check that ticking multiple times shifts the internal drift state
     let mut last_tick = v.tick();
@@ -56,6 +57,7 @@ fn component_age_affects_tuning_and_cutoff() {
         CircuitTopology::Accurate,
         0.0, // sweep_pos
         0, // comp_seed
+        0.5, // glide_knob
     );
 
     // Aged (age = 1.0)
@@ -71,12 +73,13 @@ fn component_age_affects_tuning_and_cutoff() {
         CircuitTopology::Accurate,
         0.0, // sweep_pos
         0, // comp_seed
+        0.5, // glide_knob
     );
 
     v_new.note_on(60);
-    v_new.set_gate(true, true, false);
+    v_new.set_gate(true, true, false, false);
     v_old.note_on(60);
-    v_old.set_gate(true, true, false);
+    v_old.set_gate(true, true, false, false);
 
     // Verify they output different waveforms because age modifies cutoff and tuning.
     // We tick 50 times to pass the latency compensation delay line.

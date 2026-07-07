@@ -131,6 +131,7 @@ impl Plugin for Plugin303 {
             self.params.topology.value(),
             self.params.sweep_pos.value(),
             self.params.comp_seed.value(),
+            self.params.glide.value(),
         );
 
         // Block-rate read of the fidelity tier (starts a crossfade on change).
@@ -155,14 +156,17 @@ impl Plugin for Plugin303 {
                 }
                 match event {
                     NoteEvent::NoteOn { note, .. } => {
+                        let is_legato = active_midi_note.is_some();
                         active_midi_note = Some(note);
+                        let slide = is_legato && self.params.glide.value() > 0.0;
+                        let trigger = !is_legato;
+                        self.voice.set_gate(true, trigger, false, slide);
                         self.voice.note_on(note);
-                        self.voice.set_gate(true, true, false);
                     }
                     NoteEvent::NoteOff { note, .. } => {
                         if active_midi_note == Some(note) {
                             active_midi_note = None;
-                            self.voice.set_gate(false, false, false);
+                            self.voice.set_gate(false, false, false, false);
                         }
                     }
                     _ => {}
@@ -193,6 +197,7 @@ impl Plugin for Plugin303 {
                     self.sequencer.gate,
                     self.sequencer.trigger,
                     self.sequencer.accent,
+                    self.sequencer.slide,
                 );
                 self.voice.set_freq(self.sequencer.freq);
             }

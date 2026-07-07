@@ -9,7 +9,7 @@ fn main() {
     v.set_cutoff(4000.0);
     v.set_reso(0.0);
     v.note_on(note);
-    v.set_gate(true, true, false);
+    v.set_gate(true, true, false, false);
 
     println!("First 300 samples:");
     for i in 0..300 {

@@ -39,11 +39,11 @@ fn test_accurate_topology_dsp_coercion() {
         false, 3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
         VcaEnvMode::Envelope,
         0, 0.0, plugin303::params::CompTolerance::Zero, 0,
-        CircuitTopology::Accurate, 0.0, 0,
+        CircuitTopology::Accurate, 0.0, 0, 0.5
     );
 
     v_base.note_on(60);
-    v_base.set_gate(true, true, false);
+    v_base.set_gate(true, true, false, false);
     for _ in 0..50 {
         v_base.tick();
     }
@@ -57,11 +57,11 @@ fn test_accurate_topology_dsp_coercion() {
         true, 50.0, 1000.0, 0.5, 500.0, 50.0, 1000.0, 0.5, 500.0, // Advanced envelopes enabled
         VcaEnvMode::Gate,
         0, 0.0, plugin303::params::CompTolerance::Zero, 0,
-        CircuitTopology::Accurate, 0.75, 0,
+        CircuitTopology::Accurate, 0.75, 0, 0.5
     );
 
     v_adv.note_on(60);
-    v_adv.set_gate(true, true, false);
+    v_adv.set_gate(true, true, false, false);
     for _ in 0..50 {
         v_adv.tick();
     }
@@ -82,10 +82,10 @@ fn test_fun_topology_dsp_activation() {
         false, 3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
         VcaEnvMode::Envelope,
         0, 0.0, plugin303::params::CompTolerance::Zero, 0,
-        CircuitTopology::Fun, 0.0, 0,
+        CircuitTopology::Fun, 0.0, 0, 0.5
     );
     v_base.note_on(60);
-    v_base.set_gate(true, true, false);
+    v_base.set_gate(true, true, false, false);
 
     let mut v_fun = Voice::new(sr);
     v_fun.update_params(
@@ -94,10 +94,10 @@ fn test_fun_topology_dsp_activation() {
         false, 3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
         VcaEnvMode::Envelope,
         0, 0.0, plugin303::params::CompTolerance::Zero, 0,
-        CircuitTopology::Fun, 0.0, 0,
+        CircuitTopology::Fun, 0.0, 0, 0.5
     );
     v_fun.note_on(60);
-    v_fun.set_gate(true, true, false);
+    v_fun.set_gate(true, true, false, false);
 
     for _ in 0..50 {
         v_base.tick();
