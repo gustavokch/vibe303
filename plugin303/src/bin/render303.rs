@@ -51,9 +51,6 @@ fn main() {
     v.set_cutoff(cutoff);
     v.set_reso(reso / 100.0); // --reso is a percentage; the voice wants 0..1
 
-    if gate_vca {
-        v.set_vca_env_mode(plugin303::params::VcaEnvMode::Gate);
-    }
     v.update_params(
         0.0, // tuning_cents
         0.0, // osc1_pitch_st
@@ -83,6 +80,10 @@ fn main() {
         0, // comp_seed
         0.5, // glide_knob
     );
+
+    if gate_vca {
+        v.set_vca_env_mode(plugin303::params::VcaEnvMode::Gate);
+    }
 
     v.note_on(note);
     let n = (secs * sr) as usize;
