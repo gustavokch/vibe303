@@ -11,9 +11,7 @@
 
 use super::expmath::fast_exp;
 
-/// Thermal voltage at 300 K (NF = NR = 1 for these models).
-const VT: f64 = 0.025_852;
-
+/// Thermal voltage at 300 K was previously a constant. Now dynamically calculated in BjtParams.
 /// Static Gummel-Poon parameters (the subset the BA283 transport model uses).
 #[derive(Clone, Copy, Debug)]
 pub struct BjtParams {
@@ -25,12 +23,12 @@ pub struct BjtParams {
     pub ikf: f64, // high-injection knee forward (0 ⇒ disabled)
     pub ikr: f64, // high-injection knee reverse (0 ⇒ disabled)
     pub vcrit: f64,
+    pub vt: f64,
 }
 
 impl BjtParams {
     fn make(is: f64, bf: f64, br: f64, vaf: f64, var: f64, ikf: f64, ikr: f64) -> Self {
-        let vcrit = VT * (VT / (is * std::f64::consts::SQRT_2)).ln();
-        Self {
+        let mut p = Self {
             is,
             bf,
             br,
@@ -38,8 +36,17 @@ impl BjtParams {
             var,
             ikf,
             ikr,
-            vcrit,
-        }
+            vcrit: 0.0,
+            vt: 0.025_852,
+        };
+        p.set_temp(25.0);
+        p
+    }
+
+    pub fn set_temp(&mut self, temp_c: f64) {
+        let tk = temp_c + 273.15;
+        self.vt = 1.380649e-23 * tk / 1.602176634e-19;
+        self.vcrit = self.vt * (self.vt / (self.is * std::f64::consts::SQRT_2)).ln();
     }
 
     /// 2N3904 NPN.
@@ -78,14 +85,14 @@ pub struct BjtOut {
 /// vcrit-linearized transport current `(I, g)` (SPICE pnjlim spirit; same form as
 /// `diode::stamp` but with the device's own `Is`/`Vt`).
 #[inline]
-fn transport(v: f64, is: f64, vcrit: f64) -> (f64, f64) {
+fn transport(v: f64, is: f64, vcrit: f64, vt: f64) -> (f64, f64) {
     if v < vcrit {
-        let e = fast_exp(v / VT);
-        (is * (e - 1.0), (is / VT) * e)
+        let e = fast_exp(v / vt);
+        (is * (e - 1.0), (is / vt) * e)
     } else {
-        let ec = fast_exp(vcrit / VT);
+        let ec = fast_exp(vcrit / vt);
         let icrit = is * (ec - 1.0);
-        let gcrit = (is / VT) * ec;
+        let gcrit = (is / vt) * ec;
         (icrit + gcrit * (v - vcrit), gcrit)
     }
 }
@@ -123,8 +130,8 @@ impl Bjt {
 
     fn solve_npn(&self, vbe: f64, vbc: f64) -> BjtOut {
         let p = &self.p;
-        let (itf, gtf) = transport(vbe, p.is, p.vcrit);
-        let (itr, gtr) = transport(vbc, p.is, p.vcrit);
+        let (itf, gtf) = transport(vbe, p.is, p.vcrit, p.vt);
+        let (itr, gtr) = transport(vbc, p.is, p.vcrit, p.vt);
 
         // Base-charge factor qb = (q1/2)(1+sqrt(1+4 q2)).
         let inv_af = if p.vaf > 0.0 { 1.0 / p.vaf } else { 0.0 };

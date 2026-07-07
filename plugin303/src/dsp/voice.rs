@@ -8,7 +8,7 @@ use super::osc::BlepOsc;
 use super::oversample::{Os2x, Os4x};
 use super::vco::Vco303;
 use super::drift::DriftGenerator;
-use crate::params::{OscWave, VcfTaps, VcaEnvMode, CircuitTopology};
+use crate::params::{OscWave, VcfTaps, VcaEnvMode, CircuitTopology, CompTolerance};
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
 pub fn midi_to_freq(note: u8) -> f32 {
@@ -166,10 +166,20 @@ pub struct Voice {
     master_volume: f32,
     /// Main VCF drive factor.
     drive: f32,
-    /// Component age wear level in [0, 1].
-    age: f32,
-    /// Component temperature drift amount in [0, 1].
+    /// Component age wear level in [0, 10].
+    age: i32,
+    /// Component tolerance.
+    tolerance: CompTolerance,
+    /// Seed for component variation.
+    comp_seed: i32,
+    /// Thermal noise setting in [0, 21].
+    thermal_noise: i32,
+    /// Voice drift amount in [0.0, 1.0].
     drift: f32,
+    /// Dynamic operating temperature in degrees Celsius (20.0 to 45.0)
+    temperature: f32,
+    /// Cached thermal state to avoid rebuilding LUTs.
+    thermal_noise_state: i32,
     /// VCA envelope trigger mode.
     vca_env_mode: VcaEnvMode,
     /// Current gate-on state of the voice.
@@ -178,6 +188,16 @@ pub struct Voice {
     accent_active: bool,
     /// Active circuit topology.
     pub topology: CircuitTopology,
+    /// Slide active state.
+    slide_active: bool,
+    /// Current pitch in semitones.
+    current_pitch_st: f32,
+    /// Target pitch in semitones.
+    target_pitch_st: f32,
+    /// Glide knob.
+    glide_knob: f32,
+    /// Whether the VCO LUTs need recalculation before running Tier::Ultra.
+    vco_dirty: bool,
 }
 
 impl Voice {
@@ -187,8 +207,10 @@ impl Voice {
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
         let mut ladder = LadderVcf::new(sr * ULTRA_OS_FACTOR);
+        ladder.set_instance_id(3);
         ladder.set_cal(ULTRA_BRIGHT);
         let mut ladder_hi = LadderVcf::new(sr * HIGH_OS_FACTOR);
+        ladder_hi.set_instance_id(4);
         ladder_hi.set_cal(HIGH_BRIGHT);
 
         // Sub oscillators are always square waves
@@ -196,6 +218,11 @@ impl Voice {
         sub1.set_wave(OscWave::Square);
         let mut sub2 = BlepOsc::new();
         sub2.set_wave(OscWave::Square);
+
+        let mut vco = Vco303::new(sr);
+        vco.set_instance_id(1);
+        let mut vco2 = Vco303::new(sr);
+        vco2.set_instance_id(2);
 
         Self {
             osc: BlepOsc::new(),
@@ -209,8 +236,8 @@ impl Voice {
             ladder_hi,
             os2: Os2x::new(),
 
-            vco: Vco303::new(sr),
-            vco2: Vco303::new(sr),
+            vco,
+            vco2,
             ladder,
             os: Os4x::new(),
 
@@ -245,12 +272,40 @@ impl Voice {
             accent_knob_val: 0.0,
             master_volume: 0.0,
             drive: 1.0,
-            age: 0.0,
+            age: 0,
+            tolerance: CompTolerance::Zero,
+            comp_seed: 0,
+            thermal_noise: 0,
             drift: 0.0,
+            temperature: 20.0,
+            thermal_noise_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
             gate: false,
             accent_active: false,
             topology: CircuitTopology::Accurate,
+            slide_active: false,
+            current_pitch_st: 60.0,
+            target_pitch_st: 60.0,
+            glide_knob: 0.5,
+            vco_dirty: true,
+        }
+    }
+
+    pub fn get_accent_acc(&self) -> f32 {
+        self.accent_acc
+    }
+
+    pub fn get_current_pitch(&self) -> f32 {
+        self.current_pitch_st
+    }
+
+    fn tolerance_f64(&self) -> f64 {
+        match self.tolerance {
+            CompTolerance::Zero => 0.0,
+            CompTolerance::PointFive => 0.005,
+            CompTolerance::Two => 0.02,
+            CompTolerance::Five => 0.05,
+            CompTolerance::Ten => 0.10,
         }
     }
 
@@ -282,15 +337,56 @@ impl Voice {
         veg_sustain: f32,
         veg_release: f32,
         vca_env_mode: VcaEnvMode,
-        comp_age: f32,
+        comp_age: i32,
         comp_drift: f32,
+        tolerance: CompTolerance,
+        thermal_noise: i32,
         topology: CircuitTopology,
         sweep_pos: f32,
+        comp_seed: i32,
+        glide_knob: f32,
     ) {
+        let age_changed = self.age != comp_age;
+        let tolerance_changed = self.tolerance != tolerance || self.comp_seed != comp_seed;
+
         self.topology = topology;
         self.tuning_offset = tuning_cents;
         self.age = comp_age;
         self.drift = comp_drift;
+        self.tolerance = tolerance;
+        self.comp_seed = comp_seed;
+        self.thermal_noise = thermal_noise;
+
+        let tol_f64 = match tolerance {
+            CompTolerance::Zero => 0.0,
+            CompTolerance::PointFive => 0.005,
+            CompTolerance::Two => 0.02,
+            CompTolerance::Five => 0.05,
+            CompTolerance::Ten => 0.10,
+        };
+
+        if age_changed || tolerance_changed {
+            self.ladder.set_analog_wear(tol_f64, comp_age);
+            self.ladder_hi.set_analog_wear(tol_f64, comp_age);
+            self.vco.set_analog_wear(tol_f64, comp_age);
+            self.vco2.set_analog_wear(tol_f64, comp_age);
+            
+            if self.tier == Tier::Ultra || self.pending_tier == Some(Tier::Ultra) || self.xfade_from.is_some() {
+                self.vco.recalculate_luts_async(comp_age, tol_f64);
+                self.vco2.recalculate_luts_async(comp_age, tol_f64);
+                self.vco_dirty = false;
+            } else {
+                self.vco_dirty = true;
+            }
+        }
+
+        if self.thermal_noise != self.thermal_noise_state {
+            self.ladder.set_thermal(thermal_noise);
+            self.ladder_hi.set_thermal(thermal_noise);
+            self.vco.set_thermal(thermal_noise);
+            self.vco2.set_thermal(thermal_noise);
+            self.thermal_noise_state = thermal_noise;
+        }
 
         let (
             final_osc1_pitch,
@@ -356,6 +452,7 @@ impl Voice {
         self.master_volume = volume_db;
         self.drive = 10.0f32.powf(final_drive_db / 20.0);
         self.vca_env_mode = final_vca_env_mode;
+        self.glide_knob = glide_knob;
 
         // Propagate tap/pole count
         let poles_n = match final_poles {
@@ -428,6 +525,13 @@ impl Voice {
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
+
+        if tier == Tier::Ultra && self.vco_dirty {
+            let tol_f64 = self.tolerance_f64();
+            self.vco.recalculate_luts_sync(self.age, tol_f64);
+            self.vco2.recalculate_luts_sync(self.age, tol_f64);
+            self.vco_dirty = false;
+        }
     }
 
     /// Clear all runtime state to silence, **in place** — the host reset path.
@@ -465,14 +569,20 @@ impl Voice {
         self.drift_pitch = DriftGenerator::new(1337);
         self.drift_cutoff = DriftGenerator::new(7331);
         self.accent_acc = 0.0;
+        self.temperature = 20.0;
         self.tier = Tier::Low;
         self.topology = CircuitTopology::Accurate;
+        self.slide_active = false;
+        self.current_pitch_st = 60.0;
+        self.target_pitch_st = 60.0;
+        self.glide_knob = 0.5;
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
         self.comp_low.reset();
         self.comp_high.reset();
         self.comp_ultra.reset();
+        self.vco_dirty = true;
     }
 
     /// Select the fidelity tier. Low routes to the TPT path; High routes to the
@@ -484,6 +594,13 @@ impl Voice {
     /// and the incoming path starts cold, so a hard switch would pop. No
     /// allocation, RT-safe (plain field writes).
     pub fn set_tier(&mut self, tier: Tier) {
+        if tier == Tier::Ultra && self.vco_dirty {
+            let tol_f64 = self.tolerance_f64();
+            self.vco.recalculate_luts_async(self.age, tol_f64);
+            self.vco2.recalculate_luts_async(self.age, tol_f64);
+            self.vco_dirty = false;
+        }
+
         if self.xfade_from.is_some() {
             // If a fade is already in flight, queue the new target instead of
             // clobbering the outgoing path (which would hard-cut a still-weighted
@@ -511,16 +628,25 @@ impl Voice {
     pub fn note_on(&mut self, note: u8) {
         self.current_note = note;
         self.base_hz = midi_to_freq(note);
+        let target = note as f32;
+        self.target_pitch_st = target;
+        if !self.slide_active {
+            self.current_pitch_st = target;
+        }
         self.meg.trigger();
         self.veg.trigger();
     }
 
-    pub fn set_gate(&mut self, gate: bool, trigger: bool, accent: bool) {
+    pub fn set_gate(&mut self, gate: bool, trigger: bool, accent: bool, slide: bool) {
         self.gate = gate;
         self.accent_active = accent;
+        self.slide_active = slide;
         if trigger {
             self.meg.trigger();
             self.veg.trigger();
+            if accent {
+                self.accent_acc = (self.accent_acc + 1.0).min(1.8);
+            }
         }
         if !gate {
             self.meg.release();
@@ -530,6 +656,11 @@ impl Voice {
 
     pub fn set_freq(&mut self, hz: f32) {
         self.base_hz = hz;
+        let target = 12.0 * (hz / 440.0).log2() + 69.0;
+        self.target_pitch_st = target;
+        if !self.slide_active {
+            self.current_pitch_st = target;
+        }
     }
 
     /// Renders a single sample for a specific tier, advancing its state.
@@ -613,19 +744,32 @@ impl Voice {
     /// Advances the voice by one sample, computing modulations, rendering the active
     /// tier (or crossfading), and applying the VCA envelope and master volume.
     pub fn tick(&mut self) -> f32 {
+        // Update operating temperature
+        let target_temp = if self.gate {
+            20.0 + 25.0 * self.drift
+        } else {
+            20.0
+        };
+        let tau = if self.gate { 10.0 } else { 30.0 };
+        let alpha = 1.0 - (-1.0 / (tau * self.sr)).exp();
+        self.temperature += alpha * (target_temp - self.temperature);
+
         // --- 1. Compute Pitch & Cutoff Modulations ---
-        // Pitch drift (LFO random walk)
+        // Pitch glide slew
+        let glide_time_ms = 10.0 + self.glide_knob * 400.0;
+        let glide_alpha = 1.0 - (-1.0 / (glide_time_ms * 0.001 * self.sr)).exp();
+        self.current_pitch_st += glide_alpha * (self.target_pitch_st - self.current_pitch_st);
+
+        // Pitch drift (LFO pink noise walk + systematic temperature drift)
         let drift_pitch_val = self.drift_pitch.tick(0.2, self.sr); // slow 0.2 Hz walk
-        let pitch_drift_st = drift_pitch_val * self.drift * 0.5; // Up to +-50 cents
+        let pitch_drift_st = drift_pitch_val * 0.2 * self.drift;
+        let pitch_thermal_st = -0.1 * (self.temperature - 20.0) / 25.0; // -10 cents thermal warm-up
 
         // Tuning offset
         let tuning_st = self.tuning_offset / 100.0; // cents to semitones
 
-        // Age-related pitch tracking stretch
-        let stretch_st = self.age * 0.02 * (self.current_note as f32 - 60.0) / 12.0;
-
-        // Apply pitch update
-        let osc1_f = self.base_hz * 2.0f32.powf((self.osc1_pitch_st + tuning_st + pitch_drift_st + stretch_st) / 12.0);
+        // Apply pitch update (Note: component age/tolerance do NOT affect pitch tracking)
+        let osc1_f = 440.0 * 2.0f32.powf((self.current_pitch_st - 69.0 + self.osc1_pitch_st + tuning_st + pitch_drift_st + pitch_thermal_st) / 12.0);
         self.osc.set_freq(osc1_f, self.sr);
         self.osc_hi.set_freq(osc1_f, self.sr);
         self.vco.set_freq(osc1_f);
@@ -635,26 +779,31 @@ impl Voice {
         self.sub_osc_hi.set_freq(sub_f, self.sr);
 
         if self.osc2_vol > 0.0 {
-            let osc2_f = self.base_hz * 2.0f32.powf((self.osc2_pitch_st + tuning_st + pitch_drift_st + stretch_st) / 12.0);
+            let osc2_f = 440.0 * 2.0f32.powf((self.current_pitch_st - 69.0 + self.osc2_pitch_st + tuning_st + pitch_drift_st + pitch_thermal_st) / 12.0);
             self.osc2.set_freq(osc2_f, self.sr);
             self.osc2_hi.set_freq(osc2_f, self.sr);
             self.vco2.set_freq(osc2_f);
         }
 
         // --- 2. Filter Cutoff Modulation ---
-        // Cutoff drift (LFO random walk)
+        // Cutoff drift (LFO pink noise walk + systematic temperature drift)
         let drift_cut_val = self.drift_cutoff.tick(0.1, self.sr);
-        let cutoff_drift_factor = 1.0 + drift_cut_val * self.drift * 0.15; // Up to +-15%
+        let cutoff_drift_factor = 1.0 + drift_cut_val * 0.05 * self.drift;
+        let cutoff_thermal_factor = 1.0 - 0.05 * (self.temperature - 20.0) / 25.0; // -5% cutoff warm-up
 
-        // Age-related cutoff and resonance scaling
-        let age_cutoff_factor = 1.0 - self.age * 0.15;
-        let age_reso_factor = 1.0 - self.age * 0.20;
+        // Age-related cutoff and resonance scaling (0 to 10 scale)
+        let age_f32 = self.age as f32 / 10.0;
+        let age_cutoff_factor = 1.0 - age_f32 * 0.15;
+        let age_reso_factor = 1.0 - age_f32 * 0.20;
 
-        // Accent accumulator charging
-        let target_accent = if self.accent_active { 1.0 } else { 0.0 };
-        // ~100 ms time constant leak integrator
-        let acc_decay_coeff = 1.0 - (-1.0 / (0.1 * self.sr)).exp();
-        self.accent_acc += acc_decay_coeff * (target_accent - self.accent_acc);
+        // Accent accumulator decay
+        let acc_decay_coeff = (-1.0 / (0.2 * self.sr)).exp();
+        self.accent_acc *= acc_decay_coeff;
+
+        // Modulate filter decay
+        let decay_normal_ms = 200.0 + self.decay_knob * 1800.0;
+        let effective_decay_ms = decay_normal_ms + (self.accent_knob_val * self.accent_acc).min(1.0) * (200.0 - decay_normal_ms);
+        self.meg.set_decay(effective_decay_ms);
 
         // MEG envelope
         let meg_val = self.meg.tick(self.gate);
@@ -663,8 +812,9 @@ impl Voice {
         let base_cutoff_hz = 200.0 * 20.0f32.powf(self.cutoff_knob); // 200 Hz to 4000 Hz
         // Modulated Cutoff
         let mod_cutoff_hz = base_cutoff_hz 
-            + meg_val * self.env_mod * 4000.0 * (1.0 + self.accent_knob_val * self.accent_acc);
-        let final_cutoff_hz = (mod_cutoff_hz * cutoff_drift_factor * age_cutoff_factor)
+            + meg_val * self.env_mod * 4000.0 
+            + self.accent_knob_val * self.accent_acc * 3000.0;
+        let final_cutoff_hz = (mod_cutoff_hz * cutoff_drift_factor * cutoff_thermal_factor * age_cutoff_factor)
             .clamp(20.0, self.sr * 0.45);
 
         // VCF Resonance

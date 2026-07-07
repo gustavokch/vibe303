@@ -3,6 +3,21 @@ use crate::dsp::filter::Tier;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
+pub enum CompTolerance {
+    #[default]
+    #[name = "0%"]
+    Zero,
+    #[name = "0.5%"]
+    PointFive,
+    #[name = "2%"]
+    Two,
+    #[name = "5%"]
+    Five,
+    #[name = "10%"]
+    Ten,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
 pub enum CircuitTopology {
     #[default]
     #[name = "Accurate"]
@@ -177,9 +192,16 @@ pub struct Plugin303Params {
 
     // Analog
     #[id = "comp_age"]
-    pub comp_age: FloatParam,
+    pub comp_age: IntParam,
     #[id = "comp_drift"]
     pub comp_drift: FloatParam,
+    #[id = "tolerance"]
+    pub tolerance: EnumParam<CompTolerance>,
+    #[id = "thermal_noise"]
+    pub thermal_noise: IntParam,
+
+    #[id = "comp_seed"]
+    pub comp_seed: IntParam,
 
     // Sequencer pattern persistence
     #[persist = "pattern"]
@@ -393,16 +415,36 @@ impl Default for Plugin303Params {
 
             vca_env_mode: EnumParam::new("VCA Env Mode", VcaEnvMode::Envelope),
 
-            comp_age: FloatParam::new(
+            comp_age: IntParam::new(
                 "Comp Age",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
+                0,
+                IntRange::Linear { min: 0, max: 10 }
             ),
 
             comp_drift: FloatParam::new(
                 "Comp Drift",
                 0.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 }
+            ),
+
+            tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),
+
+            thermal_noise: IntParam::new(
+                "Thermal Noise",
+                0,
+                IntRange::Linear { min: 0, max: 21 }
+            ).with_value_to_string(std::sync::Arc::new(|v| {
+                if v == 0 {
+                    "Off".to_string()
+                } else {
+                    format!("{:.1}", 1.0 + (v - 1) as f32 * 0.2)
+                }
+            })),
+
+            comp_seed: IntParam::new(
+                "Component Seed",
+                1337,
+                IntRange::Linear { min: 0, max: 999_999 }
             ),
 
             pattern: std::sync::RwLock::new(SequencerPattern::default()),

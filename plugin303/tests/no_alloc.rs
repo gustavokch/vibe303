@@ -38,7 +38,7 @@ fn voice_hot_path_is_alloc_free() {
 fn ultra_voice_hot_path_is_alloc_free() {
     use plugin303::dsp::filter::Tier;
     let mut voice = Voice::new(48_000.0); // full Ultra chain: VCO + 4× OS + nodal ladder
-    voice.set_tier(Tier::Ultra);
+    voice.set_tier_immediate(Tier::Ultra);
     voice.set_cutoff(1_000.0);
     voice.set_reso(0.5);
     voice.note_on(57);
@@ -92,12 +92,17 @@ fn tier_crossfade_hot_path_is_alloc_free() {
     // A crossfade renders BOTH tiers per sample — the heaviest hot path. Must
     // stay alloc-free while the fade is in flight.
     let mut voice = Voice::new(48_000.0);
-    voice.set_tier(Tier::Low);
+    // Initialize VCO LUTs and warm-start both backends outside the guard
+    voice.set_tier_immediate(Tier::Ultra);
     voice.set_cutoff(1_000.0);
     voice.set_reso(0.5);
     voice.note_on(57);
     for _ in 0..128 {
-        voice.tick(); // warm-start both backends outside the guard
+        voice.tick();
+    }
+    voice.set_tier_immediate(Tier::Low);
+    for _ in 0..128 {
+        voice.tick();
     }
     reset_violation_count();
     assert_no_alloc(|| {
