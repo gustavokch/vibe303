@@ -262,6 +262,8 @@ impl Vco303 {
     /// Bare construct with an empty LUT — used both by `new` (before attaching
     /// the cached LUT) and by the LUT builder's throwaway render instance.
     fn raw(sr: f32) -> Self {
+        let mut v = [0.0; NU];
+        v[CP] = 12.0; // numerical kick to prevent latch-up
         Self {
             sr: sr as f64,
             npn: BjtParams::n2n3904(),
@@ -269,7 +271,7 @@ impl Vco303 {
             diode: Diode1N4148::new(),
             jfet: Jfet::mpf104(),
             cv: 5.0,
-            v: [0.0; NU],
+            v,
             cvp: [0.0; 5],
             cip: [0.0; 5],
             r_mults: [1.0; 15],
@@ -329,7 +331,8 @@ impl Vco303 {
         let mut f0 = self.measure_freq(cv0);
         let mut cv1 = cv0 + 0.1;
         let mut f1 = self.measure_freq(cv1);
-        for _ in 0..5 {
+        println!("secant_cv target={:.2}: cv0={:.6} -> f0={:.2}, cv1={:.6} -> f1={:.2}", target, cv0, f0, cv1, f1);
+        for step in 0..5 {
             let denom = f1 - f0;
             if denom.abs() < 1e-9 {
                 break;
@@ -339,6 +342,7 @@ impl Vco303 {
             f0 = f1;
             cv1 = cv2;
             f1 = self.measure_freq(cv1);
+            println!("  step {}: cv={:.6} -> f={:.2}", step, cv1, f1);
             if (f1 / target - 1.0).abs() < 1e-3 {
                 break;
             }
@@ -564,6 +568,7 @@ impl Vco303 {
 
     pub fn reset(&mut self) {
         self.v = [0.0; NU];
+        self.v[CP] = 12.0; // numerical kick
         self.cvp = [0.0; 5];
         self.cip = [0.0; 5];
         self.t_samples = 0;
@@ -1260,7 +1265,7 @@ mod tests {
     #[test]
     #[ignore = "diagnostic: characterize freq(cv) for MY solver to refit CV_FIT"]
     fn characterize_freq_cv() {
-        let sr = 48_000.0;
+        let sr = 192_000.0;
         // Long render for fine zero-cross resolution.
         for cv in [2.5f64, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5] {
             let f = measure_freq(&render_cv(cv, sr, 0.4), sr);
