@@ -18,6 +18,7 @@ pub struct Sequencer {
     
     // Pitch slew state for slide/glide
     /// Current slewed pitch frequency.
+    #[allow(dead_code)]
     current_freq: f32,
     /// target pitch frequency of the active step.
     target_freq: f32,
@@ -86,7 +87,7 @@ impl Sequencer {
         length: usize,
         tempo_param: f32,
         sync: bool,
-        glide_param: f32,
+        _glide_param: f32,
     ) {
         if !transport.playing {
             self.gate = false;

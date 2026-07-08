@@ -70,6 +70,7 @@ impl DecayEnv {
 /// hold, decay, sustain, release, and end values.
 pub struct RcEnv {
     // Level parameters
+    #[allow(dead_code)]
     start_level: f64,
     peak_level: f64,
     sustain_level: f64,
