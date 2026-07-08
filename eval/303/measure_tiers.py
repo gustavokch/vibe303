@@ -29,6 +29,11 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 
+# Setup path to Rust renderer
+RENDER303_REL = ROOT / "target" / "release" / "render303"
+RENDER303_DBG = ROOT / "target" / "debug" / "render303"
+RENDER303 = RENDER303_REL if RENDER303_REL.exists() else RENDER303_DBG
+
 import voice_ref_spice as vr
 from parallel import run_parallel_with_fallback
 from metrics import (

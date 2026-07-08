@@ -19,8 +19,8 @@ use super::bjt::{Bjt, BjtParams};
 use super::diode::Diode1N4148;
 use super::jfet::Jfet;
 use super::linalg_static::vco_lu_solve;
-use std::sync::Mutex;
 use crate::params::OscWave;
+use std::sync::Mutex;
 
 #[cfg(test)]
 use super::linalg::lu_solve;
@@ -78,9 +78,9 @@ const CP_RESET_DELTA: f64 = 3.0;
 /// `K` anchors span MIDI `LUT_MIDI_LO`..`+ (K-1)·LUT_MIDI_STEP`; `set_freq` does a
 /// log-frequency lookup + lerp (RT-safe). The `CV_FIT` quadratic alone is ~1.4 %
 /// (worse — ~6 % — at the low end), too coarse for instrument-wide pitch.
-const LUT_K: usize = 25;
-const LUT_MIDI_LO: f64 = 24.0; // C1 ≈ 32.7 Hz
-const LUT_MIDI_STEP: f64 = 3.0; // every 3 semitones → top anchor MIDI 96 (C7 ≈ 2093 Hz)
+const LUT_K: usize = 37;
+const LUT_MIDI_LO: f64 = 0.0; // C-1 ≈ 8.18 Hz
+const LUT_MIDI_STEP: f64 = 3.0; // every 3 semitones → top anchor MIDI 108 (C8 ≈ 4186 Hz)
 
 fn lut_midi(i: usize) -> f64 {
     LUT_MIDI_LO + i as f64 * LUT_MIDI_STEP
@@ -249,12 +249,15 @@ pub struct Vco303 {
     // Synthesized square wave state
     sq_y_prev: f32,
     sq_blep_pending: f32,
+    pub is_fun: bool,
+    stuck_counter: u32,
+    last_cp: f64,
 }
 
 impl Vco303 {
     pub fn new(sr: f32) -> Self {
         let mut o = Self::raw(sr);
-        o.cv_lut = Self::cv_lut_for(sr, 0); // Default to thermal_noise=0
+        o.cv_lut = Self::cv_lut_for(sr, 0, false); // Default to thermal_noise=0
         o.lut_buffer = std::sync::Arc::new(VcoLutBuffer::new(o.cv_lut));
         o
     }
@@ -262,8 +265,6 @@ impl Vco303 {
     /// Bare construct with an empty LUT — used both by `new` (before attaching
     /// the cached LUT) and by the LUT builder's throwaway render instance.
     fn raw(sr: f32) -> Self {
-        let mut v = [0.0; NU];
-        v[CP] = 12.0; // numerical kick to prevent latch-up
         Self {
             sr: sr as f64,
             npn: BjtParams::n2n3904(),
@@ -271,7 +272,7 @@ impl Vco303 {
             diode: Diode1N4148::new(),
             jfet: Jfet::mpf104(),
             cv: 5.0,
-            v,
+            v: [0.0; NU],
             cvp: [0.0; 5],
             cip: [0.0; 5],
             r_mults: [1.0; 15],
@@ -297,30 +298,34 @@ impl Vco303 {
             blep_frac: None,
             sq_y_prev: 0.0,
             sq_blep_pending: 0.0,
+            is_fun: false,
+            stuck_counter: 0,
+            last_cp: 0.0,
         }
     }
 
     /// Return the refined-CV LUT for `sr`, building (and caching) it once. The
     /// build renders a throwaway VCO per anchor (secant), so it is gated behind
     /// the process-global cache — never repeated per voice / per `reset()`.
-    fn cv_lut_for(sr: f32, thermal_noise: i32) -> [f64; LUT_K] {
-        let key = ((sr.to_bits() as u64) << 32) | (thermal_noise as u64);
-        if let Ok(cache) = LUT_CACHE.lock() {
-            if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
-                return lut;
-            }
+    fn cv_lut_for(sr: f32, thermal_noise: i32, is_fun: bool) -> [f64; LUT_K] {
+        let key = ((sr.to_bits() as u64) << 32)
+            | ((thermal_noise as u64) & 0xff)
+            | (if is_fun { 0x100 } else { 0x0 });
+        let mut cache = match LUT_CACHE.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
+            return lut;
         }
         let mut tmp = Self::raw(sr);
+        tmp.set_fun(is_fun);
         tmp.set_thermal_internal(thermal_noise);
         let mut lut = [0.0; LUT_K];
         for (i, slot) in lut.iter_mut().enumerate() {
             *slot = tmp.secant_cv(midi_hz(lut_midi(i)));
         }
-        if let Ok(mut cache) = LUT_CACHE.lock() {
-            if !cache.iter().any(|(k, _)| *k == key) {
-                cache.push((key, lut));
-            }
-        }
+        cache.push((key, lut));
         lut
     }
 
@@ -331,8 +336,7 @@ impl Vco303 {
         let mut f0 = self.measure_freq(cv0);
         let mut cv1 = cv0 + 0.1;
         let mut f1 = self.measure_freq(cv1);
-        println!("secant_cv target={:.2}: cv0={:.6} -> f0={:.2}, cv1={:.6} -> f1={:.2}", target, cv0, f0, cv1, f1);
-        for step in 0..5 {
+        for _ in 0..5 {
             let denom = f1 - f0;
             if denom.abs() < 1e-9 {
                 break;
@@ -342,7 +346,6 @@ impl Vco303 {
             f0 = f1;
             cv1 = cv2;
             f1 = self.measure_freq(cv1);
-            println!("  step {}: cv={:.6} -> f={:.2}", step, cv1, f1);
             if (f1 / target - 1.0).abs() < 1e-3 {
                 break;
             }
@@ -355,11 +358,15 @@ impl Vco303 {
     fn measure_freq(&mut self, cv: f64) -> f64 {
         self.reset();
         self.cv = cv;
-        let warm = (self.sr * 0.04) as usize;
+        let log2_f = ((cv + 3.8) / 0.84).max(1.0);
+        let f_guess = 2.0f64.powf(log2_f);
+        let period_samples = self.sr / f_guess.max(1.0);
+
+        let warm = (self.sr * 0.04).max(period_samples * 2.0) as usize;
         for _ in 0..warm {
             self.tick();
         }
-        let n = (self.sr * 0.2) as usize;
+        let n = (self.sr * 0.2).max(period_samples * 4.0) as usize;
         let mut prev = self.tick();
         let (mut first_t, mut last_t, mut count) = (-1.0f64, 0.0f64, 0i64);
         for i in 0..n {
@@ -420,7 +427,9 @@ impl Vco303 {
         };
         let mut next_gauss = || {
             let mut u1 = next_f64();
-            if u1 < 1e-6 { u1 = 1e-6; }
+            if u1 < 1e-6 {
+                u1 = 1e-6;
+            }
             let u2 = next_f64();
             (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
         };
@@ -454,18 +463,26 @@ impl Vco303 {
     pub fn set_thermal(&mut self, thermal_noise: i32) {
         self.thermal_noise = thermal_noise;
         self.set_thermal_internal(thermal_noise);
-        let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+        let active_ptr = self
+            .lut_buffer
+            .active_ptr
+            .load(std::sync::atomic::Ordering::Acquire);
         let noise_idx = thermal_noise.clamp(0, 21) as usize;
         self.cv_lut = unsafe { (*active_ptr)[noise_idx] };
     }
 
     pub fn recalculate_luts_async(&self, age: i32, tolerance: f64) {
+        let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 {
             let mut local_luts = [[0.0f64; LUT_K]; 22];
             for noise_step in 0..22 {
-                local_luts[noise_step as usize] = Self::cv_lut_for(self.sr as f32, noise_step as i32);
+                local_luts[noise_step as usize] =
+                    Self::cv_lut_for(self.sr as f32, noise_step as i32, is_fun);
             }
-            let current_active = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+            let current_active = self
+                .lut_buffer
+                .active_ptr
+                .load(std::sync::atomic::Ordering::Acquire);
             let target_inactive = if current_active == self.lut_buffer.buffer_0 {
                 self.lut_buffer.buffer_1
             } else {
@@ -474,21 +491,26 @@ impl Vco303 {
             unsafe {
                 *target_inactive = local_luts;
             }
-            self.lut_buffer.active_ptr.store(target_inactive, std::sync::atomic::Ordering::Release);
+            self.lut_buffer
+                .active_ptr
+                .store(target_inactive, std::sync::atomic::Ordering::Release);
             return;
         }
 
         let lut_buffer = self.lut_buffer.clone();
         let sr = self.sr;
         let instance_id = self.instance_id;
-        
-        let seq = lut_buffer.sequence.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        
+
+        let seq = lut_buffer
+            .sequence
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+
         std::thread::spawn(move || {
             let mut temp_vco = Vco303::raw(sr as f32);
             temp_vco.set_instance_id(instance_id);
             temp_vco.set_analog_wear(tolerance, age);
-            
+
             let mut local_luts = [[0.0f64; LUT_K]; 22];
             for noise_step in 0..22 {
                 temp_vco.set_thermal_internal(noise_step);
@@ -496,31 +518,44 @@ impl Vco303 {
                     local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
                 }
             }
-            
-            let current_active = lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+
+            let current_active = lut_buffer
+                .active_ptr
+                .load(std::sync::atomic::Ordering::Acquire);
             let target_inactive = if current_active == lut_buffer.buffer_0 {
                 lut_buffer.buffer_1
             } else {
                 lut_buffer.buffer_0
             };
-            
+
             unsafe {
                 *target_inactive = local_luts;
             }
-            
-            if lut_buffer.sequence.load(std::sync::atomic::Ordering::Acquire) == seq {
-                lut_buffer.active_ptr.store(target_inactive, std::sync::atomic::Ordering::Release);
+
+            if lut_buffer
+                .sequence
+                .load(std::sync::atomic::Ordering::Acquire)
+                == seq
+            {
+                lut_buffer
+                    .active_ptr
+                    .store(target_inactive, std::sync::atomic::Ordering::Release);
             }
         });
     }
 
     pub fn recalculate_luts_sync(&self, age: i32, tolerance: f64) {
+        let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 {
             let mut local_luts = [[0.0f64; LUT_K]; 22];
             for noise_step in 0..22 {
-                local_luts[noise_step as usize] = Self::cv_lut_for(self.sr as f32, noise_step as i32);
+                local_luts[noise_step as usize] =
+                    Self::cv_lut_for(self.sr as f32, noise_step as i32, is_fun);
             }
-            let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+            let active_ptr = self
+                .lut_buffer
+                .active_ptr
+                .load(std::sync::atomic::Ordering::Acquire);
             unsafe {
                 *active_ptr = local_luts;
             }
@@ -530,7 +565,7 @@ impl Vco303 {
         let mut temp_vco = Vco303::raw(self.sr as f32);
         temp_vco.set_instance_id(self.instance_id);
         temp_vco.set_analog_wear(tolerance, age);
-        
+
         let mut local_luts = [[0.0f64; LUT_K]; 22];
         for noise_step in 0..22 {
             temp_vco.set_thermal_internal(noise_step);
@@ -538,10 +573,24 @@ impl Vco303 {
                 local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
             }
         }
-        
-        let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+
+        let active_ptr = self
+            .lut_buffer
+            .active_ptr
+            .load(std::sync::atomic::Ordering::Acquire);
         unsafe {
             *active_ptr = local_luts;
+        }
+    }
+
+    pub fn set_fun(&mut self, is_fun: bool) {
+        if self.is_fun != is_fun {
+            self.is_fun = is_fun;
+            let mut jfet = Jfet::mpf104();
+            if is_fun {
+                jfet.beta *= 100.0;
+            }
+            self.jfet = jfet;
         }
     }
 
@@ -578,6 +627,8 @@ impl Vco303 {
         self.blep_next = 0.0;
         self.blep_pending = 0.0;
         self.blep_frac = None;
+        self.stuck_counter = 0;
+        self.last_cp = 0.0;
     }
 
     /// Driven rail voltages at the current sample (ramped 0→V over `RAMP_S`).
@@ -638,21 +689,111 @@ impl Vco303 {
         let mut rhs = [0.0f64; NU];
 
         // Resistors.
-        stamp_res(&mut a, &mut rhs, Fix(cvb), Unk(II), 1.0 / (220e3 * self.r_mults[0])); // R77
-        stamp_res(&mut a, &mut rhs, Fix(cv), Unk(II), 1.0 / (220e3 * self.r_mults[1])); // R7
-        stamp_res(&mut a, &mut rhs, Unk(II), GND, 1.0 / (4040.0 * self.r_mults[2])); // R8
-        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(IB), 1.0 / (100e3 * self.r_mults[3])); // R9
-        stamp_res(&mut a, &mut rhs, Unk(CP), Unk(IR), 1.0 / (4700.0 * self.r_mults[4])); // R88
-        stamp_res(&mut a, &mut rhs, Unk(N10), Fix(vh), 1.0 / (10e3 * self.r_mults[5])); // R6
-        stamp_res(&mut a, &mut rhs, Unk(BF), GND, 1.0 / (10e3 * self.r_mults[6])); // R1
-        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(SH_IN), 1.0 / (100e3 * self.r_mults[7])); // R2
-        stamp_res(&mut a, &mut rhs, Unk(N17), Unk(SH_IN), 1.0 / (10e3 * self.r_mults[8])); // R3
-        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(PSI), 1.0 / (22e3 * self.r_mults[9])); // R5
-        stamp_res(&mut a, &mut rhs, Fix(vh), Unk(PL), 1.0 / (10e3 * self.r_mults[10])); // R4
-        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(D_R), 1.0 / (1e6 * self.r_mults[11])); // R90
-        stamp_res(&mut a, &mut rhs, Unk(O_R), GND, 1.0 / (220e3 * self.r_mults[12])); // R91
-        stamp_res(&mut a, &mut rhs, Unk(PL), Unk(D_P), 1.0 / (1e6 * self.r_mults[13])); // R80
-        stamp_res(&mut a, &mut rhs, Unk(O_P), GND, 1.0 / (220e3 * self.r_mults[14])); // R81
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Fix(cvb),
+            Unk(II),
+            1.0 / (220e3 * self.r_mults[0]),
+        ); // R77
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Fix(cv),
+            Unk(II),
+            1.0 / (220e3 * self.r_mults[1]),
+        ); // R7
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(II),
+            GND,
+            1.0 / (4040.0 * self.r_mults[2]),
+        ); // R8
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Fix(vp),
+            Unk(IB),
+            1.0 / (100e3 * self.r_mults[3]),
+        ); // R9
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(CP),
+            Unk(IR),
+            1.0 / (4700.0 * self.r_mults[4]),
+        ); // R88
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(N10),
+            Fix(vh),
+            1.0 / (10e3 * self.r_mults[5]),
+        ); // R6
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(BF),
+            GND,
+            1.0 / (10e3 * self.r_mults[6]),
+        ); // R1
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(BF),
+            Unk(SH_IN),
+            1.0 / (100e3 * self.r_mults[7]),
+        ); // R2
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(N17),
+            Unk(SH_IN),
+            1.0 / (10e3 * self.r_mults[8]),
+        ); // R3
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Fix(vp),
+            Unk(PSI),
+            1.0 / (22e3 * self.r_mults[9]),
+        ); // R5
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Fix(vh),
+            Unk(PL),
+            1.0 / (10e3 * self.r_mults[10]),
+        ); // R4
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(BF),
+            Unk(D_R),
+            1.0 / (1e6 * self.r_mults[11]),
+        ); // R90
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(O_R),
+            GND,
+            1.0 / (220e3 * self.r_mults[12]),
+        ); // R91
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(PL),
+            Unk(D_P),
+            1.0 / (1e6 * self.r_mults[13]),
+        ); // R80
+        stamp_res(
+            &mut a,
+            &mut rhs,
+            Unk(O_P),
+            GND,
+            1.0 / (220e3 * self.r_mults[14]),
+        ); // R81
 
         // Cap companions.
         let cdefs = self.caps(vp);
@@ -801,6 +942,18 @@ impl Vco303 {
     /// The caller must add `self.blep_now` (set by this call) to the returned raw value
     /// to get the band-limited output. `blep_now` is zero when no reset occurred.
     pub fn tick(&mut self) -> f32 {
+        let cp_val = self.v[CP];
+        if (cp_val - self.last_cp).abs() < 1e-5 {
+            self.stuck_counter += 1;
+            if self.stuck_counter > 40 {
+                self.v[CP] = 12.0 - 0.1 * (self.t_samples % 7) as f64;
+                self.stuck_counter = 0;
+            }
+        } else {
+            self.stuck_counter = 0;
+        }
+        self.last_cp = cp_val;
+
         // --- Carry the pending 2nd-tap BLEP from last sample's reset --------
         // The 2-tap BLEP must modify TWO adjacent samples: the reset sample itself
         // (tap 0 = blep_now) and the FOLLOWING sample (tap 1 = blep_pending → blep_now
@@ -875,7 +1028,7 @@ impl Vco303 {
         // --- JFET reset detection + 2-tap BLEP computation ------------------
         let cp_now = v[CP];
         let delta = cp_now - cp_prev;
-        
+
         let mut sq_blep0 = self.sq_blep_pending;
         self.sq_blep_pending = 0.0;
 
@@ -884,12 +1037,12 @@ impl Vco303 {
             let alpha = ((mid - cp_prev) / delta.max(1e-9)).clamp(0.0, 1.0) as f32;
             const BLEP_STEP: f32 = 2.92; // OR_SWING (1.46 V) × VCO_GAIN (2.0)
             let tap0 = BLEP_STEP * (alpha * alpha / 2.0 - alpha); // < 0 for α∈(0,1)
-            let tap1 = BLEP_STEP * (-alpha * alpha / 2.0);         // ≤ 0
+            let tap1 = BLEP_STEP * (-alpha * alpha / 2.0); // ≤ 0
             self.blep_now += tap0;
             self.blep_pending = tap1;
             self.blep_next = tap1;
             self.blep_frac = Some(alpha);
-            
+
             // Square wave downward step at JFET reset (matching saw)
             // We're synthesizing a pulse that swings -0.56 to +0.56 (p-p 1.12V)
             // VCO_GAIN (2.607) brings this to 2.92V p-p.
@@ -929,7 +1082,9 @@ impl Vco303 {
         match self.wave {
             OscWave::Saw => y_saw,
             OscWave::Square => pulse_raw,
-            OscWave::Sweep => y_saw * (1.0 - self.sweep_pos as f32) + pulse_raw * self.sweep_pos as f32,
+            OscWave::Sweep => {
+                y_saw * (1.0 - self.sweep_pos as f32) + pulse_raw * self.sweep_pos as f32
+            }
         }
     }
 }
@@ -1265,7 +1420,7 @@ mod tests {
     #[test]
     #[ignore = "diagnostic: characterize freq(cv) for MY solver to refit CV_FIT"]
     fn characterize_freq_cv() {
-        let sr = 192_000.0;
+        let sr = 96_000.0;
         // Long render for fine zero-cross resolution.
         for cv in [2.5f64, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5] {
             let f = measure_freq(&render_cv(cv, sr, 0.4), sr);
