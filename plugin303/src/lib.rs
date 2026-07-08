@@ -155,12 +155,12 @@ impl Plugin for Plugin303 {
                     break;
                 }
                 match event {
-                    NoteEvent::NoteOn { note, .. } => {
+                    NoteEvent::NoteOn { note, velocity, .. } => {
                         let is_legato = active_midi_note.is_some();
                         active_midi_note = Some(note);
                         let slide = is_legato && self.params.glide.value() > 0.0;
                         let trigger = !is_legato;
-                        self.voice.set_gate(true, trigger, false, slide);
+                        self.voice.set_gate(true, trigger, velocity >= 0.78, slide);
                         self.voice.note_on(note);
                     }
                     NoteEvent::NoteOff { note, .. } => {
