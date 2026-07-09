@@ -18,9 +18,10 @@
 use super::bjt::{Bjt, BjtParams};
 use super::diode::Diode1N4148;
 use super::jfet::Jfet;
+use super::linalg_static::ladder_lu_solve;
 use super::linalg_static::vco_lu_solve;
 use crate::params::OscWave;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 use super::linalg::lu_solve;
@@ -157,35 +158,39 @@ struct CapDef {
     c: f64,
 }
 
+/// Double-buffered background LUT store, published via `Arc` swap.
+///
+/// Rebuilds happen on a worker (or synchronously off the audio thread) into a
+/// freshly allocated `[[f64; LUT_K]; 22]`, which is then published by swapping
+/// it into `active` under the mutex. Because `store` never mutates an array
+/// that a prior `load()` might still be holding — it always publishes a new
+/// `Arc` — readers on the audio thread can safely `load()` a snapshot and keep
+/// using it for as long as they like, even while a rebuild is in flight or a
+/// second rebuild races the first. No unsafe code, no raw pointers.
 pub struct VcoLutBuffer {
-    buffer_0: *mut [[f64; LUT_K]; 22],
-    buffer_1: *mut [[f64; LUT_K]; 22],
-    pub active_ptr: std::sync::atomic::AtomicPtr<[[f64; LUT_K]; 22]>,
+    active: Mutex<Arc<[[f64; LUT_K]; 22]>>,
     pub sequence: std::sync::atomic::AtomicU64,
 }
 
-unsafe impl Send for VcoLutBuffer {}
-unsafe impl Sync for VcoLutBuffer {}
-
 impl VcoLutBuffer {
     pub fn new(nominal_lut: [f64; LUT_K]) -> Self {
-        let b0 = Box::into_raw(Box::new([nominal_lut; 22]));
-        let b1 = Box::into_raw(Box::new([nominal_lut; 22]));
         Self {
-            buffer_0: b0,
-            buffer_1: b1,
-            active_ptr: std::sync::atomic::AtomicPtr::new(b0),
+            active: Mutex::new(Arc::new([nominal_lut; 22])),
             sequence: std::sync::atomic::AtomicU64::new(0),
         }
     }
-}
 
-impl Drop for VcoLutBuffer {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = Box::from_raw(self.buffer_0);
-            let _ = Box::from_raw(self.buffer_1);
-        }
+    /// Snapshot the currently active LUT set. Cheap (an `Arc` clone under a
+    /// briefly-held lock, no allocation) and safe to call from the audio
+    /// thread; the returned `Arc` remains valid even if a `store` happens
+    /// immediately after.
+    pub fn load(&self) -> Arc<[[f64; LUT_K]; 22]> {
+        self.active.lock().unwrap().clone()
+    }
+
+    /// Publish a freshly computed LUT set as the new active set.
+    pub fn store(&self, luts: [[f64; LUT_K]; 22]) {
+        *Arc::make_mut(&mut self.active.lock().unwrap()) = luts;
     }
 }
 
@@ -204,6 +209,7 @@ pub struct Vco303 {
     cip: [f64; 5],
     r_mults: [f64; 15],
     c_mults: [f64; 5],
+    g_mults: [f64; 15],
     /// Samples since note-on (for the rail self-start ramp).
     t_samples: u64,
     /// DC blocker state for the `o_r` saw output.
@@ -212,7 +218,7 @@ pub struct Vco303 {
     /// DC-blocker pole, derived from `sr` so the HP corner is rate-invariant.
     dc_r: f32,
     /// Double-buffered background LUTs
-    pub lut_buffer: std::sync::Arc<VcoLutBuffer>,
+    pub lut_buffer: Arc<VcoLutBuffer>,
     /// Per-note refined-CV pitch LUT (F6.6), filled from the active double-buffer
     pub cv_lut: [f64; LUT_K],
     pub wave: OscWave,
@@ -255,17 +261,28 @@ pub struct Vco303 {
 }
 
 impl Vco303 {
+    const R_BASE: [f64; 15] = [
+        220e3, 220e3, 4040.0, 100e3, 4700.0, 10e3, 10e3, 100e3, 10e3, 22e3, 10e3, 1e6, 220e3, 1e6, 220e3
+    ];
+
+    #[inline]
+    fn update_g_mults(&mut self) {
+        for i in 0..15 {
+            self.g_mults[i] = 1.0 / (Self::R_BASE[i] * self.r_mults[i]);
+        }
+    }
+
     pub fn new(sr: f32) -> Self {
         let mut o = Self::raw(sr);
         o.cv_lut = Self::cv_lut_for(sr, 0, false); // Default to thermal_noise=0
-        o.lut_buffer = std::sync::Arc::new(VcoLutBuffer::new(o.cv_lut));
+        o.lut_buffer = Arc::new(VcoLutBuffer::new(o.cv_lut));
         o
     }
 
     /// Bare construct with an empty LUT — used both by `new` (before attaching
     /// the cached LUT) and by the LUT builder's throwaway render instance.
     fn raw(sr: f32) -> Self {
-        Self {
+        let mut o = Self {
             sr: sr as f64,
             npn: BjtParams::n2n3904(),
             pnp: BjtParams::p2n3906(),
@@ -277,6 +294,7 @@ impl Vco303 {
             cip: [0.0; 5],
             r_mults: [1.0; 15],
             c_mults: [1.0; 5],
+            g_mults: [0.0; 15],
             t_samples: 0,
             dc_x1: 0.0,
             dc_y1: 0.0,
@@ -301,7 +319,9 @@ impl Vco303 {
             is_fun: false,
             stuck_counter: 0,
             last_cp: 0.0,
-        }
+        };
+        o.update_g_mults();
+        o
     }
 
     /// Return the refined-CV LUT for `sr`, building (and caching) it once. The
@@ -321,12 +341,29 @@ impl Vco303 {
         let mut tmp = Self::raw(sr);
         tmp.set_fun(is_fun);
         tmp.set_thermal_internal(thermal_noise);
+        eprintln!(
+            "      [cv_lut_for] cache miss for sr={}, thermal={}, is_fun={}. Calculating...",
+            sr, thermal_noise, is_fun
+        );
         let mut lut = [0.0; LUT_K];
         for (i, slot) in lut.iter_mut().enumerate() {
             *slot = tmp.secant_cv(midi_hz(lut_midi(i)));
         }
+        eprintln!("      [cv_lut_for] calculated successfully.");
         cache.push((key, lut));
         lut
+    }
+
+    /// Pre-warm the process-global LUT cache for all 22 thermal-noise steps at
+    /// the given `sr` and `is_fun` combination. After this returns, every
+    /// `recalculate_luts_async` call with `age=0, tolerance=0.0` will hit the
+    /// fast-path (pure cache lookups, ~2 µs, no background thread). Expensive
+    /// (~30 s on first call for a given `sr`), but idempotent — subsequent calls
+    /// are instant because `cv_lut_for` checks the cache first.
+    pub fn warm_cache(sr: f32, is_fun: bool) {
+        for step in 0..22i32 {
+            Self::cv_lut_for(sr, step, is_fun);
+        }
     }
 
     /// Secant-solve the CV that makes this solver realize `target` Hz. Seeded
@@ -451,10 +488,11 @@ impl Vco303 {
             let c_dev = next_gauss() * (tolerance / 3.0 + age as f64 * 0.002);
             *m = (1.0 + systematic_c + c_dev).clamp(0.90, 1.10);
         }
+        self.update_g_mults();
     }
 
     pub fn set_thermal_internal(&mut self, thermal_noise: i32) {
-        let temp_c = 25.0 + thermal_noise as f64 * 10.0;
+        let temp_c = 25.0 + thermal_noise as f64;
         self.npn.set_temp(temp_c);
         self.pnp.set_temp(temp_c);
         self.diode.set_temp(temp_c);
@@ -463,38 +501,60 @@ impl Vco303 {
     pub fn set_thermal(&mut self, thermal_noise: i32) {
         self.thermal_noise = thermal_noise;
         self.set_thermal_internal(thermal_noise);
-        let active_ptr = self
-            .lut_buffer
-            .active_ptr
-            .load(std::sync::atomic::Ordering::Acquire);
         let noise_idx = thermal_noise.clamp(0, 21) as usize;
-        self.cv_lut = unsafe { (*active_ptr)[noise_idx] };
+        self.cv_lut = self.lut_buffer.load()[noise_idx];
     }
 
     pub fn recalculate_luts_async(&self, age: i32, tolerance: f64) {
         let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 {
+            // Fast path: check if ALL 22 thermal steps are already cached.
+            // If so, load them synchronously (~2 µs, RT-safe — no solver work).
+            // If any step is a cache miss, fall through to the background thread.
+            let sr = self.sr as f32;
             let mut local_luts = [[0.0f64; LUT_K]; 22];
-            for noise_step in 0..22 {
-                local_luts[noise_step as usize] =
-                    Self::cv_lut_for(self.sr as f32, noise_step as i32, is_fun);
-            }
-            let current_active = self
-                .lut_buffer
-                .active_ptr
-                .load(std::sync::atomic::Ordering::Acquire);
-            let target_inactive = if current_active == self.lut_buffer.buffer_0 {
-                self.lut_buffer.buffer_1
-            } else {
-                self.lut_buffer.buffer_0
+            let all_cached = {
+                let cache = match LUT_CACHE.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                let mut ok = true;
+                for noise_step in 0..22i32 {
+                    let key = ((sr.to_bits() as u64) << 32)
+                        | ((noise_step as u64) & 0xff)
+                        | (if is_fun { 0x100 } else { 0x0 });
+                    if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
+                        local_luts[noise_step as usize] = lut;
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+                ok
             };
-            unsafe {
-                *target_inactive = local_luts;
+            if all_cached {
+                self.lut_buffer.store(local_luts);
+                return;
             }
-            self.lut_buffer
-                .active_ptr
-                .store(target_inactive, std::sync::atomic::Ordering::Release);
-            return;
+            // Partial cache: fill the lut_buffer NOW with step 0 (always cached
+            // from `Vco303::new`) as a placeholder for all 22 slots. This gives
+            // the VCO correct pitch for thermal_noise=0 instantly, and a close
+            // approximation for other steps until the background thread finishes.
+            let step0_key = ((sr.to_bits() as u64) << 32) | (if is_fun { 0x100 } else { 0x0 });
+            let step0_lut = {
+                let cache = match LUT_CACHE.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                cache
+                    .iter()
+                    .find(|(k, _)| *k == step0_key)
+                    .map(|&(_, lut)| lut)
+            };
+            if let Some(lut) = step0_lut {
+                self.lut_buffer.store([lut; 22]);
+            }
+            // Fall through: background thread will populate accurate per-step data.
         }
 
         let lut_buffer = self.lut_buffer.clone();
@@ -507,39 +567,40 @@ impl Vco303 {
             + 1;
 
         std::thread::spawn(move || {
-            let mut temp_vco = Vco303::raw(sr as f32);
-            temp_vco.set_instance_id(instance_id);
-            temp_vco.set_analog_wear(tolerance, age);
-
             let mut local_luts = [[0.0f64; LUT_K]; 22];
-            for noise_step in 0..22 {
-                temp_vco.set_thermal_internal(noise_step);
-                for i in 0..LUT_K {
-                    local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
+
+            if age == 0 && tolerance == 0.0 {
+                // Use cv_lut_for so each step is populated into the process-global
+                // LUT_CACHE. Next call's fast-path probe will then hit.
+                for noise_step in 0..22 {
+                    local_luts[noise_step as usize] =
+                        Vco303::cv_lut_for(sr as f32, noise_step as i32, is_fun);
+                }
+            } else {
+                let mut temp_vco = Vco303::raw(sr as f32);
+                temp_vco.set_instance_id(instance_id);
+                temp_vco.set_fun(is_fun);
+                temp_vco.set_analog_wear(tolerance, age);
+
+                for noise_step in 0..22 {
+                    temp_vco.set_thermal_internal(noise_step);
+                    for i in 0..LUT_K {
+                        local_luts[noise_step as usize][i] =
+                            temp_vco.secant_cv(midi_hz(lut_midi(i)));
+                    }
                 }
             }
 
-            let current_active = lut_buffer
-                .active_ptr
-                .load(std::sync::atomic::Ordering::Acquire);
-            let target_inactive = if current_active == lut_buffer.buffer_0 {
-                lut_buffer.buffer_1
-            } else {
-                lut_buffer.buffer_0
-            };
-
-            unsafe {
-                *target_inactive = local_luts;
-            }
-
+            // If a newer request has been made since we started, our result is
+            // stale — drop it rather than publish out-of-order data. `local_luts`
+            // is this thread's own stack data, so there is nothing to race on
+            // either way; this check is purely about freshness, not safety.
             if lut_buffer
                 .sequence
                 .load(std::sync::atomic::Ordering::Acquire)
                 == seq
             {
-                lut_buffer
-                    .active_ptr
-                    .store(target_inactive, std::sync::atomic::Ordering::Release);
+                lut_buffer.store(local_luts);
             }
         });
     }
@@ -552,13 +613,7 @@ impl Vco303 {
                 local_luts[noise_step as usize] =
                     Self::cv_lut_for(self.sr as f32, noise_step as i32, is_fun);
             }
-            let active_ptr = self
-                .lut_buffer
-                .active_ptr
-                .load(std::sync::atomic::Ordering::Acquire);
-            unsafe {
-                *active_ptr = local_luts;
-            }
+            self.lut_buffer.store(local_luts);
             return;
         }
 
@@ -568,19 +623,14 @@ impl Vco303 {
 
         let mut local_luts = [[0.0f64; LUT_K]; 22];
         for noise_step in 0..22 {
+            eprintln!("    [sync] noise_step {}/22 starting...", noise_step);
             temp_vco.set_thermal_internal(noise_step);
             for i in 0..LUT_K {
                 local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
             }
         }
 
-        let active_ptr = self
-            .lut_buffer
-            .active_ptr
-            .load(std::sync::atomic::Ordering::Acquire);
-        unsafe {
-            *active_ptr = local_luts;
-        }
+        self.lut_buffer.store(local_luts);
     }
 
     pub fn set_fun(&mut self, is_fun: bool) {
@@ -588,7 +638,7 @@ impl Vco303 {
             self.is_fun = is_fun;
             let mut jfet = Jfet::mpf104();
             if is_fun {
-                jfet.beta *= 100.0;
+                jfet.beta *= 1.5;
             }
             self.jfet = jfet;
         }
@@ -1128,6 +1178,14 @@ impl Vco303 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_g_mults_updated() {
+        let mut vco = Vco303::new(48000.0);
+        let initial_g = vco.g_mults[0];
+        vco.set_analog_wear(0.05, 5);
+        assert_ne!(vco.g_mults[0], initial_g);
+    }
 
     /// Capture VCO Jacobians over several pitches, build the static fill pattern,
     /// check no-pivot safety (natural-order vs dense partial-pivot), and emit the
