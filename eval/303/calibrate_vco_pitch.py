@@ -10,11 +10,17 @@ def main():
         bin_path = root / "target" / "debug" / "vco_pitch_sweep"
         
     print(f"Running VCO sweep from {bin_path}...")
-    res = subprocess.run([str(bin_path)], capture_output=True, text=True, check=True)
+    out_file = root / "target" / "sweep_output.txt"
+    with open(out_file, "w") as f:
+        subprocess.run([str(bin_path)], stdout=f, check=True)
     
-    lines = res.stdout.strip().split("\n")
+    with open(out_file, "r") as f:
+        stdout_data = f.read()
+    lines = stdout_data.strip().split("\n")
     data_by_topo = {"accurate": [], "fun": []}
-    for line in lines[1:]:
+    for line in lines:
+        if not (line.startswith("accurate,") or line.startswith("fun,")):
+            continue
         parts = line.split(",")
         if len(parts) == 4:
             topo = parts[0].strip()

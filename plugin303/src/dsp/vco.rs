@@ -18,7 +18,6 @@
 use super::bjt::{Bjt, BjtParams};
 use super::diode::Diode1N4148;
 use super::jfet::Jfet;
-use super::linalg_static::ladder_lu_solve;
 use super::linalg_static::vco_lu_solve;
 use crate::params::OscWave;
 use std::sync::{Arc, Mutex};
@@ -262,7 +261,8 @@ pub struct Vco303 {
 
 impl Vco303 {
     const R_BASE: [f64; 15] = [
-        220e3, 220e3, 4040.0, 100e3, 4700.0, 10e3, 10e3, 100e3, 10e3, 22e3, 10e3, 1e6, 220e3, 1e6, 220e3
+        220e3, 220e3, 4040.0, 100e3, 4700.0, 10e3, 10e3, 100e3, 10e3, 22e3, 10e3, 1e6, 220e3, 1e6,
+        220e3,
     ];
 
     #[inline]
@@ -331,13 +331,20 @@ impl Vco303 {
         let key = ((sr.to_bits() as u64) << 32)
             | ((thermal_noise as u64) & 0xff)
             | (if is_fun { 0x100 } else { 0x0 });
-        let mut cache = match LUT_CACHE.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
-            return lut;
-        }
+
+        // Fast path: check the cache under the lock, but release it before any
+        // expensive computation so other threads are not blocked during LUT build.
+        {
+            let cache = match LUT_CACHE.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
+                return lut;
+            }
+        } // mutex released here
+
+        // Slow path: build the LUT without holding the mutex.
         let mut tmp = Self::raw(sr);
         tmp.set_fun(is_fun);
         tmp.set_thermal_internal(thermal_noise);
@@ -347,9 +354,24 @@ impl Vco303 {
         );
         let mut lut = [0.0; LUT_K];
         for (i, slot) in lut.iter_mut().enumerate() {
-            *slot = tmp.secant_cv(midi_hz(lut_midi(i)));
+            if is_fun {
+                *slot = tmp.secant_cv(midi_hz(lut_midi(i)));
+            } else {
+                *slot = cv_for_freq(midi_hz(lut_midi(i)));
+            }
         }
         eprintln!("      [cv_lut_for] calculated successfully.");
+
+        // Re-acquire to insert; check again in case a concurrent thread already
+        // built this key while we were computing (prefer the first to finish).
+        let mut cache = match LUT_CACHE.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(&(_, existing)) = cache.iter().find(|(k, _)| *k == key) {
+            // Another thread beat us to it — prefer its result (already stored).
+            return existing;
+        }
         cache.push((key, lut));
         lut
     }
@@ -373,7 +395,8 @@ impl Vco303 {
         let mut f0 = self.measure_freq(cv0);
         let mut cv1 = cv0 + 0.1;
         let mut f1 = self.measure_freq(cv1);
-        for _ in 0..5 {
+        println!("secant_cv target={:.2}: cv0={:.6} -> f0={:.2}, cv1={:.6} -> f1={:.2}", target, cv0, f0, cv1, f1);
+        for step in 0..5 {
             let denom = f1 - f0;
             if denom.abs() < 1e-9 {
                 break;
@@ -383,6 +406,7 @@ impl Vco303 {
             f0 = f1;
             cv1 = cv2;
             f1 = self.measure_freq(cv1);
+            println!("  step {}: cv={:.6} -> f={:.2}", step, cv1, f1);
             if (f1 / target - 1.0).abs() < 1e-3 {
                 break;
             }
@@ -585,8 +609,11 @@ impl Vco303 {
                 for noise_step in 0..22 {
                     temp_vco.set_thermal_internal(noise_step);
                     for i in 0..LUT_K {
-                        local_luts[noise_step as usize][i] =
-                            temp_vco.secant_cv(midi_hz(lut_midi(i)));
+                        local_luts[noise_step as usize][i] = if is_fun {
+                            temp_vco.secant_cv(midi_hz(lut_midi(i)))
+                        } else {
+                            cv_for_freq(midi_hz(lut_midi(i)))
+                        };
                     }
                 }
             }
@@ -619,6 +646,7 @@ impl Vco303 {
 
         let mut temp_vco = Vco303::raw(self.sr as f32);
         temp_vco.set_instance_id(self.instance_id);
+        temp_vco.set_fun(is_fun);
         temp_vco.set_analog_wear(tolerance, age);
 
         let mut local_luts = [[0.0f64; LUT_K]; 22];
@@ -626,7 +654,11 @@ impl Vco303 {
             eprintln!("    [sync] noise_step {}/22 starting...", noise_step);
             temp_vco.set_thermal_internal(noise_step);
             for i in 0..LUT_K {
-                local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
+                local_luts[noise_step as usize][i] = if is_fun {
+                    temp_vco.secant_cv(midi_hz(lut_midi(i)))
+                } else {
+                    cv_for_freq(midi_hz(lut_midi(i)))
+                };
             }
         }
 
@@ -642,6 +674,14 @@ impl Vco303 {
             }
             self.jfet = jfet;
         }
+    }
+
+    pub fn cv(&self) -> f64 {
+        self.cv
+    }
+
+    pub fn t_samples(&self) -> u64 {
+        self.t_samples
     }
 
     pub fn set_wave(&mut self, wave: OscWave) {
@@ -723,11 +763,11 @@ impl Vco303 {
         ]
     }
 
-    /// Assemble + stamp the full system at iterate `v`, fixed rails, cap
-    /// companions `(cgeq, cieq)`, and `gmin` on the diagonal.
-    fn assemble(
+    /// Assemble + stamp the linear elements of the system: resistors, capacitor companions,
+    /// and gmin/base leakage on the diagonal.
+    #[inline]
+    fn assemble_linear(
         &self,
-        v: &[f64; NU],
         rails: (f64, f64, f64, f64),
         cgeq: &[f64; 5],
         cieq: &[f64; 5],
@@ -739,111 +779,21 @@ impl Vco303 {
         let mut rhs = [0.0f64; NU];
 
         // Resistors.
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Fix(cvb),
-            Unk(II),
-            1.0 / (220e3 * self.r_mults[0]),
-        ); // R77
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Fix(cv),
-            Unk(II),
-            1.0 / (220e3 * self.r_mults[1]),
-        ); // R7
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(II),
-            GND,
-            1.0 / (4040.0 * self.r_mults[2]),
-        ); // R8
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Fix(vp),
-            Unk(IB),
-            1.0 / (100e3 * self.r_mults[3]),
-        ); // R9
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(CP),
-            Unk(IR),
-            1.0 / (4700.0 * self.r_mults[4]),
-        ); // R88
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(N10),
-            Fix(vh),
-            1.0 / (10e3 * self.r_mults[5]),
-        ); // R6
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(BF),
-            GND,
-            1.0 / (10e3 * self.r_mults[6]),
-        ); // R1
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(BF),
-            Unk(SH_IN),
-            1.0 / (100e3 * self.r_mults[7]),
-        ); // R2
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(N17),
-            Unk(SH_IN),
-            1.0 / (10e3 * self.r_mults[8]),
-        ); // R3
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Fix(vp),
-            Unk(PSI),
-            1.0 / (22e3 * self.r_mults[9]),
-        ); // R5
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Fix(vh),
-            Unk(PL),
-            1.0 / (10e3 * self.r_mults[10]),
-        ); // R4
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(BF),
-            Unk(D_R),
-            1.0 / (1e6 * self.r_mults[11]),
-        ); // R90
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(O_R),
-            GND,
-            1.0 / (220e3 * self.r_mults[12]),
-        ); // R91
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(PL),
-            Unk(D_P),
-            1.0 / (1e6 * self.r_mults[13]),
-        ); // R80
-        stamp_res(
-            &mut a,
-            &mut rhs,
-            Unk(O_P),
-            GND,
-            1.0 / (220e3 * self.r_mults[14]),
-        ); // R81
+        stamp_res(&mut a, &mut rhs, Fix(cvb), Unk(II), self.g_mults[0]); // R77
+        stamp_res(&mut a, &mut rhs, Fix(cv), Unk(II), self.g_mults[1]); // R7
+        stamp_res(&mut a, &mut rhs, Unk(II), GND, self.g_mults[2]); // R8
+        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(IB), self.g_mults[3]); // R9
+        stamp_res(&mut a, &mut rhs, Unk(CP), Unk(IR), self.g_mults[4]); // R88
+        stamp_res(&mut a, &mut rhs, Unk(N10), Fix(vh), self.g_mults[5]); // R6
+        stamp_res(&mut a, &mut rhs, Unk(BF), GND, self.g_mults[6]); // R1
+        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(SH_IN), self.g_mults[7]); // R2
+        stamp_res(&mut a, &mut rhs, Unk(N17), Unk(SH_IN), self.g_mults[8]); // R3
+        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(PSI), self.g_mults[9]); // R5
+        stamp_res(&mut a, &mut rhs, Fix(vh), Unk(PL), self.g_mults[10]); // R4
+        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(D_R), self.g_mults[11]); // R90
+        stamp_res(&mut a, &mut rhs, Unk(O_R), GND, self.g_mults[12]); // R91
+        stamp_res(&mut a, &mut rhs, Unk(PL), Unk(D_P), self.g_mults[13]); // R80
+        stamp_res(&mut a, &mut rhs, Unk(O_P), GND, self.g_mults[14]); // R81
 
         // Cap companions.
         let cdefs = self.caps(vp);
@@ -852,12 +802,25 @@ impl Vco303 {
             stamp_branch(&mut a, &mut rhs, cd.p, cd.q, cgeq[j], -cieq[j]);
         }
 
+        // Inject physical noise current into integrator capacitor node CP
+        stamp(&mut a, &mut rhs, Unk(CP), &[], i_noise);
+
+        // gmin + base leakage on every diagonal.
+        for d in 0..NU {
+            a[d][d] += gmin + GMIN_BASE;
+        }
+        (a, rhs)
+    }
+
+    /// Add the stamps for nonlinear elements (diodes, BJTs, JFETs) to the pre-assembled system.
+    #[inline]
+    fn add_nonlinear(&self, a: &mut [[f64; NU]; NU], rhs: &mut [f64; NU], v: &[f64; NU], vp: f64) {
         // Diode D1: anode n4 -> cathode n5.
         {
             let vd = vof(Unk(N4), v) - vof(Unk(N5), v);
             let (id, gd) = self.diode.stamp(vd);
             let ieq = id - gd * vd;
-            stamp_branch(&mut a, &mut rhs, Unk(N4), Unk(N5), gd, ieq);
+            stamp_branch(a, rhs, Unk(N4), Unk(N5), gd, ieq);
         }
 
         // BJTs: (device, base, collector, emitter).
@@ -880,22 +843,22 @@ impl Vco303 {
             let i_eq_c = o.ic - (o.dic_b * vb + o.dic_c * vc + o.dic_e * ve);
             let i_eq_e = o.ie - (o.die_b * vb + o.die_c * vc + o.die_e * ve);
             stamp(
-                &mut a,
-                &mut rhs,
+                a,
+                rhs,
                 nb,
                 &[(nb, o.dib_b), (nc, o.dib_c), (ne, o.dib_e)],
                 i_eq_b,
             );
             stamp(
-                &mut a,
-                &mut rhs,
+                a,
+                rhs,
                 nc,
                 &[(nb, o.dic_b), (nc, o.dic_c), (ne, o.dic_e)],
                 i_eq_c,
             );
             stamp(
-                &mut a,
-                &mut rhs,
+                a,
+                rhs,
                 ne,
                 &[(nb, o.die_b), (nc, o.die_c), (ne, o.die_e)],
                 i_eq_e,
@@ -917,52 +880,31 @@ impl Vco303 {
             let gm = ch.gm;
             let gds = ch.gds;
             let i_eq = ch.id - (gm * vgs + gds * vds);
-            stamp(
-                &mut a,
-                &mut rhs,
-                nd,
-                &[(ng, gm), (nd, gds), (ns, -(gm + gds))],
-                i_eq,
-            );
-            stamp(
-                &mut a,
-                &mut rhs,
-                ns,
-                &[(ng, -gm), (nd, -gds), (ns, gm + gds)],
-                -i_eq,
-            );
+            stamp(a, rhs, nd, &[(ng, gm), (nd, gds), (ns, -(gm + gds))], i_eq);
+            stamp(a, rhs, ns, &[(ng, -gm), (nd, -gds), (ns, gm + gds)], -i_eq);
             // Gate junction diodes: gate->source, gate->drain.
             let vgsj = vg - vs;
             let (igs, ggs) = self.jfet.gate_diode(vgsj);
-            stamp_branch(&mut a, &mut rhs, ng, ns, ggs, igs - ggs * vgsj);
+            stamp_branch(a, rhs, ng, ns, ggs, igs - ggs * vgsj);
             let vgdj = vg - vd;
             let (igd, ggd) = self.jfet.gate_diode(vgdj);
-            stamp_branch(&mut a, &mut rhs, ng, nd, ggd, igd - ggd * vgdj);
+            stamp_branch(a, rhs, ng, nd, ggd, igd - ggd * vgdj);
         }
-
-        // Inject physical noise current into integrator capacitor node CP
-        stamp(&mut a, &mut rhs, Unk(CP), &[], i_noise);
-
-        // gmin + base leakage on every diagonal.
-        for d in 0..NU {
-            a[d][d] += gmin + GMIN_BASE;
-        }
-        (a, rhs)
     }
 
-    /// One Newton solve at fixed `gmin`, warm-started from `v0`.
+    /// One Newton solve at precomputed base system, warm-started from `v0`.
     fn newton(
         &self,
-        gmin: f64,
+        base_a: &[[f64; NU]; NU],
+        base_rhs: &[f64; NU],
         v0: [f64; NU],
-        rails: (f64, f64, f64, f64),
-        cgeq: &[f64; 5],
-        cieq: &[f64; 5],
-        i_noise: f64,
+        vp: f64,
     ) -> Option<([f64; NU], u32)> {
         let mut v = v0;
         for it in 0..MAX_ITERS {
-            let (a, rhs) = self.assemble(&v, rails, cgeq, cieq, gmin, i_noise);
+            let mut a = *base_a;
+            let mut rhs = *base_rhs;
+            self.add_nonlinear(&mut a, &mut rhs, &v, vp);
             // Static-pattern, no-pivot LU (validated vs dense `lu_solve::<NU>`,
             // rel err ≪ TOL; ~10× fewer ops). NaN from a singular diagonal is
             // caught by the `is_finite` guard below → drops to the gmin homotopy.
@@ -1038,7 +980,8 @@ impl Vco303 {
         }
 
         // Fast path: warm-started Newton at gmin=0; else descend a homotopy.
-        let v = match self.newton(0.0, self.v, rails, &cgeq, &cieq, i_noise) {
+        let (base_a_0, base_rhs_0) = self.assemble_linear(rails, &cgeq, &cieq, 0.0, i_noise);
+        let v = match self.newton(&base_a_0, &base_rhs_0, self.v, vp) {
             Some((v, it)) => {
                 self.dbg_iters = it;
                 self.dbg_homotopy = false;
@@ -1050,7 +993,9 @@ impl Vco303 {
                 let mut its = 0;
                 let mut converged0 = false;
                 for &gmin in &[1e-1, 1e-2, 1e-3, 1e-4, 0.0] {
-                    match self.newton(gmin, vh, rails, &cgeq, &cieq, i_noise) {
+                    let (base_a, base_rhs) =
+                        self.assemble_linear(rails, &cgeq, &cieq, gmin, i_noise);
+                    match self.newton(&base_a, &base_rhs, vh, vp) {
                         Some((s, it)) => {
                             vh = s;
                             its += it;
@@ -1142,7 +1087,7 @@ impl Vco303 {
 /// CV for a target pitch: quadratic fit of CV in `log2(freq)` calibrated to **this
 /// solver's** measured `freq(cv)` (not SPICE's — our reset timing differs ~1.4×).
 /// Good to ~1.4 % pitch; a per-note secant refinement for tighter match is V5.
-fn cv_for_freq(freq: f64) -> f64 {
+pub fn cv_for_freq(freq: f64) -> f64 {
     const A: f64 = CV_FIT[0];
     const B: f64 = CV_FIT[1];
     const C: f64 = CV_FIT[2];
@@ -1171,7 +1116,9 @@ impl Vco303 {
             cgeq[j] = geq;
             cieq[j] = geq * self.cvp[j] + self.cip[j];
         }
-        self.assemble(&self.v, rails, &cgeq, &cieq, 0.0, 0.0)
+        let (mut a, mut rhs) = self.assemble_linear(rails, &cgeq, &cieq, 0.0, 0.0);
+        self.add_nonlinear(&mut a, &mut rhs, &self.v, vp);
+        (a, rhs)
     }
 }
 
@@ -1185,6 +1132,14 @@ mod tests {
         let initial_g = vco.g_mults[0];
         vco.set_analog_wear(0.05, 5);
         assert_ne!(vco.g_mults[0], initial_g);
+    }
+
+    #[test]
+    fn test_assemble_linear_exists() {
+        let vco = Vco303::new(48000.0);
+        let (a, _rhs) =
+            vco.assemble_linear((12.0, 5.333, 0.0, 0.0), &[0.0; 5], &[0.0; 5], 0.0, 0.0);
+        assert!(a[0][0] > 0.0);
     }
 
     /// Capture VCO Jacobians over several pitches, build the static fill pattern,

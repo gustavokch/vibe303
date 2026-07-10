@@ -439,7 +439,7 @@ impl Default for Plugin303Params {
                     if v == 0 {
                         "Off".to_string()
                     } else {
-                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.1)
+                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.01)
                     }
                 })),
 

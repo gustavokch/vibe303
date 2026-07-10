@@ -607,8 +607,8 @@ impl Voice {
 
         if tier == Tier::Ultra && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
-            self.vco.recalculate_luts_sync(self.age, tol_f64);
-            self.vco2.recalculate_luts_sync(self.age, tol_f64);
+            self.vco.recalculate_luts_async(self.age, tol_f64);
+            self.vco2.recalculate_luts_async(self.age, tol_f64);
             self.vco_dirty = false;
         }
     }
@@ -661,7 +661,6 @@ impl Voice {
         self.comp_low.reset();
         self.comp_high.reset();
         self.comp_ultra.reset();
-        self.vco_dirty = true;
     }
 
     /// Select the fidelity tier. Low routes to the TPT path; High routes to the
@@ -805,6 +804,35 @@ impl Voice {
                     OscWave::Square => 0.0,
                 };
                 let osc1 = raw + blep;
+                if self.current_note == 72 && !self.vco.is_fun {
+                    static mut DIAG_PREV: f32 = 0.0;
+                    static mut DIAG_FIRST_T: f64 = -1.0;
+                    static mut DIAG_LAST_T: f64 = 0.0;
+                    static mut DIAG_COUNT: i64 = 0;
+                    let y = osc1;
+                    let prev = unsafe { DIAG_PREV };
+                    if prev < 0.0 && y >= 0.0 {
+                        let frac = (-prev as f64) / ((y - prev) as f64);
+                        let t = self.vco.t_samples() as f64 + frac;
+                        unsafe {
+                            if DIAG_FIRST_T < 0.0 {
+                                DIAG_FIRST_T = t;
+                            } else {
+                                DIAG_LAST_T = t;
+                                DIAG_COUNT += 1;
+                            }
+                        }
+                    }
+                    unsafe { DIAG_PREV = y; }
+                    if self.vco.t_samples() == 17999 {
+                        unsafe {
+                            let freq = (DIAG_COUNT as f64 * 48000.0 / (DIAG_LAST_T - DIAG_FIRST_T)) as f32;
+                            eprintln!("Voice::render_tier DIAGNOSTIC: raw osc1 freq = {:.3} Hz (count={}, diff={:.3})", freq, DIAG_COUNT, DIAG_LAST_T - DIAG_FIRST_T);
+                            DIAG_FIRST_T = -1.0;
+                            DIAG_COUNT = 0;
+                        }
+                    }
+                }
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
                 let osc2 = if self.osc2_vol > 0.0 {
                     let raw2 = self.vco2.tick() * VCO_GAIN;
@@ -860,20 +888,13 @@ impl Voice {
 
         let p_base = self.current_pitch_st;
         let dp = match self.topology {
-            CircuitTopology::Fun => {
-                let p = p_base as f64;
-                let a3 = 1.890098269428e-06;
-                let a2 = -1.235688023706e-04;
-                let a1 = 1.379807114706e-03;
-                let a0 = 1.470079261033e-02;
-                (a3 * p * p * p + a2 * p * p + a1 * p + a0) as f32
-            }
+            CircuitTopology::Fun => 0.0f32,
             CircuitTopology::Accurate => {
                 let p = p_base as f64;
-                let a3 = 1.086727977676e-06;
-                let a2 = -1.587320947024e-04;
-                let a1 = 7.243160137061e-03;
-                let a0 = -9.818881692753e-02;
+                let a3 = -3.973856215564e-06;
+                let a2 = 1.285148664264e-03;
+                let a1 = -1.099182601094e-01;
+                let a0 = 2.812329062736e+00;
                 (a3 * p * p * p + a2 * p * p + a1 * p + a0) as f32
             }
         };
@@ -1088,8 +1109,8 @@ impl Voice {
                 CompTolerance::Five => 0.05,
                 CompTolerance::Ten => 0.1,
             };
-            self.vco.recalculate_luts_sync(self.age, tol_f64);
-            self.vco2.recalculate_luts_sync(self.age, tol_f64);
+            self.vco.recalculate_luts_async(self.age, tol_f64);
+            self.vco2.recalculate_luts_async(self.age, tol_f64);
             self.vco.set_thermal(self.thermal_noise_state);
             self.vco2.set_thermal(self.thermal_noise_state);
         }

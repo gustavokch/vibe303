@@ -27,6 +27,10 @@ fn realized_hz(v: &mut Vco303, sr: f32, nominal: f32) -> f32 {
 
 fn main() {
     let sr = 48000.0;
+    eprintln!("Warming VCO pitch LUT cache...");
+    Vco303::warm_cache(sr as f32, false);
+    Vco303::warm_cache(sr as f32, true);
+    eprintln!("Cache warmed. Running sweep...");
     println!("topology,note,nominal_hz,realized_hz");
     for &is_fun in &[false, true] {
         let topo_str = if is_fun { "fun" } else { "accurate" };
@@ -36,7 +40,8 @@ fn main() {
             v.set_fun(is_fun);
             v.recalculate_luts_sync(0, 0.0);
             v.set_thermal(0);
-            v.set_freq(nominal);
+            let raw_cv = plugin303::dsp::vco::cv_for_freq(nominal as f64);
+            v.set_cv(raw_cv);
             let period_samples = (sr / nominal).max(1.0);
             let warm = (sr * 0.1).max(period_samples * 2.0) as usize;
             for _ in 0..warm {
