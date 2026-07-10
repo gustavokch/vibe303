@@ -108,6 +108,14 @@ pub struct Voice {
     drift_pitch: DriftGenerator,
     /// VCF cutoff random walk drift generator.
     drift_cutoff: DriftGenerator,
+    /// Thermal noise-induced pitch drift generator.
+    drift_pitch_thermal: DriftGenerator,
+    /// Age-induced pitch drift generator.
+    drift_pitch_age: DriftGenerator,
+    /// Thermal noise-induced cutoff drift generator.
+    drift_cutoff_thermal: DriftGenerator,
+    /// Age-induced cutoff drift generator.
+    drift_cutoff_age: DriftGenerator,
     /// Accent decay integrator accumulator.
     accent_acc: f32,
 
@@ -168,6 +176,8 @@ pub struct Voice {
     age: f32,
     /// Component temperature drift amount in [0, 1].
     drift: f32,
+    /// Thermal noise level in [0, 50].
+    thermal_noise: i32,
     /// VCA envelope trigger mode.
     vca_env_mode: VcaEnvMode,
     /// Current gate-on state of the voice.
@@ -216,6 +226,10 @@ impl Voice {
             veg: AdsrEnv::new(sr),
             drift_pitch: DriftGenerator::new(1337),
             drift_cutoff: DriftGenerator::new(7331),
+            drift_pitch_thermal: DriftGenerator::new(42),
+            drift_pitch_age: DriftGenerator::new(99),
+            drift_cutoff_thermal: DriftGenerator::new(17),
+            drift_cutoff_age: DriftGenerator::new(77),
             accent_acc: 0.0,
 
             tier: Tier::Low,
@@ -245,6 +259,7 @@ impl Voice {
             drive: 1.0,
             age: 0.0,
             drift: 0.0,
+            thermal_noise: 0,
             vca_env_mode: VcaEnvMode::Envelope,
             gate: false,
             accent_active: false,
@@ -282,6 +297,7 @@ impl Voice {
         vca_env_mode: VcaEnvMode,
         comp_age: f32,
         comp_drift: f32,
+        thermal_noise: i32,
         topology: CircuitTopology,
         sweep_pos: f32,
     ) {
@@ -289,6 +305,7 @@ impl Voice {
         self.tuning_offset = tuning_cents;
         self.age = comp_age;
         self.drift = comp_drift;
+        self.thermal_noise = thermal_noise;
 
         let (
             final_osc1_pitch,
@@ -462,6 +479,10 @@ impl Voice {
         self.veg.reset();
         self.drift_pitch = DriftGenerator::new(1337);
         self.drift_cutoff = DriftGenerator::new(7331);
+        self.drift_pitch_thermal = DriftGenerator::new(42);
+        self.drift_pitch_age = DriftGenerator::new(99);
+        self.drift_cutoff_thermal = DriftGenerator::new(17);
+        self.drift_cutoff_age = DriftGenerator::new(77);
         self.accent_acc = 0.0;
         self.tier = Tier::Low;
         self.topology = CircuitTopology::Accurate;
@@ -596,15 +617,23 @@ impl Voice {
     /// tier (or crossfading), and applying the VCA envelope and master volume.
     pub fn tick(&mut self) -> f32 {
         // --- 1. Compute Pitch & Cutoff Modulations ---
-        // Pitch drift (LFO random walk)
-        let drift_pitch_val = self.drift_pitch.tick(0.2, self.sr); // slow 0.2 Hz walk
-        let pitch_drift_st = drift_pitch_val * self.drift * 0.5; // Up to +-50 cents
+        // Independent drift sources: thermal and age
+        let thermal_pitch_val = self.drift_pitch_thermal.tick(0.2, self.sr);
+        let age_pitch_val = self.drift_pitch_age.tick(0.15, self.sr);
+
+        // Scale to ±25 cents at max parameter values
+        // thermal_noise: 0-50 → scale to 0.25 semitones at 50
+        // age: 0-100 → scale to 0.25 semitones at 100
+        let thermal_pitch_st = thermal_pitch_val * 0.25 * (self.thermal_noise as f32 / 50.0);
+        let age_pitch_st = age_pitch_val * 0.25 * (self.age / 100.0);
+
+        let pitch_drift_st = thermal_pitch_st + age_pitch_st;
 
         // Tuning offset
         let tuning_st = self.tuning_offset / 100.0; // cents to semitones
 
         // Age-related pitch tracking stretch
-        let stretch_st = self.age * 0.02 * (self.current_note as f32 - 60.0) / 12.0;
+        let stretch_st = (self.age / 100.0) * 0.2 * (self.current_note as f32 - 60.0) / 12.0;
 
         // Apply pitch update
         let osc1_f = self.base_hz * 2.0f32.powf((self.osc1_pitch_st + tuning_st + pitch_drift_st + stretch_st) / 12.0);
@@ -624,13 +653,19 @@ impl Voice {
         }
 
         // --- 2. Filter Cutoff Modulation ---
-        // Cutoff drift (LFO random walk)
-        let drift_cut_val = self.drift_cutoff.tick(0.1, self.sr);
-        let cutoff_drift_factor = 1.0 + drift_cut_val * self.drift * 0.15; // Up to +-15%
+        // Independent cutoff drift sources: thermal and age
+        let thermal_cut_val = self.drift_cutoff_thermal.tick(0.1, self.sr);
+        let age_cut_val = self.drift_cutoff_age.tick(0.08, self.sr);
+
+        // Scale to ±25% at max (proportional to cents on logarithmic scale)
+        let thermal_cut_factor = thermal_cut_val * 0.25 * (self.thermal_noise as f32 / 50.0);
+        let age_cut_factor = age_cut_val * 0.25 * (self.age / 100.0);
+
+        let cutoff_drift_factor = 1.0 + thermal_cut_factor + age_cut_factor;
 
         // Age-related cutoff and resonance scaling
-        let age_cutoff_factor = 1.0 - self.age * 0.15;
-        let age_reso_factor = 1.0 - self.age * 0.20;
+        let age_cutoff_factor = 1.0 - (self.age / 100.0) * 0.15;
+        let age_reso_factor = 1.0 - (self.age / 100.0) * 0.20;
 
         // Accent accumulator charging
         let target_accent = if self.accent_active { 1.0 } else { 0.0 };

@@ -126,6 +126,7 @@ impl Plugin for Plugin303 {
             self.params.vca_env_mode.value(),
             self.params.comp_age.value(),
             self.params.comp_drift.value(),
+            self.params.thermal_noise.value(),
             self.params.topology.value(),
             self.params.sweep_pos.value(),
         );
