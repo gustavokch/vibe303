@@ -325,10 +325,10 @@ impl Voice {
             accent_knob_val: 0.0,
             master_volume: 0.0,
             drive: 1.0,
-            age: 0,
+            age: 1,
             tolerance: CompTolerance::Zero,
             comp_seed: 0,
-            thermal_noise: 0,
+            thermal_noise: 1,
             drift: 0.0,
             temperature: 20.0,
             thermal_noise_state: -1,
@@ -451,6 +451,10 @@ impl Voice {
                 || self.pending_tier == Some(Tier::Ultra)
                 || self.xfade_from.is_some()
             {
+                if comp_age == 0 {
+                    comp_age = 1
+                }
+
                 self.vco.recalculate_luts_async(comp_age, tol_f64);
                 self.vco2.recalculate_luts_async(comp_age, tol_f64);
                 self.vco_dirty = false;
@@ -640,8 +644,8 @@ impl Voice {
 
         if tier == Tier::Ultra && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
-            self.vco.recalculate_luts_sync(self.age, tol_f64);
-            self.vco2.recalculate_luts_sync(self.age, tol_f64);
+            self.vco.recalculate_luts_async(self.age, tol_f64);
+            self.vco2.recalculate_luts_async(self.age, tol_f64);
             self.vco_dirty = false;
         }
     }
