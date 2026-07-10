@@ -14,9 +14,21 @@ use plugin303::dsp::voice::Voice;
 
 #[global_allocator]
 static ALLOC: AllocDisabler = AllocDisabler;
+/// Pre-warm the VCO LUT cache exactly once across all parallel test threads.
+/// Without this, `recalculate_luts_async` spawns background threads that
+/// compete for CPU with the test's tight VCO tick loops.
+fn ensure_lut_cache_warm() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        Vco303::warm_cache(48_000.0, false);
+        Vco303::warm_cache(48_000.0, true);
+    });
+}
 
 #[test]
 fn voice_hot_path_is_alloc_free() {
+    ensure_lut_cache_warm();
     let mut voice = Voice::new(48_000.0);
     voice.note_on(57); // setup (may allocate) happens before the guarded region
     reset_violation_count();
@@ -36,9 +48,10 @@ fn voice_hot_path_is_alloc_free() {
 
 #[test]
 fn ultra_voice_hot_path_is_alloc_free() {
+    ensure_lut_cache_warm();
     use plugin303::dsp::filter::Tier;
     let mut voice = Voice::new(48_000.0); // full Ultra chain: VCO + 4× OS + nodal ladder
-    voice.set_tier(Tier::Ultra);
+    voice.set_tier_immediate(Tier::Ultra);
     voice.set_cutoff(1_000.0);
     voice.set_reso(0.5);
     voice.note_on(57);
@@ -62,6 +75,7 @@ fn ultra_voice_hot_path_is_alloc_free() {
 
 #[test]
 fn high_voice_hot_path_is_alloc_free() {
+    ensure_lut_cache_warm();
     use plugin303::dsp::filter::Tier;
     let mut voice = Voice::new(48_000.0); // High chain: polyBLEP saw + 2× OS + nodal ladder
     voice.set_tier(Tier::High);
@@ -88,16 +102,22 @@ fn high_voice_hot_path_is_alloc_free() {
 
 #[test]
 fn tier_crossfade_hot_path_is_alloc_free() {
+    ensure_lut_cache_warm();
     use plugin303::dsp::filter::Tier;
     // A crossfade renders BOTH tiers per sample — the heaviest hot path. Must
     // stay alloc-free while the fade is in flight.
     let mut voice = Voice::new(48_000.0);
-    voice.set_tier(Tier::Low);
+    // Initialize VCO LUTs and warm-start both backends outside the guard
+    voice.set_tier_immediate(Tier::Ultra);
     voice.set_cutoff(1_000.0);
     voice.set_reso(0.5);
     voice.note_on(57);
     for _ in 0..128 {
-        voice.tick(); // warm-start both backends outside the guard
+        voice.tick();
+    }
+    voice.set_tier_immediate(Tier::Low);
+    for _ in 0..128 {
+        voice.tick();
     }
     reset_violation_count();
     assert_no_alloc(|| {
@@ -117,6 +137,7 @@ fn tier_crossfade_hot_path_is_alloc_free() {
 
 #[test]
 fn voice_reset_is_alloc_free() {
+    ensure_lut_cache_warm();
     use plugin303::dsp::filter::Tier;
     // nih-plug's `reset()` may fire from the audio thread, so `Voice::reset` must
     // not allocate. It resets in place (no `Voice::new` reconstruction) precisely
@@ -172,6 +193,7 @@ fn ladder_vcf_hot_path_is_alloc_free() {
 
 #[test]
 fn vco_hot_path_is_alloc_free() {
+    ensure_lut_cache_warm();
     let mut osc = Vco303::new(48_000.0);
     osc.set_freq(231.0);
     for _ in 0..128 {

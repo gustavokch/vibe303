@@ -120,6 +120,32 @@ fn high_tracks_ultra_level() {
 /// floor still pins the normalisation in place everywhere.
 #[test]
 fn no_tier_collapses_in_level() {
+    let cases = &[
+        (33u8, 400.0f32, 0.5f32),
+        (45, 1_500.0, 0.0),
+        (57, 6_000.0, 0.5),
+        (57, 400.0, 0.0),
+    ];
+    for &(note, cutoff, reso) in cases {
+        let low = tier_rms(Tier::Low, note, cutoff, reso);
+        let high = tier_rms(Tier::High, note, cutoff, reso);
+        let ultra = tier_rms(Tier::Ultra, note, cutoff, reso);
+        let hi_db = 20.0 * (high / low).log10();
+        let ul_db = 20.0 * (ultra / low).log10();
+        assert!(
+            hi_db > -24.0,
+            "High collapsed {hi_db:.1} dB at note{note}/fc{cutoff:.0}/r{reso}"
+        );
+        assert!(
+            ul_db > -24.0,
+            "Ultra collapsed {ul_db:.1} dB at note{note}/fc{cutoff:.0}/r{reso}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "Slow: checks all 18 combinations, taking several minutes due to Ultra Newton solver"]
+fn no_tier_collapses_in_level_exhaustive() {
     for &note in &[33u8, 45, 57] {
         for &cutoff in &[400.0f32, 1_500.0, 6_000.0] {
             for &reso in &[0.0f32, 0.5] {

@@ -19,11 +19,9 @@
 
 use super::diode::Diode1N4148;
 use super::filter::Filter303;
+use super::linalg::lu_solve;
 use super::linalg_static::ladder_lu_solve;
 use std::f64::consts::TAU;
-
-#[cfg(test)]
-use super::linalg::lu_solve;
 
 // Node indices into the 10-node rail system.
 const TL: usize = 0;
@@ -142,6 +140,11 @@ pub struct LadderVcf {
     dc_lp: f64,
     /// High-pass pole coefficient for `dc_lp`, derived from `sr`.
     dc_alpha: f64,
+    /// Component tolerance and aging multipliers
+    c_mults: [f64; 4],
+    instance_id: u32,
+    thermal_noise: i32,
+    noise_seed: u32,
     /// Output tap selection (2 | 3 | 4 poles)
     pub poles: usize,
     /// Diagnostic: Newton iters used on the last `solve_sample` (max over the
@@ -168,11 +171,20 @@ impl LadderVcf {
             i_prev: [0.0; 4],
             dc_lp: 0.0,
             dc_alpha: 1.0 - (-TAU * RESO_HP_HZ / sr as f64).exp(),
+            c_mults: [1.0; 4],
+            instance_id: 0,
+            thermal_noise: 0,
+            noise_seed: 54321,
             poles: 4,
             dbg_iters: 0,
         };
         f.set_cutoff(1_000.0);
         f
+    }
+
+    pub fn set_instance_id(&mut self, id: u32) {
+        self.instance_id = id;
+        self.noise_seed = 54321u32.wrapping_add(id * 1000);
     }
 
     /// Diagnostic: override the Q9 feedback gain (sign + magnitude) for
@@ -186,6 +198,40 @@ impl LadderVcf {
     pub fn set_cal(&mut self, cal: f64) {
         self.cal = cal;
         self.i0 = self.diode.n_vt * TAU * self.fc * C_REF * self.cal;
+    }
+
+    pub fn set_analog_wear(&mut self, tolerance: f64, age: i32) {
+        let mut seed = 54321u32.wrapping_add(self.instance_id * 1000);
+        let mut next_f64 = || {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            (seed as f64) / (std::u32::MAX as f64)
+        };
+        let mut next_gauss = || {
+            let mut u1 = next_f64();
+            if u1 < 1e-6 {
+                u1 = 1e-6;
+            }
+            let u2 = next_f64();
+            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+        };
+
+        let systematic_c = -(age as f64 * 0.01).min(0.10);
+        let bjt_age_factor = 1.0 - (age as f64 * 0.01).min(0.10);
+
+        self.cal = CAL * bjt_age_factor;
+        self.set_cal(self.cal);
+
+        for m in self.c_mults.iter_mut() {
+            let c_dev = next_gauss() * (tolerance / 3.0 + age as f64 * 0.002);
+            *m = (1.0 + systematic_c + c_dev).clamp(0.90, 1.10);
+        }
+    }
+
+    pub fn set_thermal(&mut self, thermal_noise: i32) {
+        self.thermal_noise = thermal_noise;
+        let temp_c = 25.0 + thermal_noise as f64 * 10.0;
+        self.diode.set_temp(temp_c);
+        self.set_cal(self.cal); // Recalculate i0
     }
 
     /// Assemble the MNA system `(G, b)` at iterate `v`, fixed cap companions, the
@@ -294,11 +340,12 @@ impl LadderVcf {
         let mut v = v0;
         for it in 0..MAX_ITERS {
             let (g, b) = self.assemble(&v, vin, kfb, cfb, cgeq, cieq, gmin);
-            // Static-pattern, no-pivot LU (validated bit-equal to dense
-            // `lu_solve::<N>` over the operating range; ~2.5× faster). A singular
-            // diagonal would yield NaN — caught by the `is_finite` guard below,
-            // dropping this Newton step to the gmin homotopy as the dense path did.
-            let sol = ladder_lu_solve(g, b);
+            // Dense partial-pivot LU. `lu_solve` returns `None` on a singular
+            // diagonal (degenerate pivot) — that's the same failure mode the
+            // old `is_finite` guard caught, just surfaced earlier as a `None`
+            // instead of a NaN. Either way it drops this Newton attempt to the
+            // gmin homotopy in `solve_sample`.
+            let sol = lu_solve::<N>(g, b)?;
             let mut dmax = 0.0f64;
             for d in 0..N {
                 let dd = (sol[d] - v[d]).abs();
@@ -331,9 +378,19 @@ impl LadderVcf {
         let mut cieq = [0.0f64; 4];
         for j in 0..4 {
             let (_, _, cap) = CAPS[j];
-            let geq = 2.0 * cap / dt;
+            let cap_m = cap * self.c_mults[j];
+            let geq = 2.0 * cap_m / dt;
             cgeq[j] = geq;
-            cieq[j] = geq * self.vc_prev[j] + self.i_prev[j];
+
+            let mut i_noise = 0.0;
+            if (self.thermal_noise as f64) > 0.1 {
+                self.noise_seed = self.noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
+                let white = ((self.noise_seed as f64) / (std::u32::MAX as f64)) * 2.0 - 1.0;
+                // Scale companion current noise: max 1.0e-7 A at thermal_noise = 21
+                i_noise = white * 1e-7 * (self.thermal_noise as f64 / 21.0);
+            }
+
+            cieq[j] = geq * self.vc_prev[j] + self.i_prev[j] + i_noise;
         }
 
         // Fast path: warm-started Newton at gmin = 0. On stall, descend a gmin
@@ -428,7 +485,8 @@ impl LadderVcf {
         let mut cieq = [0.0f64; 4];
         for j in 0..4 {
             let (_, _, cap) = CAPS[j];
-            let geq = 2.0 * cap / dt;
+            let cap_m = cap * self.c_mults[j];
+            let geq = 2.0 * cap_m / dt;
             cgeq[j] = geq;
             cieq[j] = geq * self.vc_prev[j] + self.i_prev[j];
         }

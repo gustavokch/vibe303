@@ -24,4 +24,4 @@ strip = "none"
 [profile.profiling-thin]
 inherits = "profiling"
 lto = "thin"
-codegen-units = 4   # thin-LTO benefits from >1 CGU for better attribution
+codegen-units = 4      # thin-LTO benefits from >1 CGU for better attribution
