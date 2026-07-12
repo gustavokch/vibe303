@@ -171,6 +171,14 @@ pub struct Voice {
     drift_pitch: DriftGenerator,
     /// VCF cutoff random walk drift generator.
     drift_cutoff: DriftGenerator,
+    /// Thermal noise-induced pitch drift generator.
+    drift_pitch_thermal: DriftGenerator,
+    /// Age-induced pitch drift generator.
+    drift_pitch_age: DriftGenerator,
+    /// Thermal noise-induced cutoff drift generator.
+    drift_cutoff_thermal: DriftGenerator,
+    /// Age-induced cutoff drift generator.
+    drift_cutoff_age: DriftGenerator,
     /// Accent decay integrator accumulator.
     accent_acc: f32,
 
@@ -231,10 +239,10 @@ pub struct Voice {
     tolerance: CompTolerance,
     /// Seed for component variation.
     comp_seed: i32,
-    /// Thermal noise setting in [0, 21].
-    thermal_noise: i32,
     /// Voice drift amount in [0.0, 1.0].
     drift: f32,
+    /// Thermal noise level in [0, 50].
+    thermal_noise: i32,
     /// Dynamic operating temperature in degrees Celsius (20.0 to 45.0)
     temperature: f32,
     /// Cached thermal state to avoid rebuilding LUTs.
@@ -308,6 +316,10 @@ impl Voice {
             veg: AdsrEnv::new(sr),
             drift_pitch: DriftGenerator::new(1337),
             drift_cutoff: DriftGenerator::new(7331),
+            drift_pitch_thermal: DriftGenerator::new(42),
+            drift_pitch_age: DriftGenerator::new(99),
+            drift_cutoff_thermal: DriftGenerator::new(17),
+            drift_cutoff_age: DriftGenerator::new(77),
             accent_acc: 0.0,
 
             tier: Tier::Low,
@@ -338,8 +350,8 @@ impl Voice {
             age: 0,
             tolerance: CompTolerance::Zero,
             comp_seed: 0,
-            thermal_noise: 0,
             drift: 0.0,
+            thermal_noise: 0,
             temperature: 20.0,
             thermal_noise_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
@@ -647,6 +659,10 @@ impl Voice {
         self.veg.reset();
         self.drift_pitch = DriftGenerator::new(1337);
         self.drift_cutoff = DriftGenerator::new(7331);
+        self.drift_pitch_thermal = DriftGenerator::new(42);
+        self.drift_pitch_age = DriftGenerator::new(99);
+        self.drift_cutoff_thermal = DriftGenerator::new(17);
+        self.drift_cutoff_age = DriftGenerator::new(77);
         self.accent_acc = 0.0;
         self.temperature = 20.0;
         self.tier = Tier::Low;
@@ -873,6 +889,17 @@ impl Voice {
         self.temperature += alpha * (target_temp - self.temperature);
 
         // --- 1. Compute Pitch & Cutoff Modulations ---
+        // Independent drift sources: thermal and age
+        let thermal_pitch_val = self.drift_pitch_thermal.tick(0.2, self.sr);
+        let age_pitch_val = self.drift_pitch_age.tick(0.15, self.sr);
+
+        // Scale to ±25 cents at max parameter values
+        // thermal_noise: 0-50 → scale to 0.25 semitones at 50
+        // age: 0-100 → scale to 0.25 semitones at 100
+        let thermal_pitch_st = thermal_pitch_val * 0.25 * (self.thermal_noise as f32 / 50.0);
+        let age_pitch_st = age_pitch_val * 0.25 * (self.age / 100.0);
+
+        let pitch_drift_st = thermal_pitch_st + age_pitch_st;
         // Pitch glide slew
         let glide_time_ms = 10.0 + self.glide_knob * 75.0;
         let glide_alpha = 1.0 - (-1.0 / (glide_time_ms * 0.001 * self.sr)).exp();
@@ -886,6 +913,8 @@ impl Voice {
         // Tuning offset
         let tuning_st = self.tuning_offset_f / 100.0; // cents to semitones
 
+        // Age-related pitch tracking stretch
+        let stretch_st = (self.age / 100.0) * 0.2 * (self.current_note as f32 - 60.0) / 12.0;
         let p_base = self.current_pitch_st;
         let dp = match self.topology {
             CircuitTopology::Fun => 0.0f32,
@@ -950,6 +979,19 @@ impl Voice {
         }
 
         // --- 2. Filter Cutoff Modulation ---
+        // Independent cutoff drift sources: thermal and age
+        let thermal_cut_val = self.drift_cutoff_thermal.tick(0.1, self.sr);
+        let age_cut_val = self.drift_cutoff_age.tick(0.08, self.sr);
+
+        // Scale to ±25% at max (proportional to cents on logarithmic scale)
+        let thermal_cut_factor = thermal_cut_val * 0.25 * (self.thermal_noise as f32 / 50.0);
+        let age_cut_factor = age_cut_val * 0.25 * (self.age / 100.0);
+
+        let cutoff_drift_factor = 1.0 + thermal_cut_factor + age_cut_factor;
+
+        // Age-related cutoff and resonance scaling
+        let age_cutoff_factor = 1.0 - (self.age / 100.0) * 0.15;
+        let age_reso_factor = 1.0 - (self.age / 100.0) * 0.20;
         // Cutoff drift (LFO pink noise walk + systematic temperature drift)
         let drift_cut_val = self.drift_cutoff.tick(0.1, self.sr);
         let cutoff_drift_factor = 1.0 + drift_cut_val * 0.05 * self.drift;
