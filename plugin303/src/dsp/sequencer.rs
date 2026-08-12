@@ -18,6 +18,7 @@ pub struct Sequencer {
     
     // Pitch slew state for slide/glide
     /// Current slewed pitch frequency.
+    #[allow(dead_code)]
     current_freq: f32,
     /// target pitch frequency of the active step.
     target_freq: f32,
@@ -33,6 +34,8 @@ pub struct Sequencer {
     pub velocity: f32,
     /// Output envelope note trigger indicator.
     pub trigger: bool,
+    /// Output step slide state.
+    pub slide: bool,
 }
 
 /// Host transport and synchronization data passed to the sequencer.
@@ -60,6 +63,7 @@ impl Sequencer {
             accent: false,
             velocity: 0.0,
             trigger: false,
+            slide: false,
         }
     }
 
@@ -71,6 +75,7 @@ impl Sequencer {
         self.was_playing = false;
         self.gate = false;
         self.trigger = false;
+        self.slide = false;
     }
 
     /// Advance the sequencer by one sample. Returns (freq, gate, accent, velocity, trigger)
@@ -82,7 +87,7 @@ impl Sequencer {
         length: usize,
         tempo_param: f32,
         sync: bool,
-        glide_param: f32,
+        _glide_param: f32,
     ) {
         if !transport.playing {
             self.gate = false;
@@ -135,21 +140,9 @@ impl Sequencer {
         let step_freq = 440.0 * 2.0f32.powf((base_note as f32 - 69.0) / 12.0);
         self.target_freq = step_freq;
 
-        // Slide / Glide logic:
-        // Glide slew coefficient. 0.0 = instant, 1.0 = extremely slow.
-        // We configure it so 0.5 is a classic 303 slide speed (~80 ms).
-        let slide_time_ms = 10.0 + glide_param * 400.0; // 10 ms to 410 ms slide
-        let glide_alpha = 1.0 - (-1.0 / (slide_time_ms * 0.001 * sr)).exp();
-        
-        // Slew the pitch if slide is active or if we are sliding from the previous step
         let prev_step = steps[(step_idx + length - 1) % length];
-        let sliding = prev_step.slide && prev_step.gate != StepGate::Rest;
-        if sliding {
-            self.current_freq += glide_alpha * (self.target_freq - self.current_freq);
-        } else {
-            self.current_freq = self.target_freq;
-        }
-        self.freq = self.current_freq;
+        self.slide = prev_step.slide && prev_step.gate != StepGate::Rest;
+        self.freq = self.target_freq;
 
         // Gate state:
         let is_note_step = step.gate != StepGate::Rest;

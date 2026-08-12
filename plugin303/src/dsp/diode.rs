@@ -6,9 +6,7 @@
 
 use super::expmath::{fast_exp, fast_exp_branchless, fast_pow_pos};
 
-/// Thermal voltage at 300 K.
-const VT: f64 = 0.025_852;
-
+/// Thermal voltage at 300 K is now dynamically calculated.
 /// 1N4148 small-signal diode for the nodal ladder solver.
 #[derive(Clone, Copy, Debug)]
 pub struct Diode1N4148 {
@@ -25,20 +23,24 @@ pub struct Diode1N4148 {
 
 impl Diode1N4148 {
     pub fn new() -> Self {
-        let is = 1.42e-11;
-        let n = 1.7;
-        let n_vt = n * VT;
-        // SPICE pnjlim: vcrit = nVt * ln(nVt / (IS * sqrt(2))).
-        let vcrit = n_vt * (n_vt / (is * std::f64::consts::SQRT_2)).ln();
-        Self {
-            is,
-            n,
-            n_vt,
-            vcrit,
+        let mut d = Self {
+            is: 1.42e-11,
+            n: 1.7,
+            n_vt: 0.0,
+            vcrit: 0.0,
             cjo: 1.74e-12,
             vj: 0.75,
             m: 0.333,
-        }
+        };
+        d.set_temp(25.0);
+        d
+    }
+
+    pub fn set_temp(&mut self, temp_c: f64) {
+        let tk = temp_c + 273.15;
+        let vt = 1.380649e-23 * tk / 1.602176634e-19;
+        self.n_vt = self.n * vt;
+        self.vcrit = self.n_vt * (self.n_vt / (self.is * std::f64::consts::SQRT_2)).ln();
     }
 
     /// MNA contribution: returns `(I, g)` = (current into the junction,

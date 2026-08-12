@@ -78,9 +78,9 @@ const CP_RESET_DELTA: f64 = 3.0;
 /// `K` anchors span MIDI `LUT_MIDI_LO`..`+ (K-1)·LUT_MIDI_STEP`; `set_freq` does a
 /// log-frequency lookup + lerp (RT-safe). The `CV_FIT` quadratic alone is ~1.4 %
 /// (worse — ~6 % — at the low end), too coarse for instrument-wide pitch.
-const LUT_K: usize = 17;
+const LUT_K: usize = 25;
 const LUT_MIDI_LO: f64 = 24.0; // C1 ≈ 32.7 Hz
-const LUT_MIDI_STEP: f64 = 3.0; // every 3 semitones → top anchor MIDI 72 (C5 ≈ 523 Hz)
+const LUT_MIDI_STEP: f64 = 3.0; // every 3 semitones → top anchor MIDI 96 (C7 ≈ 2093 Hz)
 
 fn lut_midi(i: usize) -> f64 {
     LUT_MIDI_LO + i as f64 * LUT_MIDI_STEP
@@ -97,7 +97,7 @@ fn midi_hz(m: f64) -> f64 {
 /// entry per *distinct* sample rate and is never freed: bounded by the handful
 /// of rates a host runs in a process lifetime, so the unbounded `Vec` is a
 /// non-issue (a few hundred bytes), not a leak worth a cap.
-static LUT_CACHE: Mutex<Vec<(u32, [f64; LUT_K])>> = Mutex::new(Vec::new());
+static LUT_CACHE: Mutex<Vec<(u64, [f64; LUT_K])>> = Mutex::new(Vec::new());
 
 /// Add a current `Σ termsⱼ·Vⱼ + constant` *leaving* `node` to the KCL system.
 #[inline]
@@ -157,6 +157,38 @@ struct CapDef {
     c: f64,
 }
 
+pub struct VcoLutBuffer {
+    buffer_0: *mut [[f64; LUT_K]; 22],
+    buffer_1: *mut [[f64; LUT_K]; 22],
+    pub active_ptr: std::sync::atomic::AtomicPtr<[[f64; LUT_K]; 22]>,
+    pub sequence: std::sync::atomic::AtomicU64,
+}
+
+unsafe impl Send for VcoLutBuffer {}
+unsafe impl Sync for VcoLutBuffer {}
+
+impl VcoLutBuffer {
+    pub fn new(nominal_lut: [f64; LUT_K]) -> Self {
+        let b0 = Box::into_raw(Box::new([nominal_lut; 22]));
+        let b1 = Box::into_raw(Box::new([nominal_lut; 22]));
+        Self {
+            buffer_0: b0,
+            buffer_1: b1,
+            active_ptr: std::sync::atomic::AtomicPtr::new(b0),
+            sequence: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl Drop for VcoLutBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = Box::from_raw(self.buffer_0);
+            let _ = Box::from_raw(self.buffer_1);
+        }
+    }
+}
+
 pub struct Vco303 {
     sr: f64,
     npn: BjtParams,
@@ -170,6 +202,8 @@ pub struct Vco303 {
     /// Trapezoidal cap state (v_prev, i_prev) for the 5 caps.
     cvp: [f64; 5],
     cip: [f64; 5],
+    r_mults: [f64; 15],
+    c_mults: [f64; 5],
     /// Samples since note-on (for the rail self-start ramp).
     t_samples: u64,
     /// DC blocker state for the `o_r` saw output.
@@ -177,11 +211,15 @@ pub struct Vco303 {
     dc_y1: f32,
     /// DC-blocker pole, derived from `sr` so the HP corner is rate-invariant.
     dc_r: f32,
-    /// Per-note refined-CV pitch LUT (F6.6), filled from the per-sr cache at
-    /// construction. `set_freq` lerps it — no render, no alloc (RT-safe).
-    cv_lut: [f64; LUT_K],
+    /// Double-buffered background LUTs
+    pub lut_buffer: std::sync::Arc<VcoLutBuffer>,
+    /// Per-note refined-CV pitch LUT (F6.6), filled from the active double-buffer
+    pub cv_lut: [f64; LUT_K],
     pub wave: OscWave,
     pub sweep_pos: f64,
+    instance_id: u32,
+    thermal_noise: i32,
+    noise_seed: u32,
     /// Diagnostics: Newton iters used + whether the last sample fell to homotopy.
     #[doc(hidden)]
     pub dbg_iters: u32,
@@ -206,19 +244,26 @@ pub struct Vco303 {
     /// Internal; carried from the reset sample to the following sample.
     blep_pending: f32,
     /// Whether a reset occurred last tick (used by `blep_frac` smoke-test compat).
-    pub blep_frac: Option<f32>,   // kept for test compat; equals Some(alpha) on reset
+    pub blep_frac: Option<f32>,
+
+    // Synthesized square wave state
+    sq_y_prev: f32,
+    sq_blep_pending: f32,
 }
 
 impl Vco303 {
     pub fn new(sr: f32) -> Self {
         let mut o = Self::raw(sr);
-        o.cv_lut = Self::cv_lut_for(sr);
+        o.cv_lut = Self::cv_lut_for(sr, 0); // Default to thermal_noise=0
+        o.lut_buffer = std::sync::Arc::new(VcoLutBuffer::new(o.cv_lut));
         o
     }
 
     /// Bare construct with an empty LUT — used both by `new` (before attaching
     /// the cached LUT) and by the LUT builder's throwaway render instance.
     fn raw(sr: f32) -> Self {
+        let mut v = [0.0; NU];
+        v[CP] = 12.0; // numerical kick to prevent latch-up
         Self {
             sr: sr as f64,
             npn: BjtParams::n2n3904(),
@@ -226,38 +271,47 @@ impl Vco303 {
             diode: Diode1N4148::new(),
             jfet: Jfet::mpf104(),
             cv: 5.0,
-            v: [0.0; NU],
+            v,
             cvp: [0.0; 5],
             cip: [0.0; 5],
+            r_mults: [1.0; 15],
+            c_mults: [1.0; 5],
             t_samples: 0,
             dc_x1: 0.0,
             dc_y1: 0.0,
             // ~7.6 Hz HP corner (matches the legacy 0.999 @ 48 kHz) made
             // rate-invariant: r = exp(-2π·f_hp/sr).
             dc_r: (-2.0 * std::f32::consts::PI * DC_BLOCK_HZ / sr).exp(),
+            lut_buffer: std::sync::Arc::new(VcoLutBuffer::new([0.0; LUT_K])),
             cv_lut: [0.0; LUT_K],
             wave: OscWave::Saw,
             sweep_pos: 0.0,
+            instance_id: 0,
+            thermal_noise: 0,
+            noise_seed: 12345,
             dbg_iters: 0,
             dbg_homotopy: false,
             blep_now: 0.0,
             blep_next: 0.0,
             blep_pending: 0.0,
             blep_frac: None,
+            sq_y_prev: 0.0,
+            sq_blep_pending: 0.0,
         }
     }
 
     /// Return the refined-CV LUT for `sr`, building (and caching) it once. The
     /// build renders a throwaway VCO per anchor (secant), so it is gated behind
     /// the process-global cache — never repeated per voice / per `reset()`.
-    fn cv_lut_for(sr: f32) -> [f64; LUT_K] {
-        let key = sr.to_bits();
+    fn cv_lut_for(sr: f32, thermal_noise: i32) -> [f64; LUT_K] {
+        let key = ((sr.to_bits() as u64) << 32) | (thermal_noise as u64);
         if let Ok(cache) = LUT_CACHE.lock() {
             if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
                 return lut;
             }
         }
         let mut tmp = Self::raw(sr);
+        tmp.set_thermal_internal(thermal_noise);
         let mut lut = [0.0; LUT_K];
         for (i, slot) in lut.iter_mut().enumerate() {
             *slot = tmp.secant_cv(midi_hz(lut_midi(i)));
@@ -277,7 +331,8 @@ impl Vco303 {
         let mut f0 = self.measure_freq(cv0);
         let mut cv1 = cv0 + 0.1;
         let mut f1 = self.measure_freq(cv1);
-        for _ in 0..5 {
+        println!("secant_cv target={:.2}: cv0={:.6} -> f0={:.2}, cv1={:.6} -> f1={:.2}", target, cv0, f0, cv1, f1);
+        for step in 0..5 {
             let denom = f1 - f0;
             if denom.abs() < 1e-9 {
                 break;
@@ -287,6 +342,7 @@ impl Vco303 {
             f0 = f1;
             cv1 = cv2;
             f1 = self.measure_freq(cv1);
+            println!("  step {}: cv={:.6} -> f={:.2}", step, cv1, f1);
             if (f1 / target - 1.0).abs() < 1e-3 {
                 break;
             }
@@ -356,6 +412,139 @@ impl Vco303 {
         self.cv = cv;
     }
 
+    pub fn set_analog_wear(&mut self, tolerance: f64, age: i32) {
+        let mut seed = 12345u32.wrapping_add(self.instance_id * 1000);
+        let mut next_f64 = || {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            (seed as f64) / (std::u32::MAX as f64)
+        };
+        let mut next_gauss = || {
+            let mut u1 = next_f64();
+            if u1 < 1e-6 { u1 = 1e-6; }
+            let u2 = next_f64();
+            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+        };
+
+        let systematic_r = (age as f64 * 0.01).min(0.10);
+        let systematic_c = -(age as f64 * 0.01).min(0.10);
+
+        let bjt_age_factor = 1.0 - (age as f64 * 0.01).min(0.10);
+        self.npn.bf = BjtParams::n2n3904().bf * bjt_age_factor;
+        self.npn.br = BjtParams::n2n3904().br * bjt_age_factor;
+        self.pnp.bf = BjtParams::p2n3906().bf * bjt_age_factor;
+        self.pnp.br = BjtParams::p2n3906().br * bjt_age_factor;
+
+        for m in self.r_mults.iter_mut() {
+            let r_dev = next_gauss() * (tolerance / 3.0 + age as f64 * 0.002);
+            *m = (1.0 + systematic_r + r_dev).clamp(0.90, 1.10);
+        }
+        for m in self.c_mults.iter_mut() {
+            let c_dev = next_gauss() * (tolerance / 3.0 + age as f64 * 0.002);
+            *m = (1.0 + systematic_c + c_dev).clamp(0.90, 1.10);
+        }
+    }
+
+    pub fn set_thermal_internal(&mut self, thermal_noise: i32) {
+        let temp_c = 25.0 + thermal_noise as f64 * 10.0;
+        self.npn.set_temp(temp_c);
+        self.pnp.set_temp(temp_c);
+        self.diode.set_temp(temp_c);
+    }
+
+    pub fn set_thermal(&mut self, thermal_noise: i32) {
+        self.thermal_noise = thermal_noise;
+        self.set_thermal_internal(thermal_noise);
+        let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+        let noise_idx = thermal_noise.clamp(0, 21) as usize;
+        self.cv_lut = unsafe { (*active_ptr)[noise_idx] };
+    }
+
+    pub fn recalculate_luts_async(&self, age: i32, tolerance: f64) {
+        if age == 0 && tolerance == 0.0 {
+            let mut local_luts = [[0.0f64; LUT_K]; 22];
+            for noise_step in 0..22 {
+                local_luts[noise_step as usize] = Self::cv_lut_for(self.sr as f32, noise_step as i32);
+            }
+            let current_active = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+            let target_inactive = if current_active == self.lut_buffer.buffer_0 {
+                self.lut_buffer.buffer_1
+            } else {
+                self.lut_buffer.buffer_0
+            };
+            unsafe {
+                *target_inactive = local_luts;
+            }
+            self.lut_buffer.active_ptr.store(target_inactive, std::sync::atomic::Ordering::Release);
+            return;
+        }
+
+        let lut_buffer = self.lut_buffer.clone();
+        let sr = self.sr;
+        let instance_id = self.instance_id;
+        
+        let seq = lut_buffer.sequence.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        
+        std::thread::spawn(move || {
+            let mut temp_vco = Vco303::raw(sr as f32);
+            temp_vco.set_instance_id(instance_id);
+            temp_vco.set_analog_wear(tolerance, age);
+            
+            let mut local_luts = [[0.0f64; LUT_K]; 22];
+            for noise_step in 0..22 {
+                temp_vco.set_thermal_internal(noise_step);
+                for i in 0..LUT_K {
+                    local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
+                }
+            }
+            
+            let current_active = lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+            let target_inactive = if current_active == lut_buffer.buffer_0 {
+                lut_buffer.buffer_1
+            } else {
+                lut_buffer.buffer_0
+            };
+            
+            unsafe {
+                *target_inactive = local_luts;
+            }
+            
+            if lut_buffer.sequence.load(std::sync::atomic::Ordering::Acquire) == seq {
+                lut_buffer.active_ptr.store(target_inactive, std::sync::atomic::Ordering::Release);
+            }
+        });
+    }
+
+    pub fn recalculate_luts_sync(&self, age: i32, tolerance: f64) {
+        if age == 0 && tolerance == 0.0 {
+            let mut local_luts = [[0.0f64; LUT_K]; 22];
+            for noise_step in 0..22 {
+                local_luts[noise_step as usize] = Self::cv_lut_for(self.sr as f32, noise_step as i32);
+            }
+            let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+            unsafe {
+                *active_ptr = local_luts;
+            }
+            return;
+        }
+
+        let mut temp_vco = Vco303::raw(self.sr as f32);
+        temp_vco.set_instance_id(self.instance_id);
+        temp_vco.set_analog_wear(tolerance, age);
+        
+        let mut local_luts = [[0.0f64; LUT_K]; 22];
+        for noise_step in 0..22 {
+            temp_vco.set_thermal_internal(noise_step);
+            for i in 0..LUT_K {
+                local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
+            }
+        }
+        
+        let active_ptr = self.lut_buffer.active_ptr.load(std::sync::atomic::Ordering::Acquire);
+        unsafe {
+            *active_ptr = local_luts;
+        }
+    }
+
     pub fn set_wave(&mut self, wave: OscWave) {
         self.wave = wave;
     }
@@ -364,8 +553,22 @@ impl Vco303 {
         self.sweep_pos = pos;
     }
 
+    pub fn set_instance_id(&mut self, id: u32) {
+        self.instance_id = id;
+        self.noise_seed = 12345u32.wrapping_add(id * 1000);
+    }
+
+    pub fn get_c_mults(&self) -> [f64; 5] {
+        self.c_mults
+    }
+
+    pub fn get_r_mults(&self) -> [f64; 15] {
+        self.r_mults
+    }
+
     pub fn reset(&mut self) {
         self.v = [0.0; NU];
+        self.v[CP] = 12.0; // numerical kick
         self.cvp = [0.0; 5];
         self.cip = [0.0; 5];
         self.t_samples = 0;
@@ -394,27 +597,27 @@ impl Vco303 {
             CapDef {
                 p: Fix(vp),
                 q: Unk(CP),
-                c: 1e-8,
+                c: 1e-8 * self.c_mults[0],
             }, // C3 integrator
             CapDef {
                 p: Unk(BF),
                 q: Unk(N17),
-                c: 1e-8,
+                c: 1e-8 * self.c_mults[1],
             }, // C1
             CapDef {
                 p: Unk(PSI),
                 q: GND,
-                c: 1e-6,
+                c: 1e-6 * self.c_mults[2],
             }, // C2
             CapDef {
                 p: Unk(D_R),
                 q: Unk(O_R),
-                c: 1e-7,
+                c: 1e-7 * self.c_mults[3],
             }, // C90
             CapDef {
                 p: Unk(D_P),
                 q: Unk(O_P),
-                c: 1e-7,
+                c: 1e-7 * self.c_mults[4],
             }, // C80
         ]
     }
@@ -428,27 +631,28 @@ impl Vco303 {
         cgeq: &[f64; 5],
         cieq: &[f64; 5],
         gmin: f64,
+        i_noise: f64,
     ) -> ([[f64; NU]; NU], [f64; NU]) {
         let (vp, vh, cvb, cv) = rails;
         let mut a = [[0.0f64; NU]; NU];
         let mut rhs = [0.0f64; NU];
 
         // Resistors.
-        stamp_res(&mut a, &mut rhs, Fix(cvb), Unk(II), 1.0 / 220e3); // R77
-        stamp_res(&mut a, &mut rhs, Fix(cv), Unk(II), 1.0 / 220e3); // R7
-        stamp_res(&mut a, &mut rhs, Unk(II), GND, 1.0 / 4040.0); // R8
-        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(IB), 1.0 / 100e3); // R9
-        stamp_res(&mut a, &mut rhs, Unk(CP), Unk(IR), 1.0 / 4700.0); // R88
-        stamp_res(&mut a, &mut rhs, Unk(N10), Fix(vh), 1.0 / 10e3); // R6
-        stamp_res(&mut a, &mut rhs, Unk(BF), GND, 1.0 / 10e3); // R1
-        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(SH_IN), 1.0 / 100e3); // R2
-        stamp_res(&mut a, &mut rhs, Unk(N17), Unk(SH_IN), 1.0 / 10e3); // R3
-        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(PSI), 1.0 / 22e3); // R5
-        stamp_res(&mut a, &mut rhs, Fix(vh), Unk(PL), 1.0 / 10e3); // R4
-        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(D_R), 1.0 / 1e6); // R90
-        stamp_res(&mut a, &mut rhs, Unk(O_R), GND, 1.0 / 220e3); // R91
-        stamp_res(&mut a, &mut rhs, Unk(PL), Unk(D_P), 1.0 / 1e6); // R80
-        stamp_res(&mut a, &mut rhs, Unk(O_P), GND, 1.0 / 220e3); // R81
+        stamp_res(&mut a, &mut rhs, Fix(cvb), Unk(II), 1.0 / (220e3 * self.r_mults[0])); // R77
+        stamp_res(&mut a, &mut rhs, Fix(cv), Unk(II), 1.0 / (220e3 * self.r_mults[1])); // R7
+        stamp_res(&mut a, &mut rhs, Unk(II), GND, 1.0 / (4040.0 * self.r_mults[2])); // R8
+        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(IB), 1.0 / (100e3 * self.r_mults[3])); // R9
+        stamp_res(&mut a, &mut rhs, Unk(CP), Unk(IR), 1.0 / (4700.0 * self.r_mults[4])); // R88
+        stamp_res(&mut a, &mut rhs, Unk(N10), Fix(vh), 1.0 / (10e3 * self.r_mults[5])); // R6
+        stamp_res(&mut a, &mut rhs, Unk(BF), GND, 1.0 / (10e3 * self.r_mults[6])); // R1
+        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(SH_IN), 1.0 / (100e3 * self.r_mults[7])); // R2
+        stamp_res(&mut a, &mut rhs, Unk(N17), Unk(SH_IN), 1.0 / (10e3 * self.r_mults[8])); // R3
+        stamp_res(&mut a, &mut rhs, Fix(vp), Unk(PSI), 1.0 / (22e3 * self.r_mults[9])); // R5
+        stamp_res(&mut a, &mut rhs, Fix(vh), Unk(PL), 1.0 / (10e3 * self.r_mults[10])); // R4
+        stamp_res(&mut a, &mut rhs, Unk(BF), Unk(D_R), 1.0 / (1e6 * self.r_mults[11])); // R90
+        stamp_res(&mut a, &mut rhs, Unk(O_R), GND, 1.0 / (220e3 * self.r_mults[12])); // R91
+        stamp_res(&mut a, &mut rhs, Unk(PL), Unk(D_P), 1.0 / (1e6 * self.r_mults[13])); // R80
+        stamp_res(&mut a, &mut rhs, Unk(O_P), GND, 1.0 / (220e3 * self.r_mults[14])); // R81
 
         // Cap companions.
         let cdefs = self.caps(vp);
@@ -545,6 +749,9 @@ impl Vco303 {
             stamp_branch(&mut a, &mut rhs, ng, nd, ggd, igd - ggd * vgdj);
         }
 
+        // Inject physical noise current into integrator capacitor node CP
+        stamp(&mut a, &mut rhs, Unk(CP), &[], i_noise);
+
         // gmin + base leakage on every diagonal.
         for d in 0..NU {
             a[d][d] += gmin + GMIN_BASE;
@@ -560,10 +767,11 @@ impl Vco303 {
         rails: (f64, f64, f64, f64),
         cgeq: &[f64; 5],
         cieq: &[f64; 5],
+        i_noise: f64,
     ) -> Option<([f64; NU], u32)> {
         let mut v = v0;
         for it in 0..MAX_ITERS {
-            let (a, rhs) = self.assemble(&v, rails, cgeq, cieq, gmin);
+            let (a, rhs) = self.assemble(&v, rails, cgeq, cieq, gmin, i_noise);
             // Static-pattern, no-pivot LU (validated vs dense `lu_solve::<NU>`,
             // rel err ≪ TOL; ~10× fewer ops). NaN from a singular diagonal is
             // caught by the `is_finite` guard below → drops to the gmin homotopy.
@@ -619,8 +827,15 @@ impl Vco303 {
             cieq[j] = geq * self.cvp[j] + self.cip[j];
         }
 
+        let mut i_noise = 0.0;
+        if self.thermal_noise > 0 {
+            self.noise_seed = self.noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
+            let white = ((self.noise_seed as f64) / (std::u32::MAX as f64)) * 2.0 - 1.0;
+            i_noise = white * 5e-8 * (self.thermal_noise as f64 / 21.0);
+        }
+
         // Fast path: warm-started Newton at gmin=0; else descend a homotopy.
-        let v = match self.newton(0.0, self.v, rails, &cgeq, &cieq) {
+        let v = match self.newton(0.0, self.v, rails, &cgeq, &cieq, i_noise) {
             Some((v, it)) => {
                 self.dbg_iters = it;
                 self.dbg_homotopy = false;
@@ -632,7 +847,7 @@ impl Vco303 {
                 let mut its = 0;
                 let mut converged0 = false;
                 for &gmin in &[1e-1, 1e-2, 1e-3, 1e-4, 0.0] {
-                    match self.newton(gmin, vh, rails, &cgeq, &cieq) {
+                    match self.newton(gmin, vh, rails, &cgeq, &cieq, i_noise) {
                         Some((s, it)) => {
                             vh = s;
                             its += it;
@@ -658,52 +873,33 @@ impl Vco303 {
         self.v = v;
 
         // --- JFET reset detection + 2-tap BLEP computation ------------------
-        // The integrator cap C3 (p=vp, q=CP) charges slowly as Q3 pulls cp
-        // downward, then the JFET discharges it in one Newton step — a large
-        // UPWARD jump in v[CP] of several volts.
-        //
-        // SPICE measurements (1.25 µs grid, cv=5.0 and 3.4):
-        //   CP swings from 5.35 V (bottom, just-before-reset) up to 11.20 V (top,
-        //   after reset). A jump ≥ 3 V between samples is unambiguously a reset.
-        //   OR_SWING ≈ 1.46 V at both CV values; × VCO_GAIN (2.0) → BLEP step 2.92 V.
-        //   The reset causes o_r to jump UPWARD (o_r tracks cp through the output
-        //   network: high cp → high o_r).
-        //
-        // 2-tap first-order BLEP for an upward step D at fractional offset `alpha`:
-        //   Tap 0 (this sample, post-reset): residual = D · (alpha² / 2 - alpha)
-        //   Tap 1 (next sample):             residual = D · (-alpha² / 2)
-        //
-        // `alpha ∈ [0,1)` is the fractional position of the discontinuity within
-        // the current sample period, estimated as the fraction of the cp jump that
-        // occurred before the midpoint:
-        //   alpha = (mid − cp_prev) / (cp_now − cp_prev)
-        //
-        // With cp_prev ≈ 5.35 and cp_now ≈ 11.20, delta ≈ 5.85 and alpha ≈ 0.5.
-        // At alpha = 0.5: Tap0 = D · (0.125 − 0.5) = −0.375·D (pulls post-reset down)
-        //                 Tap1 = D · (−0.125)        = −0.125·D (small next-sample fix)
-        // This correctly cancels the alias energy from the hard upward jump.
         let cp_now = v[CP];
         let delta = cp_now - cp_prev;
+        
+        let mut sq_blep0 = self.sq_blep_pending;
+        self.sq_blep_pending = 0.0;
+
         if delta > CP_RESET_DELTA {
             let mid = (cp_prev + cp_now) * 0.5;
             let alpha = ((mid - cp_prev) / delta.max(1e-9)).clamp(0.0, 1.0) as f32;
-            // BLEP step size = SPICE OR_SWING × VCO_GAIN. The sign convention:
-            // the raw o_r output jumps UP at reset, so the BLEP correction for
-            // the post-jump sample (tap 0) must be NEGATIVE (alpha²/2 − alpha < 0
-            // for alpha ∈ (0,1)), and tap 1 is also negative. Scale is 2.92 V.
             const BLEP_STEP: f32 = 2.92; // OR_SWING (1.46 V) × VCO_GAIN (2.0)
             let tap0 = BLEP_STEP * (alpha * alpha / 2.0 - alpha); // < 0 for α∈(0,1)
             let tap1 = BLEP_STEP * (-alpha * alpha / 2.0);         // ≤ 0
-            // Add tap0 to the CURRENT sample's accumulated correction.
             self.blep_now += tap0;
-            // Store tap1 for the NEXT sample.
             self.blep_pending = tap1;
-            self.blep_next = tap1; // caller-readable lookahead
-            self.blep_frac = Some(alpha); // compat
+            self.blep_next = tap1;
+            self.blep_frac = Some(alpha);
+            
+            // Square wave downward step at JFET reset (matching saw)
+            // We're synthesizing a pulse that swings -0.56 to +0.56 (p-p 1.12V)
+            // VCO_GAIN (2.607) brings this to 2.92V p-p.
+            // Step size is -1.12V (downward)
+            const SQ_DOWN_STEP: f32 = -1.12;
+            sq_blep0 += SQ_DOWN_STEP * (alpha * alpha / 2.0 - alpha);
+            self.sq_blep_pending += SQ_DOWN_STEP * (-alpha * alpha / 2.0);
         }
         // --- end BLEP ---------------------------------------------------
 
-        // Update cap trapezoidal state.
         for (j, cd) in cdefs.iter().enumerate() {
             let vc = vof(cd.p, &v) - vof(cd.q, &v);
             let inew = cgeq[j] * vc - cieq[j];
@@ -712,20 +908,29 @@ impl Vco303 {
         }
         self.t_samples += 1;
 
-        // Read raw voltage based on selected waveform
-        let saw_raw = v[O_R];
-        let pulse_raw = v[O_P];
+        let saw_raw = v[O_R] as f32;
+        let y_saw = saw_raw - self.dc_x1 + self.dc_r * self.dc_y1;
+        self.dc_x1 = saw_raw;
+        self.dc_y1 = y_saw;
 
-        let x = match self.wave {
-            OscWave::Saw => saw_raw,
+        // Upward zero crossing detection (smooth ramp crossing zero)
+        if self.sq_y_prev <= 0.0 && y_saw > 0.0 {
+            // alpha is the fraction of the sample BEFORE the crossing
+            let alpha = (self.sq_y_prev / (self.sq_y_prev - y_saw)).clamp(0.0, 1.0);
+            const SQ_UP_STEP: f32 = 1.12;
+            sq_blep0 += SQ_UP_STEP * (alpha * alpha / 2.0 - alpha);
+            self.sq_blep_pending += SQ_UP_STEP * (-alpha * alpha / 2.0);
+        }
+        self.sq_y_prev = y_saw;
+
+        // Synthesize the square wave (±0.56V) + BLEP
+        let pulse_raw = if y_saw > 0.0 { 0.56 } else { -0.56 } + sq_blep0;
+
+        match self.wave {
+            OscWave::Saw => y_saw,
             OscWave::Square => pulse_raw,
-            OscWave::Sweep => saw_raw * (1.0 - self.sweep_pos) + pulse_raw * self.sweep_pos,
-        } as f32;
-
-        let y = x - self.dc_x1 + self.dc_r * self.dc_y1;
-        self.dc_x1 = x;
-        self.dc_y1 = y;
-        y
+            OscWave::Sweep => y_saw * (1.0 - self.sweep_pos as f32) + pulse_raw * self.sweep_pos as f32,
+        }
     }
 }
 
@@ -761,7 +966,7 @@ impl Vco303 {
             cgeq[j] = geq;
             cieq[j] = geq * self.cvp[j] + self.cip[j];
         }
-        self.assemble(&self.v, rails, &cgeq, &cieq, 0.0)
+        self.assemble(&self.v, rails, &cgeq, &cieq, 0.0, 0.0)
     }
 }
 
@@ -1060,7 +1265,7 @@ mod tests {
     #[test]
     #[ignore = "diagnostic: characterize freq(cv) for MY solver to refit CV_FIT"]
     fn characterize_freq_cv() {
-        let sr = 48_000.0;
+        let sr = 192_000.0;
         // Long render for fine zero-cross resolution.
         for cv in [2.5f64, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5] {
             let f = measure_freq(&render_cv(cv, sr, 0.4), sr);

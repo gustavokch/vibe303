@@ -1,14 +1,15 @@
 //! Monophonic voice with dual oscillators, sub-oscillator, drift/age modulation.
 
+use super::drift::DriftGenerator;
 use super::env::AdsrEnv;
 use super::filter::{Filter303, Tier};
 use super::ladder::TptLadder;
 use super::ladder_wdf::LadderVcf;
 use super::osc::BlepOsc;
 use super::oversample::{Os2x, Os4x};
+use super::rc_env::{DecayEnv, LeakyIntegrator, RcEnv};
 use super::vco::Vco303;
-use super::drift::DriftGenerator;
-use crate::params::{OscWave, VcfTaps, VcaEnvMode, CircuitTopology};
+use crate::params::{CircuitTopology, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
 pub fn midi_to_freq(note: u8) -> f32 {
@@ -18,9 +19,10 @@ pub fn midi_to_freq(note: u8) -> f32 {
 pub const ULTRA_OS_FACTOR: f32 = 4.0;
 pub const HIGH_OS_FACTOR: f32 = 2.0;
 
-/// Level trim to bring the DC-blocked VCO saw to ~unit (polyBLEP-saw) amplitude.
-pub const VCO_GAIN: f32 = 2.0;
-
+/// VCO output gain. The Ultra MNA solver outputs a raw saw wave with ~1.12 V p-p swing.
+/// SPICE gold has a ~1.46 V p-p swing which after its own gain stages gives ~2.92 V p-p.
+/// `VCO_GAIN = 2.92 / 1.120 = 2.607` matches the SPICE drive level into the VCF.
+pub const VCO_GAIN: f32 = 2.607;
 
 /// Per-tier VCF brightness (cutoff→bias scale on the shared `LadderVcf`). With
 /// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
@@ -30,7 +32,7 @@ pub const VCO_GAIN: f32 = 2.0;
 /// LSD. See `brightness_sweep`/`high_brightness_sweep` diagnostics (F6.5).
 const ULTRA_BRIGHT: f64 = 0.70;
 const HIGH_BRIGHT: f64 = 0.50;
-const HIGH_LEVEL_TRIM: f32 = 1.45; // +3.2 dB
+const HIGH_LEVEL_TRIM: f32 = 1.35; // +2.6 dB (re-calibrated after RC envelope)
 const XFADE_SECS: f32 = 0.010;
 const COMP_BUF: usize = 64;
 
@@ -111,6 +113,29 @@ pub struct Voice {
     /// Accent decay integrator accumulator.
     accent_acc: f32,
 
+    // --- Classic 303 Envelope Chain ---
+    /// Main Envelope Generator (pure exponential decay) — drives VCF cutoff
+    meg_decay: DecayEnv,
+    /// RC smoother for envMod path (tau = normalAttack, default 3ms)
+    rc1: LeakyIntegrator,
+    /// RC smoother for accent path (tau = accentAttack, default 15ms)  
+    rc2: LeakyIntegrator,
+    /// Amplitude envelope (RC-filtered AHDSR)
+    vca_env: RcEnv,
+    /// Pitch slew limiter (glide)
+    pitch_slew: LeakyIntegrator,
+    /// Amplitude de-click lowpass (optional, tau ~ 2ms)
+    amp_declicker: LeakyIntegrator,
+
+    // Accent state
+    accent_gain: f32,     // 0.0 or accent_knob value (set per-note)
+    normal_decay_ms: f64, // decay knob → 30..3000 ms
+    accent_decay_ms: f64, // accent decay knob -> 30..3000 ms
+
+    // EnvMod scaling (measured curve from hardware)
+    env_scaler: f64,
+    env_offset: f64,
+
     // --- Tier Switch/Crossfade ---
     /// Active (target) tier.
     tier: Tier,
@@ -164,18 +189,40 @@ pub struct Voice {
     master_volume: f32,
     /// Main VCF drive factor.
     drive: f32,
-    /// Component age wear level in [0, 1].
-    age: f32,
-    /// Component temperature drift amount in [0, 1].
+    /// Component age wear level in [0, 10].
+    age: i32,
+    /// Component tolerance.
+    tolerance: CompTolerance,
+    /// Seed for component variation.
+    comp_seed: i32,
+    /// Thermal noise setting in [0, 21].
+    thermal_noise: i32,
+    /// Voice drift amount in [0.0, 1.0].
     drift: f32,
+    /// Dynamic operating temperature in degrees Celsius (20.0 to 45.0)
+    temperature: f32,
+    /// Cached thermal state to avoid rebuilding LUTs.
+    thermal_noise_state: i32,
     /// VCA envelope trigger mode.
     vca_env_mode: VcaEnvMode,
+    /// Toggle to use advanced envelope settings instead of classic 303 RC envelopes.
+    advanced_env: bool,
     /// Current gate-on state of the voice.
     pub gate: bool,
     /// Current active step accent modifier.
     accent_active: bool,
     /// Active circuit topology.
     pub topology: CircuitTopology,
+    /// Slide active state.
+    slide_active: bool,
+    /// Current pitch in semitones.
+    current_pitch_st: f32,
+    /// Target pitch in semitones.
+    target_pitch_st: f32,
+    /// Glide knob.
+    glide_knob: f32,
+    /// Whether the VCO LUTs need recalculation before running Tier::Ultra.
+    vco_dirty: bool,
 }
 
 impl Voice {
@@ -185,8 +232,10 @@ impl Voice {
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
         let mut ladder = LadderVcf::new(sr * ULTRA_OS_FACTOR);
+        ladder.set_instance_id(3);
         ladder.set_cal(ULTRA_BRIGHT);
         let mut ladder_hi = LadderVcf::new(sr * HIGH_OS_FACTOR);
+        ladder_hi.set_instance_id(4);
         ladder_hi.set_cal(HIGH_BRIGHT);
 
         // Sub oscillators are always square waves
@@ -194,6 +243,11 @@ impl Voice {
         sub1.set_wave(OscWave::Square);
         let mut sub2 = BlepOsc::new();
         sub2.set_wave(OscWave::Square);
+
+        let mut vco = Vco303::new(sr);
+        vco.set_instance_id(1);
+        let mut vco2 = Vco303::new(sr);
+        vco2.set_instance_id(2);
 
         Self {
             osc: BlepOsc::new(),
@@ -207,8 +261,8 @@ impl Voice {
             ladder_hi,
             os2: Os2x::new(),
 
-            vco: Vco303::new(sr),
-            vco2: Vco303::new(sr),
+            vco,
+            vco2,
             ladder,
             os: Os4x::new(),
 
@@ -217,6 +271,34 @@ impl Voice {
             drift_pitch: DriftGenerator::new(1337),
             drift_cutoff: DriftGenerator::new(7331),
             accent_acc: 0.0,
+
+            meg_decay: DecayEnv::new(sr as f64),
+            rc1: {
+                let mut li = LeakyIntegrator::new(sr as f64);
+                li.set_time_constant(3.0);
+                li
+            },
+            rc2: {
+                let mut li = LeakyIntegrator::new(sr as f64);
+                li.set_time_constant(15.0);
+                li
+            },
+            vca_env: RcEnv::new(sr as f64),
+            pitch_slew: {
+                let mut li = LeakyIntegrator::new(sr as f64);
+                li.set_time_constant(12.0); // 0.2 * 60ms = 12ms
+                li
+            },
+            amp_declicker: {
+                let mut li = LeakyIntegrator::new(sr as f64);
+                li.set_time_constant(2.0);
+                li
+            },
+            accent_gain: 0.0,
+            normal_decay_ms: 200.0,
+            accent_decay_ms: 200.0,
+            env_scaler: 1.0,
+            env_offset: 0.0,
 
             tier: Tier::Low,
             xfade_from: None,
@@ -243,13 +325,64 @@ impl Voice {
             accent_knob_val: 0.0,
             master_volume: 0.0,
             drive: 1.0,
-            age: 0.0,
+            age: 0,
+            tolerance: CompTolerance::Zero,
+            comp_seed: 0,
+            thermal_noise: 0,
             drift: 0.0,
+            temperature: 20.0,
+            thermal_noise_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
+            advanced_env: false,
             gate: false,
             accent_active: false,
             topology: CircuitTopology::Accurate,
+            slide_active: false,
+            current_pitch_st: 60.0,
+            target_pitch_st: 60.0,
+            glide_knob: 0.5,
+            vco_dirty: true,
         }
+    }
+
+    pub fn get_accent_acc(&self) -> f32 {
+        self.accent_acc
+    }
+
+    pub fn get_current_pitch(&self) -> f32 {
+        self.current_pitch_st
+    }
+
+    pub fn set_vca_env_mode(&mut self, mode: VcaEnvMode) {
+        self.vca_env_mode = mode;
+    }
+
+    fn tolerance_f64(&self) -> f64 {
+        match self.tolerance {
+            CompTolerance::Zero => 0.0,
+            CompTolerance::PointFive => 0.005,
+            CompTolerance::Two => 0.02,
+            CompTolerance::Five => 0.05,
+            CompTolerance::Ten => 0.10,
+        }
+    }
+
+    fn calculate_env_mod_scaler(&mut self, cutoff_hz: f64, env_mod_normalized: f64) {
+        const C0: f64 = 3.138152786059267e+002; // lowest nominal cutoff
+        const C1: f64 = 2.394411986817546e+003; // highest nominal cutoff
+        const OF: f64 = 0.048292930943553; // offset factor
+        const OC: f64 = 0.294391201442418; // offset constant
+        const SLO_F: f64 = 3.773996325111173; // scaler factor at low cutoff
+        const SLO_C: f64 = 0.736965594166206; // scaler constant at low cutoff
+        const SHI_F: f64 = 4.194548788411135; // scaler factor at high cutoff
+        const SHI_C: f64 = 0.864344900642434; // scaler constant at high cutoff
+
+        let e = env_mod_normalized;
+        let c = exp_to_lin(cutoff_hz, C0, C1).clamp(0.0, 1.0);
+        let s_lo = SLO_F * e + SLO_C;
+        let s_hi = SHI_F * e + SHI_C;
+        self.env_scaler = (1.0 - c) * s_lo + c * s_hi;
+        self.env_offset = OF * c + OC;
     }
 
     /// Update the internal voice states with block-rate parameter readings from the host.
@@ -280,15 +413,59 @@ impl Voice {
         veg_sustain: f32,
         veg_release: f32,
         vca_env_mode: VcaEnvMode,
-        comp_age: f32,
+        comp_age: i32,
         comp_drift: f32,
+        tolerance: CompTolerance,
+        thermal_noise: i32,
         topology: CircuitTopology,
         sweep_pos: f32,
+        comp_seed: i32,
+        glide_knob: f32,
     ) {
+        let age_changed = self.age != comp_age;
+        let tolerance_changed = self.tolerance != tolerance || self.comp_seed != comp_seed;
+
         self.topology = topology;
         self.tuning_offset = tuning_cents;
         self.age = comp_age;
         self.drift = comp_drift;
+        self.tolerance = tolerance;
+        self.comp_seed = comp_seed;
+        self.thermal_noise = thermal_noise;
+
+        let tol_f64 = match tolerance {
+            CompTolerance::Zero => 0.0,
+            CompTolerance::PointFive => 0.005,
+            CompTolerance::Two => 0.02,
+            CompTolerance::Five => 0.05,
+            CompTolerance::Ten => 0.10,
+        };
+
+        if age_changed || tolerance_changed {
+            self.ladder.set_analog_wear(tol_f64, comp_age);
+            self.ladder_hi.set_analog_wear(tol_f64, comp_age);
+            self.vco.set_analog_wear(tol_f64, comp_age);
+            self.vco2.set_analog_wear(tol_f64, comp_age);
+
+            if self.tier == Tier::Ultra
+                || self.pending_tier == Some(Tier::Ultra)
+                || self.xfade_from.is_some()
+            {
+                self.vco.recalculate_luts_async(comp_age, tol_f64);
+                self.vco2.recalculate_luts_async(comp_age, tol_f64);
+                self.vco_dirty = false;
+            } else {
+                self.vco_dirty = true;
+            }
+        }
+
+        if self.thermal_noise != self.thermal_noise_state {
+            self.ladder.set_thermal(thermal_noise);
+            self.ladder_hi.set_thermal(thermal_noise);
+            self.vco.set_thermal(thermal_noise);
+            self.vco2.set_thermal(thermal_noise);
+            self.thermal_noise_state = thermal_noise;
+        }
 
         let (
             final_osc1_pitch,
@@ -310,17 +487,17 @@ impl Voice {
                     other => other,
                 };
                 (
-                    0.0,                    // osc1_pitch_st
-                    0.0,                    // osc2_pitch_st
-                    0.0,                    // osc2_vol
-                    0.0,                    // sub_vol
-                    wave,                   // waveform
-                    0.5,                    // osc1_pw (fixed to 50% for standard square)
-                    0.0,                    // sweep_pos
-                    VcfTaps::FourPole,      // vcf_taps
-                    0.0,                    // vcf_drive
-                    false,                  // advanced_env
-                    VcaEnvMode::Envelope,   // vca_env_mode
+                    0.0,                  // osc1_pitch_st
+                    0.0,                  // osc2_pitch_st
+                    0.0,                  // osc2_vol
+                    0.0,                  // sub_vol
+                    wave,                 // waveform
+                    0.5,                  // osc1_pw (fixed to 50% for standard square)
+                    0.0,                  // sweep_pos
+                    VcfTaps::FourPole,    // vcf_taps
+                    0.0,                  // vcf_drive
+                    advanced_env,         // advanced_env
+                    VcaEnvMode::Envelope, // vca_env_mode
                 )
             }
             CircuitTopology::Fun => {
@@ -354,6 +531,8 @@ impl Voice {
         self.master_volume = volume_db;
         self.drive = 10.0f32.powf(final_drive_db / 20.0);
         self.vca_env_mode = final_vca_env_mode;
+        self.advanced_env = final_advanced_env;
+        self.glide_knob = glide_knob;
 
         // Propagate tap/pole count
         let poles_n = match final_poles {
@@ -369,7 +548,7 @@ impl Voice {
         self.osc.set_wave(final_wave);
         self.osc.set_pw(final_pw);
         self.osc.set_sweep(final_sweep);
-        
+
         self.osc2.set_wave(final_wave);
         self.osc2.set_pw(final_pw);
         self.osc2.set_sweep(final_sweep);
@@ -377,16 +556,29 @@ impl Voice {
         self.osc_hi.set_wave(final_wave);
         self.osc_hi.set_pw(final_pw);
         self.osc_hi.set_sweep(final_sweep);
-        
+
         self.osc2_hi.set_wave(final_wave);
         self.osc2_hi.set_pw(final_pw);
         self.osc2_hi.set_sweep(final_sweep);
 
         self.vco.set_wave(final_wave);
         self.vco.set_sweep(final_sweep as f64);
-        
+
         self.vco2.set_wave(final_wave);
         self.vco2.set_sweep(final_sweep as f64);
+
+        // Update Envelopes sample rates to self.sr
+        let sr_f64 = self.sr as f64;
+        self.meg_decay.set_sample_rate(sr_f64);
+        self.vca_env.set_sample_rate(sr_f64);
+        self.rc1.set_sample_rate(sr_f64);
+        self.rc2.set_sample_rate(sr_f64);
+        self.pitch_slew.set_sample_rate(sr_f64);
+        self.amp_declicker.set_sample_rate(sr_f64);
+
+        // Update Glide Slew Time Constant (0.2 * slide_time)
+        let slide_time_ms = 2.0 + glide_knob as f64 * 358.0;
+        self.pitch_slew.set_time_constant(0.2 * slide_time_ms);
 
         // Update Envelopes
         if final_advanced_env {
@@ -415,6 +607,25 @@ impl Voice {
             self.veg.set_decay(vca_decay_ms);
             self.veg.set_sustain(0.0);
             self.veg.set_release(200.0);
+
+            // --- Classic RC-based settings (both topologies) ---
+            // MEG decay from knob: 30..3000 ms (Devil Fish extended range)
+            self.normal_decay_ms = 30.0 + decay_knob as f64 * 2970.0;
+            // Accent decay from knob: 30..3000 ms (Devil Fish)
+            self.accent_decay_ms = 30.0 + accent_knob as f64 * 2970.0;
+
+            // VCA envelope: fixed 303 timings
+            self.vca_env.set_attack(0.0);
+            self.vca_env.set_decay(1230.0);
+            self.vca_env.set_sustain(0.0);
+
+            // RC lowpass smoothers constants
+            self.rc1.set_time_constant(3.0); // normal attack
+            self.rc2.set_time_constant(15.0); // accent attack
+
+            // envMod scaling using measured hardware curve
+            let cutoff_hz = lin_to_exp(cutoff as f64, 314.0, 2394.0);
+            self.calculate_env_mod_scaler(cutoff_hz, env_mod as f64);
         }
     }
 
@@ -426,6 +637,13 @@ impl Voice {
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
+
+        if tier == Tier::Ultra && self.vco_dirty {
+            let tol_f64 = self.tolerance_f64();
+            self.vco.recalculate_luts_sync(self.age, tol_f64);
+            self.vco2.recalculate_luts_sync(self.age, tol_f64);
+            self.vco_dirty = false;
+        }
     }
 
     /// Clear all runtime state to silence, **in place** — the host reset path.
@@ -460,17 +678,35 @@ impl Voice {
         self.os2 = Os2x::new();
         self.meg.reset();
         self.veg.reset();
+        self.meg_decay.reset();
+        self.rc1.reset();
+        self.rc2.reset();
+        self.vca_env.reset();
+        self.pitch_slew.reset();
+        self.amp_declicker.reset();
+        self.accent_gain = 0.0;
+        self.normal_decay_ms = 200.0;
+        self.accent_decay_ms = 200.0;
+        self.env_scaler = 1.0;
+        self.env_offset = 0.0;
         self.drift_pitch = DriftGenerator::new(1337);
         self.drift_cutoff = DriftGenerator::new(7331);
         self.accent_acc = 0.0;
+        self.temperature = 20.0;
         self.tier = Tier::Low;
         self.topology = CircuitTopology::Accurate;
+        self.advanced_env = false;
+        self.slide_active = false;
+        self.current_pitch_st = 60.0;
+        self.target_pitch_st = 60.0;
+        self.glide_knob = 0.5;
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
         self.comp_low.reset();
         self.comp_high.reset();
         self.comp_ultra.reset();
+        self.vco_dirty = true;
     }
 
     /// Select the fidelity tier. Low routes to the TPT path; High routes to the
@@ -482,6 +718,13 @@ impl Voice {
     /// and the incoming path starts cold, so a hard switch would pop. No
     /// allocation, RT-safe (plain field writes).
     pub fn set_tier(&mut self, tier: Tier) {
+        if tier == Tier::Ultra && self.vco_dirty {
+            let tol_f64 = self.tolerance_f64();
+            self.vco.recalculate_luts_async(self.age, tol_f64);
+            self.vco2.recalculate_luts_async(self.age, tol_f64);
+            self.vco_dirty = false;
+        }
+
         if self.xfade_from.is_some() {
             // If a fade is already in flight, queue the new target instead of
             // clobbering the outgoing path (which would hard-cut a still-weighted
@@ -509,25 +752,55 @@ impl Voice {
     pub fn note_on(&mut self, note: u8) {
         self.current_note = note;
         self.base_hz = midi_to_freq(note);
+        let target = note as f32;
+        self.target_pitch_st = target;
+        if !self.slide_active {
+            self.current_pitch_st = target;
+            self.pitch_slew.set_state(self.base_hz as f64);
+        }
         self.meg.trigger();
         self.veg.trigger();
     }
 
-    pub fn set_gate(&mut self, gate: bool, trigger: bool, accent: bool) {
+    pub fn set_gate(&mut self, gate: bool, trigger: bool, accent: bool, slide: bool) {
         self.gate = gate;
         self.accent_active = accent;
+        self.slide_active = slide;
         if trigger {
             self.meg.trigger();
             self.veg.trigger();
+            if accent {
+                self.accent_acc = (self.accent_acc + 1.0).min(1.8);
+            }
+
+            // --- Classic RC Envelopes ---
+            if accent {
+                self.accent_gain = self.accent_knob_val;
+                self.meg_decay.set_decay(self.accent_decay_ms);
+                self.vca_env.set_release(50.0); // accent release = 50ms
+            } else {
+                self.accent_gain = 0.0;
+                self.meg_decay.set_decay(self.normal_decay_ms);
+                self.vca_env.set_release(0.5); // normal release = 0.5ms
+            }
+            self.meg_decay.trigger();
+            self.vca_env.note_on();
         }
         if !gate {
             self.meg.release();
             self.veg.release();
+            self.vca_env.note_off();
         }
     }
 
     pub fn set_freq(&mut self, hz: f32) {
         self.base_hz = hz;
+        let target = 12.0 * (hz / 440.0).log2() + 69.0;
+        self.target_pitch_st = target;
+        if !self.slide_active {
+            self.current_pitch_st = target;
+            self.pitch_slew.set_state(hz as f64);
+        }
     }
 
     /// Renders a single sample for a specific tier, advancing its state.
@@ -538,9 +811,13 @@ impl Voice {
             Tier::Low => {
                 let osc1 = self.osc.tick();
                 let sub = self.sub_osc.tick() * self.sub_vol;
-                let osc2 = if self.osc2_vol > 0.0 { self.osc2.tick() } else { 0.0 };
+                let osc2 = if self.osc2_vol > 0.0 {
+                    self.osc2.tick()
+                } else {
+                    0.0
+                };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
-                
+
                 let y = self.filter.tick(mix * self.drive) / self.drive;
                 self.comp_low.process(y)
             }
@@ -550,18 +827,20 @@ impl Voice {
             Tier::High => {
                 let osc1 = self.osc_hi.tick();
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
-                let osc2 = if self.osc2_vol > 0.0 { self.osc2_hi.tick() } else { 0.0 };
+                let osc2 = if self.osc2_vol > 0.0 {
+                    self.osc2_hi.tick()
+                } else {
+                    0.0
+                };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
                 let hi = self.os2.up(mix * self.drive);
-                let o = [
-                    self.ladder_hi.tick(hi[0]),
-                    self.ladder_hi.tick(hi[1]),
-                ];
+                let o = [self.ladder_hi.tick(hi[0]), self.ladder_hi.tick(hi[1])];
                 // HIGH_LEVEL_TRIM equalises High's loudness to Ultra (tier-switch
                 // is then timbre-only). Pre-comp-delay so the crossfade blends
                 // level-matched paths.
-                self.comp_high.process(self.os2.down(o) * (HIGH_LEVEL_TRIM / self.drive))
+                self.comp_high
+                    .process(self.os2.down(o) * (HIGH_LEVEL_TRIM / self.drive))
             }
             // Ultra: circuit VCO saw → nodal diode-ladder at 4× oversample.
             // The nodal VCO runs at base rate; its sharp JFET reset edge is corrected
@@ -575,9 +854,25 @@ impl Voice {
             // reset. Option A (full 4× VCO, future `Tier::UltraHd`) gives complete alias
             // freedom at ~4× the CPU cost.
             Tier::Ultra => {
-                let osc1 = self.vco.tick() * VCO_GAIN + self.vco.blep_now;
+                let raw = self.vco.tick() * VCO_GAIN;
+                let blep = match self.vco.wave {
+                    OscWave::Saw => self.vco.blep_now,
+                    OscWave::Sweep => self.vco.blep_now * (1.0 - self.vco.sweep_pos as f32),
+                    OscWave::Square => 0.0,
+                };
+                let osc1 = raw + blep;
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
-                let osc2 = if self.osc2_vol > 0.0 { self.vco2.tick() * VCO_GAIN + self.vco2.blep_now } else { 0.0 };
+                let osc2 = if self.osc2_vol > 0.0 {
+                    let raw2 = self.vco2.tick() * VCO_GAIN;
+                    let blep2 = match self.vco2.wave {
+                        OscWave::Saw => self.vco2.blep_now,
+                        OscWave::Sweep => self.vco2.blep_now * (1.0 - self.vco2.sweep_pos as f32),
+                        OscWave::Square => 0.0,
+                    };
+                    raw2 + blep2
+                } else {
+                    0.0
+                };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
                 let hi = self.os.up(mix * self.drive);
@@ -595,19 +890,71 @@ impl Voice {
     /// Advances the voice by one sample, computing modulations, rendering the active
     /// tier (or crossfading), and applying the VCA envelope and master volume.
     pub fn tick(&mut self) -> f32 {
+        // Update operating temperature
+        let target_temp = if self.gate {
+            20.0 + 25.0 * self.drift
+        } else {
+            20.0
+        };
+        let tau = if self.gate { 10.0 } else { 30.0 };
+        let alpha = 1.0 - (-1.0 / (tau * self.sr)).exp();
+        self.temperature += alpha * (target_temp - self.temperature);
+
+        // Tick meg_decay if classic mode
+        let meg_out = if self.advanced_env {
+            0.0
+        } else {
+            self.meg_decay.tick()
+        };
+
         // --- 1. Compute Pitch & Cutoff Modulations ---
-        // Pitch drift (LFO random walk)
-        let drift_pitch_val = self.drift_pitch.tick(0.2, self.sr); // slow 0.2 Hz walk
-        let pitch_drift_st = drift_pitch_val * self.drift * 0.5; // Up to +-50 cents
+        // Pitch glide slew
+        let osc1_f = if self.advanced_env {
+            let glide_time_ms = 10.0 + self.glide_knob * 400.0;
+            let glide_alpha = 1.0 - (-1.0 / (glide_time_ms * 0.001 * self.sr)).exp();
+            self.current_pitch_st += glide_alpha * (self.target_pitch_st - self.current_pitch_st);
 
-        // Tuning offset
-        let tuning_st = self.tuning_offset / 100.0; // cents to semitones
+            // Pitch drift (LFO pink noise walk + systematic temperature drift)
+            let drift_pitch_val = self.drift_pitch.tick(0.2, self.sr); // slow 0.2 Hz walk
+            let pitch_drift_st = drift_pitch_val * 0.2 * self.drift;
+            let pitch_thermal_st = -0.1 * (self.temperature - 20.0) / 25.0; // -10 cents thermal warm-up
 
-        // Age-related pitch tracking stretch
-        let stretch_st = self.age * 0.02 * (self.current_note as f32 - 60.0) / 12.0;
+            // Tuning offset
+            let tuning_st = self.tuning_offset / 100.0; // cents to semitones
 
-        // Apply pitch update
-        let osc1_f = self.base_hz * 2.0f32.powf((self.osc1_pitch_st + tuning_st + pitch_drift_st + stretch_st) / 12.0);
+            // Apply pitch update
+            440.0
+                * 2.0f32.powf(
+                    (self.current_pitch_st - 69.0
+                        + self.osc1_pitch_st
+                        + tuning_st
+                        + pitch_drift_st
+                        + pitch_thermal_st)
+                        / 12.0,
+                )
+        } else {
+            // Classic mode: pitch_slew slew rate in Hz
+            let target_hz = 440.0 * 2.0f32.powf((self.target_pitch_st - 69.0) / 12.0);
+            let slewed_hz = self.pitch_slew.tick(target_hz as f64) as f32;
+
+            // Convert slewed frequency back to semitones to keep self.current_pitch_st correct
+            self.current_pitch_st = 12.0 * (slewed_hz / 440.0).log2() + 69.0;
+
+            // Pitch drift (LFO pink noise walk + systematic temperature drift)
+            let drift_pitch_val = self.drift_pitch.tick(0.2, self.sr);
+            let pitch_drift_st = drift_pitch_val * 0.2 * self.drift;
+            let pitch_thermal_st = -0.1 * (self.temperature - 20.0) / 25.0;
+
+            // Tuning offset
+            let tuning_st = self.tuning_offset / 100.0;
+
+            // Apply offsets to the slewed frequency
+            slewed_hz
+                * 2.0f32.powf(
+                    (self.osc1_pitch_st + tuning_st + pitch_drift_st + pitch_thermal_st) / 12.0,
+                )
+        };
+
         self.osc.set_freq(osc1_f, self.sr);
         self.osc_hi.set_freq(osc1_f, self.sr);
         self.vco.set_freq(osc1_f);
@@ -617,37 +964,82 @@ impl Voice {
         self.sub_osc_hi.set_freq(sub_f, self.sr);
 
         if self.osc2_vol > 0.0 {
-            let osc2_f = self.base_hz * 2.0f32.powf((self.osc2_pitch_st + tuning_st + pitch_drift_st + stretch_st) / 12.0);
+            let osc2_f = if self.advanced_env {
+                let tuning_st = self.tuning_offset / 100.0;
+                let drift_pitch_val = self.drift_pitch.tick(0.2, self.sr);
+                let pitch_drift_st = drift_pitch_val * 0.2 * self.drift;
+                let pitch_thermal_st = -0.1 * (self.temperature - 20.0) / 25.0;
+                440.0
+                    * 2.0f32.powf(
+                        (self.current_pitch_st - 69.0
+                            + self.osc2_pitch_st
+                            + tuning_st
+                            + pitch_drift_st
+                            + pitch_thermal_st)
+                            / 12.0,
+                    )
+            } else {
+                osc1_f * 2.0f32.powf(self.osc2_pitch_st / 12.0)
+            };
             self.osc2.set_freq(osc2_f, self.sr);
             self.osc2_hi.set_freq(osc2_f, self.sr);
             self.vco2.set_freq(osc2_f);
         }
 
         // --- 2. Filter Cutoff Modulation ---
-        // Cutoff drift (LFO random walk)
+        // Cutoff drift (LFO pink noise walk + systematic temperature drift)
         let drift_cut_val = self.drift_cutoff.tick(0.1, self.sr);
-        let cutoff_drift_factor = 1.0 + drift_cut_val * self.drift * 0.15; // Up to +-15%
+        let cutoff_drift_factor = 1.0 + drift_cut_val * 0.05 * self.drift;
+        let cutoff_thermal_factor = 1.0 - 0.05 * (self.temperature - 20.0) / 25.0; // -5% cutoff warm-up
 
-        // Age-related cutoff and resonance scaling
-        let age_cutoff_factor = 1.0 - self.age * 0.15;
-        let age_reso_factor = 1.0 - self.age * 0.20;
+        // Age-related cutoff and resonance scaling (0 to 10 scale)
+        let age_f32 = self.age as f32 / 10.0;
+        let age_cutoff_factor = 1.0 - age_f32 * 0.15;
+        let age_reso_factor = 1.0 - age_f32 * 0.20;
 
-        // Accent accumulator charging
-        let target_accent = if self.accent_active { 1.0 } else { 0.0 };
-        // ~100 ms time constant leak integrator
-        let acc_decay_coeff = 1.0 - (-1.0 / (0.1 * self.sr)).exp();
-        self.accent_acc += acc_decay_coeff * (target_accent - self.accent_acc);
+        // Accent accumulator decay
+        let acc_decay_coeff = (-1.0 / (0.2 * self.sr)).exp();
+        self.accent_acc *= acc_decay_coeff;
 
-        // MEG envelope
-        let meg_val = self.meg.tick(self.gate);
+        let final_cutoff_hz = if self.advanced_env {
+            // Modulate filter decay
+            let decay_normal_ms = 200.0 + self.decay_knob * 1800.0;
+            let effective_decay_ms = decay_normal_ms
+                + (self.accent_knob_val * self.accent_acc).min(1.0) * (200.0 - decay_normal_ms);
+            self.meg.set_decay(effective_decay_ms);
 
-        // VCF Cutoff Base in Hz
-        let base_cutoff_hz = 200.0 * 20.0f32.powf(self.cutoff_knob); // 200 Hz to 4000 Hz
-        // Modulated Cutoff
-        let mod_cutoff_hz = base_cutoff_hz 
-            + meg_val * self.env_mod * 4000.0 * (1.0 + self.accent_knob_val * self.accent_acc);
-        let final_cutoff_hz = (mod_cutoff_hz * cutoff_drift_factor * age_cutoff_factor)
-            .clamp(20.0, self.sr * 0.45);
+            // MEG envelope
+            let meg_val = self.meg.tick(self.gate);
+
+            // VCF Cutoff Base in Hz
+            let base_cutoff_hz = 200.0 * 20.0f32.powf(self.cutoff_knob); // 200 Hz to 4000 Hz
+                                                                         // Modulated Cutoff
+            let mod_cutoff_hz = base_cutoff_hz
+                + meg_val * self.env_mod * 4000.0
+                + self.accent_knob_val * self.accent_acc * 3000.0;
+
+            (mod_cutoff_hz * cutoff_drift_factor * cutoff_thermal_factor * age_cutoff_factor)
+                .clamp(20.0, self.sr * 0.45)
+        } else {
+            // Classic mode: dual RC smoothers
+            let rc1_out = self.rc1.tick(meg_out);
+            let rc2_input = if self.accent_gain > 0.0 { meg_out } else { 0.0 };
+            let rc2_out = self.rc2.tick(rc2_input);
+
+            // Base cutoff in Hz (314..2394 range)
+            let base_cutoff_hz = lin_to_exp(self.cutoff_knob as f64, 314.0, 2394.0);
+
+            // Modulated Cutoff in Hz (exponential/octave domain)
+            let env_mod_term = self.env_scaler * (rc1_out - self.env_offset);
+            let accent_term = self.accent_gain as f64 * rc2_out;
+            let mod_cutoff_hz = base_cutoff_hz * 2.0_f64.powf(env_mod_term + accent_term);
+
+            let cutoff_hz = mod_cutoff_hz as f32
+                * cutoff_drift_factor
+                * cutoff_thermal_factor
+                * age_cutoff_factor;
+            cutoff_hz.clamp(20.0, self.sr * 0.45)
+        };
 
         // VCF Resonance
         let final_reso = self.reso_knob * age_reso_factor;
@@ -692,14 +1084,27 @@ impl Voice {
         };
 
         // --- 4. VCA Envelope Modulation ---
-        let veg_val = self.veg.tick(self.gate);
-        let vca_level = match self.vca_env_mode {
-            VcaEnvMode::Gate => if self.gate { 1.0 } else { 0.0 },
-            VcaEnvMode::Envelope => veg_val,
+        let vca_gain = if self.advanced_env {
+            let veg_val = self.veg.tick(self.gate);
+            let vca_level = match self.vca_env_mode {
+                VcaEnvMode::Gate => {
+                    if self.gate {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                VcaEnvMode::Envelope => veg_val,
+            };
+            vca_level * (1.0 + self.accent_knob_val * self.accent_acc * 0.5)
+        } else {
+            let mut amp_out = self.vca_env.tick();
+            if self.vca_env.is_note_on() {
+                // VCA is boosted by MEG output + accent
+                amp_out += 0.45 * meg_out + self.accent_gain as f64 * 4.0 * meg_out;
+            }
+            self.amp_declicker.tick(amp_out) as f32
         };
-
-        // Accent boosts VCA level
-        let vca_gain = vca_level * (1.0 + self.accent_knob_val * self.accent_acc * 0.5);
 
         // Master Output volume db
         let master_gain = 10.0f32.powf(self.master_volume / 20.0);
@@ -737,4 +1142,14 @@ impl Voice {
     pub fn set_ultra_reso_gain(&mut self, g: f64) {
         self.ladder.set_reso_gain(g);
     }
+}
+
+#[inline]
+fn lin_to_exp(x: f64, min: f64, max: f64) -> f64 {
+    min * (max / min).powf(x)
+}
+
+#[inline]
+fn exp_to_lin(y: f64, min: f64, max: f64) -> f64 {
+    (y / min).ln() / (max / min).ln()
 }
