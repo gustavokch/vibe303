@@ -32,7 +32,7 @@ impl Default for Plugin303 {
             sample_rate,
             voice: Voice::new(sample_rate),
             reported_latency: 0,
-            sequencer: Sequencer::new(),
+            sequencer: Sequencer::new(sample_rate as f64),
             active_midi_note: None,
         }
     }
@@ -147,7 +147,7 @@ impl Plugin for Plugin303 {
     ) -> bool {
         self.sample_rate = cfg.sample_rate;
         self.voice = Voice::new(self.sample_rate);
-        self.sequencer = Sequencer::new();
+        self.sequencer = Sequencer::new(self.sample_rate as f64);
         self.active_midi_note = None;
         // Apply the persisted tier (no fade — this is the initial state, not a
         // user change) and report its latency so the host can PDC the
@@ -164,7 +164,7 @@ impl Plugin for Plugin303 {
         // thread, where allocating / rebuilding the VCO pitch LUT is illegal —
         // see `Voice::reset`. The LUT cache is warmed once in `initialize`.
         self.voice.reset();
-        self.sequencer = Sequencer::new();
+        self.sequencer.reset();
         self.active_midi_note = None;
         // Re-apply the persisted tier immediately (no fade) — otherwise the voice
         // would silently revert to Low and the next block would crossfade up to
