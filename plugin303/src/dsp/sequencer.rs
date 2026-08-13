@@ -1,7 +1,5 @@
 //! 16-step sequencer engine.
 
-use crate::params::SequencerStep;
-
 pub const MAX_STEPS: usize = 16;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
@@ -82,25 +80,11 @@ pub struct Sequencer {
     prev_note_slide: bool,
     prev_was_sounding: bool,
     isr_origin: f64,
-
-    // Legacy fields for backward compatibility during refactoring
-    pub freq: f32,
-    pub gate: bool,
-    pub accent: bool,
-    pub velocity: f32,
-    pub trigger: bool,
-    pub slide: bool,
 }
 
 const ISR_PERIOD_S: f64 = 0.0018;
 const GATE_ON_LATENCY_S: f64 = 0.0010;
 const GATE_OFF_LATENCY_S: f64 = 0.00235;
-
-pub struct TransportInfo {
-    pub playing: bool,
-    pub pos_beats: Option<f64>,
-    pub tempo: Option<f64>,
-}
 
 impl Sequencer {
     pub fn new(sample_rate: f64) -> Self {
@@ -114,12 +98,6 @@ impl Sequencer {
             prev_note_slide: false,
             prev_was_sounding: false,
             isr_origin: 0.0,
-            freq: 440.0,
-            gate: false,
-            accent: false,
-            velocity: 0.0,
-            trigger: false,
-            slide: false,
         }
     }
 
@@ -141,9 +119,6 @@ impl Sequencer {
         self.gate_off_sample = None;
         self.prev_note_slide = false;
         self.prev_was_sounding = false;
-        self.gate = false;
-        self.trigger = false;
-        self.slide = false;
     }
 
     pub fn reset_transport(&mut self, _pos_beats: f64) {
@@ -257,19 +232,6 @@ impl Sequencer {
             self.next_step_sample += self.samples_per_step(bpm, timebase);
             self.step_idx = (self.step_idx + 1) % num_steps;
         }
-    }
-
-    /// Legacy single-sample tick kept for compatibility until Task 4
-    pub fn tick(
-        &mut self,
-        _sr: f32,
-        _transport: &TransportInfo,
-        _steps: &[SequencerStep; 16],
-        _length: usize,
-        _tempo_param: f32,
-        _sync: bool,
-        _glide_param: f32,
-    ) {
     }
 }
 

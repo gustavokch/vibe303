@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 pub mod dsp;
 pub mod params;
-use dsp::sequencer::{Sequencer, TransportInfo};
+use dsp::sequencer::{SeqEvent, Sequencer, Timebase};
 use dsp::voice::Voice;
 use params::Plugin303Params;
 /// The main plugin structure implementing the nih-plug VST3/CLAP synth interface.
@@ -226,18 +226,40 @@ impl Plugin for Plugin303 {
         }
 
         let seq_run = self.params.seq_run.value();
-        let pattern_steps = if seq_run {
-            self.params.pattern.read().ok().map(|p| p.steps)
+        let pattern = if seq_run {
+            self.params
+                .pattern
+                .read()
+                .ok()
+                .map(|p| p.compile(self.params.seq_length.value() as u8))
         } else {
             None
         };
-        let seq_length = self.params.seq_length.value() as usize;
-        let seq_tempo = self.params.seq_tempo.value();
-        let seq_sync = self.params.seq_sync.value();
-        let glide_val = self.params.glide.value();
+        let seq_tempo = self.params.seq_tempo.value() as f64;
+        let transport = context.transport();
+        let is_running = seq_run && (transport.playing || !self.params.seq_sync.value());
+        self.sequencer.set_running(is_running);
+
+        let mut seq_events = [(0, SeqEvent::GateOff); 64];
+        let mut seq_event_count = 0;
+        let mut seq_event_idx = 0;
+
+        if let Some(pat) = &pattern {
+            self.sequencer.process_block(
+                pat,
+                0,
+                buffer.samples() as u32,
+                &mut seq_events,
+                &mut seq_event_count,
+                transport.tempo.unwrap_or(seq_tempo),
+                Timebase::Straight,
+                false,
+            );
+        }
 
         let mut next_event = context.next_event();
         let mut active_midi_note = self.active_midi_note;
+        let glide_val = self.params.glide.value();
 
         for (sample_idx, mut frame) in buffer.iter_samples().enumerate() {
             // Apply every event scheduled for this sample (sample-accurate).
@@ -266,31 +288,15 @@ impl Plugin for Plugin303 {
             }
             self.active_midi_note = active_midi_note;
 
-            // If no MIDI note is held, run the sequencer
-            if active_midi_note.is_none() && seq_run {
-                if let Some(steps) = &pattern_steps {
-                    let transport = context.transport();
-                    let transport_info = TransportInfo {
-                        playing: transport.playing,
-                        pos_beats: transport.pos_beats(),
-                        tempo: transport.tempo,
-                    };
-                    self.sequencer.tick(
-                        self.sample_rate,
-                        &transport_info,
-                        steps,
-                        seq_length,
-                        seq_tempo,
-                        seq_sync,
-                        glide_val,
+            // If no MIDI note is held, run the sequencer events for this sample
+            if active_midi_note.is_none() {
+                while seq_event_idx < seq_event_count && seq_events[seq_event_idx].0 == sample_idx as u32 {
+                    self.voice.on_seq_event(
+                        seq_events[seq_event_idx].1,
+                        self.params.accent.value(),
+                        self.params.decay.value() * 3000.0,
                     );
-                    self.voice.set_gate(
-                        self.sequencer.gate,
-                        self.sequencer.trigger,
-                        self.sequencer.accent,
-                        self.sequencer.slide,
-                    );
-                    self.voice.set_freq(self.sequencer.freq);
+                    seq_event_idx += 1;
                 }
             }
 
