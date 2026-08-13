@@ -31,14 +31,6 @@ fn tier_rms(tier: Tier, note: u8, cutoff: f32, reso: f32) -> f32 {
     let sr = 48_000.0;
     let mut v = Voice::new(sr);
     v.set_tier_immediate(tier);
-    v.update_params(
-        0.0, 0.0, 0.0, 0.0, plugin303::params::OscWave::Saw, 0.5, 0.0,
-        0.5, 0.0, 0.0, 0.5, 0.0, 0.0,
-        plugin303::params::VcfTaps::FourPole, 0.0, false, 3.0, 200.0, 0.0, 200.0,
-        3.0, 200.0, 0.0, 200.0, plugin303::params::VcaEnvMode::Envelope,
-        0, 0.0, plugin303::params::CompTolerance::Zero, 0, plugin303::params::CircuitTopology::Accurate,
-        0.0, 0, 0.5
-    );
     v.set_cutoff(cutoff);
     v.set_reso(reso);
     v.note_on(note);

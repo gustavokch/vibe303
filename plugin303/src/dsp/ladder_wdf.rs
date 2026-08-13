@@ -19,11 +19,9 @@
 
 use super::diode::Diode1N4148;
 use super::filter::Filter303;
+use super::linalg::lu_solve;
 use super::linalg_static::ladder_lu_solve;
 use std::f64::consts::TAU;
-
-#[cfg(test)]
-use super::linalg::lu_solve;
 
 // Node indices into the 10-node rail system.
 const TL: usize = 0;
@@ -68,6 +66,10 @@ const CAPS: [(usize, usize, f64); 4] = [
 
 const MAX_ITERS: usize = 50;
 const TOL: f64 = 1e-9;
+/// Absolute tolerance for convergence (document eq. 3.30: ε_abs).
+const TOL_ABS: f64 = 1e-11;
+/// Relative tolerance for convergence (document eq. 3.30: ε_rel).
+const TOL_REL: f64 = 1e-9;
 const DENORM: f64 = 1e-30;
 /// Always-on leakage so reverse-biased nodes never float the matrix.
 const GMIN_BASE: f64 = 1e-12;
@@ -210,7 +212,9 @@ impl LadderVcf {
         };
         let mut next_gauss = || {
             let mut u1 = next_f64();
-            if u1 < 1e-6 { u1 = 1e-6; }
+            if u1 < 1e-6 {
+                u1 = 1e-6;
+            }
             let u2 = next_f64();
             (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
         };
@@ -340,11 +344,12 @@ impl LadderVcf {
         let mut v = v0;
         for it in 0..MAX_ITERS {
             let (g, b) = self.assemble(&v, vin, kfb, cfb, cgeq, cieq, gmin);
-            // Static-pattern, no-pivot LU (validated bit-equal to dense
-            // `lu_solve::<N>` over the operating range; ~2.5× faster). A singular
-            // diagonal would yield NaN — caught by the `is_finite` guard below,
-            // dropping this Newton step to the gmin homotopy as the dense path did.
-            let sol = ladder_lu_solve(g, b);
+            // Dense partial-pivot LU. `lu_solve` returns `None` on a singular
+            // diagonal (degenerate pivot) — that's the same failure mode the
+            // old `is_finite` guard caught, just surfaced earlier as a `None`
+            // instead of a NaN. Either way it drops this Newton attempt to the
+            // gmin homotopy in `solve_sample`.
+            let sol = lu_solve::<N>(g, b)?;
             let mut dmax = 0.0f64;
             for d in 0..N {
                 let dd = (sol[d] - v[d]).abs();
@@ -357,6 +362,12 @@ impl LadderVcf {
             }
             v = sol;
             if dmax < TOL {
+                return Some((v, it as u32 + 1));
+            }
+            // Mixed absolute + relative tolerance (document eq. 3.30)
+            // ε_abs + ε_rel × |v_max| handles both small and large signal swings
+            let vmax = v.iter().fold(0.0f64, |a, &x| a.abs().max(x.abs()));
+            if dmax < TOL_ABS + TOL_REL * vmax {
                 return Some((v, it as u32 + 1));
             }
         }
@@ -380,15 +391,15 @@ impl LadderVcf {
             let cap_m = cap * self.c_mults[j];
             let geq = 2.0 * cap_m / dt;
             cgeq[j] = geq;
-            
+
             let mut i_noise = 0.0;
-            if self.thermal_noise > 0 {
+            if (self.thermal_noise as f64) > 0.1 {
                 self.noise_seed = self.noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
                 let white = ((self.noise_seed as f64) / (std::u32::MAX as f64)) * 2.0 - 1.0;
                 // Scale companion current noise: max 1.0e-7 A at thermal_noise = 21
                 i_noise = white * 1e-7 * (self.thermal_noise as f64 / 21.0);
             }
-            
+
             cieq[j] = geq * self.vc_prev[j] + self.i_prev[j] + i_noise;
         }
 
