@@ -8,6 +8,8 @@
 //! not sample-for-sample identity — sample-exact ESR vs ngspice is structurally
 //! unreachable for a real-time bespoke chain (design doc F3-VCO V4).
 
+#![allow(dead_code)]
+
 use std::f64::consts::PI;
 use std::path::PathBuf;
 

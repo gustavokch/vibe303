@@ -21,8 +21,8 @@ fn ensure_lut_cache_warm() {
     use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        Vco303::warm_cache(48_000.0, false);
-        Vco303::warm_cache(48_000.0, true);
+        Vco303::warm_cache_nominal(48_000.0, false);
+        Vco303::warm_cache_nominal(48_000.0, true);
     });
 }
 

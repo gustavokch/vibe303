@@ -7,7 +7,7 @@ use super::ladder::TptLadder;
 use super::ladder_wdf::LadderVcf;
 use super::osc::BlepOsc;
 use super::oversample::{Os2x, Os4x};
-use super::rc_env::{DecayEnv, LeakyIntegrator, RcEnv};
+use super::rc_env::{AccentSweep, DecayEnv, LeakyIntegrator, RcEnv};
 use super::vco::Vco303;
 use crate::params::{CircuitTopology, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
 
@@ -32,13 +32,10 @@ pub const VCO_GAIN: f32 = 2.607;
 /// LSD. See `brightness_sweep`/`high_brightness_sweep` diagnostics (F6.5).
 const ULTRA_BRIGHT: f64 = 0.70;
 const HIGH_BRIGHT: f64 = 0.50;
-const HIGH_LEVEL_TRIM: f32 = 1.890; // +5.5 dB
+const HIGH_LEVEL_TRIM: f32 = 1.55; // +3.8 dB
 const XFADE_SECS: f32 = 0.010;
 const COMP_BUF: usize = 64;
 
-/// TB-303 slide time constants per pitch index (seconds)
-/// Indexed by pitch modulo 8 - authentic TB-303 glide behavior
-const SLIDE_TIME: [f32; 8] = [1.8, 0.03, 0.8, 0.01, 1.8, 0.8, 1.8, 0.03];
 
 const LOW_FC_POLY: [f32; 10] = [
     6.258712813859e+00,
@@ -192,12 +189,12 @@ pub struct Voice {
     meg_decay: DecayEnv,
     /// RC smoother for envMod path (tau = normalAttack, default 3ms)
     rc1: LeakyIntegrator,
-    /// RC smoother for accent path (tau = accentAttack, default 15ms)  
-    rc2: LeakyIntegrator,
+    /// Accent Sweep memory circuit (C13)
+    sweep_c13: AccentSweep,
     /// Amplitude envelope (RC-filtered AHDSR)
     vca_env: RcEnv,
-    /// Pitch slew limiter (glide)
-    pitch_slew: LeakyIntegrator,
+    /// RC smoother for VCA accent injection (R119/C36, tau = 1.55ms)
+    vca_accent_rc: LeakyIntegrator,
     /// Amplitude de-click lowpass (optional, tau ~ 2ms)
     amp_declicker: LeakyIntegrator,
 
@@ -358,15 +355,11 @@ impl Voice {
                 li.set_time_constant(3.0);
                 li
             },
-            rc2: {
-                let mut li = LeakyIntegrator::new(sr as f64);
-                li.set_time_constant(15.0);
-                li
-            },
+            sweep_c13: AccentSweep::new(sr as f64),
             vca_env: RcEnv::new(sr as f64),
-            pitch_slew: {
+            vca_accent_rc: {
                 let mut li = LeakyIntegrator::new(sr as f64);
-                li.set_time_constant(12.0); // 0.2 * 60ms = 12ms
+                li.set_time_constant(1.55); // 47 kΩ * 0.033 µF = 1.55 ms
                 li
             },
             amp_declicker: {
@@ -435,6 +428,10 @@ impl Voice {
 
     pub fn set_vca_env_mode(&mut self, mode: VcaEnvMode) {
         self.vca_env_mode = mode;
+    }
+
+    pub fn set_advanced_env(&mut self, enabled: bool) {
+        self.advanced_env = enabled;
     }
 
     fn tolerance_f64(&self) -> f64 {
@@ -662,13 +659,9 @@ impl Voice {
         self.meg_decay.set_sample_rate(sr_f64);
         self.vca_env.set_sample_rate(sr_f64);
         self.rc1.set_sample_rate(sr_f64);
-        self.rc2.set_sample_rate(sr_f64);
-        self.pitch_slew.set_sample_rate(sr_f64);
+        self.sweep_c13.set_sample_rate(sr_f64);
+        self.vca_accent_rc.set_sample_rate(sr_f64);
         self.amp_declicker.set_sample_rate(sr_f64);
-
-        // Update Glide Slew Time Constant (0.2 * slide_time)
-        let slide_time_ms = 2.0 + glide_knob as f64 * 358.0;
-        self.pitch_slew.set_time_constant(0.2 * slide_time_ms);
 
         // Update Envelopes
         if final_advanced_env {
@@ -711,7 +704,6 @@ impl Voice {
 
             // RC lowpass smoothers constants
             self.rc1.set_time_constant(3.0); // normal attack
-            self.rc2.set_time_constant(15.0); // accent attack
 
             // envMod scaling using measured hardware curve
             let cutoff_hz = lin_to_exp(cutoff as f64, 314.0, 2394.0);
@@ -781,9 +773,9 @@ impl Voice {
         self.veg.reset();
         self.meg_decay.reset();
         self.rc1.reset();
-        self.rc2.reset();
+        self.sweep_c13.reset();
         self.vca_env.reset();
-        self.pitch_slew.reset();
+        self.vca_accent_rc.reset();
         self.amp_declicker.reset();
         self.accent_gain = 0.0;
         self.normal_decay_ms = 200.0;
@@ -860,36 +852,47 @@ impl Voice {
         self.target_pitch_st = target;
         if !self.slide_active {
             self.current_pitch_st = target;
-            self.pitch_slew.set_state(self.base_hz as f64);
         }
+        self.gate = true;
         self.meg.trigger();
         self.veg.trigger();
+        self.meg_decay.trigger();
+        self.vca_env.note_on();
+    }
+
+    pub fn note_off(&mut self) {
+        self.gate = false;
+        self.meg.release();
+        self.veg.release();
+        self.vca_env.note_off();
     }
 
     pub fn set_gate(&mut self, gate: bool, trigger: bool, accent: bool, slide: bool) {
         self.gate = gate;
         self.accent_active = accent;
         self.slide_active = slide;
+
+        // --- Classic RC Envelopes: update accent state even if not triggering (G1, G14) ---
+        if accent {
+            self.accent_gain = self.accent_knob_val;
+            self.meg_decay.set_decay(self.accent_decay_ms);
+            self.vca_env.set_release(50.0);
+        } else {
+            self.accent_gain = 0.0;
+            self.meg_decay.set_decay(self.normal_decay_ms);
+            self.vca_env.set_release(0.5);
+        }
+
         if trigger {
             self.meg.trigger();
             self.veg.trigger();
             if accent {
                 self.accent_acc = (self.accent_acc + 1.0).min(1.8);
             }
-
-            // --- Classic RC Envelopes ---
-            if accent {
-                self.accent_gain = self.accent_knob_val;
-                self.meg_decay.set_decay(self.accent_decay_ms);
-                self.vca_env.set_release(50.0); // accent release = 50ms
-            } else {
-                self.accent_gain = 0.0;
-                self.meg_decay.set_decay(self.normal_decay_ms);
-                self.vca_env.set_release(0.5); // normal release = 0.5ms
-            }
             self.meg_decay.trigger();
             self.vca_env.note_on();
         }
+
         if !gate {
             self.meg.release();
             self.veg.release();
@@ -908,7 +911,6 @@ impl Voice {
         self.target_pitch_st = target;
         if !self.slide_active {
             self.current_pitch_st = target;
-            self.pitch_slew.set_state(hz as f64);
         }
     }
 
@@ -1016,18 +1018,22 @@ impl Voice {
             self.meg_decay.tick()
         };
 
-        // --- 1. Compute Pitch & Cutoff Modulations ---
         // Pitch glide slew
         if self.advanced_env {
             let glide_time_ms = 10.0 + self.glide_knob * 400.0;
             let glide_alpha = 1.0 - (-1.0 / (glide_time_ms * 0.001 * self.sr)).exp();
             self.current_pitch_st += glide_alpha * (self.target_pitch_st - self.current_pitch_st);
         } else {
-            // Classic mode: pitch-dependent glide time using TB-303 lookup table
-            let pos = (self.target_pitch_st as usize) % 8;
-            let slide_time_s = SLIDE_TIME[pos];
-            let glide_alpha = 1.0 - (-1.0 / (slide_time_s * self.sr)).exp();
-            self.current_pitch_st += glide_alpha * (self.target_pitch_st - self.current_pitch_st);
+            // Classic mode: CV-domain exponential lag (G8, G9)
+            // Slide window is active during destination note (G10).
+            if self.slide_active {
+                let tau_ms = 22.0;
+                let glide_alpha = 1.0 - (-1.0 / (tau_ms * 0.001 * self.sr)).exp();
+                self.current_pitch_st += glide_alpha * (self.target_pitch_st - self.current_pitch_st);
+            } else {
+                // If not sliding, snap instantly
+                self.current_pitch_st = self.target_pitch_st;
+            }
         }
 
         // Pitch drift (LFO pink noise walk + systematic temperature drift)
@@ -1131,16 +1137,23 @@ impl Voice {
         } else {
             // Classic mode: dual RC smoothers
             let rc1_out = self.rc1.tick(meg_out);
-            let rc2_input = if self.accent_gain > 0.0 { meg_out } else { 0.0 };
-            let rc2_out = self.rc2.tick(rc2_input);
+
+            // Sweep injection is the output of the C13 memory cap
+            let sweep_drive = if self.accent_gain > 0.0 {
+                meg_out * (self.accent_gain as f64)
+            } else {
+                0.0
+            };
+            let sweep_out = self.sweep_c13.tick(sweep_drive, self.reso_knob as f64);
 
             // Base cutoff in Hz (314..2394 range)
             let base_cutoff_hz = lin_to_exp(self.cutoff_knob as f64, 314.0, 2394.0);
 
             // Modulated Cutoff in Hz (exponential/octave domain)
             let env_mod_term = self.env_scaler * (rc1_out - self.env_offset);
-            let accent_term = self.accent_gain as f64 * rc2_out;
-            let mod_cutoff_hz = base_cutoff_hz * 2.0_f64.powf(env_mod_term + accent_term);
+
+            // Adding sweep_out (memory trace) to the octave sum (G4, G5, G6)
+            let mod_cutoff_hz = base_cutoff_hz * 2.0_f64.powf(env_mod_term + sweep_out);
 
             let cutoff_hz = mod_cutoff_hz as f32
                 * cutoff_drift_factor
@@ -1206,26 +1219,34 @@ impl Voice {
         };
 
         // --- 4. VCA Envelope Modulation ---
-        let vca_gain = if self.advanced_env {
-            let veg_val = self.veg.tick(self.gate);
-            let vca_level = match self.vca_env_mode {
-                VcaEnvMode::Gate => {
-                    if self.gate {
-                        1.0
+        let vca_gain = match self.vca_env_mode {
+            VcaEnvMode::Gate => {
+                let gate_level = if self.gate { 1.0f32 } else { 0.0f32 };
+                if self.advanced_env {
+                    gate_level * (1.0 + self.accent_knob_val * self.accent_acc * 0.5)
+                } else {
+                    gate_level
+                }
+            }
+            VcaEnvMode::Envelope => {
+                if self.advanced_env {
+                    let veg_val = self.veg.tick(self.gate);
+                    veg_val * (1.0 + self.accent_knob_val * self.accent_acc * 0.5)
+                } else {
+                    let amp_out = self.vca_env.tick();
+
+                    // Accent injection is filtered by the R119/C36 RC network (tau=1.55ms)
+                    let accent_drive = if self.vca_env.is_note_on() {
+                        0.45 * meg_out + self.accent_gain as f64 * 4.0 * meg_out
                     } else {
                         0.0
-                    }
+                    };
+                    let accent_injection = self.vca_accent_rc.tick(accent_drive);
+
+                    let composite_amp = amp_out + accent_injection;
+                    self.amp_declicker.tick(composite_amp) as f32
                 }
-                VcaEnvMode::Envelope => veg_val,
-            };
-            vca_level * (1.0 + self.accent_knob_val * self.accent_acc * 0.5)
-        } else {
-            let mut amp_out = self.vca_env.tick();
-            if self.vca_env.is_note_on() {
-                // VCA is boosted by MEG output + accent
-                amp_out += 0.45 * meg_out + self.accent_gain as f64 * 4.0 * meg_out;
             }
-            self.amp_declicker.tick(amp_out) as f32
         };
 
         // Master Output volume db

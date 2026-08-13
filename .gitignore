@@ -43,6 +43,13 @@ runs/
 
 # Scratch / throwaway experiment dirs
 scratch/
+.claude/
+.jc303-ref/
+worktree-*/
+test_*
+*.csv
+sweep_output*
 
 # step-4 ACME VCF parity render scratch (binaries)
 eval/303/_acme_vcf_work/
+

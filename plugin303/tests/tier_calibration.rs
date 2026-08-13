@@ -14,8 +14,8 @@ static INIT: Once = Once::new();
 
 fn ensure_lut_cache_warm() {
     INIT.call_once(|| {
-        Vco303::warm_cache(SR, false);
-        Vco303::warm_cache(SR, true);
+        Vco303::warm_cache_nominal(SR, false);
+        Vco303::warm_cache_nominal(SR, true);
     });
 }
 

@@ -225,6 +225,17 @@ impl Plugin for Plugin303 {
             self.reported_latency = latency;
         }
 
+        let seq_run = self.params.seq_run.value();
+        let pattern_steps = if seq_run {
+            self.params.pattern.read().ok().map(|p| p.steps)
+        } else {
+            None
+        };
+        let seq_length = self.params.seq_length.value() as usize;
+        let seq_tempo = self.params.seq_tempo.value();
+        let seq_sync = self.params.seq_sync.value();
+        let glide_val = self.params.glide.value();
+
         let mut next_event = context.next_event();
         let mut active_midi_note = self.active_midi_note;
 
@@ -238,7 +249,7 @@ impl Plugin for Plugin303 {
                     NoteEvent::NoteOn { note, velocity, .. } => {
                         let is_legato = active_midi_note.is_some();
                         active_midi_note = Some(note);
-                        let slide = is_legato && self.params.glide.value() > 0.0;
+                        let slide = is_legato && glide_val > 0.0;
                         let trigger = !is_legato;
                         self.voice.set_gate(true, trigger, velocity >= 0.78, slide);
                         self.voice.note_on(note);
@@ -256,30 +267,31 @@ impl Plugin for Plugin303 {
             self.active_midi_note = active_midi_note;
 
             // If no MIDI note is held, run the sequencer
-            if active_midi_note.is_none() && self.params.seq_run.value() {
-                let transport = context.transport();
-                let transport_info = TransportInfo {
-                    playing: transport.playing,
-                    pos_beats: transport.pos_beats(),
-                    tempo: transport.tempo,
-                };
-                let pattern_guard = self.params.pattern.read().unwrap();
-                self.sequencer.tick(
-                    self.sample_rate,
-                    &transport_info,
-                    &pattern_guard.steps,
-                    self.params.seq_length.value() as usize,
-                    self.params.seq_tempo.value(),
-                    self.params.seq_sync.value(),
-                    self.params.glide.value(),
-                );
-                self.voice.set_gate(
-                    self.sequencer.gate,
-                    self.sequencer.trigger,
-                    self.sequencer.accent,
-                    self.sequencer.slide,
-                );
-                self.voice.set_freq(self.sequencer.freq);
+            if active_midi_note.is_none() && seq_run {
+                if let Some(steps) = &pattern_steps {
+                    let transport = context.transport();
+                    let transport_info = TransportInfo {
+                        playing: transport.playing,
+                        pos_beats: transport.pos_beats(),
+                        tempo: transport.tempo,
+                    };
+                    self.sequencer.tick(
+                        self.sample_rate,
+                        &transport_info,
+                        steps,
+                        seq_length,
+                        seq_tempo,
+                        seq_sync,
+                        glide_val,
+                    );
+                    self.voice.set_gate(
+                        self.sequencer.gate,
+                        self.sequencer.trigger,
+                        self.sequencer.accent,
+                        self.sequencer.slide,
+                    );
+                    self.voice.set_freq(self.sequencer.freq);
+                }
             }
 
             let out = self.voice.tick();

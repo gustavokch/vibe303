@@ -23,8 +23,10 @@ use super::diode::Diode1N4148;
 use super::jfet::Jfet;
 use super::linalg::lu_solve;
 use super::linalg_static::vco_lu_solve;
+use super::triple_buffer::TripleBuffer;
+use super::worker::{submit_lut_job, LutJob};
 use crate::params::OscWave;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 // --- unknown node indices ---------------------------------------------------
 const II: usize = 0;
@@ -83,14 +85,14 @@ const CP_RESET_DELTA: f64 = 3.0;
 /// `K` anchors span MIDI `LUT_MIDI_LO`..`+ (K-1)·LUT_MIDI_STEP`; `set_freq` does a
 /// log-frequency lookup + lerp (RT-safe). The `CV_FIT` quadratic alone is ~1.4 %
 /// (worse — ~6 % — at the low end), too coarse for instrument-wide pitch.
-const LUT_K: usize = 37;
-const LUT_MIDI_LO: f64 = 0.0; // C-1 ≈ 8.18 Hz
-const LUT_MIDI_STEP: f64 = 3.0; // every 3 semitones → top anchor MIDI 108 (C8 ≈ 4186 Hz)
+pub(crate) const LUT_K: usize = 37;
+pub(crate) const LUT_MIDI_LO: f64 = 0.0; // C-1 ≈ 8.18 Hz
+pub(crate) const LUT_MIDI_STEP: f64 = 3.0; // every 3 semitones → top anchor MIDI 108 (C8 ≈ 4186 Hz)
 
-fn lut_midi(i: usize) -> f64 {
+pub(crate) fn lut_midi(i: usize) -> f64 {
     LUT_MIDI_LO + i as f64 * LUT_MIDI_STEP
 }
-fn midi_hz(m: f64) -> f64 {
+pub(crate) fn midi_hz(m: f64) -> f64 {
     440.0 * 2.0f64.powf((m - 69.0) / 12.0)
 }
 
@@ -102,7 +104,7 @@ fn midi_hz(m: f64) -> f64 {
 /// entry per *distinct* sample rate and is never freed: bounded by the handful
 /// of rates a host runs in a process lifetime, so the unbounded `Vec` is a
 /// non-issue (a few hundred bytes), not a leak worth a cap.
-static LUT_CACHE: Mutex<Vec<(u64, [f64; LUT_K])>> = Mutex::new(Vec::new());
+static LUT_CACHE: RwLock<Vec<(u64, [f64; LUT_K])>> = RwLock::new(Vec::new());
 static DISABLE_WARM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Add a current `Σ termsⱼ·Vⱼ + constant` *leaving* `node` to the KCL system.
@@ -163,41 +165,32 @@ struct CapDef {
     c: f64,
 }
 
-/// Double-buffered background LUT store, published via `Arc` swap.
-///
-/// Rebuilds happen on a worker (or synchronously off the audio thread) into a
-/// freshly allocated `[[f64; LUT_K]; 22]`, which is then published by swapping
-/// it into `active` under the mutex. Because `store` never mutates an array
-/// that a prior `load()` might still be holding — it always publishes a new
-/// `Arc` — readers on the audio thread can safely `load()` a snapshot and keep
-/// using it for as long as they like, even while a rebuild is in flight or a
-/// second rebuild races the first. No unsafe code, no raw pointers.
+/// Triple-buffered background LUT store using lock-free, zero-allocation primitive.
 pub struct VcoLutBuffer {
-    active: Mutex<Arc<[[f64; LUT_K]; 22]>>,
-    pub sequence: std::sync::atomic::AtomicU64,
+    buffer: TripleBuffer<[[f64; LUT_K]; 22]>,
+    pub sequence: Arc<std::sync::atomic::AtomicU64>,
     pub completed_sequence: std::sync::atomic::AtomicU64,
 }
 
 impl VcoLutBuffer {
     pub fn new(nominal_lut: [f64; LUT_K]) -> Self {
         Self {
-            active: Mutex::new(Arc::new([nominal_lut; 22])),
-            sequence: std::sync::atomic::AtomicU64::new(0),
+            buffer: TripleBuffer::new([nominal_lut; 22]),
+            sequence: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             completed_sequence: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
-    /// Snapshot the currently active LUT set. Cheap (an `Arc` clone under a
-    /// briefly-held lock, no allocation) and safe to call from the audio
-    /// thread; the returned `Arc` remains valid even if a `store` happens
-    /// immediately after.
-    pub fn load(&self) -> Arc<[[f64; LUT_K]; 22]> {
-        self.active.lock().unwrap().clone()
+    /// Read the currently active LUT set. Wait-free, zero-allocation, lock-free,
+    /// safe to call on the real-time audio thread.
+    #[inline]
+    pub fn load(&self) -> &[[f64; LUT_K]; 22] {
+        self.buffer.read()
     }
 
     /// Publish a freshly computed LUT set as the new active set.
     pub fn store(&self, luts: [[f64; LUT_K]; 22]) {
-        *Arc::make_mut(&mut self.active.lock().unwrap()) = luts;
+        self.buffer.write(luts);
         self.completed_sequence.fetch_add(1, std::sync::atomic::Ordering::Release);
     }
 }
@@ -271,7 +264,7 @@ pub struct Vco303 {
     /// instances used for LUT warm-up / secant calibration (off the audio
     /// thread, correctness matters more than speed); left `false` on
     /// real-time instances, which use the validated fast static solve.
-    dense_solver: bool,
+    pub(crate) dense_solver: bool,
     loaded_sequence: u64,
 }
 
@@ -302,7 +295,7 @@ impl Vco303 {
 
     /// Bare construct with an empty LUT — used both by `new` (before attaching
     /// the cached LUT) and by the LUT builder's throwaway render instance.
-    fn raw(sr: f32) -> Self {
+    pub(crate) fn raw(sr: f32) -> Self {
         let mut o = Self {
             sr: sr as f64,
             npn: BjtParams::n2n3904(),
@@ -350,23 +343,23 @@ impl Vco303 {
     /// Return the refined-CV LUT for `sr`, building (and caching) it once. The
     /// build renders a throwaway VCO per anchor (secant), so it is gated behind
     /// the process-global cache — never repeated per voice / per `reset()`.
-    fn cv_lut_for(sr: f32, thermal_noise: i32, is_fun: bool) -> [f64; LUT_K] {
+    pub(crate) fn cv_lut_for(sr: f32, thermal_noise: i32, is_fun: bool) -> [f64; LUT_K] {
         let key = ((sr.to_bits() as u64) << 32)
             | ((thermal_noise as u64) & 0xff)
             | (if is_fun { 0x100 } else { 0x0 });
-        // Fast path: check the cache under the lock, but release it before any
+        // Fast path: check the cache under the read lock, but release it before any
         // expensive computation so other threads are not blocked during LUT build.
         {
-            let cache = match LUT_CACHE.lock() {
+            let cache = match LUT_CACHE.read() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
             if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
                 return lut;
             }
-        } // mutex released here
+        } // read lock released here
 
-        // Slow path: build the LUT without holding the mutex.
+        // Slow path: build the LUT without holding the lock.
         let mut tmp = Self::raw(sr);
         tmp.dense_solver = false;
         tmp.set_fun(is_fun);
@@ -377,9 +370,9 @@ impl Vco303 {
             *slot = tmp.secant_cv(target_hz);
         }
 
-        // Re-acquire to insert; check again in case a concurrent thread already
+        // Re-acquire write lock to insert; check again in case a concurrent thread already
         // built this key while we were computing (prefer the first to finish).
-        let mut cache = match LUT_CACHE.lock() {
+        let mut cache = match LUT_CACHE.write() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
@@ -389,6 +382,12 @@ impl Vco303 {
         }
         cache.push((key, lut));
         lut
+    }
+
+    /// Pre-warm the process-global LUT cache for step 0 (nominal temperature) only.
+    /// Fast nominal warming for unit tests to run in sub-second time.
+    pub fn warm_cache_nominal(sr: f32, is_fun: bool) {
+        Self::cv_lut_for(sr, 0, is_fun);
     }
 
     /// Pre-warm the process-global LUT cache for all 22 thermal-noise steps at
@@ -405,7 +404,7 @@ impl Vco303 {
 
     /// Secant-solve the CV that makes this solver realize `target` Hz. Seeded
     /// from the `CV_FIT` quadratic, refined to ≲0.1 %. Runs only at LUT build.
-    fn secant_cv(&mut self, target: f64) -> f64 {
+    pub(crate) fn secant_cv(&mut self, target: f64) -> f64 {
         let cv_seed = cv_for_freq(target);
         let mut cv0 = cv_seed;
         let mut f0 = self.measure_freq(cv0);
@@ -578,7 +577,7 @@ impl Vco303 {
             let sr = self.sr as f32;
             let mut local_luts = [[0.0f64; LUT_K]; 22];
             let all_cached = {
-                let cache = match LUT_CACHE.lock() {
+                let cache = match LUT_CACHE.read() {
                     Ok(guard) => guard,
                     Err(poisoned) => poisoned.into_inner(),
                 };
@@ -606,7 +605,7 @@ impl Vco303 {
             // approximation for other steps until the background thread finishes.
             let step0_key = ((sr.to_bits() as u64) << 32) | (if is_fun { 0x100 } else { 0x0 });
             let step0_lut = {
-                let cache = match LUT_CACHE.lock() {
+                let cache = match LUT_CACHE.read() {
                     Ok(guard) => guard,
                     Err(poisoned) => poisoned.into_inner(),
                 };
@@ -618,62 +617,32 @@ impl Vco303 {
             if let Some(lut) = step0_lut {
                 self.lut_buffer.store([lut; 22]);
             }
-            // Fall through: background thread will populate accurate per-step data.
+            // Fall through: background worker will populate accurate per-step data.
         }
 
-        let lut_buffer = self.lut_buffer.clone();
-        let sr = self.sr;
-        let instance_id = self.instance_id;
-
+        let lut_buffer = Arc::clone(&self.lut_buffer);
         let seq = lut_buffer
             .sequence
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
             + 1;
 
-        std::thread::spawn(move || {
-            let mut local_luts = [[0.0f64; LUT_K]; 22];
+        let seq_checker = Arc::clone(&lut_buffer.sequence);
+        let buffer_for_complete = Arc::clone(&lut_buffer);
 
-            if age == 0 && tolerance == 0.0 {
-                let lut = Vco303::cv_lut_for(sr as f32, 0, is_fun);
-                local_luts = [lut; 22];
-            } else {
-                let mut temp_vco = Vco303::raw(sr as f32);
-                temp_vco.dense_solver = false;
-                temp_vco.set_instance_id(instance_id);
-                temp_vco.set_fun(is_fun);
-                temp_vco.set_analog_wear(tolerance, age);
+        let job = LutJob {
+            sr: self.sr as f32,
+            instance_id: self.instance_id,
+            is_fun,
+            age,
+            tolerance,
+            sequence: seq,
+            sequence_checker: seq_checker,
+            on_complete: Arc::new(move |luts| {
+                buffer_for_complete.store(luts);
+            }),
+        };
 
-                for noise_step in 0..22 {
-                    // Abort early if a newer request has superseded this build.
-                    // Each thermal step is ~3 s of solver work; checking here turns
-                    // a knob sweep into at most one full build plus cheap partials.
-                    if lut_buffer
-                        .sequence
-                        .load(std::sync::atomic::Ordering::Acquire)
-                        != seq
-                    {
-                        return;
-                    }
-                    temp_vco.set_thermal_internal(noise_step);
-                    for i in 0..LUT_K {
-                        local_luts[noise_step as usize][i] =
-                            temp_vco.secant_cv(midi_hz(lut_midi(i)));
-                    }
-                }
-            }
-
-            // If a newer request has been made since we started, our result is
-            // stale — drop it rather than publish out-of-order data. `local_luts`
-            // is this thread's own stack data, so there is nothing to race on
-            // either way; this check is purely about freshness, not safety.
-            if lut_buffer
-                .sequence
-                .load(std::sync::atomic::Ordering::Acquire)
-                == seq
-            {
-                lut_buffer.store(local_luts);
-            }
-        });
+        submit_lut_job(job);
     }
 
     pub fn recalculate_luts_sync(&self, age: i32, tolerance: f64) {
@@ -988,6 +957,10 @@ impl Vco303 {
     /// The caller must add `self.blep_now` (set by this call) to the returned raw value
     /// to get the band-limited output. `blep_now` is zero when no reset occurred.
     pub fn tick(&mut self) -> f32 {
+        // --- JFET Perturbation Watchdog ---
+        // If the integrator capacitor node CP remains completely static for over 2000 samples
+        // (potential numerical latch-up in the relaxation loop), inject a minor perturbation
+        // on CP based on sample count to kick-start oscillation without causing audible discontinuities.
         let cp_val = self.v[CP];
         if (cp_val - self.last_cp).abs() < 1e-12 {
             self.stuck_counter += 1;

@@ -23,6 +23,7 @@ const ULTRA_BRIGHTNESS: f64 = 0.70; // re-tuned VCF brightness (resonance-active
 fn render_ultra(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: f64) -> Vec<f32> {
     let mut v = Voice::new(sr);
     v.set_tier_immediate(Tier::Ultra);
+    v.set_advanced_env(true);
     v.set_ultra_brightness(cal);
     v.set_cutoff(cutoff);
     v.set_reso(reso);
