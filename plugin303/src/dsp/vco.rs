@@ -644,6 +644,16 @@ impl Vco303 {
                 temp_vco.set_analog_wear(tolerance, age);
 
                 for noise_step in 0..22 {
+                    // Abort early if a newer request has superseded this build.
+                    // Each thermal step is ~3 s of solver work; checking here turns
+                    // a knob sweep into at most one full build plus cheap partials.
+                    if lut_buffer
+                        .sequence
+                        .load(std::sync::atomic::Ordering::Acquire)
+                        != seq
+                    {
+                        return;
+                    }
                     temp_vco.set_thermal_internal(noise_step);
                     for i in 0..LUT_K {
                         local_luts[noise_step as usize][i] =

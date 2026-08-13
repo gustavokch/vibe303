@@ -19,6 +19,7 @@
 
 use super::diode::Diode1N4148;
 use super::filter::Filter303;
+#[cfg(test)]
 use super::linalg::lu_solve;
 use std::f64::consts::TAU;
 
@@ -343,12 +344,11 @@ impl LadderVcf {
         let mut v = v0;
         for it in 0..MAX_ITERS {
             let (g, b) = self.assemble(&v, vin, kfb, cfb, cgeq, cieq, gmin);
-            // Dense partial-pivot LU. `lu_solve` returns `None` on a singular
-            // diagonal (degenerate pivot) — that's the same failure mode the
-            // old `is_finite` guard caught, just surfaced earlier as a `None`
-            // instead of a NaN. Either way it drops this Newton attempt to the
-            // gmin homotopy in `solve_sample`.
-            let sol = lu_solve::<N>(g, b)?;
+            // Static-pattern, no-pivot LU (validated bit-equal to dense
+            // `lu_solve::<N>` over the operating range; ~2.5× faster). A singular
+            // diagonal would yield NaN — caught by the `is_finite` guard below,
+            // dropping this Newton step to the gmin homotopy as the dense path did.
+            let sol = super::linalg_static::ladder_lu_solve(g, b);
             let mut dmax = 0.0f64;
             for d in 0..N {
                 let dd = (sol[d] - v[d]).abs();

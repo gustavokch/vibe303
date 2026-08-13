@@ -405,15 +405,15 @@ impl Voice {
             accent_knob_val: 0.0,
             master_volume: 0.0,
             drive: 1.0,
-            age: 1,
+            age: 0,
             tolerance: CompTolerance::Zero,
             comp_seed: 0,
             drift: 0.0,
-            thermal_noise: 1,
+            thermal_noise: 0,
             temperature: 20.0,
             thermal_noise_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
-            advanced_env: true,
+            advanced_env: false,
             gate: false,
             accent_active: false,
             topology: CircuitTopology::Accurate,
@@ -493,7 +493,7 @@ impl Voice {
         veg_sustain: f32,
         veg_release: f32,
         vca_env_mode: VcaEnvMode,
-        mut comp_age: i32,
+        comp_age: i32,
         comp_drift: f32,
         tolerance: CompTolerance,
         thermal_noise: i32,
@@ -523,7 +523,12 @@ impl Voice {
 
         self.set_topology(topology);
 
-        if age_changed || tolerance_changed || topology_changed {
+        // Topology-change recalcs are owned by `set_topology` (called above,
+        // after `self.age`/`self.tolerance` are updated, so it sees fresh
+        // values). This branch owns age/tolerance changes only — including
+        // `topology_changed` here would fire a second recalc that always
+        // supersedes the one `set_topology` just started.
+        if age_changed || tolerance_changed {
             let is_fun_mode = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun_mode);
             self.vco2.set_fun(is_fun_mode);
@@ -536,10 +541,6 @@ impl Voice {
                 || self.pending_tier == Some(Tier::Ultra)
                 || self.xfade_from.is_some()
             {
-                if comp_age == 0 {
-                    comp_age = 1
-                }
-
                 self.vco.recalculate_luts_async(comp_age, tol_f64);
                 self.vco2.recalculate_luts_async(comp_age, tol_f64);
                 self.vco_dirty = false;
@@ -1274,12 +1275,16 @@ impl Voice {
             let is_fun = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun);
             self.vco2.set_fun(is_fun);
+            // Single owner of the topology-change LUT recalc. Uses the same
+            // tolerance mapping as `update_params` — in the plugin path
+            // `update_params` previously fired a second recalc with these values
+            // that always superseded this one, so they are the effective behavior.
             let tol_f64 = match self.tolerance {
                 CompTolerance::Zero => 0.0,
-                CompTolerance::PointFive => 0.005,
-                CompTolerance::Two => 0.02,
-                CompTolerance::Five => 0.05,
-                CompTolerance::Ten => 0.1,
+                CompTolerance::PointFive => 0.0005,
+                CompTolerance::Two => 0.002,
+                CompTolerance::Five => 0.005,
+                CompTolerance::Ten => 0.01,
             };
             self.vco.recalculate_luts_async(self.age, tol_f64);
             self.vco2.recalculate_luts_async(self.age, tol_f64);
