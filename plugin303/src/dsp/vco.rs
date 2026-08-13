@@ -454,7 +454,7 @@ impl Vco303 {
         let n = (period_samples * 16.0).max(self.sr * 0.010) as usize;
         let mut prev_cp = self.v[CP];
         let (mut first_t, mut last_t, mut count) = (-1.0f64, 0.0f64, 0i64);
-        const THRESH: f64 = 8.0;
+        const THRESH: f64 = 6.0;
         for i in 0..n {
             self.tick();
             let cp = self.v[CP];

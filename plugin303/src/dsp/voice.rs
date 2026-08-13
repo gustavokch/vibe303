@@ -1039,18 +1039,7 @@ impl Voice {
 
         // Age-related pitch tracking stretch
         let _stretch_st = (self.age as f32 / 100.0) * 0.2 * (self.current_note as f32 - 60.0) / 12.0;
-        let p_base = self.current_pitch_st;
-        let dp = match self.topology {
-            CircuitTopology::Fun => 0.0f32,
-            CircuitTopology::Accurate => {
-                let p = p_base as f64;
-                let a3 = -3.973856215564e-06;
-                let a2 = 1.285148664264e-03;
-                let a1 = -1.099182601094e-01;
-                let a0 = 2.812329062736e+00;
-                (a3 * p * p * p + a2 * p * p + a1 * p + a0) as f32
-            }
-        };
+        let dp = 0.0f32;
 
         let vco1_f = 440.0
             * 2.0f32.powf(
@@ -1297,10 +1286,6 @@ impl Voice {
             self.vco.set_thermal(self.thermal_noise_state);
             self.vco2.set_thermal(self.thermal_noise_state);
         }
-    }
-
-    pub fn get_vco_debug_info(&self) -> (bool, f64) {
-        (self.vco.is_fun, self.vco.cv_lut[8])
     }
 }
 

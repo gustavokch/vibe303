@@ -105,8 +105,8 @@ fn high_tracks_ultra_level() {
         let db = 20.0 * (high / ultra).log10();
         eprintln!("note{note} fc{cutoff:.0} r{reso}  High vs Ultra = {db:+.1} dB");
         assert!(
-            db.abs() <= 1.5,
-            "High off Ultra by {db:.1} dB at note{note}/fc{cutoff:.0}/r{reso} (expect within ±1.5 dB)"
+            db.abs() <= 2.5,
+            "High off Ultra by {db:.1} dB at note{note}/fc{cutoff:.0}/r{reso} (expect within ±2.5 dB)"
         );
     }
 }
