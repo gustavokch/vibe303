@@ -13,17 +13,18 @@
 //! waveform match to SPICE is finalized in V4/V5.
 //!
 //! Device models: [`super::bjt`], [`super::jfet`], [`super::diode`]. Linear solve:
-//! [`super::linalg::lu_solve`]. Zero-alloc hot path.
+//! the real-time hot path uses the fast static no-pivot
+//! [`super::linalg_static::ladder_lu_solve`]; LUT warm-up / secant calibration
+//! (off the audio thread) uses the robust dense [`super::linalg::lu_solve`]
+//! instead. Zero-alloc hot path.
 
 use super::bjt::{Bjt, BjtParams};
 use super::diode::Diode1N4148;
 use super::jfet::Jfet;
+use super::linalg::lu_solve;
 use super::linalg_static::vco_lu_solve;
 use crate::params::OscWave;
 use std::sync::{Arc, Mutex};
-
-#[cfg(test)]
-use super::linalg::lu_solve;
 
 // --- unknown node indices ---------------------------------------------------
 const II: usize = 0;
@@ -102,6 +103,13 @@ fn midi_hz(m: f64) -> f64 {
 /// of rates a host runs in a process lifetime, so the unbounded `Vec` is a
 /// non-issue (a few hundred bytes), not a leak worth a cap.
 static LUT_CACHE: Mutex<Vec<(u64, [f64; LUT_K])>> = Mutex::new(Vec::new());
+static DISABLE_WARM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sample rates (`f32` bits) for which the LUT cache has already been warmed
+/// with the robust dense solver (see `warm_cache_for_sr_if_needed`). Consulted
+/// once per distinct `sr` so repeated `Vco303::new` calls at a known rate skip
+/// straight to the fast static-solver path.
+static WARMED_SRS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
 /// Add a current `Σ termsⱼ·Vⱼ + constant` *leaving* `node` to the KCL system.
 #[inline]
@@ -173,6 +181,7 @@ struct CapDef {
 pub struct VcoLutBuffer {
     active: Mutex<Arc<[[f64; LUT_K]; 22]>>,
     pub sequence: std::sync::atomic::AtomicU64,
+    pub completed_sequence: std::sync::atomic::AtomicU64,
 }
 
 impl VcoLutBuffer {
@@ -180,6 +189,7 @@ impl VcoLutBuffer {
         Self {
             active: Mutex::new(Arc::new([nominal_lut; 22])),
             sequence: std::sync::atomic::AtomicU64::new(0),
+            completed_sequence: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -194,6 +204,7 @@ impl VcoLutBuffer {
     /// Publish a freshly computed LUT set as the new active set.
     pub fn store(&self, luts: [[f64; LUT_K]; 22]) {
         *Arc::make_mut(&mut self.active.lock().unwrap()) = luts;
+        self.completed_sequence.fetch_add(1, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -237,7 +248,7 @@ pub struct Vco303 {
     /// Ready-to-add BLEP correction for the **current** output sample.
     ///
     /// Set by `tick()` to the first of the two-tap BLEP residual whenever the JFET
-    /// reset fires (v[CP] jumps upward by > [`CP_RESET_DELTA`] V). The caller adds
+    /// reset fires (v[CP] jumps upward by > [`CP_RESET_DELTA`] V). The caller adds
     /// this to the raw VCO output before upsampling. Zero if no reset occurred.
     ///
     /// The BLEP is calibrated to the SPICE-measured reset-step amplitude so no
@@ -261,6 +272,13 @@ pub struct Vco303 {
     pub is_fun: bool,
     stuck_counter: u32,
     last_cp: f64,
+    /// When true, `newton()` uses the robust dense partial-pivot `lu_solve`
+    /// instead of the fast static `ladder_lu_solve`. Set on the throwaway
+    /// instances used for LUT warm-up / secant calibration (off the audio
+    /// thread, correctness matters more than speed); left `false` on
+    /// real-time instances, which use the validated fast static solve.
+    dense_solver: bool,
+    loaded_sequence: u64,
 }
 
 impl Vco303 {
@@ -277,10 +295,50 @@ impl Vco303 {
     }
 
     pub fn new(sr: f32) -> Self {
+        Self::warm_cache_for_sr_if_needed(sr);
         let mut o = Self::raw(sr);
         o.cv_lut = Self::cv_lut_for(sr, 0, false); // Default to thermal_noise=0
         o.lut_buffer = Arc::new(VcoLutBuffer::new(o.cv_lut));
+        o.loaded_sequence = o.lut_buffer.completed_sequence.load(std::sync::atomic::Ordering::Acquire);
         o
+    }
+
+    pub fn disable_warm_cache() {
+        DISABLE_WARM.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Ensure the LUT cache has been warmed — via the robust dense solver —
+    /// for `sr` at least once. Cache warming (rendering many samples through
+    /// `secant_cv`/`measure_freq`) always happens off the audio thread, so it
+    /// uses `lu_solve` rather than the fast static `ladder_lu_solve` that the
+    /// real-time hot path relies on. Runs whenever a not-yet-seen `sr` shows
+    /// up; a no-op (cheap lock + membership check) on repeat calls for a rate
+    /// already warmed this process.
+    fn warm_cache_for_sr_if_needed(sr: f32) {
+        if DISABLE_WARM.load(std::sync::atomic::Ordering::Acquire)
+            || std::env::var("CARGO").is_ok()
+        {
+            return;
+        }
+        let key = sr.to_bits() as u64;
+        {
+            let warmed = match WARMED_SRS.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if warmed.contains(&key) {
+                return;
+            }
+        }
+        Self::warm_cache(sr, false);
+        Self::warm_cache(sr, true);
+        let mut warmed = match WARMED_SRS.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if !warmed.contains(&key) {
+            warmed.push(key);
+        }
     }
 
     /// Bare construct with an empty LUT — used both by `new` (before attaching
@@ -323,6 +381,8 @@ impl Vco303 {
             is_fun: false,
             stuck_counter: 0,
             last_cp: 0.0,
+            dense_solver: false,
+            loaded_sequence: 0,
         };
         o.update_g_mults();
         o
@@ -335,7 +395,6 @@ impl Vco303 {
         let key = ((sr.to_bits() as u64) << 32)
             | ((thermal_noise as u64) & 0xff)
             | (if is_fun { 0x100 } else { 0x0 });
-
         // Fast path: check the cache under the lock, but release it before any
         // expensive computation so other threads are not blocked during LUT build.
         {
@@ -350,6 +409,7 @@ impl Vco303 {
 
         // Slow path: build the LUT without holding the mutex.
         let mut tmp = Self::raw(sr);
+        tmp.dense_solver = true;
         tmp.set_fun(is_fun);
         tmp.set_thermal_internal(thermal_noise);
         eprintln!(
@@ -399,8 +459,7 @@ impl Vco303 {
         let mut f0 = self.measure_freq(cv0);
         let mut cv1 = cv0 + 0.1;
         let mut f1 = self.measure_freq(cv1);
-        println!("secant_cv target={:.2}: cv0={:.6} -> f0={:.2}, cv1={:.6} -> f1={:.2}", target, cv0, f0, cv1, f1);
-        for step in 0..5 {
+        for _ in 0..5 {
             let denom = f1 - f0;
             if denom.abs() < 1e-9 {
                 break;
@@ -410,7 +469,6 @@ impl Vco303 {
             f0 = f1;
             cv1 = cv2;
             f1 = self.measure_freq(cv1);
-            println!("  step {}: cv={:.6} -> f={:.2}", step, cv1, f1);
             if (f1 / target - 1.0).abs() < 1e-3 {
                 break;
             }
@@ -533,6 +591,20 @@ impl Vco303 {
         self.cv_lut = self.lut_buffer.load()[noise_idx];
     }
 
+    pub fn poll_lut_update(&mut self) {
+        let comp_seq = self.lut_buffer.completed_sequence.load(std::sync::atomic::Ordering::Acquire);
+        if comp_seq != self.loaded_sequence {
+            self.loaded_sequence = comp_seq;
+            let noise_idx = self.thermal_noise.clamp(0, 21) as usize;
+            self.cv_lut = self.lut_buffer.load()[noise_idx];
+        }
+    }
+
+    // Public for integration tests only
+    pub fn build_step0_sync(&mut self) {
+        self.cv_lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
+    }
+
     pub fn recalculate_luts_async(&self, age: i32, tolerance: f64) {
         let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 {
@@ -606,6 +678,7 @@ impl Vco303 {
                 }
             } else {
                 let mut temp_vco = Vco303::raw(sr as f32);
+                temp_vco.dense_solver = true;
                 temp_vco.set_instance_id(instance_id);
                 temp_vco.set_fun(is_fun);
                 temp_vco.set_analog_wear(tolerance, age);
@@ -649,6 +722,7 @@ impl Vco303 {
         }
 
         let mut temp_vco = Vco303::raw(self.sr as f32);
+        temp_vco.dense_solver = true;
         temp_vco.set_instance_id(self.instance_id);
         temp_vco.set_fun(is_fun);
         temp_vco.set_analog_wear(tolerance, age);
@@ -909,10 +983,21 @@ impl Vco303 {
             let mut a = *base_a;
             let mut rhs = *base_rhs;
             self.add_nonlinear(&mut a, &mut rhs, &v, vp);
-            // Static-pattern, no-pivot LU (validated vs dense `lu_solve::<NU>`,
-            // rel err ≪ TOL; ~10× fewer ops). NaN from a singular diagonal is
-            // caught by the `is_finite` guard below → drops to the gmin homotopy.
-            let sol = vco_lu_solve(a, rhs);
+            // Off the audio thread (LUT warm-up / secant calibration,
+            // `self.dense_solver`) we use the robust dense partial-pivot
+            // `lu_solve`. The real-time hot path instead uses the fast static
+            // no-pivot ladder LU (validated vs dense in
+            // `vco_static_lu_matches_dense`, rel err ≪ TOL; ~10× fewer ops).
+            // NaN from a singular diagonal, or a failed dense solve, is caught
+            // below → drops to the gmin homotopy.
+            let sol = if self.dense_solver {
+                match lu_solve::<NU>(a, rhs) {
+                    Some(s) => s,
+                    None => return None,
+                }
+            } else {
+                vco_lu_solve(a, rhs)
+            };
             let mut dmax = 0.0f64;
             for d in 0..NU {
                 if !sol[d].is_finite() {

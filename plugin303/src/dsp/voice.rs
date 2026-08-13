@@ -405,11 +405,11 @@ impl Voice {
             accent_knob_val: 0.0,
             master_volume: 0.0,
             drive: 1.0,
-            age: 0,
+            age: 1,
             tolerance: CompTolerance::Zero,
             comp_seed: 0,
             drift: 0.0,
-            thermal_noise: 0,
+            thermal_noise: 1,
             temperature: 20.0,
             thermal_noise_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
@@ -493,7 +493,7 @@ impl Voice {
         veg_sustain: f32,
         veg_release: f32,
         vca_env_mode: VcaEnvMode,
-        comp_age: i32,
+        mut comp_age: i32,
         comp_drift: f32,
         tolerance: CompTolerance,
         thermal_noise: i32,
@@ -504,6 +504,7 @@ impl Voice {
     ) {
         let age_changed = self.age != comp_age;
         let tolerance_changed = self.tolerance != tolerance || self.comp_seed != comp_seed;
+        let topology_changed = self.topology != topology;
 
         self.tuning_offset = tuning_cents;
         self.age = comp_age;
@@ -522,7 +523,10 @@ impl Voice {
 
         self.set_topology(topology);
 
-        if age_changed || tolerance_changed {
+        if age_changed || tolerance_changed || topology_changed {
+            let is_fun_mode = topology == CircuitTopology::Fun;
+            self.vco.set_fun(is_fun_mode);
+            self.vco2.set_fun(is_fun_mode);
             self.ladder.set_analog_wear(tol_f64, comp_age);
             self.ladder_hi.set_analog_wear(tol_f64, comp_age);
             self.vco.set_analog_wear(tol_f64, comp_age);
@@ -532,6 +536,10 @@ impl Voice {
                 || self.pending_tier == Some(Tier::Ultra)
                 || self.xfade_from.is_some()
             {
+                if comp_age == 0 {
+                    comp_age = 1
+                }
+
                 self.vco.recalculate_luts_async(comp_age, tol_f64);
                 self.vco2.recalculate_luts_async(comp_age, tol_f64);
                 self.vco_dirty = false;
@@ -540,7 +548,7 @@ impl Voice {
             }
         }
 
-        if self.thermal_noise != self.thermal_noise_state {
+        if self.thermal_noise != self.thermal_noise_state || age_changed || tolerance_changed || topology_changed {
             self.ladder.set_thermal(thermal_noise);
             self.ladder_hi.set_thermal(thermal_noise);
             self.vco.set_thermal(thermal_noise);
@@ -716,6 +724,9 @@ impl Voice {
             self.target_pitch_st = self.target_pitch_st.clamp(0.0, 108.0);
             self.current_pitch_st = self.current_pitch_st.clamp(0.0, 108.0);
         }
+
+        self.vco.poll_lut_update();
+        self.vco2.poll_lut_update();
     }
 
     /// Set the tier with no crossfade — for the initial/persisted selection at
