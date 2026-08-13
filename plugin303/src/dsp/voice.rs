@@ -413,7 +413,7 @@ impl Voice {
         veg_sustain: f32,
         veg_release: f32,
         vca_env_mode: VcaEnvMode,
-        comp_age: i32,
+        mut comp_age: i32,
         comp_drift: f32,
         tolerance: CompTolerance,
         thermal_noise: i32,
@@ -424,6 +424,7 @@ impl Voice {
     ) {
         let age_changed = self.age != comp_age;
         let tolerance_changed = self.tolerance != tolerance || self.comp_seed != comp_seed;
+        let topology_changed = self.topology != topology;
 
         self.topology = topology;
         self.tuning_offset = tuning_cents;
@@ -441,7 +442,11 @@ impl Voice {
             CompTolerance::Ten => 0.10,
         };
 
-        if age_changed || tolerance_changed {
+        if age_changed || tolerance_changed || topology_changed {
+            let is_fun_mode = topology == CircuitTopology::Fun;
+            self.vco.set_fun(is_fun_mode);
+            self.vco2.set_fun(is_fun_mode);
+
             self.ladder.set_analog_wear(tol_f64, comp_age);
             self.ladder_hi.set_analog_wear(tol_f64, comp_age);
             self.vco.set_analog_wear(tol_f64, comp_age);
@@ -463,7 +468,7 @@ impl Voice {
             }
         }
 
-        if self.thermal_noise != self.thermal_noise_state {
+        if self.thermal_noise != self.thermal_noise_state || age_changed || tolerance_changed || topology_changed {
             self.ladder.set_thermal(thermal_noise);
             self.ladder_hi.set_thermal(thermal_noise);
             self.vco.set_thermal(thermal_noise);
@@ -631,6 +636,9 @@ impl Voice {
             let cutoff_hz = lin_to_exp(cutoff as f64, 314.0, 2394.0);
             self.calculate_env_mod_scaler(cutoff_hz, env_mod as f64);
         }
+
+        self.vco.poll_lut_update();
+        self.vco2.poll_lut_update();
     }
 
     /// Set the tier with no crossfade — for the initial/persisted selection at

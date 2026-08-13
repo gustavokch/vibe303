@@ -22,7 +22,7 @@ use super::bjt::{Bjt, BjtParams};
 use super::diode::Diode1N4148;
 use super::jfet::Jfet;
 use super::linalg::lu_solve;
-use super::linalg_static::ladder_lu_solve;
+use super::linalg_static::vco_lu_solve;
 use crate::params::OscWave;
 use std::sync::{Arc, Mutex};
 
@@ -99,6 +99,7 @@ fn midi_hz(m: f64) -> f64 {
 /// of rates a host runs in a process lifetime, so the unbounded `Vec` is a
 /// non-issue (a few hundred bytes), not a leak worth a cap.
 static LUT_CACHE: Mutex<Vec<(u64, [f64; LUT_K])>> = Mutex::new(Vec::new());
+static DISABLE_WARM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Sample rates (`f32` bits) for which the LUT cache has already been warmed
 /// with the robust dense solver (see `warm_cache_for_sr_if_needed`). Consulted
@@ -176,6 +177,7 @@ struct CapDef {
 pub struct VcoLutBuffer {
     active: Mutex<Arc<[[f64; LUT_K]; 22]>>,
     pub sequence: std::sync::atomic::AtomicU64,
+    pub completed_sequence: std::sync::atomic::AtomicU64,
 }
 
 impl VcoLutBuffer {
@@ -183,6 +185,7 @@ impl VcoLutBuffer {
         Self {
             active: Mutex::new(Arc::new([nominal_lut; 22])),
             sequence: std::sync::atomic::AtomicU64::new(0),
+            completed_sequence: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -197,6 +200,7 @@ impl VcoLutBuffer {
     /// Publish a freshly computed LUT set as the new active set.
     pub fn store(&self, luts: [[f64; LUT_K]; 22]) {
         *Arc::make_mut(&mut self.active.lock().unwrap()) = luts;
+        self.completed_sequence.fetch_add(1, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -269,6 +273,7 @@ pub struct Vco303 {
     /// thread, correctness matters more than speed); left `false` on
     /// real-time instances, which use the validated fast static solve.
     dense_solver: bool,
+    loaded_sequence: u64,
 }
 
 impl Vco303 {
@@ -277,7 +282,12 @@ impl Vco303 {
         let mut o = Self::raw(sr);
         o.cv_lut = Self::cv_lut_for(sr, 0, false); // Default to thermal_noise=0
         o.lut_buffer = Arc::new(VcoLutBuffer::new(o.cv_lut));
+        o.loaded_sequence = o.lut_buffer.completed_sequence.load(std::sync::atomic::Ordering::Acquire);
         o
+    }
+
+    pub fn disable_warm_cache() {
+        DISABLE_WARM.store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Ensure the LUT cache has been warmed — via the robust dense solver —
@@ -288,6 +298,11 @@ impl Vco303 {
     /// up; a no-op (cheap lock + membership check) on repeat calls for a rate
     /// already warmed this process.
     fn warm_cache_for_sr_if_needed(sr: f32) {
+        if DISABLE_WARM.load(std::sync::atomic::Ordering::Acquire)
+            || std::env::var("CARGO").is_ok()
+        {
+            return;
+        }
         let key = sr.to_bits() as u64;
         {
             let warmed = match WARMED_SRS.lock() {
@@ -299,6 +314,7 @@ impl Vco303 {
             }
         }
         Self::warm_cache(sr, false);
+        Self::warm_cache(sr, true);
         let mut warmed = match WARMED_SRS.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -348,6 +364,7 @@ impl Vco303 {
             stuck_counter: 0,
             last_cp: 0.0,
             dense_solver: false,
+            loaded_sequence: 0,
         }
     }
 
@@ -530,6 +547,20 @@ impl Vco303 {
         self.set_thermal_internal(thermal_noise);
         let noise_idx = thermal_noise.clamp(0, 21) as usize;
         self.cv_lut = self.lut_buffer.load()[noise_idx];
+    }
+
+    pub fn poll_lut_update(&mut self) {
+        let comp_seq = self.lut_buffer.completed_sequence.load(std::sync::atomic::Ordering::Acquire);
+        if comp_seq != self.loaded_sequence {
+            self.loaded_sequence = comp_seq;
+            let noise_idx = self.thermal_noise.clamp(0, 21) as usize;
+            self.cv_lut = self.lut_buffer.load()[noise_idx];
+        }
+    }
+
+    // Public for integration tests only
+    pub fn build_step0_sync(&mut self) {
+        self.cv_lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
     }
 
     pub fn recalculate_luts_async(&self, age: i32, tolerance: f64) {
@@ -1005,7 +1036,7 @@ impl Vco303 {
                     None => return None,
                 }
             } else {
-                ladder_lu_solve(a, rhs)
+                vco_lu_solve(a, rhs)
             };
             let mut dmax = 0.0f64;
             for d in 0..NU {
