@@ -8,6 +8,7 @@ use super::ladder_wdf::LadderVcf;
 use super::osc::BlepOsc;
 use super::oversample::{Os2x, Os4x};
 use super::rc_env::{AccentSweep, DecayEnv, LeakyIntegrator, RcEnv};
+use super::sequencer::SeqEvent;
 use super::vco::Vco303;
 use crate::params::{CircuitTopology, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
 
@@ -286,6 +287,8 @@ pub struct Voice {
     pub topology: CircuitTopology,
     /// Slide active state.
     slide_active: bool,
+    /// Pitch slew for exponential slide (tau = 12ms -> 60ms constant-time slide).
+    pitch_slew: LeakyIntegrator,
     /// Current pitch in semitones.
     current_pitch_st: f32,
     /// Target pitch in semitones.
@@ -372,6 +375,13 @@ impl Voice {
             accent_decay_ms: 200.0,
             env_scaler: 1.0,
             env_offset: 0.0,
+
+            pitch_slew: {
+                let mut li = LeakyIntegrator::new(sr as f64);
+                li.set_time_constant(12.0);
+                li.set_state(60.0);
+                li
+            },
 
             tier: Tier::Low,
             xfade_from: None,
@@ -662,6 +672,7 @@ impl Voice {
         self.sweep_c13.set_sample_rate(sr_f64);
         self.vca_accent_rc.set_sample_rate(sr_f64);
         self.amp_declicker.set_sample_rate(sr_f64);
+        self.pitch_slew.set_sample_rate(sr_f64);
 
         // Update Envelopes
         if final_advanced_env {
@@ -777,6 +788,10 @@ impl Voice {
         self.vca_env.reset();
         self.vca_accent_rc.reset();
         self.amp_declicker.reset();
+        self.pitch_slew.reset();
+        self.pitch_slew.set_sample_rate(self.sr as f64);
+        self.pitch_slew.set_time_constant(12.0);
+        self.pitch_slew.set_state(60.0);
         self.accent_gain = 0.0;
         self.normal_decay_ms = 200.0;
         self.accent_decay_ms = 200.0;
@@ -852,6 +867,7 @@ impl Voice {
         self.target_pitch_st = target;
         if !self.slide_active {
             self.current_pitch_st = target;
+            self.pitch_slew.set_state(target as f64);
         }
         self.gate = true;
         self.meg.trigger();
@@ -911,6 +927,67 @@ impl Voice {
         self.target_pitch_st = target;
         if !self.slide_active {
             self.current_pitch_st = target;
+            self.pitch_slew.set_state(target as f64);
+        }
+    }
+
+    pub fn on_seq_event(&mut self, ev: SeqEvent, accent_amount: f32, decay_knob_ms: f32) {
+        match ev {
+            SeqEvent::Trigger { key, octave, accent } => {
+                let target = 60.0 + key as f32 + 12.0 * octave as f32;
+                let target = if self.topology == CircuitTopology::Accurate {
+                    target.clamp(24.0, 72.0)
+                } else {
+                    target.clamp(0.0, 108.0)
+                };
+                self.target_pitch_st = target;
+                self.current_pitch_st = target;
+                self.pitch_slew.set_state(target as f64);
+                self.slide_active = false;
+
+                self.gate = true;
+                self.accent_active = accent;
+                if accent {
+                    self.accent_gain = if accent_amount > 0.0 { accent_amount } else { self.accent_knob_val };
+                    self.meg_decay.set_decay(self.accent_decay_ms);
+                    self.vca_env.set_release(50.0);
+                    self.accent_acc += (1.0 - self.accent_acc) * 0.8;
+                } else {
+                    self.accent_gain = 0.0;
+                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 { decay_knob_ms as f64 } else { self.normal_decay_ms });
+                    self.vca_env.set_release(0.5);
+                }
+
+                self.meg.trigger();
+                self.veg.trigger();
+                self.meg_decay.trigger();
+                self.vca_env.note_on();
+            }
+            SeqEvent::SlideTo { key, octave, accent } => {
+                let target = 60.0 + key as f32 + 12.0 * octave as f32;
+                let target = if self.topology == CircuitTopology::Accurate {
+                    target.clamp(24.0, 72.0)
+                } else {
+                    target.clamp(0.0, 108.0)
+                };
+                self.target_pitch_st = target;
+                self.slide_active = true;
+                self.accent_active = accent;
+
+                if accent {
+                    self.accent_gain = if accent_amount > 0.0 { accent_amount } else { self.accent_knob_val };
+                    self.meg_decay.set_decay(self.accent_decay_ms);
+                    self.vca_env.set_release(50.0);
+                    self.accent_acc += (1.0 - self.accent_acc) * 0.8;
+                } else {
+                    self.accent_gain = 0.0;
+                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 { decay_knob_ms as f64 } else { self.normal_decay_ms });
+                    self.vca_env.set_release(0.5);
+                }
+            }
+            SeqEvent::GateOff => {
+                self.set_gate(false, false, false, false);
+            }
         }
     }
 
@@ -1021,18 +1098,16 @@ impl Voice {
         // Pitch glide slew
         if self.advanced_env {
             let glide_time_ms = 10.0 + self.glide_knob * 400.0;
-            let glide_alpha = 1.0 - (-1.0 / (glide_time_ms * 0.001 * self.sr)).exp();
-            self.current_pitch_st += glide_alpha * (self.target_pitch_st - self.current_pitch_st);
+            self.pitch_slew.set_time_constant(glide_time_ms as f64);
+            self.current_pitch_st = self.pitch_slew.tick(self.target_pitch_st as f64) as f32;
         } else {
-            // Classic mode: CV-domain exponential lag (G8, G9)
-            // Slide window is active during destination note (G10).
+            // Classic mode: CV-domain exponential lag (tau = 12 ms -> 60 ms slide)
             if self.slide_active {
-                let tau_ms = 22.0;
-                let glide_alpha = 1.0 - (-1.0 / (tau_ms * 0.001 * self.sr)).exp();
-                self.current_pitch_st += glide_alpha * (self.target_pitch_st - self.current_pitch_st);
+                self.pitch_slew.set_time_constant(12.0);
+                self.current_pitch_st = self.pitch_slew.tick(self.target_pitch_st as f64) as f32;
             } else {
-                // If not sliding, snap instantly
                 self.current_pitch_st = self.target_pitch_st;
+                self.pitch_slew.set_state(self.target_pitch_st as f64);
             }
         }
 
