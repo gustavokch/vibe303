@@ -97,6 +97,22 @@ fn transport(v: f64, is: f64, vcrit: f64, vt: f64) -> (f64, f64) {
     }
 }
 
+/// Current-iteration variant of transport: maintains full exponential beyond V_CRIT.
+/// Follows the Newton-Raphson document's approach, preserving device physics at all
+/// bias levels for potentially faster convergence.
+#[cfg(feature = "current-iteration")]
+#[inline]
+fn transport_current_iteration(v: f64, is: f64, vcrit: f64, vt: f64) -> (f64, f64) {
+    if v < vcrit {
+        let e = fast_exp(v / vt);
+        (is * (e - 1.0), (is / vt) * e)
+    } else {
+        // Full exponential beyond V_CRIT - no linearization
+        let e = fast_exp(v / vt);
+        (is * (e - 1.0), (is / vt) * e)
+    }
+}
+
 /// A BJT device: parameters + polarity.
 #[derive(Clone, Copy, Debug)]
 pub struct Bjt {
@@ -253,5 +269,46 @@ mod tests {
         );
         assert!(op.dic_b > 0.0, "PNP node gm sign should match NPN");
         assert!(on.ic > 0.0);
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn transport_current_iteration_matches_below_vcrit() {
+        // Below V_CRIT, current-iteration should match standard transport
+        let p = BjtParams::n2n3904();
+        let v = 0.6; // Below vcrit (~0.73V for 2N3904)
+
+        let (i_std, g_std) = transport(v, p.is, p.vcrit, p.vt);
+        let (i_ci, g_ci) = transport_current_iteration(v, p.is, p.vcrit, p.vt);
+
+        assert_eq!(i_std.to_bits(), i_ci.to_bits(), "current mismatch below V_CRIT");
+        assert_eq!(g_std.to_bits(), g_ci.to_bits(), "conductance mismatch below V_CRIT");
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn transport_current_iteration_exponential_above_vcrit() {
+        // Above V_CRIT, current-iteration should use full exponential
+        let p = BjtParams::n2n3904();
+        let v_above = p.vcrit + 0.1;
+
+        let (i_std, g_std) = transport(v_above, p.is, p.vcrit, p.vt);
+        let (i_ci, g_ci) = transport_current_iteration(v_above, p.is, p.vcrit, p.vt);
+
+        // Standard linearizes (conductance frozen), current-iteration uses full exponential
+        assert!((g_std - g_ci).abs() > 1e-6, "current-iteration should differ from linear extension");
+        // Current-iteration should give higher current (full exponential)
+        assert!(i_ci > i_std, "current-iteration current should be higher above V_CRIT");
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn transport_current_iteration_conductance_positive() {
+        // Current-iteration should maintain positive conductance for convergence
+        let p = BjtParams::n2n3904();
+        for v in [-2.0, -0.5, 0.0, 0.3, 0.6, p.vcrit - 0.01, p.vcrit + 0.05, 1.0] {
+            let (_, g) = transport_current_iteration(v, p.is, p.vcrit, p.vt);
+            assert!(g > 0.0, "conductance must be positive at v={}", v);
+        }
     }
 }

@@ -35,6 +35,10 @@ const HIGH_LEVEL_TRIM: f32 = 1.890; // +5.5 dB
 const XFADE_SECS: f32 = 0.010;
 const COMP_BUF: usize = 64;
 
+/// TB-303 slide time constants per pitch index (seconds)
+/// Indexed by pitch modulo 8 - authentic TB-303 glide behavior
+const SLIDE_TIME: [f32; 8] = [1.8, 0.03, 0.8, 0.01, 1.8, 0.8, 1.8, 0.03];
+
 const LOW_FC_POLY: [f32; 10] = [
     6.258712813859e+00,
     5.371432501979e-02,
@@ -873,9 +877,11 @@ impl Voice {
         self.temperature += alpha * (target_temp - self.temperature);
 
         // --- 1. Compute Pitch & Cutoff Modulations ---
-        // Pitch glide slew
-        let glide_time_ms = 10.0 + self.glide_knob * 75.0;
-        let glide_alpha = 1.0 - (-1.0 / (glide_time_ms * 0.001 * self.sr)).exp();
+        // Pitch-dependent glide time using TB-303 lookup table
+        // Map target pitch to index (0-7) and fetch slide time constant
+        let pos = (self.target_pitch_st as usize) % 8;
+        let slide_time_s = SLIDE_TIME[pos];
+        let glide_alpha = 1.0 - (-1.0 / (slide_time_s * self.sr)).exp();
         self.current_pitch_st += glide_alpha * (self.target_pitch_st - self.current_pitch_st);
 
         // Pitch drift (LFO pink noise walk + systematic temperature drift)

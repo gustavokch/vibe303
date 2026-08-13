@@ -57,6 +57,10 @@ const GND: Node = Fix(0.0);
 
 const MAX_ITERS: usize = 100;
 const TOL: f64 = 1e-7;
+/// Absolute tolerance for convergence (document eq. 3.30: ε_abs).
+const TOL_ABS: f64 = 1e-9;
+/// Relative tolerance for convergence (document eq. 3.30: ε_rel).
+const TOL_REL: f64 = 1e-7;
 const GMIN_BASE: f64 = 1e-12;
 const RAMP_S: f64 = 1e-3; // rail ramp time for self-start
 /// DC-blocker highpass corner (Hz). ~7.6 Hz reproduces the legacy hardcoded
@@ -923,6 +927,12 @@ impl Vco303 {
                 }
             }
             if dmax < TOL {
+                return Some((v, it as u32 + 1));
+            }
+            // Mixed absolute + relative tolerance (document eq. 3.30)
+            // ε_abs + ε_rel × |v_max| handles both small and large signal swings
+            let vmax = v.iter().fold(0.0f64, |a, &x| a.abs().max(x.abs()));
+            if dmax < TOL_ABS + TOL_REL * vmax {
                 return Some((v, it as u32 + 1));
             }
         }

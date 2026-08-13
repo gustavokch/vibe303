@@ -103,6 +103,19 @@ impl Jfet {
             (icrit + gcrit * (v - self.vcrit), gcrit)
         }
     }
+
+    /// Current-iteration variant of gate_diode: maintains full exponential beyond V_CRIT.
+    #[cfg(feature = "current-iteration")]
+    pub fn gate_diode_current_iteration(&self, v: f64) -> (f64, f64) {
+        if v < self.vcrit {
+            let e = fast_exp(v / VT);
+            (self.is * (e - 1.0), (self.is / VT) * e)
+        } else {
+            // Full exponential beyond V_CRIT - no linearization
+            let e = fast_exp(v / VT);
+            (self.is * (e - 1.0), (self.is / VT) * e)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -179,5 +192,46 @@ mod tests {
         assert!(i > 0.0 && g > 0.0);
         let (ir, _) = j.gate_diode(-1.0);
         assert!(ir < 0.0 && ir > -2.0 * j.is, "reverse current ~ -Is");
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn gate_diode_current_iteration_matches_below_vcrit() {
+        // Below V_CRIT, current-iteration should match standard gate_diode
+        let j = Jfet::mpf104();
+        let v = 0.4; // Below vcrit (~0.66V for MPF104)
+
+        let (i_std, g_std) = j.gate_diode(v);
+        let (i_ci, g_ci) = j.gate_diode_current_iteration(v);
+
+        assert_eq!(i_std.to_bits(), i_ci.to_bits(), "current mismatch below V_CRIT");
+        assert_eq!(g_std.to_bits(), g_ci.to_bits(), "conductance mismatch below V_CRIT");
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn gate_diode_current_iteration_exponential_above_vcrit() {
+        // Above V_CRIT, current-iteration should use full exponential
+        let j = Jfet::mpf104();
+        let v_above = j.vcrit + 0.1;
+
+        let (i_std, g_std) = j.gate_diode(v_above);
+        let (i_ci, g_ci) = j.gate_diode_current_iteration(v_above);
+
+        // Standard linearizes (conductance frozen), current-iteration uses full exponential
+        assert!((g_std - g_ci).abs() > 1e-6, "current-iteration should differ from linear extension");
+        // Current-iteration should give higher current (full exponential)
+        assert!(i_ci > i_std, "current-iteration current should be higher above V_CRIT");
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn gate_diode_current_iteration_conductance_positive() {
+        // Current-iteration should maintain positive conductance for convergence
+        let j = Jfet::mpf104();
+        for v in [-2.0, -1.0, -0.5, 0.0, 0.3, 0.4, j.vcrit - 0.01, j.vcrit + 0.05, 0.8] {
+            let (_, g) = j.gate_diode_current_iteration(v);
+            assert!(g > 0.0, "conductance must be positive at v={}", v);
+        }
     }
 }
