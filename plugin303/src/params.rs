@@ -108,6 +108,31 @@ impl Default for SequencerPattern {
     }
 }
 
+impl SequencerPattern {
+    pub fn compile(&self, num_steps: u8) -> crate::dsp::sequencer::Pattern {
+        let mut pitches = [crate::dsp::sequencer::PitchEntry::default(); 16];
+        let mut timing = [crate::dsp::sequencer::TimeEntry::Rest; 16];
+        for i in 0..16 {
+            timing[i] = match self.steps[i].gate {
+                StepGate::Note => crate::dsp::sequencer::TimeEntry::Note,
+                StepGate::Tie => crate::dsp::sequencer::TimeEntry::Tie,
+                StepGate::Rest => crate::dsp::sequencer::TimeEntry::Rest,
+            };
+            pitches[i] = crate::dsp::sequencer::PitchEntry {
+                key: self.steps[i].semitone,
+                octave: self.steps[i].octave,
+                accent: self.steps[i].accent,
+                slide: self.steps[i].slide,
+            };
+        }
+        crate::dsp::sequencer::Pattern {
+            pitches,
+            timing,
+            num_steps: num_steps.clamp(1, 16),
+        }
+    }
+}
+
 #[derive(Params)]
 pub struct Plugin303Params {
     #[id = "tier"]
@@ -264,7 +289,7 @@ impl Default for Plugin303Params {
             )
             .with_unit(" dB"),
 
-            seq_run: BoolParam::new("Seq Run", true),
+            seq_run: BoolParam::new("Seq Run", false),
             seq_sync: BoolParam::new("Seq Sync", true),
 
             seq_tempo: FloatParam::new(
@@ -327,7 +352,7 @@ impl Default for Plugin303Params {
             )
             .with_unit(" dB"),
 
-            glide: FloatParam::new("Glide", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            glide: FloatParam::new("Glide", 0.1, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
             advanced_env: BoolParam::new("Advanced Env", false),
 
@@ -433,12 +458,12 @@ impl Default for Plugin303Params {
 
             tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),
 
-            thermal_noise: IntParam::new("Thermal Noise", 0, IntRange::Linear { min: 0, max: 50 })
+            thermal_noise: IntParam::new("Thermal Noise", 0, IntRange::Linear { min: 0, max: 100 })
                 .with_value_to_string(std::sync::Arc::new(|v| {
                     if v == 0 {
                         "Off".to_string()
                     } else {
-                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.01)
+                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.001)
                     }
                 })),
 
@@ -450,7 +475,6 @@ impl Default for Plugin303Params {
                     max: 999_999,
                 },
             ),
-
 
             pattern: std::sync::RwLock::new(SequencerPattern::default()),
         }

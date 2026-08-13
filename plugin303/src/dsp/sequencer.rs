@@ -2,6 +2,76 @@
 
 use crate::params::{SequencerStep, StepGate};
 
+pub const MAX_STEPS: usize = 16;
+
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct PitchEntry {
+    pub key: i8,
+    pub octave: i8,
+    pub accent: bool,
+    pub slide: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TimeEntry {
+    #[default]
+    Note,
+    Tie,
+    Rest,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pattern {
+    pub pitches: [PitchEntry; MAX_STEPS],
+    pub timing: [TimeEntry; MAX_STEPS],
+    pub num_steps: u8,
+}
+
+impl Default for Pattern {
+    fn default() -> Self {
+        Self {
+            pitches: [PitchEntry::default(); MAX_STEPS],
+            timing: [TimeEntry::Note; MAX_STEPS],
+            num_steps: 16,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SeqEvent {
+    Trigger { key: i8, octave: i8, accent: bool },
+    SlideTo { key: i8, octave: i8, accent: bool },
+    GateOff,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Timebase {
+    #[default]
+    Straight,
+    Triplet,
+}
+
+impl Timebase {
+    pub fn ticks_per_step(self) -> f64 {
+        match self {
+            Self::Straight => 6.0,
+            Self::Triplet => 8.0,
+        }
+    }
+    pub fn gate_on_ticks(self) -> f64 {
+        match self {
+            Self::Straight => 3.0,
+            Self::Triplet => 5.0,
+        }
+    }
+    pub fn steps_per_beat(self) -> f64 {
+        match self {
+            Self::Straight => 4.0,
+            Self::Triplet => 8.0 / 3.0,
+        }
+    }
+}
+
 /// A 16-step sequencer tracking step playback position, timing phases,
 /// and generating frequency/trigger/gate/accent modulation signals.
 pub struct Sequencer {
