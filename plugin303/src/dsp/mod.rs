@@ -12,6 +12,7 @@ pub mod linalg;
 pub mod linalg_static;
 pub mod osc;
 pub mod oversample;
+pub mod rc_env;
 pub mod sequencer;
 pub mod vco;
 pub mod voice;
