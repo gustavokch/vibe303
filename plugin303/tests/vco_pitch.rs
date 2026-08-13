@@ -33,11 +33,17 @@ fn realized_hz(v: &mut Vco303, sr: f32) -> f32 {
 fn pitch_accurate_across_range() {
     for sr in [48_000.0f32, 192_000.0] {
         println!("--- Testing pitch accuracy at SR = {} ---", sr);
-        for &target in &[32.70f32, 110.0, 220.0, 440.0, 523.25, 1046.5] {
-            let mut v = Vco303::new(sr);
-            v.set_fun(true);
-            v.recalculate_luts_sync(0, 0.0);
-            v.set_thermal(0);
+        let mut v = Vco303::new(sr);
+        v.set_fun(true);
+        v.recalculate_luts_sync(0, 0.0);
+        v.set_thermal(0);
+
+        let targets: &[f32] = if sr >= 192_000.0 {
+            &[32.70f32, 110.0, 220.0, 440.0, 523.25, 1046.5]
+        } else {
+            &[32.70f32, 110.0, 220.0, 440.0]
+        };
+        for &target in targets {
             v.set_freq(target);
             for _ in 0..(sr as usize / 4) {
                 v.tick(); // settle

@@ -105,12 +105,6 @@ fn midi_hz(m: f64) -> f64 {
 static LUT_CACHE: Mutex<Vec<(u64, [f64; LUT_K])>> = Mutex::new(Vec::new());
 static DISABLE_WARM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Sample rates (`f32` bits) for which the LUT cache has already been warmed
-/// with the robust dense solver (see `warm_cache_for_sr_if_needed`). Consulted
-/// once per distinct `sr` so repeated `Vco303::new` calls at a known rate skip
-/// straight to the fast static-solver path.
-static WARMED_SRS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
-
 /// Add a current `Σ termsⱼ·Vⱼ + constant` *leaving* `node` to the KCL system.
 #[inline]
 fn stamp(
@@ -295,7 +289,6 @@ impl Vco303 {
     }
 
     pub fn new(sr: f32) -> Self {
-        Self::warm_cache_for_sr_if_needed(sr);
         let mut o = Self::raw(sr);
         o.cv_lut = Self::cv_lut_for(sr, 0, false); // Default to thermal_noise=0
         o.lut_buffer = Arc::new(VcoLutBuffer::new(o.cv_lut));
@@ -305,40 +298,6 @@ impl Vco303 {
 
     pub fn disable_warm_cache() {
         DISABLE_WARM.store(true, std::sync::atomic::Ordering::Release);
-    }
-
-    /// Ensure the LUT cache has been warmed — via the robust dense solver —
-    /// for `sr` at least once. Cache warming (rendering many samples through
-    /// `secant_cv`/`measure_freq`) always happens off the audio thread, so it
-    /// uses `lu_solve` rather than the fast static `ladder_lu_solve` that the
-    /// real-time hot path relies on. Runs whenever a not-yet-seen `sr` shows
-    /// up; a no-op (cheap lock + membership check) on repeat calls for a rate
-    /// already warmed this process.
-    fn warm_cache_for_sr_if_needed(sr: f32) {
-        if DISABLE_WARM.load(std::sync::atomic::Ordering::Acquire)
-            || std::env::var("CARGO").is_ok()
-        {
-            return;
-        }
-        let key = sr.to_bits() as u64;
-        {
-            let warmed = match WARMED_SRS.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            if warmed.contains(&key) {
-                return;
-            }
-        }
-        Self::warm_cache(sr, false);
-        Self::warm_cache(sr, true);
-        let mut warmed = match WARMED_SRS.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        if !warmed.contains(&key) {
-            warmed.push(key);
-        }
     }
 
     /// Bare construct with an empty LUT — used both by `new` (before attaching
@@ -409,22 +368,14 @@ impl Vco303 {
 
         // Slow path: build the LUT without holding the mutex.
         let mut tmp = Self::raw(sr);
-        tmp.dense_solver = true;
+        tmp.dense_solver = false;
         tmp.set_fun(is_fun);
         tmp.set_thermal_internal(thermal_noise);
-        eprintln!(
-            "      [cv_lut_for] cache miss for sr={}, thermal={}, is_fun={}. Calculating...",
-            sr, thermal_noise, is_fun
-        );
         let mut lut = [0.0; LUT_K];
         for (i, slot) in lut.iter_mut().enumerate() {
-            if is_fun {
-                *slot = tmp.secant_cv(midi_hz(lut_midi(i)));
-            } else {
-                *slot = cv_for_freq(midi_hz(lut_midi(i)));
-            }
+            let target_hz = midi_hz(lut_midi(i));
+            *slot = tmp.secant_cv(target_hz);
         }
-        eprintln!("      [cv_lut_for] calculated successfully.");
 
         // Re-acquire to insert; check again in case a concurrent thread already
         // built this key while we were computing (prefer the first to finish).
@@ -444,7 +395,7 @@ impl Vco303 {
     /// the given `sr` and `is_fun` combination. After this returns, every
     /// `recalculate_luts_async` call with `age=0, tolerance=0.0` will hit the
     /// fast-path (pure cache lookups, ~2 µs, no background thread). Expensive
-    /// (~30 s on first call for a given `sr`), but idempotent — subsequent calls
+    /// on first call for a given `sr`, but idempotent — subsequent calls
     /// are instant because `cv_lut_for` checks the cache first.
     pub fn warm_cache(sr: f32, is_fun: bool) {
         for step in 0..22i32 {
@@ -455,10 +406,17 @@ impl Vco303 {
     /// Secant-solve the CV that makes this solver realize `target` Hz. Seeded
     /// from the `CV_FIT` quadratic, refined to ≲0.1 %. Runs only at LUT build.
     fn secant_cv(&mut self, target: f64) -> f64 {
-        let mut cv0 = cv_for_freq(target);
+        let cv_seed = cv_for_freq(target);
+        let mut cv0 = cv_seed;
         let mut f0 = self.measure_freq(cv0);
-        let mut cv1 = cv0 + 0.1;
+        if f0 <= 0.0 {
+            return cv_seed;
+        }
+        let mut cv1 = cv0 + 0.05;
         let mut f1 = self.measure_freq(cv1);
+        if f1 <= 0.0 {
+            return cv_seed;
+        }
         for _ in 0..5 {
             let denom = f1 - f0;
             if denom.abs() < 1e-9 {
@@ -469,6 +427,9 @@ impl Vco303 {
             f0 = f1;
             cv1 = cv2;
             f1 = self.measure_freq(cv1);
+            if f1 <= 0.0 {
+                return cv0;
+            }
             if (f1 / target - 1.0).abs() < 1e-3 {
                 break;
             }
@@ -476,8 +437,9 @@ impl Vco303 {
         cv1
     }
 
-    /// Realized fundamental (Hz) at a fixed `cv`, via interpolated rising
-    /// zero-crossings over a steady window. Mutates state; LUT-build only.
+    /// Realized fundamental (Hz) at a fixed `cv`, via interpolated downward
+    /// threshold crossings of the integrator capacitor node CP over a steady window.
+    /// Mutates state; LUT-build only.
     fn measure_freq(&mut self, cv: f64) -> f64 {
         self.reset();
         self.cv = cv;
@@ -485,17 +447,19 @@ impl Vco303 {
         let f_guess = 2.0f64.powf(log2_f);
         let period_samples = self.sr / f_guess.max(1.0);
 
-        let warm = (self.sr * 0.04).max(period_samples * 2.0) as usize;
+        let warm = (period_samples * 6.0).max(self.sr * 0.003) as usize;
         for _ in 0..warm {
             self.tick();
         }
-        let n = (self.sr * 0.2).max(period_samples * 4.0) as usize;
-        let mut prev = self.tick();
+        let n = (period_samples * 16.0).max(self.sr * 0.010) as usize;
+        let mut prev_cp = self.v[CP];
         let (mut first_t, mut last_t, mut count) = (-1.0f64, 0.0f64, 0i64);
+        const THRESH: f64 = 8.0;
         for i in 0..n {
-            let y = self.tick();
-            if prev < 0.0 && y >= 0.0 {
-                let frac = (-prev as f64) / ((y - prev) as f64);
+            self.tick();
+            let cp = self.v[CP];
+            if prev_cp >= THRESH && cp < THRESH {
+                let frac = (prev_cp - THRESH) / (prev_cp - cp);
                 let t = i as f64 + frac;
                 if first_t < 0.0 {
                     first_t = t;
@@ -504,7 +468,7 @@ impl Vco303 {
                     count += 1;
                 }
             }
-            prev = y;
+            prev_cp = cp;
         }
         if count == 0 || last_t <= first_t {
             return 0.0;
@@ -670,15 +634,11 @@ impl Vco303 {
             let mut local_luts = [[0.0f64; LUT_K]; 22];
 
             if age == 0 && tolerance == 0.0 {
-                // Use cv_lut_for so each step is populated into the process-global
-                // LUT_CACHE. Next call's fast-path probe will then hit.
-                for noise_step in 0..22 {
-                    local_luts[noise_step as usize] =
-                        Vco303::cv_lut_for(sr as f32, noise_step as i32, is_fun);
-                }
+                let lut = Vco303::cv_lut_for(sr as f32, 0, is_fun);
+                local_luts = [lut; 22];
             } else {
                 let mut temp_vco = Vco303::raw(sr as f32);
-                temp_vco.dense_solver = true;
+                temp_vco.dense_solver = false;
                 temp_vco.set_instance_id(instance_id);
                 temp_vco.set_fun(is_fun);
                 temp_vco.set_analog_wear(tolerance, age);
@@ -686,11 +646,8 @@ impl Vco303 {
                 for noise_step in 0..22 {
                     temp_vco.set_thermal_internal(noise_step);
                     for i in 0..LUT_K {
-                        local_luts[noise_step as usize][i] = if is_fun {
-                            temp_vco.secant_cv(midi_hz(lut_midi(i)))
-                        } else {
-                            cv_for_freq(midi_hz(lut_midi(i)))
-                        };
+                        local_luts[noise_step as usize][i] =
+                            temp_vco.secant_cv(midi_hz(lut_midi(i)));
                     }
                 }
             }
@@ -712,31 +669,23 @@ impl Vco303 {
     pub fn recalculate_luts_sync(&self, age: i32, tolerance: f64) {
         let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 {
-            let mut local_luts = [[0.0f64; LUT_K]; 22];
-            for noise_step in 0..22 {
-                local_luts[noise_step as usize] =
-                    Self::cv_lut_for(self.sr as f32, noise_step as i32, is_fun);
-            }
-            self.lut_buffer.store(local_luts);
+            let lut = Self::cv_lut_for(self.sr as f32, 0, is_fun);
+            self.lut_buffer.store([lut; 22]);
             return;
         }
 
         let mut temp_vco = Vco303::raw(self.sr as f32);
-        temp_vco.dense_solver = true;
+        temp_vco.dense_solver = false;
         temp_vco.set_instance_id(self.instance_id);
         temp_vco.set_fun(is_fun);
         temp_vco.set_analog_wear(tolerance, age);
 
         let mut local_luts = [[0.0f64; LUT_K]; 22];
         for noise_step in 0..22 {
-            eprintln!("    [sync] noise_step {}/22 starting...", noise_step);
             temp_vco.set_thermal_internal(noise_step);
             for i in 0..LUT_K {
-                local_luts[noise_step as usize][i] = if is_fun {
-                    temp_vco.secant_cv(midi_hz(lut_midi(i)))
-                } else {
-                    cv_for_freq(midi_hz(lut_midi(i)))
-                };
+                local_luts[noise_step as usize][i] =
+                    temp_vco.secant_cv(midi_hz(lut_midi(i)));
             }
         }
 
@@ -1030,9 +979,9 @@ impl Vco303 {
     /// to get the band-limited output. `blep_now` is zero when no reset occurred.
     pub fn tick(&mut self) -> f32 {
         let cp_val = self.v[CP];
-        if (cp_val - self.last_cp).abs() < 1e-5 {
+        if (cp_val - self.last_cp).abs() < 1e-12 {
             self.stuck_counter += 1;
-            if self.stuck_counter > 40 {
+            if self.stuck_counter > 2000 {
                 self.v[CP] = 12.0 - 0.1 * (self.t_samples % 7) as f64;
                 self.stuck_counter = 0;
             }

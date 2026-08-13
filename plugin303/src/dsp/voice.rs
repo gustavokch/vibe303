@@ -969,35 +969,6 @@ impl Voice {
                     OscWave::Square => 0.0,
                 };
                 let osc1 = raw + blep;
-                if self.current_note == 72 && !self.vco.is_fun {
-                    static mut DIAG_PREV: f32 = 0.0;
-                    static mut DIAG_FIRST_T: f64 = -1.0;
-                    static mut DIAG_LAST_T: f64 = 0.0;
-                    static mut DIAG_COUNT: i64 = 0;
-                    let y = osc1;
-                    let prev = unsafe { DIAG_PREV };
-                    if prev < 0.0 && y >= 0.0 {
-                        let frac = (-prev as f64) / ((y - prev) as f64);
-                        let t = self.vco.t_samples() as f64 + frac;
-                        unsafe {
-                            if DIAG_FIRST_T < 0.0 {
-                                DIAG_FIRST_T = t;
-                            } else {
-                                DIAG_LAST_T = t;
-                                DIAG_COUNT += 1;
-                            }
-                        }
-                    }
-                    unsafe { DIAG_PREV = y; }
-                    if self.vco.t_samples() == 17999 {
-                        unsafe {
-                            let freq = (DIAG_COUNT as f64 * 48000.0 / (DIAG_LAST_T - DIAG_FIRST_T)) as f32;
-                            eprintln!("Voice::render_tier DIAGNOSTIC: raw osc1 freq = {:.3} Hz (count={}, diff={:.3})", freq, DIAG_COUNT, DIAG_LAST_T - DIAG_FIRST_T);
-                            DIAG_FIRST_T = -1.0;
-                            DIAG_COUNT = 0;
-                        }
-                    }
-                }
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
                 let osc2 = if self.osc2_vol > 0.0 {
                     let raw2 = self.vco2.tick() * VCO_GAIN;

@@ -20,7 +20,6 @@
 use super::diode::Diode1N4148;
 use super::filter::Filter303;
 use super::linalg::lu_solve;
-use super::linalg_static::ladder_lu_solve;
 use std::f64::consts::TAU;
 
 // Node indices into the 10-node rail system.
