@@ -15,14 +15,14 @@ pub struct Sequencer {
     prev_gate: bool,
     /// Tracks if host was playing in the previous block.
     was_playing: bool,
-    
+
     // Pitch slew state for slide/glide
     /// Current slewed pitch frequency.
     #[allow(dead_code)]
     current_freq: f32,
     /// target pitch frequency of the active step.
     target_freq: f32,
-    
+
     // Output control values
     /// Output slewed note frequency.
     pub freq: f32,
@@ -112,7 +112,7 @@ impl Sequencer {
             let raw_idx = step_float.floor() as i64;
             let idx = (raw_idx.rem_euclid(length as i64)) as usize;
             let phase = step_float.fract() as f32;
-            
+
             let changed = idx != self.prev_step_idx;
             (idx, phase, changed)
         } else {
@@ -133,7 +133,7 @@ impl Sequencer {
         }
 
         let step = steps[step_idx];
-        
+
         // Calculate raw step frequency (pitch + octave offset)
         // Midi base 36 (C1) as the 0-reference for sequencer pitch tracking.
         let base_note = 36 + step.semitone + step.octave * 12;

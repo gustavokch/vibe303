@@ -14,5 +14,7 @@ pub mod osc;
 pub mod oversample;
 pub mod rc_env;
 pub mod sequencer;
+pub mod triple_buffer;
 pub mod vco;
 pub mod voice;
+pub mod worker;

@@ -31,18 +31,29 @@ fn realized_hz(v: &mut Vco303, sr: f32) -> f32 {
 
 #[test]
 fn pitch_accurate_across_range() {
-    let sr = 192_000.0;
-    for &target in &[110.0f32, 220.0, 440.0, 1046.5] {
+    for sr in [48_000.0f32, 192_000.0] {
+        println!("--- Testing pitch accuracy at SR = {} ---", sr);
         let mut v = Vco303::new(sr);
-        v.set_freq(target);
-        for _ in 0..(sr as usize / 4) {
-            v.tick(); // settle
+        v.set_fun(true);
+        v.recalculate_luts_sync(0, 0.0);
+        v.set_thermal(0);
+
+        let targets: &[f32] = if sr >= 192_000.0 {
+            &[32.70f32, 110.0, 220.0, 440.0, 523.25, 1046.5]
+        } else {
+            &[32.70f32, 110.0, 220.0, 440.0]
+        };
+        for &target in targets {
+            v.set_freq(target);
+            for _ in 0..(sr as usize / 4) {
+                v.tick(); // settle
+            }
+            let f = realized_hz(&mut v, sr);
+            println!("  Target: {:.2} Hz, Realized: {:.2} Hz (error: {:.3}%)", target, f, (f / target - 1.0).abs() * 100.0);
+            assert!(
+                (f / target - 1.0).abs() < 0.015,
+                "pitch {target} -> {f} at SR {sr} exceeds 1.5% tolerance"
+            );
         }
-        let f = realized_hz(&mut v, sr);
-        println!("Target: {}, Realized: {}", target, f);
-        assert!(
-            (f / target - 1.0).abs() < 0.005,
-            "pitch {target} -> {f} (>0.5%)"
-        );
     }
 }

@@ -1,5 +1,5 @@
-use nih_plug::prelude::*;
 use crate::dsp::filter::Tier;
+use nih_plug::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
@@ -72,13 +72,13 @@ impl Default for StepGate {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SequencerStep {
-    pub semitone: i8,      // 0..12
-    pub octave: i8,        // -2..2
+    pub semitone: i8, // 0..12
+    pub octave: i8,   // -2..2
     pub gate: StepGate,
     pub accent: bool,
     pub slide: bool,
-    pub gate_len: f32,     // 0.0..1.0
-    pub velocity: f32,     // 0.0..1.0
+    pub gate_len: f32, // 0.0..1.0
+    pub velocity: f32, // 0.0..1.0
 }
 
 impl Default for SequencerStep {
@@ -202,7 +202,6 @@ pub struct Plugin303Params {
 
     #[id = "comp_seed"]
     pub comp_seed: IntParam,
-
     // Sequencer pattern persistence
     #[persist = "pattern"]
     pub pattern: std::sync::RwLock<SequencerPattern>,
@@ -211,35 +210,17 @@ pub struct Plugin303Params {
 impl Plugin303Params {
     pub fn is_param_active(&self, param_id: &str) -> bool {
         match self.topology.value() {
-            CircuitTopology::Accurate => {
-                match param_id {
-                    "osc1_pitch"
-                    | "osc2_pitch"
-                    | "osc2_vol"
-                    | "osc1_pw"
-                    | "sub_vol"
-                    | "sweep_pos"
-                    | "vcf_taps"
-                    | "vcf_drive"
-                    | "advanced_env"
-                    | "meg_attack"
-                    | "meg_decay_adj"
-                    | "meg_sustain"
-                    | "meg_release"
-                    | "veg_attack"
-                    | "veg_decay_adj"
-                    | "veg_sustain"
-                    | "veg_release"
-                    | "vca_env_mode" => false,
-                    _ => true,
-                }
-            }
-            CircuitTopology::Fun => {
-                match param_id {
-                    "waveform" => false,
-                    _ => true,
-                }
-            }
+            CircuitTopology::Accurate => match param_id {
+                "osc1_pitch" | "osc2_pitch" | "osc2_vol" | "osc1_pw" | "sub_vol" | "sweep_pos"
+                | "vcf_taps" | "vcf_drive" | "advanced_env" | "meg_attack" | "meg_decay_adj"
+                | "meg_sustain" | "meg_release" | "veg_attack" | "veg_decay_adj"
+                | "veg_sustain" | "veg_release" | "vca_env_mode" => false,
+                _ => true,
+            },
+            CircuitTopology::Fun => match param_id {
+                "waveform" => false,
+                _ => true,
+            },
         }
     }
 }
@@ -253,38 +234,22 @@ impl Default for Plugin303Params {
             tuning: FloatParam::new(
                 "Tuning",
                 0.0,
-                FloatRange::Linear { min: -100.0, max: 100.0 }
-            ).with_unit(" cents"),
+                FloatRange::Linear {
+                    min: -100.0,
+                    max: 100.0,
+                },
+            )
+            .with_unit(" cents"),
 
-            cutoff: FloatParam::new(
-                "Cutoff",
-                0.5,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
-            ),
+            cutoff: FloatParam::new("Cutoff", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
-            resonance: FloatParam::new(
-                "Resonance",
-                0.5,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
-            ),
+            resonance: FloatParam::new("Resonance", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
-            env_mod: FloatParam::new(
-                "Env Mod",
-                0.5,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
-            ),
+            env_mod: FloatParam::new("Env Mod", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
-            decay: FloatParam::new(
-                "Decay",
-                0.5,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
-            ),
+            decay: FloatParam::new("Decay", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
-            accent: FloatParam::new(
-                "Accent",
-                0.5,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
-            ),
+            accent: FloatParam::new("Accent", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
             waveform: EnumParam::new("Waveform", OscWave::Saw),
 
@@ -294,9 +259,10 @@ impl Default for Plugin303Params {
                 FloatRange::Skewed {
                     min: -90.0,
                     max: 6.0,
-                    factor: FloatRange::skew_factor(-2.0)
-                }
-            ).with_unit(" dB"),
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" dB"),
 
             seq_run: BoolParam::new("Seq Run", true),
             seq_sync: BoolParam::new("Seq Sync", true),
@@ -304,49 +270,49 @@ impl Default for Plugin303Params {
             seq_tempo: FloatParam::new(
                 "Seq Tempo",
                 120.0,
-                FloatRange::Linear { min: 40.0, max: 300.0 }
-            ).with_unit(" BPM"),
+                FloatRange::Linear {
+                    min: 40.0,
+                    max: 300.0,
+                },
+            )
+            .with_unit(" BPM"),
 
-            seq_length: IntParam::new(
-                "Seq Length",
-                16,
-                IntRange::Linear { min: 1, max: 16 }
-            ),
+            seq_length: IntParam::new("Seq Length", 16, IntRange::Linear { min: 1, max: 16 }),
 
             osc1_pitch: FloatParam::new(
                 "Osc 1 Pitch",
                 0.0,
-                FloatRange::Linear { min: -24.0, max: 24.0 }
-            ).with_unit(" st"),
+                FloatRange::Linear {
+                    min: -24.0,
+                    max: 24.0,
+                },
+            )
+            .with_unit(" st"),
 
             osc2_pitch: FloatParam::new(
                 "Osc 2 Pitch",
                 0.0,
-                FloatRange::Linear { min: -24.0, max: 24.0 }
-            ).with_unit(" st"),
+                FloatRange::Linear {
+                    min: -24.0,
+                    max: 24.0,
+                },
+            )
+            .with_unit(" st"),
 
             osc2_vol: FloatParam::new(
                 "Osc 2 Volume",
                 0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
+                FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
 
-            osc1_pw: FloatParam::new(
-                "Osc 1 PW",
-                0.5,
-                FloatRange::Linear { min: 0.1, max: 0.9 }
-            ),
+            osc1_pw: FloatParam::new("Osc 1 PW", 0.5, FloatRange::Linear { min: 0.1, max: 0.9 }),
 
-            sub_vol: FloatParam::new(
-                "Sub Vol",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
-            ),
+            sub_vol: FloatParam::new("Sub Vol", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
             sweep_pos: FloatParam::new(
                 "Sweep Morph",
                 0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
+                FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
 
             vcf_taps: EnumParam::new("VCF Taps", VcfTaps::FourPole),
@@ -354,98 +320,137 @@ impl Default for Plugin303Params {
             vcf_drive: FloatParam::new(
                 "VCF Drive",
                 0.0,
-                FloatRange::Linear { min: 0.0, max: 24.0 }
-            ).with_unit(" dB"),
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 24.0,
+                },
+            )
+            .with_unit(" dB"),
 
-            glide: FloatParam::new(
-                "Glide",
-                0.5,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
-            ),
+            glide: FloatParam::new("Glide", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
             advanced_env: BoolParam::new("Advanced Env", false),
 
             meg_attack: FloatParam::new(
                 "MEG Attack",
                 3.0,
-                FloatRange::Skewed { min: 0.1, max: 1000.0, factor: FloatRange::skew_factor(-2.0) }
-            ).with_unit(" ms"),
+                FloatRange::Skewed {
+                    min: 0.1,
+                    max: 1000.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" ms"),
 
             meg_decay_adj: FloatParam::new(
                 "MEG Decay Adj",
                 200.0,
-                FloatRange::Skewed { min: 10.0, max: 3000.0, factor: FloatRange::skew_factor(-2.0) }
-            ).with_unit(" ms"),
+                FloatRange::Skewed {
+                    min: 10.0,
+                    max: 3000.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" ms"),
 
             meg_sustain: FloatParam::new(
                 "MEG Sustain",
                 0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
+                FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
 
             meg_release: FloatParam::new(
                 "MEG Release",
                 200.0,
-                FloatRange::Skewed { min: 10.0, max: 3000.0, factor: FloatRange::skew_factor(-2.0) }
-            ).with_unit(" ms"),
+                FloatRange::Skewed {
+                    min: 10.0,
+                    max: 3000.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" ms"),
 
             veg_attack: FloatParam::new(
                 "VEG Attack",
                 3.0,
-                FloatRange::Skewed { min: 0.1, max: 1000.0, factor: FloatRange::skew_factor(-2.0) }
-            ).with_unit(" ms"),
+                FloatRange::Skewed {
+                    min: 0.1,
+                    max: 1000.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" ms"),
 
             veg_decay_adj: FloatParam::new(
                 "VEG Decay Adj",
                 200.0,
-                FloatRange::Skewed { min: 10.0, max: 3000.0, factor: FloatRange::skew_factor(-2.0) }
-            ).with_unit(" ms"),
+                FloatRange::Skewed {
+                    min: 10.0,
+                    max: 3000.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" ms"),
 
             veg_sustain: FloatParam::new(
                 "VEG Sustain",
                 0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
+                FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
 
             veg_release: FloatParam::new(
                 "VEG Release",
                 200.0,
-                FloatRange::Skewed { min: 10.0, max: 3000.0, factor: FloatRange::skew_factor(-2.0) }
-            ).with_unit(" ms"),
+                FloatRange::Skewed {
+                    min: 10.0,
+                    max: 3000.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" ms"),
 
             vca_env_mode: EnumParam::new("VCA Env Mode", VcaEnvMode::Envelope),
 
             comp_age: IntParam::new(
                 "Comp Age",
                 0,
-                IntRange::Linear { min: 0, max: 10 }
+                IntRange::Linear {
+                    min: (0),
+                    max: (100),
+                },
             ),
 
             comp_drift: FloatParam::new(
                 "Comp Drift",
                 0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 }
+                FloatRange::SymmetricalSkewed {
+                    min: (0.0),
+                    max: (0.5),
+                    factor: (0.8),
+                    center: (0.25),
+                },
             ),
 
             tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),
 
-            thermal_noise: IntParam::new(
-                "Thermal Noise",
-                0,
-                IntRange::Linear { min: 0, max: 21 }
-            ).with_value_to_string(std::sync::Arc::new(|v| {
-                if v == 0 {
-                    "Off".to_string()
-                } else {
-                    format!("{:.1}", 1.0 + (v - 1) as f32 * 0.2)
-                }
-            })),
+            thermal_noise: IntParam::new("Thermal Noise", 0, IntRange::Linear { min: 0, max: 50 })
+                .with_value_to_string(std::sync::Arc::new(|v| {
+                    if v == 0 {
+                        "Off".to_string()
+                    } else {
+                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.01)
+                    }
+                })),
 
             comp_seed: IntParam::new(
                 "Component Seed",
                 1337,
-                IntRange::Linear { min: 0, max: 999_999 }
+                IntRange::Linear {
+                    min: 0,
+                    max: 999_999,
+                },
             ),
+
 
             pattern: std::sync::RwLock::new(SequencerPattern::default()),
         }

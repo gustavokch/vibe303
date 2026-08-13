@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 pub mod dsp;
 pub mod params;
-use dsp::voice::Voice;
 use dsp::sequencer::{Sequencer, TransportInfo};
+use dsp::voice::Voice;
 use params::Plugin303Params;
 /// The main plugin structure implementing the nih-plug VST3/CLAP synth interface.
 pub struct Plugin303 {
@@ -38,8 +38,88 @@ impl Default for Plugin303 {
     }
 }
 
+const fn str_eq(a: &str, b: &str) -> bool {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    if ab.len() != bb.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < ab.len() {
+        if ab[i] != bb[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const fn hash_to_16_bytes(s: &str) -> [u8; 16] {
+    let bytes = s.as_bytes();
+    let mut hash1 = 0xcbf29ce484222325u64;
+    let mut hash2 = 0x811c9dc5u64;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash1 ^= bytes[i] as u64;
+        hash1 = hash1.wrapping_mul(0x100000001b3u64);
+
+        hash2 ^= bytes[i] as u64;
+        hash2 = hash2.wrapping_mul(0x100000001b3u64);
+        i += 1;
+    }
+    let h1_bytes = hash1.to_ne_bytes();
+    let h2_bytes = hash2.to_ne_bytes();
+    let mut arr = [0u8; 16];
+    let mut j = 0;
+    while j < 8 {
+        arr[j] = h1_bytes[j];
+        arr[j + 8] = h2_bytes[j];
+        j += 1;
+    }
+    arr
+}
+
+const fn parse_vst3_class_id(name: &str, custom_id: Option<&str>) -> [u8; 16] {
+    match custom_id {
+        Some(cid) => {
+            let bytes = cid.as_bytes();
+            if bytes.len() == 16 {
+                let mut arr = [0u8; 16];
+                let mut i = 0;
+                while i < 16 {
+                    arr[i] = bytes[i];
+                    i += 1;
+                }
+                arr
+            } else {
+                hash_to_16_bytes(cid)
+            }
+        }
+        None => {
+            if str_eq(name, "TB303") {
+                *b"desmen-tb303-vs3"
+            } else {
+                hash_to_16_bytes(name)
+            }
+        }
+    }
+}
+
+const PLUGIN_NAME: &'static str = match option_env!("VIBE303_NAME") {
+    Some(name) => name,
+    None => "TB303",
+};
+
+const CLAP_ID: &'static str = match option_env!("VIBE303_CLAP_ID") {
+    Some(id) => id,
+    None => "com.desmen.tb303",
+};
+
+const VST3_CLASS_ID: [u8; 16] =
+    parse_vst3_class_id(PLUGIN_NAME, option_env!("VIBE303_VST3_CLASS_ID"));
+
 impl Plugin for Plugin303 {
-    const NAME: &'static str = "TB303";
+    const NAME: &'static str = PLUGIN_NAME;
     const VENDOR: &'static str = "desmen";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
@@ -84,7 +164,7 @@ impl Plugin for Plugin303 {
         // thread, where allocating / rebuilding the VCO pitch LUT is illegal —
         // see `Voice::reset`. The LUT cache is warmed once in `initialize`.
         self.voice.reset();
-        self.sequencer.reset();
+        self.sequencer = Sequencer::new();
         self.active_midi_note = None;
         // Re-apply the persisted tier immediately (no fade) — otherwise the voice
         // would silently revert to Low and the next block would crossfade up to
@@ -145,6 +225,17 @@ impl Plugin for Plugin303 {
             self.reported_latency = latency;
         }
 
+        let seq_run = self.params.seq_run.value();
+        let pattern_steps = if seq_run {
+            self.params.pattern.read().ok().map(|p| p.steps)
+        } else {
+            None
+        };
+        let seq_length = self.params.seq_length.value() as usize;
+        let seq_tempo = self.params.seq_tempo.value();
+        let seq_sync = self.params.seq_sync.value();
+        let glide_val = self.params.glide.value();
+
         let mut next_event = context.next_event();
         let mut active_midi_note = self.active_midi_note;
 
@@ -158,7 +249,7 @@ impl Plugin for Plugin303 {
                     NoteEvent::NoteOn { note, velocity, .. } => {
                         let is_legato = active_midi_note.is_some();
                         active_midi_note = Some(note);
-                        let slide = is_legato && self.params.glide.value() > 0.0;
+                        let slide = is_legato && glide_val > 0.0;
                         let trigger = !is_legato;
                         self.voice.set_gate(true, trigger, velocity >= 0.78, slide);
                         self.voice.note_on(note);
@@ -176,30 +267,31 @@ impl Plugin for Plugin303 {
             self.active_midi_note = active_midi_note;
 
             // If no MIDI note is held, run the sequencer
-            if active_midi_note.is_none() && self.params.seq_run.value() {
-                let transport = context.transport();
-                let transport_info = TransportInfo {
-                    playing: transport.playing,
-                    pos_beats: transport.pos_beats(),
-                    tempo: transport.tempo,
-                };
-                let pattern_guard = self.params.pattern.read().unwrap();
-                self.sequencer.tick(
-                    self.sample_rate,
-                    &transport_info,
-                    &pattern_guard.steps,
-                    self.params.seq_length.value() as usize,
-                    self.params.seq_tempo.value(),
-                    self.params.seq_sync.value(),
-                    self.params.glide.value(),
-                );
-                self.voice.set_gate(
-                    self.sequencer.gate,
-                    self.sequencer.trigger,
-                    self.sequencer.accent,
-                    self.sequencer.slide,
-                );
-                self.voice.set_freq(self.sequencer.freq);
+            if active_midi_note.is_none() && seq_run {
+                if let Some(steps) = &pattern_steps {
+                    let transport = context.transport();
+                    let transport_info = TransportInfo {
+                        playing: transport.playing,
+                        pos_beats: transport.pos_beats(),
+                        tempo: transport.tempo,
+                    };
+                    self.sequencer.tick(
+                        self.sample_rate,
+                        &transport_info,
+                        steps,
+                        seq_length,
+                        seq_tempo,
+                        seq_sync,
+                        glide_val,
+                    );
+                    self.voice.set_gate(
+                        self.sequencer.gate,
+                        self.sequencer.trigger,
+                        self.sequencer.accent,
+                        self.sequencer.slide,
+                    );
+                    self.voice.set_freq(self.sequencer.freq);
+                }
             }
 
             let out = self.voice.tick();
@@ -212,13 +304,13 @@ impl Plugin for Plugin303 {
 }
 
 impl Vst3Plugin for Plugin303 {
-    const VST3_CLASS_ID: [u8; 16] = *b"desmen-tb303-vs3";
+    const VST3_CLASS_ID: [u8; 16] = VST3_CLASS_ID;
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
 
 impl ClapPlugin for Plugin303 {
-    const CLAP_ID: &'static str = "com.desmen.tb303";
+    const CLAP_ID: &'static str = CLAP_ID;
     const CLAP_DESCRIPTION: Option<&'static str> = Some("Souped-up TB-303 voice");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;

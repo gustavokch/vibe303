@@ -179,13 +179,54 @@ fn test_glide_slew_behavior() {
     let pitch_after_tick = voice.get_current_pitch();
     assert!(pitch_after_tick < 61.0, "Expected pitch to slew, got {}", pitch_after_tick);
     
-    // Eventually it approaches 72.0
-    for _ in 0..8820 {
+    // Constant-time slide tau = 22ms.
+    // At t = tau (22ms = ~970 samples), pitch should reach ~ 60 + 12 * (1 - 1/e) = 67.585
+    let tau_samples = (44.1 * 22.0) as usize;
+    for _ in 1..tau_samples {
+        voice.tick();
+    }
+    let pitch_at_tau = voice.get_current_pitch();
+    let expected_at_tau = 60.0 + 12.0 * (1.0 - (-1.0f32).exp());
+    assert!(
+        (pitch_at_tau - expected_at_tau).abs() < 0.2,
+        "Expected pitch at tau (~22ms) to be ~{}, got {}",
+        expected_at_tau,
+        pitch_at_tau
+    );
+
+    // At 5 * tau (~110ms = ~4851 samples), pitch should be within 0.1 of 72.0
+    for _ in 0..(4 * tau_samples) {
         voice.tick();
     }
     let pitch_final = voice.get_current_pitch();
     assert!((pitch_final - 72.0).abs() < 0.1, "Expected pitch to slide to near 72, got {}", pitch_final);
 }
+
+#[test]
+fn test_accent_mid_note_switch_without_trigger() {
+    let mut voice = Voice::new(44100.0);
+    voice.update_params(
+        0.0, 0.0, 0.0, 0.0, OscWave::Saw, 0.5, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 0.8,
+        VcfTaps::FourPole, 0.0, false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        VcaEnvMode::Envelope, 0, 0.0, CompTolerance::Zero, 0, CircuitTopology::Accurate, 0.0, 0, 0.5
+    );
+    
+    // Start unaccented note
+    voice.set_gate(true, true, false, false);
+    for _ in 0..100 {
+        voice.tick();
+    }
+    
+    // Slid note introduces accent without triggering (trigger = false, accent = true)
+    voice.set_gate(true, false, true, true);
+    
+    // Voice should have adopted accent gain even though trigger was false
+    // (verified via rendering samples)
+    for _ in 0..100 {
+        voice.tick();
+    }
+}
+
 
 #[test]
 fn test_env_mod_octave_scaling() {

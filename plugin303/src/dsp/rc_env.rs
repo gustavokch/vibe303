@@ -319,3 +319,48 @@ impl DecayEnv {
         self.y_init = 1.0 / self.c;
     }
 }
+
+/// Models the TB-303 Accent Sweep circuit (diode D24 + C13).
+/// Features asymmetric charge/discharge times and free-running memory.
+pub struct AccentSweep {
+    v_c13: f64,
+    fs: f64,
+}
+
+impl AccentSweep {
+    pub fn new(fs: f64) -> Self {
+        Self { v_c13: 0.0, fs }
+    }
+
+    pub fn set_sample_rate(&mut self, fs: f64) {
+        if fs > 0.0 {
+            self.fs = fs;
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.v_c13 = 0.0;
+    }
+
+    /// `src` is the raw envelope value * accent_knob.
+    /// `resonance_knob` (0.0 to 1.0) controls the charge resistance and depth (VR4-B).
+    #[inline]
+    pub fn tick(&mut self, src: f64, resonance_knob: f64) -> f64 {
+        // VR4-B couples sweep depth with resonance. We use the resonance knob directly to scale the drive.
+        let drive = src * resonance_knob;
+
+        if drive > self.v_c13 {
+            // Charge: fast (tau roughly 47ms to 147ms, decreasing with higher resonance)
+            let tau_chg = 50.0;
+            let coeff = 1.0 - (-1.0 / (0.001 * tau_chg * self.fs)).exp();
+            self.v_c13 += coeff * (drive - self.v_c13);
+        } else {
+            // Discharge: slow (tau roughly 100-150ms)
+            let tau_dis = 120.0;
+            let coeff = 1.0 - (-1.0 / (0.001 * tau_dis * self.fs)).exp();
+            self.v_c13 += coeff * (0.0 - self.v_c13);
+        }
+        self.v_c13
+    }
+}
+
