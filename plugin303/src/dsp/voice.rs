@@ -909,7 +909,7 @@ impl Voice {
         let tuning_st = self.tuning_offset_f / 100.0; // cents to semitones
 
         // Age-related pitch tracking stretch
-        let stretch_st = (self.age / 100.0) * 0.2 * (self.current_note as f32 - 60.0) / 12.0;
+        let stretch_st = (self.age as f32 / 100.0) * 0.2 * (self.current_note as f32 - 60.0) / 12.0;
         let p_base = self.current_pitch_st;
         let dp = match self.topology {
             CircuitTopology::Fun => 0.0f32,
@@ -974,22 +974,12 @@ impl Voice {
         }
 
         // --- 2. Filter Cutoff Modulation ---
-        // Independent cutoff drift sources: thermal and age
-        let thermal_cut_val = self.drift_cutoff_thermal.tick(0.1, self.sr);
-        let age_cut_val = self.drift_cutoff_age.tick(0.08, self.sr);
-
-        // Scale to ±25% at max (proportional to cents on logarithmic scale)
-        let thermal_cut_factor = thermal_cut_val * 0.25 * (self.thermal_noise as f32 / 50.0);
-        let age_cut_factor = age_cut_val * 0.25 * (self.age / 100.0);
-
-        let cutoff_drift_factor = 1.0 + thermal_cut_factor + age_cut_factor;
-
-        // Age-related cutoff and resonance scaling
-        let age_cutoff_factor = 1.0 - (self.age / 100.0) * 0.15;
-        let age_reso_factor = 1.0 - (self.age / 100.0) * 0.20;
         // Cutoff drift (LFO pink noise walk + systematic temperature drift)
         let drift_cut_val = self.drift_cutoff.tick(0.1, self.sr);
-        let cutoff_drift_factor = 1.0 + drift_cut_val * 0.05 * self.drift;
+        let thermal_cut_val = self.drift_cutoff_thermal.tick(0.1, self.sr);
+
+        let thermal_cut_factor = thermal_cut_val * 0.25 * (self.thermal_noise as f32 / 50.0);
+        let cutoff_drift_factor = 1.0 + drift_cut_val * 0.05 * self.drift + thermal_cut_factor;
         let cutoff_thermal_factor = 1.0 - 0.05 * (self.temperature - 20.0) / 25.0; // -5% cutoff warm-up
 
         // Age-related cutoff and resonance scaling (0 to 10 scale)
@@ -997,7 +987,6 @@ impl Voice {
         let age_cutoff_factor = 1.0 - age_f32 * 0.15;
         let age_reso_factor = 1.0 - age_f32 * 0.20;
 
-        // Accent accumulator decay
         let acc_decay_coeff = (-1.0 / (0.2 * self.sr)).exp();
         self.accent_acc *= acc_decay_coeff;
 

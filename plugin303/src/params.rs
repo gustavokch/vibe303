@@ -451,14 +451,6 @@ impl Default for Plugin303Params {
                 },
             ),
 
-            thermal_noise: IntParam::new("Thermal Noise", 0, IntRange::Linear { min: 0, max: 50 })
-                .with_value_to_string(std::sync::Arc::new(|v| {
-                    if v == 0 {
-                        "Off".to_string()
-                    } else {
-                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.01)
-                    }
-                })),
 
             pattern: std::sync::RwLock::new(SequencerPattern::default()),
         }
