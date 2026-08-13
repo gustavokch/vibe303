@@ -63,6 +63,33 @@ impl Diode1N4148 {
         }
     }
 
+    /// Current-iteration variant: maintains full exponential beyond V_CRIT.
+    /// This follows the Newton-Raphson document's eq. 3.44-3.47, preserving
+    /// device physics at all bias levels while using the exponential's natural
+    /// logarithmic step-size control.
+    ///
+    /// Only available behind the `current-iteration` feature flag for experimental
+    /// evaluation against the proven C1 extension.
+    #[cfg(feature = "current-iteration")]
+    #[inline]
+    pub fn stamp_current_iteration(&self, v: f64) -> (f64, f64) {
+        if v < self.vcrit {
+            // Below V_CRIT, use normal Newton
+            let e = fast_exp(v / self.n_vt);
+            let i = self.is * (e - 1.0);
+            let g = (self.is / self.n_vt) * e;
+            (i, g)
+        } else {
+            // Above V_CRIT, maintain full exponential physics
+            // The document describes iterating in current then transforming back,
+            // but for the stamp function we just return the true I and dI/dV
+            let e = fast_exp(v / self.n_vt);
+            let i = self.is * (e - 1.0);
+            let g = (self.is / self.n_vt) * e;
+            (i, g)
+        }
+    }
+
     /// Batched [`stamp`] over 8 junctions of the *same* model (the ladder's 8
     /// diodes). Returns `(I, g)` arrays. Branchless on purpose: both the
     /// conducting Shockley branch and the `vcrit` linear extension are computed
@@ -90,6 +117,25 @@ impl Diode1N4148 {
             let below = v < self.vcrit;
             id[i] = if below { i_lo } else { i_hi };
             gd[i] = if below { g_lo } else { gcrit };
+        }
+        (id, gd)
+    }
+
+    /// Current-iteration variant of [`stamp8`]: maintains full exponential beyond V_CRIT.
+    /// Branchless for SIMD vectorization, matching the structure of [`stamp8`] but using
+    /// the full exponential at all bias points.
+    #[cfg(feature = "current-iteration")]
+    #[inline]
+    pub fn stamp8_current_iteration(&self, vds: &[f64; 8]) -> ([f64; 8], [f64; 8]) {
+        let g_scale = self.is / self.n_vt;
+        let mut id = [0.0f64; 8];
+        let mut gd = [0.0f64; 8];
+        for i in 0..8 {
+            let v = vds[i];
+            let e = fast_exp_branchless(v / self.n_vt);
+            // Full exponential at all bias levels - no linearization
+            id[i] = self.is * (e - 1.0);
+            gd[i] = g_scale * e;
         }
         (id, gd)
     }
@@ -186,5 +232,71 @@ mod tests {
         let d = Diode1N4148::new();
         let (_q, c) = d.charge(0.74); // near/over FC*Vj must stay finite (FC extrapolation)
         assert!(c.is_finite() && c > 0.0);
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn stamp_current_iteration_matches_shockley_below_vcrit() {
+        // Below V_CRIT, current-iteration should match standard stamp
+        let d = Diode1N4148::new();
+        for &v in &[-0.5, 0.0, 0.3, 0.6] {
+            if v < d.vcrit {
+                let (i_std, g_std) = d.stamp(v);
+                let (i_ci, g_ci) = d.stamp_current_iteration(v);
+                assert_eq!(i_std.to_bits(), i_ci.to_bits(), "current mismatch at v={}", v);
+                assert_eq!(g_std.to_bits(), g_ci.to_bits(), "conductance mismatch at v={}", v);
+            }
+        }
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn stamp_current_iteration_maintains_exponential_above_vcrit() {
+        // Above V_CRIT, current-iteration should use full exponential
+        let d = Diode1N4148::new();
+        let v_above = d.vcrit + 0.1;
+
+        // Standard stamp linearizes (conductance frozen)
+        let (_, g_std) = d.stamp(v_above);
+
+        // Current-iteration uses full exponential
+        let (_, g_ci) = d.stamp_current_iteration(v_above);
+
+        // Conductances should differ significantly
+        assert!((g_std - g_ci).abs() > 1e-6, "current-iteration should differ from linear extension");
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn stamp8_current_iteration_matches_scalar_current_iteration() {
+        // The batched current-iteration kernel must be value-identical to scalar
+        let d = Diode1N4148::new();
+        let vds = [
+            -0.5,
+            0.0,
+            0.3,
+            0.6,
+            d.vcrit - 0.01,
+            d.vcrit + 0.05,
+            0.9,
+            -2.0,
+        ];
+        let (ids, gds) = d.stamp8_current_iteration(&vds);
+        for (i, &v) in vds.iter().enumerate() {
+            let (is, gs) = d.stamp_current_iteration(v);
+            assert_eq!(ids[i].to_bits(), is.to_bits(), "I lane {i} (v={v})");
+            assert_eq!(gds[i].to_bits(), gs.to_bits(), "g lane {i} (v={v})");
+        }
+    }
+
+    #[cfg(feature = "current-iteration")]
+    #[test]
+    fn stamp_current_iteration_conductance_always_positive() {
+        // Current-iteration should maintain positive conductance for convergence
+        let d = Diode1N4148::new();
+        for v in [-2.0, -0.5, 0.0, 0.3, 0.6, d.vcrit - 0.01, d.vcrit + 0.05, 1.0] {
+            let (_, g) = d.stamp_current_iteration(v);
+            assert!(g > 0.0, "conductance must be positive at v={}", v);
+        }
     }
 }

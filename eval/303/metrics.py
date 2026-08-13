@@ -53,6 +53,9 @@ def esr_metrics(ref: np.ndarray, mod: np.ndarray) -> dict:
     nrmse = float(np.sqrt(np.mean(err**2)) / max(r.max() - r.min(), 1e-20))
     return {"lag": lag, "esr": esr, "esr_db": esr_db(esr), "nrmse": nrmse}
 
+# Alias for backward compatibility with older scripts importing this as 'esr'
+metrics = esr_metrics
+
 
 def pre_emphasis(x: np.ndarray, alpha: float = 0.8613) -> np.ndarray:
     """Perceptual HF weighting (matched-z of the paper's 0.85 @ 48 kHz)."""

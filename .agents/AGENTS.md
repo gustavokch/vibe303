@@ -37,14 +37,14 @@ xtask/                nih-plug bundler runner
 
 ## Language & Toolchain
 
-| Domain | Language | Toolchain |
-|--------|----------|-----------|
-| Plugin / DSP | Rust (edition 2021) | `cargo` / `rustup`; nih-plug pinned to a specific git rev |
-| Circuit IR pipeline | Python 3.12 | `uv` (package manager); stdlib `tomllib` for the IR; no heavy deps for circuitgen |
-| Evaluation harness | Python 3.12 | `uv run --no-project` with `--with PySpice --with numpy`; ngspice-46 required |
-| ACME parity (historical) | Julia | ACME.jl; verdict = NO-GO for both 303 circuits |
-| CI | GitHub Actions | Manual dispatch; self-hosted linux x64 runners |
-| Linting | `ruff` (Python), `cargo clippy` (Rust) | ruff config in `pyproject.toml`; line-length 100 |
+| Domain                   | Language                               | Toolchain                                                                         |
+| ------------------------ | -------------------------------------- | --------------------------------------------------------------------------------- |
+| Plugin / DSP             | Rust (edition 2021)                    | `cargo` / `rustup`; nih-plug pinned to a specific git rev                         |
+| Circuit IR pipeline      | Python 3.12                            | `uv` (package manager); stdlib `tomllib` for the IR; no heavy deps for circuitgen |
+| Evaluation harness       | Python 3.12                            | `uv run --no-project` with `--with PySpice --with numpy`; ngspice-46 required     |
+| ACME parity (historical) | Julia                                  | ACME.jl; verdict = NO-GO for both 303 circuits                                    |
+| CI                       | GitHub Actions                         | Manual dispatch; self-hosted linux x64 runners                                    |
+| Linting                  | `ruff` (Python), `cargo clippy` (Rust) | ruff config in `pyproject.toml`; line-length 100                                  |
 
 ### Key Commands
 
@@ -119,11 +119,11 @@ circuit/vcf303.toml ──┤
 
 ### Fidelity Tiers
 
-| Tier | VCO | VCF | OS | Cost | Status |
-|------|-----|-----|----|------|--------|
-| **Low** | polyBLEP saw | TPT ladder | None | Cheapest | RT-viable, ships |
-| **High** | polyBLEP saw | Nodal diode-ladder (`LadderVcf`) | 2× | ~42% core | RT-viable |
-| **Ultra** | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 4× | ~147% core | Offline-grade per voice |
+| Tier      | VCO                    | VCF                              | OS   | Cost       | Status                  |
+| --------- | ---------------------- | -------------------------------- | ---- | ---------- | ----------------------- |
+| **Low**   | polyBLEP saw           | TPT ladder                       | None | Cheapest   | RT-viable, ships        |
+| **High**  | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 2×   | ~42% core  | RT-viable               |
+| **Ultra** | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 4×   | ~147% core | Offline-grade per voice |
 
 - Oversampling is **tier-intrinsic** (not a separate param). Each tier's ladder is calibrated to its OS rate.
 - Tier switches use a **10 ms equal-power crossfade** (click-free). Mid-fade changes are queued (no clobbering).
@@ -167,24 +167,26 @@ circuit/vcf303.toml ──┤
 
 ### Rust (`cargo test -p plugin303`)
 
+Always run the tests compiled in release mode, unless there is a failure that needs to be debugged.
+
 The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnostics).
 
-| Test file | Purpose |
-|-----------|---------|
-| `ultra_spectral.rs` | **Binding spectral gate** — Welch LSD ≤ 4.0, corr ≥ 0.95 vs SPICE gold |
-| `high_spectral.rs` | High-tier spectral gate — LSD ≤ 29, corr ≥ 0.95 |
-| `voice_esr.rs` | Low-tier ESR regression guard (budget 3.5 dB) |
-| `tier_levels.rs` | Per-tier level parity |
-| `tier_switch.rs` | Click-free crossfade: switch-window step ≤ 2.5× steady |
-| `vcf_resonance.rs` | Active Q9 reso peak frequency tracking vs ngspice fixture |
-| `vco_pitch.rs` | VCO per-note pitch accuracy (< 0.3% at 110/220/440 Hz) |
-| `no_alloc.rs` | Zero-allocation gate on the audio path (all tiers) |
-| `ultra_stability.rs` | NaN/bounded sweep guard for Ultra |
-| `newton_iters.rs` | Newton convergence budget for the nodal solver |
-| `ladder_alias.rs` | Oversampled ladder anti-aliasing verification |
-| `vcf303_fit.rs` | TPT ladder fit to ngspice gold |
-| `params_tier.rs` | Tier enum nih-plug param wiring |
-| `ultra_esr.rs` | **(#[ignore])** Informational — sample-exact ESR vs ngspice is NOT the gate |
+| Test file            | Purpose                                                                     |
+| -------------------- | --------------------------------------------------------------------------- |
+| `ultra_spectral.rs`  | **Binding spectral gate** — Welch LSD ≤ 4.0, corr ≥ 0.95 vs SPICE gold      |
+| `high_spectral.rs`   | High-tier spectral gate — LSD ≤ 29, corr ≥ 0.95                             |
+| `voice_esr.rs`       | Low-tier ESR regression guard (budget 3.5 dB)                               |
+| `tier_levels.rs`     | Per-tier level parity                                                       |
+| `tier_switch.rs`     | Click-free crossfade: switch-window step ≤ 2.5× steady                      |
+| `vcf_resonance.rs`   | Active Q9 reso peak frequency tracking vs ngspice fixture                   |
+| `vco_pitch.rs`       | VCO per-note pitch accuracy (< 0.3% at 110/220/440 Hz)                      |
+| `no_alloc.rs`        | Zero-allocation gate on the audio path (all tiers)                          |
+| `ultra_stability.rs` | NaN/bounded sweep guard for Ultra                                           |
+| `newton_iters.rs`    | Newton convergence budget for the nodal solver                              |
+| `ladder_alias.rs`    | Oversampled ladder anti-aliasing verification                               |
+| `vcf303_fit.rs`      | TPT ladder fit to ngspice gold                                              |
+| `params_tier.rs`     | Tier enum nih-plug param wiring                                             |
+| `ultra_esr.rs`       | **(#[ignore])** Informational — sample-exact ESR vs ngspice is NOT the gate |
 
 - Tests starting with `#[ignore]` are **diagnostics**, not gates. They exist for investigative sweeps and are not expected to pass as acceptance criteria.
 - **Gold files** live in `eval/303/gold/`. Regenerate with `eval/303/gen_gold.py`.
@@ -303,6 +305,7 @@ The handoff document is `HANDOFF.md` (root) — the definitive status snapshot. 
 **F1–F6 DONE.** The three-tier fidelity axis is complete, gated, click-free, PDC-reported, with active Q9 resonance + per-note VCO pitch.
 
 Remaining work:
+
 1. **F6.9 DAW smoke-test** — manual, human-in-the-loop (`docs/DAW_SMOKE_TEST.md`).
 2. **Accent / glide / decay levers** (M4/M6, a separate axis from fidelity tiers).
 3. **GUI** (nih_plug_egui, behind a `gui` feature gate — not yet started).

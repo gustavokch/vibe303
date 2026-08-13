@@ -51,6 +51,12 @@ fn main() {
     v.set_cutoff(cutoff);
     v.set_reso(reso / 100.0); // --reso is a percentage; the voice wants 0..1
 
+    let topology_mode = if wave_mode == OscWave::Sweep {
+        plugin303::params::CircuitTopology::Fun
+    } else {
+        plugin303::params::CircuitTopology::Accurate
+    };
+
     v.update_params(
         0.0, // tuning_cents
         0.0, // osc1_pitch_st
@@ -75,7 +81,7 @@ fn main() {
         0.0, // comp_drift
         plugin303::params::CompTolerance::Zero,
         0, // thermal_noise
-        plugin303::params::CircuitTopology::Accurate,
+        topology_mode,
         0.0, // sweep_pos
         0, // comp_seed
         0.5, // glide_knob
