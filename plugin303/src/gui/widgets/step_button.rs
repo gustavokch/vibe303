@@ -10,7 +10,7 @@ pub fn format_pitch(semitone: i8, octave: i8) -> String {
         .get(semitone.clamp(0, 12) as usize)
         .unwrap_or(&"C");
     let oct_num = 3 + octave;
-    format!("{}{}", name, oct_num)
+    format!("{} {}", name, oct_num)
 }
 
 pub fn render_step_strip(
@@ -88,16 +88,16 @@ pub fn render_step_strip(
                 p.text(
                     pos2(acc_rect.left() + 9.0, acc_rect.center().y),
                     nih_plug_egui::egui::Align2::CENTER_CENTER,
-                    "A",
-                    FontId::new(8.0, FontFamily::Proportional),
+                    "ACC",
+                    FontId::new(7.5, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(acc_rect.right() - 5.5, acc_rect.center().y);
+                let led_pos = pos2(acc_rect.right() - 4.5, acc_rect.center().y);
                 if step.accent {
-                    p.circle_filled(led_pos, 4.0, theme::ACCENT_AMBER_GLOW);
-                    p.circle_filled(led_pos, 2.5, theme::ACCENT_AMBER);
+                    p.circle_filled(led_pos, 3.5, theme::ACCENT_AMBER_GLOW);
+                    p.circle_filled(led_pos, 2.0, theme::ACCENT_AMBER);
                 } else {
-                    p.circle_filled(led_pos, 2.0, Color32::from_rgb(0x14, 0x16, 0x1c));
+                    p.circle_filled(led_pos, 1.8, Color32::from_rgb(0x14, 0x16, 0x1c));
                 }
             }
 
@@ -129,16 +129,16 @@ pub fn render_step_strip(
                 p.text(
                     pos2(sld_rect.left() + 9.0, sld_rect.center().y),
                     nih_plug_egui::egui::Align2::CENTER_CENTER,
-                    "S",
-                    FontId::new(8.0, FontFamily::Proportional),
+                    "SLD",
+                    FontId::new(7.5, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(sld_rect.right() - 5.5, sld_rect.center().y);
+                let led_pos = pos2(sld_rect.right() - 4.5, sld_rect.center().y);
                 if step.slide {
-                    p.circle_filled(led_pos, 4.0, theme::SLIDE_CYAN_GLOW);
-                    p.circle_filled(led_pos, 2.5, theme::SLIDE_CYAN);
+                    p.circle_filled(led_pos, 3.5, theme::SLIDE_CYAN_GLOW);
+                    p.circle_filled(led_pos, 2.0, theme::SLIDE_CYAN);
                 } else {
-                    p.circle_filled(led_pos, 2.0, Color32::from_rgb(0x14, 0x16, 0x1c));
+                    p.circle_filled(led_pos, 1.8, Color32::from_rgb(0x14, 0x16, 0x1c));
                 }
             }
         });
@@ -211,7 +211,7 @@ pub fn render_step_strip(
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-            if ui.add(nih_plug_egui::egui::Button::new("▲").min_size(vec2(21.0, 14.0)))
+            if ui.add(nih_plug_egui::egui::Button::new("▲").min_size(vec2(23.0, 14.0)))
                 .on_hover_text("Octave up")
                 .clicked()
                 && step.octave < 2
@@ -219,7 +219,7 @@ pub fn render_step_strip(
                 step.octave += 1;
                 changed = true;
             }
-            if ui.add(nih_plug_egui::egui::Button::new("▼").min_size(vec2(21.0, 14.0)))
+            if ui.add(nih_plug_egui::egui::Button::new("▼").min_size(vec2(23.0, 14.0)))
                 .on_hover_text("Octave down")
                 .clicked()
                 && step.octave > -2

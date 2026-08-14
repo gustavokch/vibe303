@@ -148,7 +148,7 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                     nih_plug_egui::egui::RichText::new("VEG ADSR")
                                         .font(FontId::new(8.5, FontFamily::Proportional))
                                         .strong()
-                                        .color(if is_accurate { theme::TEXT_MUTED } else { theme::ACCENT_AMBER }),
+                                        .color(if is_accurate { theme::TEXT_MUTED } else { theme::SOUPED_ORANGE }),
                                 );
                                 ui.horizontal(|ui| {
                                     ui.add(MiniFader::new(
@@ -156,28 +156,28 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                         setter,
                                         "A",
                                         45.0,
-                                        theme::ACCENT_AMBER,
+                                        theme::SOUPED_ORANGE,
                                     ));
                                     ui.add(MiniFader::new(
                                         &params.veg_decay_adj,
                                         setter,
                                         "D",
                                         45.0,
-                                        theme::ACCENT_AMBER,
+                                        theme::SOUPED_ORANGE,
                                     ));
                                     ui.add(MiniFader::new(
                                         &params.veg_sustain,
                                         setter,
                                         "S",
                                         45.0,
-                                        theme::ACCENT_AMBER,
+                                        theme::SOUPED_ORANGE,
                                     ));
                                     ui.add(MiniFader::new(
                                         &params.veg_release,
                                         setter,
                                         "R",
                                         45.0,
-                                        theme::ACCENT_AMBER,
+                                        theme::SOUPED_ORANGE,
                                     ));
                                 });
                             });
@@ -217,11 +217,11 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
 
                 let painter = ui.painter();
 
-                // 70% opacity dark overlay tint
+                // 30% opacity dark overlay tint (preserves visibility of ghosted controls)
                 painter.rect_filled(
                     overlay_rect,
                     4.0,
-                    Color32::from_rgba_premultiplied(0x0e, 0x11, 0x16, 0xb8),
+                    Color32::from_rgba_premultiplied(0x0e, 0x11, 0x16, 0x4d),
                 );
                 painter.rect_stroke(
                     overlay_rect,

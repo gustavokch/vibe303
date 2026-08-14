@@ -2,81 +2,81 @@
 
 **Date:** 2026-08-14  
 **Target Spec:** `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
-**Overall Visual QA Weighted Score:** 88.70 / 100  
-**Overall Spec Compliance:** Non-Compliant (`false`)  
+**Overall Visual QA Weighted Score:** 91.83 / 100  
+**Overall Spec Compliance:** Non-Compliant (`false`)
 
 ---
 
-## 1. Score Breakdown
+## 1. Executive Summary & Score Breakdown
 
-- **Classic 303 Front Panel:** 88.00 / 100 (Weight: 35%, Weighted Contribution: 30.80) — `spec_compliance: false`
-- **Souped-Up Drawer:** 88.00 / 100 (Weight: 30%, Weighted Contribution: 26.40) — `spec_compliance: true`
-- **Sequencer Console:** 90.00 / 100 (Weight: 35%, Weighted Contribution: 31.50) — `spec_compliance: true`
-- **Calculated Total:** 88.70 / 100
+Visual QA analysis was performed across the three GUI sections. While Classic 303 Front Panel and Souped-Up Engine Drawer pass spec compliance gates, the Sequencer Console is non-compliant due to typography and layout deviations.
 
----
-
-## 2. Refinement Tasks by Section
-
-### 2.1 Classic 303 Front Panel Refinement Tasks
-
-1. **Move RESO COMP Knob to Souped-Up Engine Drawer** `[Severity: Minor, Category: geometry]`
-   - **Observed:** The primary classic knob row renders 8 rotary dials because RESO COMP is added directly into the front row.
-   - **Expected:** The Classic 303 front panel contains the 7 canonical vintage rotary dials (Tuning, Cutoff, Resonance, Env Mod, Decay, Accent, Volume).
-   - **Actionable Fix:** Remove RESO COMP from `plugin303/src/gui/panels/classic_panel.rs` and relocate it into the filter group inside `plugin303/src/gui/panels/souped_panel.rs`.
-
-2. **Fidelity Tier Switch Accent Color** `[Severity: Minor, Category: color]`
-   - **Observed:** The Fidelity Tier slide switch uses the default silver metallic carriage identical to the Waveform switch.
-   - **Expected:** The Fidelity Tier slide switch uses a red sliding carriage cap to match the design specification mockup.
-   - **Actionable Fix:** Add an optional `accent_color: Option<Color32>` parameter or builder field to `SlideSwitch` in `plugin303/src/gui/widgets/switch.rs`, and pass red accent styling for the tier switch in `classic_panel.rs`.
-
-3. **Chassis Header Ventilation Grills** `[Severity: Minor, Category: missing_feature]`
-   - **Observed:** The top header bar renders text labels and the topology switch without procedural ventilation grill slots.
-   - **Expected:** The top header chassis renders procedural vertical cooling ventilation grill slots flanking the center controls.
-   - **Actionable Fix:** Implement procedural vertical ventilation slots in `plugin303/src/gui/panels/header_bar.rs` using `painter.rect_filled()`.
-
-4. **Knob Parameter Labels Bold Typography** `[Severity: Minor, Category: typography]`
-   - **Observed:** Parameter labels above rotary dials render with standard font weight.
-   - **Expected:** Parameter labels above rotary dials render in bold uppercase typography for high contrast.
-   - **Actionable Fix:** Update font styling for dial labels in `plugin303/src/gui/widgets/knob.rs` and `classic_panel.rs` to use bold text styling tokens.
+| Section | Alignment Score | Weight | Weighted Score | Spec Compliance |
+| :--- | :--- | :--- | :--- | :--- |
+| **Classic 303 Front Panel** | 91.50 | 35% | 32.025 | `true` |
+| **Souped-Up Drawer** | 92.00 | 30% | 27.600 | `true` |
+| **Sequencer Console** | 92.00 | 35% | 32.200 | `false` |
+| **Total / Overall** | **91.83** | **100%** | **91.825** | `false` |
 
 ---
 
-### 2.2 Souped-Up Engine Drawer Refinement Tasks
+## 2. Design Spec Comparison & Defect Analysis
 
-1. **Accurate Mode Ghosted Controls Alpha Layer** `[Severity: Minor, Category: geometry]`
-   - **Observed:** The drawer completely hides extended controls in Accurate mode and renders only the overlay box with the quick-switch button.
-   - **Expected:** The drawer renders extended controls in a disabled state at 30 percent opacity, with the quick-switch overlay banner rendered on top.
-   - **Actionable Fix:** Update `plugin303/src/gui/panels/souped_panel.rs` to render the controls at 30 percent opacity before painting the overlay banner when `CircuitTopology::Accurate` is active.
+### 2.1 Classic 303 Front Panel (`classic_panel`)
+- **Header Bar Branding (`typography`):** Spec calls for TECHNEO logo on top-left and TB-303 PLUGIN branding in orange caps on top-right per UI mockup. Observed header currently shows `VIBE 303 / ANALOG CIRCUIT EMULATION`.
+- **Knob Parameter Labels (`typography`):** Spec Section 3.1 requires parameter titles above rotary dials to be rendered in **bold uppercase** typography. Observed labels use standard-weight proportional font (`FontId 9.5`).
 
-2. **Standardize VEG ADSR Fader Fill Bar Color** `[Severity: Minor, Category: color]`
-   - **Observed:** VEG faders render an amber glow color while MEG faders render an orange glow color.
-   - **Expected:** VEG faders render glowing orange fill bars matching the drawer theme, or use a consistent defined secondary envelope token.
-   - **Actionable Fix:** Align the VEG fader glow color token in `plugin303/src/gui/widgets/fader.rs` with `theme::ORANGE_ACCENT` or document the intentional amber differentiator in `theme.rs`.
+### 2.2 Souped-Up Engine Drawer (`souped_drawer`)
+- **VEG ADSR MiniFaders Color (`color`):** Spec Section 3.2 & Section 5 define glowing orange fill bars (`#ff8800`) matching `theme::SOUPED_ORANGE`. Observed VEG ADSR faders use amber glow (`#ffaa00`) while MEG ADSR faders use orange (`#ff8800`).
+- **Accurate Mode Overlay Tint (`geometry`):** Spec Section 4.1 specifies ghosted/dimmed extended controls at ~30% opacity with non-interactive overlay badge. Observed implementation uses a heavy 70% dark tint overlay rect (`0xb8` alpha) over `add_enabled_ui(false)`.
 
----
-
-### 2.3 Sequencer Console Refinement Tasks
-
-1. **StepGate Rest Color Token Consistency** `[Severity: Minor, Category: color]`
-   - **Observed:** `StepGate::Rest` uses hardcoded `Color32::from_rgb(0x2c, 0x32, 0x3c)` in `step_button.rs`.
-   - **Expected:** `StepGate::Rest` references the centralized `theme::GATE_REST_COLOR` design token.
-   - **Actionable Fix:** Replace the hardcoded `Color32` with `theme::GATE_REST_COLOR` in `plugin303/src/gui/widgets/step_button.rs`.
-
-2. **Accent and Slide Button Typography Constraints** `[Severity: Minor, Category: typography]`
-   - **Observed:** Buttons display single-letter labels `A` and `S` due to the 22px width constraint.
-   - **Expected:** Buttons display full `ACC` and `SLD` label text or explicit hover tooltips.
-   - **Actionable Fix:** Optimize label font size to render `ACC` and `SLD`, or retain `A` and `S` while attaching explicit egui tooltips describing `Accent` and `Slide`.
-
-3. **Multi-Octave Piano Roll Interface Documentation** `[Severity: Minor, Category: missing_feature]`
-   - **Observed:** Pitch selection opens a 5-octave vertical scrollable piano roll popup rather than a 13-key horizontal mini-keyboard.
-   - **Expected:** 13-key horizontal MiniKeyboard popover or documented upgraded multi-octave piano roll.
-   - **Actionable Fix:** Retain the 5-octave scrollable piano roll as an enhanced UI feature, and update `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md` to reflect the multi-octave roll.
+### 2.3 Sequencer Console (`sequencer`) — Non-Compliant
+- **ACC / SLD Button Labels (`typography`):** Spec Section 3.3 calls for buttons labeled `ACC` (Accent) and `SLD` (Slide). Observed implementation displays single-letter abbreviations `A` and `S`.
+- **Pitch Readout Formatting (`typography`):** Spec Section 3.3 specifies formatted note name with a space between note and octave (e.g., `C 3`, `F# 2`). Observed readout concatenates directly without space (e.g., `C3`, `F#2`).
+- **Octave Nudge Control Buttons (`alignment`):** Spec Section 3.3 specifies full-width horizontal alignment spanning the 48px step column evenly. Observed nudge buttons (`▲` / `▼`) are 21px wide each with 2px spacing, leaving an unwanted gap on the 48px column.
 
 ---
 
-## 3. Verification & Quality Gates
+## 3. Actionable Refinement Tasks by File
 
-1. **Cargo Build:** `cargo check -p plugin303 --all-features`
-2. **Audio Path Allocation Test:** `cargo test -p plugin303 --test no_alloc`
-3. **Visual Quality Gate Target:** Achieve overall weighted score >= 90 / 100 with `spec_compliance: true`.
+### 3.1 `plugin303/src/gui/panels/classic_panel.rs` & `plugin303/src/gui/widgets/knob.rs`
+1. **Knob Parameter Label Weight** `[Severity: Minor, Category: typography]`
+   - **Target File:** `plugin303/src/gui/widgets/knob.rs`
+   - **Fix:** Update label painter text style in `Knob303` to use strong/bold font weight token (`egui::FontId::new(9.5, egui::FontFamily::Proportional)` with bold styling or `TextStyle::Name("Bold".into())`).
+
+2. **Header Branding Strings** `[Severity: Minor, Category: typography]`
+   - **Target File:** `plugin303/src/gui/panels/header_bar.rs` / `classic_panel.rs`
+   - **Fix:** Update header branding text strings to `TECHNEO` / `TB-303 PLUGIN` if exact mockup parity is mandated, or document brand name configuration.
+
+### 3.2 `plugin303/src/gui/panels/souped_panel.rs`
+1. **Unify VEG ADSR Fader Glow Color** `[Severity: Minor, Category: color]`
+   - **Target File:** `plugin303/src/gui/panels/souped_panel.rs`
+   - **Fix:** Change VEG ADSR fader color token from amber (`#ffaa00`) to `theme::SOUPED_ORANGE` (`#ff8800`) to align with MEG faders and Souped-Up drawer color palette.
+
+2. **Adjust Accurate Mode Overlay Tint** `[Severity: Minor, Category: geometry]`
+   - **Target File:** `plugin303/src/gui/panels/souped_panel.rs`
+   - **Fix:** Reduce background overlay rect tint alpha from `0xb8` (~70%) to `0x4d` (~30% opacity) so underlying ghosted controls remain clearly visible per Spec Section 4.1.
+
+### 3.3 `plugin303/src/gui/widgets/step_button.rs`
+1. **Update Accent & Slide Button Labels** `[Severity: Minor, Category: typography]`
+   - **Target File:** `plugin303/src/gui/widgets/step_button.rs`
+   - **Fix:** Update modifier button labels from `"A"` and `"S"` to `"ACC"` and `"SLD"`. Adjust font size slightly if necessary to fit the step button bounds cleanly.
+
+2. **Format Pitch Readout with Space** `[Severity: Minor, Category: typography]`
+   - **Target File:** `plugin303/src/gui/widgets/step_button.rs`
+   - **Fix:** Update `format_pitch` function to return `format!("{} {}", name, oct_num)` instead of `format!("{}{}", name, oct_num)`.
+
+3. **Expand Octave Nudge Buttons to 48px Width** `[Severity: Minor, Category: alignment]`
+   - **Target File:** `plugin303/src/gui/widgets/step_button.rs`
+   - **Fix:** Adjust octave button `min_size` to `vec2(23.0, 14.0)` with exact layout expansion, or use `ui.allocate_ui_with_layout` with full horizontal fill across the 48px step column width.
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Compilation Check:**
+   `cargo check -p plugin303 --all-features`
+2. **Audio Path Allocation Gate:**
+   `cargo test -p plugin303 --test no_alloc`
+3. **Visual Quality Gate Target:**
+   Re-run Visual QA harness to verify `overall_score >= 95.0` and `spec_compliance == true`.

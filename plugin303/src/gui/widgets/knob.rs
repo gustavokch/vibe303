@@ -60,8 +60,16 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             let painter = ui.painter();
 
             // Label above (bold uppercase)
+            let label_pos = pos2(rect.center().x, rect.top() + 4.0);
             painter.text(
-                pos2(rect.center().x, rect.top() + 4.0),
+                pos2(label_pos.x + 0.3, label_pos.y),
+                nih_plug_egui::egui::Align2::CENTER_CENTER,
+                self.label.to_uppercase(),
+                FontId::new(9.5, FontFamily::Proportional),
+                theme::TEXT_PRIMARY,
+            );
+            painter.text(
+                label_pos,
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 self.label.to_uppercase(),
                 FontId::new(9.5, FontFamily::Proportional),
