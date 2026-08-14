@@ -17,13 +17,13 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
             ui.set_min_height(160.0);
-            ui.set_min_width(490.0);
+            ui.set_min_width(580.0);
 
             // Header Row
             ui.horizontal(|ui| {
                 ui.label(
                     nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE DRAWER")
-                        .font(FontId::new(11.0, FontFamily::Proportional))
+                        .font(FontId::new(10.5, FontFamily::Proportional))
                         .strong()
                         .color(if is_accurate {
                             theme::TEXT_MUTED
@@ -34,7 +34,7 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                 if is_accurate {
                     ui.label(
                         nih_plug_egui::egui::RichText::new("(Bypassed in Accurate Mode)")
-                            .font(FontId::new(9.0, FontFamily::Proportional))
+                            .font(FontId::new(8.5, FontFamily::Proportional))
                             .color(theme::TEXT_MUTED),
                     );
                 }
