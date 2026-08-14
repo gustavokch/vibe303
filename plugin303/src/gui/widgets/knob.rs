@@ -155,7 +155,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     || self.label.contains("DRIFT")
                     || self.label.contains("AGE")
                 {
-                    if f <= 1.0 && f >= 0.0 {
+                    if (0.0..=1.0).contains(&f) {
                         format!("{:.0}%", f * 100.0)
                     } else if f.abs() >= 100.0 {
                         format!("{:.0}%", f)

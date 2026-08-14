@@ -322,7 +322,7 @@ pub fn render_piano_roll_popup(
                                     p.text(
                                         label_pos,
                                         Align2::RIGHT_CENTER,
-                                        &full_note_str,
+                                        full_note_str,
                                         FontId::monospace(10.5),
                                         full_label_color,
                                     );
