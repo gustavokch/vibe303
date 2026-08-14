@@ -28,12 +28,12 @@ pub fn render_sequencer(
             ui.horizontal(|ui| {
                 // Left Transport & Config Column
                 ui.vertical(|ui| {
-                    ui.set_width(125.0);
+                    ui.set_width(100.0);
 
                     ui.label(
-                        nih_plug_egui::egui::RichText::new("16-STEP SEQUENCER CONSOLE")
+                        nih_plug_egui::egui::RichText::new("16-STEP SEQUENCER")
                             .font(nih_plug_egui::egui::FontId::new(
-                                11.0,
+                                10.5,
                                 nih_plug_egui::egui::FontFamily::Proportional,
                             ))
                             .strong()

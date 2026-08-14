@@ -47,26 +47,24 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                 ui.horizontal(|ui| {
                     // Left Column: Dials & Slopes
                     ui.vertical(|ui| {
-                        // Section 1: Dual Osc & Drive
+                        // Section 1: Dual Osc & Sub
                         ui.label(
-                            nih_plug_egui::egui::RichText::new("OSCILLATOR & DRIVE")
+                            nih_plug_egui::egui::RichText::new("OSCILLATOR")
                                 .font(FontId::new(8.5, FontFamily::Proportional))
                                 .strong()
                                 .color(if is_accurate { theme::TEXT_MUTED } else { theme::TEXT_SECONDARY }),
                         );
                         ui.horizontal(|ui| {
-                            ui.add(Knob303::new(&params.osc1_pitch, setter, "OSC1 DET", 13.0));
-                            ui.add(Knob303::new(&params.osc2_pitch, setter, "OSC2 DET", 13.0));
-                            ui.add(Knob303::new(&params.osc2_vol, setter, "OSC2 MIX", 13.0));
-                            ui.add(Knob303::new(&params.osc1_pw, setter, "OSC1 PW", 13.0));
-                            ui.add(Knob303::new(&params.sub_vol, setter, "SUB VOL", 13.0));
-                            ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 13.0));
-                            ui.add(Knob303::new(&params.glide, setter, "GLIDE", 13.0));
+                            ui.add(Knob303::new(&params.osc1_pitch, setter, "OSC1 DET", 12.0));
+                            ui.add(Knob303::new(&params.osc2_pitch, setter, "OSC2 DET", 12.0));
+                            ui.add(Knob303::new(&params.osc2_vol, setter, "OSC2 MIX", 12.0));
+                            ui.add(Knob303::new(&params.osc1_pw, setter, "OSC1 PW", 12.0));
+                            ui.add(Knob303::new(&params.sub_vol, setter, "SUB VOL", 12.0));
                         });
 
-                        ui.add_space(4.0);
+                        ui.add_space(3.0);
 
-                        // Section 2: Filter Slopes & Analog Wear
+                        // Section 2: Filter Slopes, Drive & Analog Drift
                         ui.label(
                             nih_plug_egui::egui::RichText::new("FILTER & ANALOG DRIFT")
                                 .font(FontId::new(8.5, FontFamily::Proportional))
@@ -80,10 +78,13 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                 "VCF TAPS",
                                 &["2-POLE", "3-POLE", "4-POLE"],
                             ));
-                            ui.add_space(6.0);
-                            ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 12.0));
-                            ui.add(Knob303::new(&params.comp_age, setter, "AGE", 12.0));
-                            ui.add(Knob303::new(&params.reso_comp, setter, "RESO COMP", 12.0));
+                            ui.add_space(4.0);
+                            ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 11.5));
+                            ui.add(Knob303::new(&params.glide, setter, "GLIDE", 11.5));
+                            ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.5));
+                            ui.add(Knob303::new(&params.comp_age, setter, "AGE", 11.5));
+                            ui.add(Knob303::new(&params.reso_comp, setter, "RESO COMP", 11.5));
+                            ui.add_space(4.0);
                             ui.add(SlideSwitch::new(
                                 &params.tolerance,
                                 setter,

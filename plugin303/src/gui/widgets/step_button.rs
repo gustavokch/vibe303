@@ -20,7 +20,7 @@ pub fn render_step_strip(
     is_active: bool,
 ) -> bool {
     let mut changed = false;
-    let width = 42.0;
+    let width = 36.0;
 
     ui.vertical(|ui| {
         ui.set_width(width);
@@ -62,7 +62,7 @@ pub fn render_step_strip(
 
             // ACC Button
             let (acc_rect, acc_resp) =
-                ui.allocate_exact_size(vec2(20.0, 18.0), Sense::click());
+                ui.allocate_exact_size(vec2(17.0, 16.0), Sense::click());
             let acc_resp = acc_resp.on_hover_text("Toggle Accent (A)");
             if acc_resp.clicked() {
                 step.accent = !step.accent;
@@ -86,24 +86,24 @@ pub fn render_step_strip(
                     nih_plug_egui::egui::StrokeKind::Inside,
                 );
                 p.text(
-                    pos2(acc_rect.left() + 3.5, acc_rect.center().y),
+                    pos2(acc_rect.left() + 2.5, acc_rect.center().y),
                     nih_plug_egui::egui::Align2::LEFT_CENTER,
-                    "ACC",
-                    FontId::new(6.5, FontFamily::Proportional),
+                    "A",
+                    FontId::new(7.0, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
                 let led_pos = pos2(acc_rect.right() - 3.5, acc_rect.center().y);
                 if step.accent {
-                    p.circle_filled(led_pos, 3.0, theme::ACCENT_AMBER_GLOW);
-                    p.circle_filled(led_pos, 1.8, theme::ACCENT_AMBER);
+                    p.circle_filled(led_pos, 2.8, theme::ACCENT_AMBER_GLOW);
+                    p.circle_filled(led_pos, 1.6, theme::ACCENT_AMBER);
                 } else {
-                    p.circle_filled(led_pos, 1.5, Color32::from_rgb(0x14, 0x16, 0x1c));
+                    p.circle_filled(led_pos, 1.4, Color32::from_rgb(0x14, 0x16, 0x1c));
                 }
             }
 
             // SLD Button
             let (sld_rect, sld_resp) =
-                ui.allocate_exact_size(vec2(20.0, 18.0), Sense::click());
+                ui.allocate_exact_size(vec2(17.0, 16.0), Sense::click());
             let sld_resp = sld_resp.on_hover_text("Toggle Slide (S)");
             if sld_resp.clicked() {
                 step.slide = !step.slide;
@@ -127,18 +127,18 @@ pub fn render_step_strip(
                     nih_plug_egui::egui::StrokeKind::Inside,
                 );
                 p.text(
-                    pos2(sld_rect.left() + 3.5, sld_rect.center().y),
+                    pos2(sld_rect.left() + 2.5, sld_rect.center().y),
                     nih_plug_egui::egui::Align2::LEFT_CENTER,
-                    "SLD",
-                    FontId::new(6.5, FontFamily::Proportional),
+                    "S",
+                    FontId::new(7.0, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
                 let led_pos = pos2(sld_rect.right() - 3.5, sld_rect.center().y);
                 if step.slide {
-                    p.circle_filled(led_pos, 3.0, theme::SLIDE_CYAN_GLOW);
-                    p.circle_filled(led_pos, 1.8, theme::SLIDE_CYAN);
+                    p.circle_filled(led_pos, 2.8, theme::SLIDE_CYAN_GLOW);
+                    p.circle_filled(led_pos, 1.6, theme::SLIDE_CYAN);
                 } else {
-                    p.circle_filled(led_pos, 1.5, Color32::from_rgb(0x14, 0x16, 0x1c));
+                    p.circle_filled(led_pos, 1.4, Color32::from_rgb(0x14, 0x16, 0x1c));
                 }
             }
         });
@@ -157,12 +157,12 @@ pub fn render_step_strip(
         };
         let gate_btn = nih_plug_egui::egui::Button::new(
             nih_plug_egui::egui::RichText::new(gate_str)
-                .font(FontId::new(8.5, FontFamily::Proportional))
+                .font(FontId::new(8.0, FontFamily::Proportional))
                 .strong()
                 .color(text_color),
         )
         .fill(gate_color)
-        .min_size(vec2(width, 20.0));
+        .min_size(vec2(width, 18.0));
 
         if ui.add(gate_btn).clicked() {
             step.gate = match step.gate {
@@ -179,12 +179,12 @@ pub fn render_step_strip(
         let pitch_str = format_pitch(step.semitone, step.octave);
         let pitch_btn = nih_plug_egui::egui::Button::new(
             nih_plug_egui::egui::RichText::new(pitch_str)
-                .font(FontId::new(9.5, FontFamily::Monospace))
+                .font(FontId::new(9.0, FontFamily::Monospace))
                 .strong()
                 .color(theme::TEXT_PRIMARY),
         )
         .fill(Color32::from_rgb(0x18, 0x1c, 0x24))
-        .min_size(vec2(width, 20.0));
+        .min_size(vec2(width, 18.0));
 
         let pitch_resp = ui
             .add(pitch_btn)
@@ -213,7 +213,7 @@ pub fn render_step_strip(
             ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
 
             // Octave Up Button
-            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(20.0, 14.0), Sense::click());
+            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(17.0, 14.0), Sense::click());
             let up_resp = up_resp.on_hover_text("Octave up (+1)");
             if up_resp.clicked() && step.octave < 2 {
                 step.octave += 1;
@@ -244,17 +244,17 @@ pub fn render_step_strip(
                     theme::TEXT_MUTED
                 };
                 p.line_segment(
-                    [pos2(cx - 3.0, cy + 2.0), pos2(cx, cy - 2.5)],
-                    Stroke::new(1.4_f32, arrow_color),
+                    [pos2(cx - 2.5, cy + 1.5), pos2(cx, cy - 2.0)],
+                    Stroke::new(1.3_f32, arrow_color),
                 );
                 p.line_segment(
-                    [pos2(cx, cy - 2.5), pos2(cx + 3.0, cy + 2.0)],
-                    Stroke::new(1.4_f32, arrow_color),
+                    [pos2(cx, cy - 2.0), pos2(cx + 2.5, cy + 1.5)],
+                    Stroke::new(1.3_f32, arrow_color),
                 );
             }
 
             // Octave Down Button
-            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(20.0, 14.0), Sense::click());
+            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(17.0, 14.0), Sense::click());
             let dn_resp = dn_resp.on_hover_text("Octave down (-1)");
             if dn_resp.clicked() && step.octave > -2 {
                 step.octave -= 1;
@@ -285,12 +285,12 @@ pub fn render_step_strip(
                     theme::TEXT_MUTED
                 };
                 p.line_segment(
-                    [pos2(cx - 3.0, cy - 2.0), pos2(cx, cy + 2.5)],
-                    Stroke::new(1.4_f32, arrow_color),
+                    [pos2(cx - 2.5, cy - 1.5), pos2(cx, cy + 2.0)],
+                    Stroke::new(1.3_f32, arrow_color),
                 );
                 p.line_segment(
-                    [pos2(cx, cy + 2.5), pos2(cx + 3.0, cy - 2.0)],
-                    Stroke::new(1.4_f32, arrow_color),
+                    [pos2(cx, cy + 2.0), pos2(cx + 2.5, cy - 1.5)],
+                    Stroke::new(1.3_f32, arrow_color),
                 );
             }
         });
