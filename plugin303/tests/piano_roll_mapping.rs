@@ -1,7 +1,8 @@
 use plugin303::gui::widgets::piano_roll_popup::{
-    is_semitone_black_key, note_name_for_semitone, pitch_to_row_index, row_index_to_pitch,
-    TOTAL_PIANO_ROLL_ROWS,
+    is_semitone_black_key, note_name_for_semitone, pitch_to_row_index, row_index_to_label,
+    row_index_to_pitch, TOTAL_PIANO_ROLL_ROWS,
 };
+use plugin303::gui::widgets::step_button::format_pitch;
 
 #[test]
 fn test_total_rows_count() {
@@ -101,4 +102,24 @@ fn test_note_names() {
     assert_eq!(note_name_for_semitone(10), "A#");
     assert_eq!(note_name_for_semitone(11), "B");
     assert_eq!(note_name_for_semitone(12), "C");
+}
+
+#[test]
+fn test_row_labels_octave_boundaries() {
+    assert_eq!(row_index_to_label(0), "C6");   // Top C (row 0, semitone 12, oct 2)
+    assert_eq!(row_index_to_label(1), "B5");
+    assert_eq!(row_index_to_label(12), "C5");  // Base C in oct 2 (row 12, semitone 0, oct 2)
+    assert_eq!(row_index_to_label(24), "C4");  // Base C in oct 1
+    assert_eq!(row_index_to_label(36), "C3");  // Base C in oct 0 (Middle C)
+    assert_eq!(row_index_to_label(48), "C2");  // Base C in oct -1
+    assert_eq!(row_index_to_label(60), "C1");  // Base C in oct -2 (Lowest note)
+}
+
+#[test]
+fn test_format_pitch_upper_c() {
+    assert_eq!(format_pitch(0, 0), "C 3");
+    assert_eq!(format_pitch(12, 0), "C 4");
+    assert_eq!(format_pitch(0, 2), "C 5");
+    assert_eq!(format_pitch(12, 2), "C 6");
+    assert_eq!(format_pitch(0, -2), "C 1");
 }

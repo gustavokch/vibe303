@@ -10,6 +10,24 @@ pub const POPUP_WIDTH: f32 = 160.0;
 pub const POPUP_HEIGHT: f32 = 270.0;
 pub const ROW_HEIGHT: f32 = 22.0;
 
+pub const PIANO_ROLL_LABELS: [&str; TOTAL_PIANO_ROLL_ROWS] = [
+    "C6", "B5", "A#5", "A5", "G#5", "G5", "F#5", "F5", "E5", "D#5", "D5", "C#5", // Rows 0..=11
+    "C5", "B4", "A#4", "A4", "G#4", "G4", "F#4", "F4", "E4", "D#4", "D4", "C#4", // Rows 12..=23
+    "C4", "B3", "A#3", "A3", "G#3", "G3", "F#3", "F3", "E3", "D#3", "D3", "C#3", // Rows 24..=35
+    "C3", "B2", "A#2", "A2", "G#2", "G2", "F#2", "F2", "E2", "D#2", "D2", "C#2", // Rows 36..=47
+    "C2", "B1", "A#1", "A1", "G#1", "G1", "F#1", "F1", "E1", "D#1", "D1", "C#1", // Rows 48..=59
+    "C1",                                                                          // Row 60
+];
+
+#[inline]
+pub fn row_index_to_label(row_idx: usize) -> &'static str {
+    if row_idx < TOTAL_PIANO_ROLL_ROWS {
+        PIANO_ROLL_LABELS[row_idx]
+    } else {
+        "C1"
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OpenPianoRollState {
     pub step_idx: usize,
@@ -200,8 +218,7 @@ pub fn render_piano_roll_popup(
                                 let is_active = row_idx == active_row;
                                 let is_black = is_semitone_black_key(semitone);
                                 let note_name = note_name_for_semitone(semitone);
-                                let oct_num = 3 + octave;
-                                let full_note_str = format!("{}{}", note_name, oct_num);
+                                let full_note_str = row_index_to_label(row_idx);
 
                                 let row_width = ui.available_width();
                                 let (row_rect, row_resp) = ui.allocate_exact_size(

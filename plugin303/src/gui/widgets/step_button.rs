@@ -9,7 +9,7 @@ pub fn format_pitch(semitone: i8, octave: i8) -> String {
     let name = note_names
         .get(semitone.clamp(0, 12) as usize)
         .unwrap_or(&"C");
-    let oct_num = 3 + octave;
+    let oct_num = 3 + octave + if semitone == 12 { 1 } else { 0 };
     format!("{} {}", name, oct_num)
 }
 
