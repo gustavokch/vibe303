@@ -103,7 +103,7 @@ pub fn render_sequencer(
 
                 // 16 Step Columns in a single continuous row
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(3.0, 0.0);
+                    ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(2.0, 0.0);
                     if let Ok(mut pattern_guard) = params.pattern.write() {
                         let num_steps = params.seq_length.value() as usize;
 
@@ -111,16 +111,21 @@ pub fn render_sequencer(
                             let is_active = active_step as usize == step_idx;
                             let in_active_range = step_idx < num_steps;
 
-                            ui.group(|ui| {
-                                ui.add_enabled_ui(in_active_range, |ui| {
-                                    render_step_strip(
-                                        ui,
-                                        step_idx,
-                                        &mut pattern_guard.steps[step_idx],
-                                        is_active,
-                                    );
+                            Frame::new()
+                                .fill(Color32::from_rgb(0x18, 0x1b, 0x20))
+                                .stroke(theme::border_stroke())
+                                .corner_radius(CornerRadius::same(3))
+                                .inner_margin(Margin::symmetric(2, 3))
+                                .show(ui, |ui| {
+                                    ui.add_enabled_ui(in_active_range, |ui| {
+                                        render_step_strip(
+                                            ui,
+                                            step_idx,
+                                            &mut pattern_guard.steps[step_idx],
+                                            is_active,
+                                        );
+                                    });
                                 });
-                            });
                         }
 
                         render_piano_roll_popup(ui.ctx(), &mut pattern_guard);

@@ -12,14 +12,20 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
         // Logo / Title
         ui.add_space(8.0);
         ui.label(
-            nih_plug_egui::egui::RichText::new("VIBE 303")
+            nih_plug_egui::egui::RichText::new("TECHNEO")
                 .font(FontId::new(16.0, FontFamily::Proportional))
                 .strong()
                 .color(theme::TEXT_PRIMARY),
         );
         ui.label(
-            nih_plug_egui::egui::RichText::new("ANALOG CIRCUIT EMULATION")
-                .font(FontId::new(9.5, FontFamily::Proportional))
+            nih_plug_egui::egui::RichText::new("TB-303 PLUGIN")
+                .font(FontId::new(11.0, FontFamily::Proportional))
+                .strong()
+                .color(theme::SOUPED_ORANGE),
+        );
+        ui.label(
+            nih_plug_egui::egui::RichText::new("• VIBE 303 ANALOG CIRCUIT EMULATION")
+                .font(FontId::new(9.0, FontFamily::Proportional))
                 .color(theme::TEXT_MUTED),
         );
 
