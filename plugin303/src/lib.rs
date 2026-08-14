@@ -273,6 +273,7 @@ impl Plugin for Plugin303 {
             self.params.sweep_pos.value(),
             self.params.comp_seed.value(),
             self.params.glide.value(),
+            self.params.reso_comp.value(),
         );
 
         // Block-rate read of the fidelity tier (starts a crossfade on change).

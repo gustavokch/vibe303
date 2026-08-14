@@ -43,7 +43,8 @@ runs/
 
 # Scratch / throwaway experiment dirs
 scratch/
-.claude/
+.claude/*
+!.claude/workflows
 .jc303-ref/
 worktree-*/
 test_*

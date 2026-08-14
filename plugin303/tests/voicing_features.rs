@@ -38,6 +38,7 @@ fn test_accent_stacking() {
         0.0,
         0,
         0.5,
+        0.0,
     );
     // Trigger consecutive accents
     v.set_gate(true, true, true, false);

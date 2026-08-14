@@ -24,6 +24,7 @@ fn test_topology_param_defaults_and_blackouts() {
     assert!(params.is_param_active("tuning"));
     assert!(params.is_param_active("cutoff"));
     assert!(params.is_param_active("resonance"));
+    assert!(params.is_param_active("reso_comp"));
     assert!(params.is_param_active("waveform"));
 }
 
@@ -67,6 +68,7 @@ fn test_accurate_topology_dsp_coercion() {
         0.0,
         0,
         0.5,
+        0.0,
     );
 
     v_base.note_on(60);
@@ -112,6 +114,7 @@ fn test_accurate_topology_dsp_coercion() {
         0.75,
         0,
         0.5,
+        0.0,
     );
 
     v_adv.note_on(60);
@@ -167,6 +170,7 @@ fn test_fun_topology_dsp_activation() {
         0.0,
         0,
         0.5,
+        0.0,
     );
     v_base.note_on(60);
     v_base.set_gate(true, true, false, false);
@@ -206,6 +210,7 @@ fn test_fun_topology_dsp_activation() {
         0.0,
         0,
         0.5,
+        0.0,
     );
     v_fun.note_on(60);
     v_fun.set_gate(true, true, false, false);

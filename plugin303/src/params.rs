@@ -263,6 +263,8 @@ pub struct Plugin303Params {
     pub vcf_taps: EnumParam<VcfTaps>,
     #[id = "vcf_drive"]
     pub vcf_drive: FloatParam,
+    #[id = "reso_comp"]
+    pub reso_comp: FloatParam,
     #[id = "glide"]
     pub glide: FloatParam,
     #[id = "advanced_env"]
@@ -432,6 +434,15 @@ impl Default for Plugin303Params {
                 },
             )
             .with_unit(" dB"),
+
+            reso_comp: FloatParam::new(
+                "Reso Gain Comp",
+                0.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 1.0,
+                },
+            ),
 
             glide: FloatParam::new("Glide", 0.1, FloatRange::Linear { min: 0.0, max: 1.0 }),
 

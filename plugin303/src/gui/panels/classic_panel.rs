@@ -27,14 +27,16 @@ pub fn render_classic(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSette
 
             ui.add_space(12.0);
 
-            // Row of main dials
+            // Row of main dials (classic 303 vintage rotary dials + resonance compensation)
             ui.horizontal(|ui| {
-                ui.add(Knob303::new(&params.tuning, setter, "TUNING", 16.0));
-                ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
-                ui.add(Knob303::new(&params.resonance, setter, "RESO", 20.0));
-                ui.add(Knob303::new(&params.env_mod, setter, "ENV MOD", 18.0));
-                ui.add(Knob303::new(&params.decay, setter, "DECAY", 18.0));
-                ui.add(Knob303::new(&params.accent, setter, "ACCENT", 18.0));
+                ui.add(Knob303::new(&params.tuning, setter, "TUNING", 14.0));
+                ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 16.0));
+                ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 16.0));
+                ui.add(Knob303::new(&params.reso_comp, setter, "RESO COMP", 15.0));
+                ui.add(Knob303::new(&params.env_mod, setter, "ENV MOD", 15.0));
+                ui.add(Knob303::new(&params.decay, setter, "DECAY", 15.0));
+                ui.add(Knob303::new(&params.accent, setter, "ACCENT", 15.0));
+                ui.add(Knob303::new(&params.volume, setter, "VOLUME", 14.0));
             });
 
             ui.add_space(10.0);
@@ -45,7 +47,7 @@ pub fn render_classic(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSette
                     &params.waveform,
                     setter,
                     "WAVEFORM",
-                    &["SAW", "SQR", "SWEEP"],
+                    &["SAW", "SQUARE", "SWEEP"],
                 ));
                 ui.add_space(20.0);
                 let is_accurate = params.topology.value() == CircuitTopology::Accurate;
