@@ -3,6 +3,8 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 pub mod dsp;
+#[cfg(feature = "gui")]
+pub mod gui;
 pub mod params;
 use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::Voice;
@@ -18,6 +20,11 @@ pub struct Plugin303 {
     /// Last latency reported to the host (samples). Tracked so we only notify on
     /// change — Ultra/High oversampling adds group delay the host must PDC.
     reported_latency: u32,
+    /// GUI Editor state for window sizing and scale factor persistence.
+    #[cfg(feature = "gui")]
+    pub editor_state: Arc<nih_plug_egui::EguiState>,
+    /// Thread-safe playhead step index for GUI rendering.
+    pub current_playing_step: Arc<std::sync::atomic::AtomicU8>,
     /// Built-in 16-step sequencer.
     sequencer: Sequencer,
     /// Tracked active MIDI note to manage note priority.
@@ -37,12 +44,17 @@ impl Plugin303 {
             params.seq_length.value() as u8,
             params.seq_mode.value(),
         );
+        let sequencer = Sequencer::new(sample_rate as f64);
+        let current_playing_step = sequencer.current_step.clone();
         Self {
             params,
             sample_rate,
             voice: Voice::new(sample_rate),
             reported_latency: 0,
-            sequencer: Sequencer::new(sample_rate as f64),
+            #[cfg(feature = "gui")]
+            editor_state: nih_plug_egui::EguiState::from_size(crate::gui::GUI_WIDTH, crate::gui::GUI_HEIGHT),
+            current_playing_step,
+            sequencer,
             active_midi_note: None,
             current_sample_pos: 0,
             prev_transport_sample: None,
@@ -158,6 +170,21 @@ impl Plugin for Plugin303 {
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        #[cfg(feature = "gui")]
+        {
+            crate::gui::create_editor(
+                self.params.clone(),
+                self.editor_state.clone(),
+                self.current_playing_step.clone(),
+            )
+        }
+        #[cfg(not(feature = "gui"))]
+        {
+            None
+        }
     }
 
     fn initialize(

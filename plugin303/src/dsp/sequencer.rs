@@ -42,6 +42,9 @@ pub enum SeqEvent {
     GateOff,
 }
 
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
+
 pub use crate::params::Timebase;
 
 pub struct Sequencer {
@@ -54,6 +57,7 @@ pub struct Sequencer {
     prev_note_slide: bool,
     prev_was_sounding: bool,
     isr_origin: f64,
+    pub current_step: Arc<AtomicU8>,
 }
 
 const ISR_PERIOD_S: f64 = 0.0018;
@@ -72,6 +76,7 @@ impl Sequencer {
             prev_note_slide: false,
             prev_was_sounding: false,
             isr_origin: 0.0,
+            current_step: Arc::new(AtomicU8::new(255)),
         }
     }
 
@@ -82,6 +87,8 @@ impl Sequencer {
     pub fn set_running(&mut self, running: bool) {
         if running && !self.running {
             self.reset();
+        } else if !running && self.running {
+            self.current_step.store(255, Ordering::Relaxed);
         }
         self.running = running;
     }
@@ -93,6 +100,7 @@ impl Sequencer {
         self.gate_off_sample = None;
         self.prev_note_slide = false;
         self.prev_was_sounding = false;
+        self.current_step.store(255, Ordering::Relaxed);
     }
 
     pub fn reset_transport(&mut self, _pos_beats: f64) {
@@ -171,6 +179,7 @@ impl Sequencer {
 
         // 2. Step boundaries
         while self.next_step_sample < block_end {
+            self.current_step.store(self.step_idx as u8, Ordering::Relaxed);
             let t = self.isr_quantise(self.next_step_sample, GATE_ON_LATENCY_S, hw_jitter);
             let offset = (t as u32).saturating_sub(block_start as u32);
 
