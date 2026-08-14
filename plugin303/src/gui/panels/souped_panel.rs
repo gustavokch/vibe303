@@ -201,17 +201,18 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
             if is_accurate {
                 // Dimmed / Ghosted Accurate Mode Overlay over controls
                 let overlay_rect = content_response.response.rect;
+                let visible_bounds = ui.min_rect();
 
-                let banner_width = 380.0;
-                let banner_height = 86.0;
+                let banner_width = 360.0;
+                let banner_height = 82.0;
                 let banner_rect = nih_plug_egui::egui::Rect::from_center_size(
-                    overlay_rect.center(),
+                    visible_bounds.center(),
                     vec2(banner_width, banner_height),
                 );
 
                 let btn_rect = nih_plug_egui::egui::Rect::from_center_size(
-                    nih_plug_egui::egui::pos2(banner_rect.center().x, banner_rect.bottom() - 22.0),
-                    vec2(190.0, 22.0),
+                    nih_plug_egui::egui::pos2(banner_rect.center().x, banner_rect.bottom() - 20.0),
+                    vec2(180.0, 20.0),
                 );
                 let btn_resp = ui.allocate_rect(btn_rect, nih_plug_egui::egui::Sense::click());
                 let btn_hovered = btn_resp.hovered();

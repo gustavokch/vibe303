@@ -86,18 +86,18 @@ pub fn render_step_strip(
                     nih_plug_egui::egui::StrokeKind::Inside,
                 );
                 p.text(
-                    pos2(acc_rect.left() + 2.5, acc_rect.center().y),
+                    pos2(acc_rect.left() + 2.0, acc_rect.center().y),
                     nih_plug_egui::egui::Align2::LEFT_CENTER,
-                    "A",
-                    FontId::new(7.0, FontFamily::Proportional),
+                    "ACC",
+                    FontId::new(6.0, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(acc_rect.right() - 3.5, acc_rect.center().y);
+                let led_pos = pos2(acc_rect.right() - 3.0, acc_rect.center().y);
                 if step.accent {
-                    p.circle_filled(led_pos, 2.8, theme::ACCENT_AMBER_GLOW);
-                    p.circle_filled(led_pos, 1.6, theme::ACCENT_AMBER);
+                    p.circle_filled(led_pos, 2.5, theme::ACCENT_AMBER_GLOW);
+                    p.circle_filled(led_pos, 1.5, theme::ACCENT_AMBER);
                 } else {
-                    p.circle_filled(led_pos, 1.4, Color32::from_rgb(0x14, 0x16, 0x1c));
+                    p.circle_filled(led_pos, 1.3, Color32::from_rgb(0x14, 0x16, 0x1c));
                 }
             }
 
@@ -127,18 +127,18 @@ pub fn render_step_strip(
                     nih_plug_egui::egui::StrokeKind::Inside,
                 );
                 p.text(
-                    pos2(sld_rect.left() + 2.5, sld_rect.center().y),
+                    pos2(sld_rect.left() + 2.0, sld_rect.center().y),
                     nih_plug_egui::egui::Align2::LEFT_CENTER,
-                    "S",
-                    FontId::new(7.0, FontFamily::Proportional),
+                    "SLD",
+                    FontId::new(6.0, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(sld_rect.right() - 3.5, sld_rect.center().y);
+                let led_pos = pos2(sld_rect.right() - 3.0, sld_rect.center().y);
                 if step.slide {
-                    p.circle_filled(led_pos, 2.8, theme::SLIDE_CYAN_GLOW);
-                    p.circle_filled(led_pos, 1.6, theme::SLIDE_CYAN);
+                    p.circle_filled(led_pos, 2.5, theme::SLIDE_CYAN_GLOW);
+                    p.circle_filled(led_pos, 1.5, theme::SLIDE_CYAN);
                 } else {
-                    p.circle_filled(led_pos, 1.4, Color32::from_rgb(0x14, 0x16, 0x1c));
+                    p.circle_filled(led_pos, 1.3, Color32::from_rgb(0x14, 0x16, 0x1c));
                 }
             }
         });
@@ -152,7 +152,7 @@ pub fn render_step_strip(
             StepGate::Rest => (
                 "REST",
                 theme::GATE_REST_COLOR,
-                Color32::from_rgb(0xd8, 0xde, 0xe8),
+                Color32::from_rgb(0xee, 0xf2, 0xf8),
             ),
         };
         let gate_btn = nih_plug_egui::egui::Button::new(
@@ -213,7 +213,7 @@ pub fn render_step_strip(
             ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
 
             // Octave Up Button
-            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(17.0, 14.0), Sense::click());
+            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(17.0, 16.0), Sense::click());
             let up_resp = up_resp.on_hover_text("Octave up (+1)");
             if up_resp.clicked() && step.octave < 2 {
                 step.octave += 1;
@@ -254,7 +254,7 @@ pub fn render_step_strip(
             }
 
             // Octave Down Button
-            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(17.0, 14.0), Sense::click());
+            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(17.0, 16.0), Sense::click());
             let dn_resp = dn_resp.on_hover_text("Octave down (-1)");
             if dn_resp.clicked() && step.octave > -2 {
                 step.octave -= 1;

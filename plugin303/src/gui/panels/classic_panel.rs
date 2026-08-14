@@ -29,13 +29,13 @@ pub fn render_classic(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSette
 
             // Row of main dials (canonical 7 vintage 303 rotary dials)
             ui.horizontal(|ui| {
-                ui.add(Knob303::new(&params.tuning, setter, "TUNING", 14.0));
-                ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 16.0));
-                ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 16.0));
+                ui.add(Knob303::new(&params.tuning, setter, "TUNING", 15.0));
+                ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 15.0));
+                ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 15.0));
                 ui.add(Knob303::new(&params.env_mod, setter, "ENV MOD", 15.0));
                 ui.add(Knob303::new(&params.decay, setter, "DECAY", 15.0));
                 ui.add(Knob303::new(&params.accent, setter, "ACCENT", 15.0));
-                ui.add(Knob303::new(&params.volume, setter, "VOLUME", 14.0));
+                ui.add(Knob303::new(&params.volume, setter, "VOLUME", 15.0));
             });
 
             ui.add_space(10.0);
