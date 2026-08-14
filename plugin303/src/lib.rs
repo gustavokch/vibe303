@@ -321,6 +321,7 @@ impl Plugin for Plugin303 {
                         bpm,
                         timebase,
                         num_steps,
+                        Some(&self.cached_pattern),
                     );
                 }
                 self.prev_transport_sample = Some(pos_samples + buffer.samples() as i64);

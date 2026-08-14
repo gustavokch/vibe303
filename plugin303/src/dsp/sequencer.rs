@@ -23,6 +23,7 @@ pub struct Pattern {
     pub pitches: [PitchEntry; MAX_STEPS],
     pub timing: [TimeEntry; MAX_STEPS],
     pub num_steps: u8,
+    pub decoupled: bool,
 }
 
 impl Default for Pattern {
@@ -31,6 +32,7 @@ impl Default for Pattern {
             pitches: [PitchEntry::default(); MAX_STEPS],
             timing: [TimeEntry::Note; MAX_STEPS],
             num_steps: 16,
+            decoupled: false,
         }
     }
 }
@@ -114,6 +116,7 @@ impl Sequencer {
         bpm: f64,
         timebase: Timebase,
         num_steps: u8,
+        pattern: Option<&Pattern>,
     ) {
         let num_steps = (num_steps as usize).clamp(1, 16);
         let step_len = self.samples_per_step(bpm, timebase);
@@ -124,11 +127,33 @@ impl Sequencer {
 
         let pos = pos_samples.max(0) as f64;
         let phase_in_loop = pos.rem_euclid(loop_len);
-        self.step_idx = ((phase_in_loop / step_len).floor() as usize) % num_steps;
-        self.pitch_idx = self.step_idx;
-        let sample_into_step = phase_in_loop - (self.step_idx as f64 * step_len);
+        let current_step = ((phase_in_loop / step_len).floor() as usize) % num_steps;
+        let sample_into_step = phase_in_loop - (current_step as f64 * step_len);
 
-        self.next_step_sample = block_start as f64 + (step_len - sample_into_step);
+        if sample_into_step <= 1e-6 {
+            self.step_idx = current_step;
+            self.next_step_sample = block_start as f64;
+        } else {
+            self.step_idx = (current_step + 1) % num_steps;
+            self.next_step_sample = block_start as f64 + (step_len - sample_into_step);
+        }
+
+        if let Some(pat) = pattern {
+            if pat.decoupled {
+                let mut note_count = 0;
+                for i in 0..self.step_idx {
+                    if pat.timing[i] == TimeEntry::Note {
+                        note_count += 1;
+                    }
+                }
+                self.pitch_idx = note_count % num_steps;
+            } else {
+                self.pitch_idx = self.step_idx;
+            }
+        } else {
+            self.pitch_idx = self.step_idx;
+        }
+
         self.gate_off_sample = None;
         self.prev_note_slide = false;
         self.prev_was_sounding = false;
@@ -167,7 +192,7 @@ impl Sequencer {
         // 1. Pending GateOff from previous block?
         if let Some(g) = self.gate_off_sample {
             let g_quant = self.isr_quantise(g, GATE_OFF_LATENCY_S, hw_jitter);
-            if g_quant >= block_start as f64 && g_quant < block_end {
+            if g_quant < block_end {
                 let offset = (g_quant as u32).saturating_sub(block_start as u32);
                 if *out_count < 64 {
                     out_events[*out_count] = (offset, SeqEvent::GateOff);
@@ -192,7 +217,11 @@ impl Sequencer {
                     // Gate continues sounding
                 }
                 TimeEntry::Note => {
-                    let p = pattern.pitches[self.pitch_idx];
+                    let p = if pattern.decoupled {
+                        pattern.pitches[self.pitch_idx]
+                    } else {
+                        pattern.pitches[self.step_idx]
+                    };
                     let next_timing = pattern.timing[(self.step_idx + 1) % num_steps];
 
                     let ev = if self.prev_note_slide && self.prev_was_sounding {
@@ -237,7 +266,11 @@ impl Sequencer {
 
                     self.prev_note_slide = p.slide;
                     self.prev_was_sounding = true;
-                    self.pitch_idx = (self.pitch_idx + 1) % num_steps;
+                    if pattern.decoupled {
+                        self.pitch_idx = (self.pitch_idx + 1) % num_steps;
+                    } else {
+                        self.pitch_idx = (self.step_idx + 1) % num_steps;
+                    }
                 }
             }
 

@@ -190,10 +190,16 @@ impl SequencerPattern {
             }
         }
 
+        let decoupled = match mode {
+            SequencerMode::DirectGrid => false,
+            SequencerMode::DecoupledHardware => true,
+        };
+
         crate::dsp::sequencer::Pattern {
             pitches,
             timing,
             num_steps,
+            decoupled,
         }
     }
 }

@@ -25,3 +25,6 @@ strip = "none"
 inherits = "profiling"
 lto = "thin"
 codegen-units = 4      # thin-LTO benefits from >1 CGU for better attribution
+
+[patch."https://github.com/RustAudio/baseview.git"]
+baseview = { path = "vendor/baseview" }

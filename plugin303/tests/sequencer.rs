@@ -6,6 +6,7 @@ fn test_data_model_compiles() {
         pitches: [PitchEntry::default(); 16],
         timing: [TimeEntry::Rest; 16],
         num_steps: 16,
+        decoupled: false,
     };
 }
 
@@ -17,6 +18,7 @@ fn test_sequencer_drift_free() {
         pitches: [PitchEntry::default(); 16],
         timing: [TimeEntry::Rest; 16],
         num_steps: 16,
+        decoupled: false,
     };
     pat.timing[0] = TimeEntry::Note;
 
@@ -57,6 +59,7 @@ fn test_gate_duty_triplet() {
         pitches: [PitchEntry::default(); 16],
         timing: [TimeEntry::Rest; 16],
         num_steps: 16,
+        decoupled: false,
     };
     pat.timing[0] = TimeEntry::Note;
 
@@ -98,6 +101,7 @@ fn test_decoupled_pitch_memory() {
         pitches: [PitchEntry::default(); 16],
         timing: [TimeEntry::Rest; 16],
         num_steps: 4,
+        decoupled: true,
     };
     // Pitches: 0 (C), 2 (D), 4 (E), 5 (F)
     pat.pitches[0].key = 0;
@@ -145,6 +149,7 @@ fn test_slide_lookahead() {
         pitches: [PitchEntry::default(); 16],
         timing: [TimeEntry::Rest; 16],
         num_steps: 4,
+        decoupled: false,
     };
     pat.pitches[0].key = 0;
     pat.pitches[0].slide = true; // Note 0 slides into Note 1
@@ -239,6 +244,7 @@ fn test_sequencer_multiblock_chunked_processing() {
         pitches: [PitchEntry::default(); 16],
         timing: [TimeEntry::Rest; 16],
         num_steps: 4,
+        decoupled: false,
     };
     pat.timing[0] = TimeEntry::Note;
     pat.timing[1] = TimeEntry::Note;
@@ -291,15 +297,16 @@ fn test_sequencer_transport_jump_and_loop_sync() {
     let mut seq = Sequencer::new(48000.0);
     seq.set_running(true);
 
-    // 120 bpm, straight timebase => 6000 samples per step.
-    // Jump to 9000 samples (Step 1, exactly halfway through step).
-    seq.sync_to_transport(9000, 0, 120.0, Timebase::Straight, 16);
-
     let pat = Pattern {
         pitches: [PitchEntry::default(); 16],
         timing: [TimeEntry::Note; 16],
         num_steps: 16,
+        decoupled: false,
     };
+
+    // 120 bpm, straight timebase => 6000 samples per step.
+    // Jump to 9000 samples (Step 1, exactly halfway through step).
+    seq.sync_to_transport(9000, 0, 120.0, Timebase::Straight, 16, Some(&pat));
 
     let mut events = [(0, SeqEvent::GateOff); 64];
     let mut count = 0;
@@ -336,4 +343,95 @@ fn test_sequencer_transport_jump_and_loop_sync() {
     assert_eq!(count2, 1);
     assert_eq!(events2[0].0, 2000);
     assert_eq!(events2[0].1, SeqEvent::GateOff);
+}
+
+#[test]
+fn test_gate_off_quantization_boundary() {
+    let mut seq = Sequencer::new(48000.0);
+    seq.set_running(true);
+    let mut pat = Pattern {
+        pitches: [PitchEntry::default(); 16],
+        timing: [TimeEntry::Rest; 16],
+        num_steps: 16,
+        decoupled: false,
+    };
+    pat.timing[0] = TimeEntry::Note;
+
+    // Process block 1 from 0 to 2900 (GateOff is at 3000, outside block 1)
+    let mut events1 = [(0, SeqEvent::GateOff); 64];
+    let mut count1 = 0;
+    seq.process_block(
+        &pat,
+        0,
+        2900,
+        &mut events1,
+        &mut count1,
+        120.0,
+        Timebase::Straight,
+        true, // hw_jitter enabled
+    );
+    assert_eq!(count1, 1); // Note 0 Trigger
+
+    // Process block 2 from 2900 to 6000 (GateOff will land inside block 2)
+    let mut events2 = [(0, SeqEvent::GateOff); 64];
+    let mut count2 = 0;
+    seq.process_block(
+        &pat,
+        2900,
+        3100,
+        &mut events2,
+        &mut count2,
+        120.0,
+        Timebase::Straight,
+        true,
+    );
+    assert_eq!(count2, 1);
+    assert_eq!(events2[0].1, SeqEvent::GateOff);
+}
+
+#[test]
+fn test_decoupled_pitch_transport_sync() {
+    let mut seq = Sequencer::new(48000.0);
+    seq.set_running(true);
+
+    let mut pat = Pattern {
+        pitches: [PitchEntry::default(); 16],
+        timing: [TimeEntry::Rest; 16],
+        num_steps: 4,
+        decoupled: true,
+    };
+    // Pitches: 0 (C), 2 (D), 4 (E), 5 (F)
+    pat.pitches[0].key = 0;
+    pat.pitches[1].key = 2;
+    pat.pitches[2].key = 4;
+    pat.pitches[3].key = 5;
+
+    // Timing: Step 0 = Note (Pitch 0: key 0), Step 1 = Rest, Step 2 = Note (Pitch 1: key 2), Step 3 = Note (Pitch 2: key 4)
+    pat.timing[0] = TimeEntry::Note;
+    pat.timing[1] = TimeEntry::Rest;
+    pat.timing[2] = TimeEntry::Note;
+    pat.timing[3] = TimeEntry::Note;
+
+    // Seek transport directly to Step 2 (sample 12000 at 120 bpm straight)
+    seq.sync_to_transport(12000, 0, 120.0, Timebase::Straight, 4, Some(&pat));
+
+    let mut events = [(0, SeqEvent::GateOff); 64];
+    let mut count = 0;
+    seq.process_block(
+        &pat,
+        0,
+        6000,
+        &mut events,
+        &mut count,
+        120.0,
+        Timebase::Straight,
+        false,
+    );
+
+    assert_eq!(count, 2); // Step 2 Trigger + GateOff
+    if let SeqEvent::Trigger { key, .. } = events[0].1 {
+        assert_eq!(key, 2); // Correct pitch 1 (key 2) after Rest step 1!
+    } else {
+        panic!("Expected Trigger event");
+    }
 }
