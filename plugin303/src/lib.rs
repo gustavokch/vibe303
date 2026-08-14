@@ -3,14 +3,16 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 pub mod dsp;
+#[cfg(feature = "gui")]
+pub mod gui;
 pub mod params;
-use dsp::sequencer::{Sequencer, TransportInfo};
+use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::Voice;
 use params::Plugin303Params;
 /// The main plugin structure implementing the nih-plug VST3/CLAP synth interface.
 pub struct Plugin303 {
     /// Shared parameters object.
-    params: Arc<Plugin303Params>,
+    pub params: Arc<Plugin303Params>,
     /// Active sample rate.
     sample_rate: f32,
     /// Monophonic synth voice.
@@ -18,23 +20,56 @@ pub struct Plugin303 {
     /// Last latency reported to the host (samples). Tracked so we only notify on
     /// change — Ultra/High oversampling adds group delay the host must PDC.
     reported_latency: u32,
+    /// GUI Editor state for window sizing and scale factor persistence.
+    #[cfg(feature = "gui")]
+    pub editor_state: Arc<nih_plug_egui::EguiState>,
+    /// Thread-safe playhead step index for GUI rendering.
+    pub current_playing_step: Arc<std::sync::atomic::AtomicU8>,
     /// Built-in 16-step sequencer.
     sequencer: Sequencer,
     /// Tracked active MIDI note to manage note priority.
     active_midi_note: Option<u8>,
+    /// Monotonic running sample position for multi-block sequencer scheduling.
+    current_sample_pos: u64,
+    /// Previous transport sample position to detect jumps, loops, and seeks.
+    prev_transport_sample: Option<i64>,
+    /// Cached compiled sequencer pattern for non-blocking RT audio safety.
+    cached_pattern: crate::dsp::sequencer::Pattern,
+}
+
+impl Plugin303 {
+    pub fn new_with_params(params: Arc<Plugin303Params>) -> Self {
+        let sample_rate = 48_000.0;
+        let cached_pattern = params
+            .pattern
+            .read()
+            .unwrap()
+            .compile(params.seq_length.value() as u8, params.seq_mode.value());
+        let sequencer = Sequencer::new(sample_rate as f64);
+        let current_playing_step = sequencer.current_step.clone();
+        Self {
+            params,
+            sample_rate,
+            voice: Voice::new(sample_rate),
+            reported_latency: 0,
+            #[cfg(feature = "gui")]
+            editor_state: nih_plug_egui::EguiState::from_size(
+                crate::gui::GUI_WIDTH,
+                crate::gui::GUI_HEIGHT,
+            ),
+            current_playing_step,
+            sequencer,
+            active_midi_note: None,
+            current_sample_pos: 0,
+            prev_transport_sample: None,
+            cached_pattern,
+        }
+    }
 }
 
 impl Default for Plugin303 {
     fn default() -> Self {
-        let sample_rate = 48_000.0;
-        Self {
-            params: Arc::new(Plugin303Params::default()),
-            sample_rate,
-            voice: Voice::new(sample_rate),
-            reported_latency: 0,
-            sequencer: Sequencer::new(),
-            active_midi_note: None,
-        }
+        Self::new_with_params(Arc::new(Plugin303Params::default()))
     }
 }
 
@@ -139,6 +174,21 @@ impl Plugin for Plugin303 {
         self.params.clone()
     }
 
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        #[cfg(feature = "gui")]
+        {
+            crate::gui::create_editor(
+                self.params.clone(),
+                self.editor_state.clone(),
+                self.current_playing_step.clone(),
+            )
+        }
+        #[cfg(not(feature = "gui"))]
+        {
+            None
+        }
+    }
+
     fn initialize(
         &mut self,
         _layout: &AudioIOLayout,
@@ -147,8 +197,16 @@ impl Plugin for Plugin303 {
     ) -> bool {
         self.sample_rate = cfg.sample_rate;
         self.voice = Voice::new(self.sample_rate);
-        self.sequencer = Sequencer::new();
+        self.sequencer = Sequencer::new(self.sample_rate as f64);
         self.active_midi_note = None;
+        if let Ok(guard) = self.params.pattern.read() {
+            self.cached_pattern = guard.compile(
+                self.params.seq_length.value() as u8,
+                self.params.seq_mode.value(),
+            );
+        }
+        self.current_sample_pos = 0;
+        self.prev_transport_sample = None;
         // Apply the persisted tier (no fade — this is the initial state, not a
         // user change) and report its latency so the host can PDC the
         // oversampling group delay from the first block.
@@ -164,13 +222,16 @@ impl Plugin for Plugin303 {
         // thread, where allocating / rebuilding the VCO pitch LUT is illegal —
         // see `Voice::reset`. The LUT cache is warmed once in `initialize`.
         self.voice.reset();
-        self.sequencer = Sequencer::new();
+        self.sequencer.reset();
         self.active_midi_note = None;
+        self.current_sample_pos = 0;
+        self.prev_transport_sample = None;
         // Re-apply the persisted tier immediately (no fade) — otherwise the voice
         // would silently revert to Low and the next block would crossfade up to
         // the user's tier on every transport start / loop-jump.
         self.voice.set_tier_immediate(self.params.tier.value());
     }
+
     fn process(
         &mut self,
         buffer: &mut Buffer,
@@ -226,18 +287,69 @@ impl Plugin for Plugin303 {
         }
 
         let seq_run = self.params.seq_run.value();
-        let pattern_steps = if seq_run {
-            self.params.pattern.read().ok().map(|p| p.steps)
-        } else {
-            None
-        };
-        let seq_length = self.params.seq_length.value() as usize;
-        let seq_tempo = self.params.seq_tempo.value();
         let seq_sync = self.params.seq_sync.value();
-        let glide_val = self.params.glide.value();
+        let transport = context.transport();
+        let is_running = seq_run && (transport.playing || !seq_sync);
+        self.sequencer.set_running(is_running);
+
+        if seq_run {
+            if let Ok(guard) = self.params.pattern.try_read() {
+                self.cached_pattern = guard.compile(
+                    self.params.seq_length.value() as u8,
+                    self.params.seq_mode.value(),
+                );
+            }
+        }
+
+        let bpm = transport
+            .tempo
+            .unwrap_or(self.params.seq_tempo.value() as f64);
+        let timebase = self.params.seq_timebase.value();
+        let jitter = self.params.seq_jitter.value();
+        let num_steps = self.params.seq_length.value() as u8;
+
+        if is_running && seq_sync && transport.playing {
+            if let Some(pos_samples) = transport.pos_samples() {
+                let is_discontinuous = match self.prev_transport_sample {
+                    None => true,
+                    Some(prev) => (pos_samples - prev).abs() > (buffer.samples() as i64 + 64),
+                };
+                if is_discontinuous {
+                    self.sequencer.sync_to_transport(
+                        pos_samples,
+                        self.current_sample_pos,
+                        bpm,
+                        timebase,
+                        num_steps,
+                        Some(&self.cached_pattern),
+                    );
+                }
+                self.prev_transport_sample = Some(pos_samples + buffer.samples() as i64);
+            }
+        } else {
+            self.prev_transport_sample = None;
+        }
+
+        let mut seq_events = [(0, SeqEvent::GateOff); 64];
+        let mut seq_event_count = 0;
+        let mut seq_event_idx = 0;
+
+        if is_running {
+            self.sequencer.process_block(
+                &self.cached_pattern,
+                self.current_sample_pos,
+                buffer.samples() as u32,
+                &mut seq_events,
+                &mut seq_event_count,
+                bpm,
+                timebase,
+                jitter,
+            );
+        }
 
         let mut next_event = context.next_event();
         let mut active_midi_note = self.active_midi_note;
+        let glide_val = self.params.glide.value();
 
         for (sample_idx, mut frame) in buffer.iter_samples().enumerate() {
             // Apply every event scheduled for this sample (sample-accurate).
@@ -266,31 +378,17 @@ impl Plugin for Plugin303 {
             }
             self.active_midi_note = active_midi_note;
 
-            // If no MIDI note is held, run the sequencer
-            if active_midi_note.is_none() && seq_run {
-                if let Some(steps) = &pattern_steps {
-                    let transport = context.transport();
-                    let transport_info = TransportInfo {
-                        playing: transport.playing,
-                        pos_beats: transport.pos_beats(),
-                        tempo: transport.tempo,
-                    };
-                    self.sequencer.tick(
-                        self.sample_rate,
-                        &transport_info,
-                        steps,
-                        seq_length,
-                        seq_tempo,
-                        seq_sync,
-                        glide_val,
+            // If no MIDI note is held, run the sequencer events for this sample
+            if active_midi_note.is_none() {
+                while seq_event_idx < seq_event_count
+                    && seq_events[seq_event_idx].0 == sample_idx as u32
+                {
+                    self.voice.on_seq_event(
+                        seq_events[seq_event_idx].1,
+                        self.params.accent.value(),
+                        self.params.decay.value() * 3000.0,
                     );
-                    self.voice.set_gate(
-                        self.sequencer.gate,
-                        self.sequencer.trigger,
-                        self.sequencer.accent,
-                        self.sequencer.slide,
-                    );
-                    self.voice.set_freq(self.sequencer.freq);
+                    seq_event_idx += 1;
                 }
             }
 
@@ -299,6 +397,10 @@ impl Plugin for Plugin303 {
                 *s = out;
             }
         }
+
+        // Advance monotonic sample counter
+        self.current_sample_pos += buffer.samples() as u64;
+
         ProcessStatus::Normal
     }
 }

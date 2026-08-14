@@ -10,7 +10,7 @@ fn measure_slope(f: &mut dyn Filter303, sr: f32, poles: usize) -> f32 {
 
     // Warm up
     let amp = 0.5f32;
-    
+
     // RMS at 2 kHz (1 octave above cutoff)
     let mut rms_2k = 0.0;
     let mut ph = 0.0f32;
@@ -46,10 +46,16 @@ fn measure_slope(f: &mut dyn Filter303, sr: f32, poles: usize) -> f32 {
 fn tpt_ladder_slopes() {
     let sr = 48_000.0;
     let mut f = TptLadder::new(sr);
-    
+
     for (poles, expected) in [(2, 12.0), (3, 18.0), (4, 24.0)] {
         let slope = measure_slope(&mut f, sr, poles);
-        assert!((slope - expected).abs() < 3.0, "TPT {} poles: expected ~{}, got {}", poles, expected, slope);
+        assert!(
+            (slope - expected).abs() < 3.0,
+            "TPT {} poles: expected ~{}, got {}",
+            poles,
+            expected,
+            slope
+        );
     }
 }
 
@@ -58,11 +64,17 @@ fn nodal_ladder_slopes() {
     let sr = 192_000.0;
     // We run it at high rate since oversampling runs it at ULTRA_OS_FACTOR
     let mut f = LadderVcf::new(sr);
-    
+
     // Nodal filter poles are physically spread by diode loading (not textbook coincident),
     // so the slopes are naturally shallower in this frequency band.
     for (poles, expected) in [(2, 10.5), (3, 17.5), (4, 18.0)] {
         let slope = measure_slope(&mut f, sr, poles);
-        assert!((slope - expected).abs() < 2.0, "Nodal {} poles: expected ~{}, got {}", poles, expected, slope);
+        assert!(
+            (slope - expected).abs() < 2.0,
+            "Nodal {} poles: expected ~{}, got {}",
+            poles,
+            expected,
+            slope
+        );
     }
 }

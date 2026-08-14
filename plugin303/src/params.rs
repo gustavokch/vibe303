@@ -57,6 +57,45 @@ pub enum VcaEnvMode {
     Envelope,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
+pub enum SequencerMode {
+    #[default]
+    #[name = "Direct Grid"]
+    DirectGrid,
+    #[name = "Decoupled (Roland 303)"]
+    DecoupledHardware,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
+pub enum Timebase {
+    #[default]
+    #[name = "16th (Straight)"]
+    Straight,
+    #[name = "12th (Triplet)"]
+    Triplet,
+}
+
+impl Timebase {
+    pub fn ticks_per_step(self) -> f64 {
+        match self {
+            Self::Straight => 6.0,
+            Self::Triplet => 8.0,
+        }
+    }
+    pub fn gate_on_ticks(self) -> f64 {
+        match self {
+            Self::Straight => 3.0,
+            Self::Triplet => 5.0,
+        }
+    }
+    pub fn steps_per_beat(self) -> f64 {
+        match self {
+            Self::Straight => 4.0,
+            Self::Triplet => 8.0 / 3.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum StepGate {
     Rest,
@@ -108,6 +147,63 @@ impl Default for SequencerPattern {
     }
 }
 
+impl SequencerPattern {
+    pub fn compile(&self, num_steps: u8, mode: SequencerMode) -> crate::dsp::sequencer::Pattern {
+        let num_steps = num_steps.clamp(1, 16);
+        let mut pitches = [crate::dsp::sequencer::PitchEntry::default(); 16];
+        let mut timing = [crate::dsp::sequencer::TimeEntry::Rest; 16];
+
+        match mode {
+            SequencerMode::DirectGrid => {
+                for i in 0..16 {
+                    timing[i] = match self.steps[i].gate {
+                        StepGate::Note => crate::dsp::sequencer::TimeEntry::Note,
+                        StepGate::Tie => crate::dsp::sequencer::TimeEntry::Tie,
+                        StepGate::Rest => crate::dsp::sequencer::TimeEntry::Rest,
+                    };
+                    pitches[i] = crate::dsp::sequencer::PitchEntry {
+                        key: self.steps[i].semitone,
+                        octave: self.steps[i].octave,
+                        accent: self.steps[i].accent,
+                        slide: self.steps[i].slide,
+                    };
+                }
+            }
+            SequencerMode::DecoupledHardware => {
+                let mut note_count = 0;
+                for i in 0..num_steps as usize {
+                    timing[i] = match self.steps[i].gate {
+                        StepGate::Note => {
+                            pitches[note_count] = crate::dsp::sequencer::PitchEntry {
+                                key: self.steps[i].semitone,
+                                octave: self.steps[i].octave,
+                                accent: self.steps[i].accent,
+                                slide: self.steps[i].slide,
+                            };
+                            note_count += 1;
+                            crate::dsp::sequencer::TimeEntry::Note
+                        }
+                        StepGate::Tie => crate::dsp::sequencer::TimeEntry::Tie,
+                        StepGate::Rest => crate::dsp::sequencer::TimeEntry::Rest,
+                    };
+                }
+            }
+        }
+
+        let decoupled = match mode {
+            SequencerMode::DirectGrid => false,
+            SequencerMode::DecoupledHardware => true,
+        };
+
+        crate::dsp::sequencer::Pattern {
+            pitches,
+            timing,
+            num_steps,
+            decoupled,
+        }
+    }
+}
+
 #[derive(Params)]
 pub struct Plugin303Params {
     #[id = "tier"]
@@ -143,6 +239,12 @@ pub struct Plugin303Params {
     pub seq_tempo: FloatParam,
     #[id = "seq_length"]
     pub seq_length: IntParam,
+    #[id = "seq_mode"]
+    pub seq_mode: EnumParam<SequencerMode>,
+    #[id = "seq_timebase"]
+    pub seq_timebase: EnumParam<Timebase>,
+    #[id = "seq_jitter"]
+    pub seq_jitter: BoolParam,
 
     // --- Souped-up ---
     #[id = "osc1_pitch"]
@@ -264,7 +366,7 @@ impl Default for Plugin303Params {
             )
             .with_unit(" dB"),
 
-            seq_run: BoolParam::new("Seq Run", true),
+            seq_run: BoolParam::new("Seq Run", false),
             seq_sync: BoolParam::new("Seq Sync", true),
 
             seq_tempo: FloatParam::new(
@@ -278,6 +380,10 @@ impl Default for Plugin303Params {
             .with_unit(" BPM"),
 
             seq_length: IntParam::new("Seq Length", 16, IntRange::Linear { min: 1, max: 16 }),
+
+            seq_mode: EnumParam::new("Seq Mode", SequencerMode::DirectGrid),
+            seq_timebase: EnumParam::new("Seq Timebase", Timebase::Straight),
+            seq_jitter: BoolParam::new("Seq Jitter", false),
 
             osc1_pitch: FloatParam::new(
                 "Osc 1 Pitch",
@@ -327,7 +433,7 @@ impl Default for Plugin303Params {
             )
             .with_unit(" dB"),
 
-            glide: FloatParam::new("Glide", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            glide: FloatParam::new("Glide", 0.1, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
             advanced_env: BoolParam::new("Advanced Env", false),
 
@@ -433,12 +539,12 @@ impl Default for Plugin303Params {
 
             tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),
 
-            thermal_noise: IntParam::new("Thermal Noise", 0, IntRange::Linear { min: 0, max: 50 })
+            thermal_noise: IntParam::new("Thermal Noise", 0, IntRange::Linear { min: 0, max: 100 })
                 .with_value_to_string(std::sync::Arc::new(|v| {
                     if v == 0 {
                         "Off".to_string()
                     } else {
-                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.01)
+                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.001)
                     }
                 })),
 
@@ -450,7 +556,6 @@ impl Default for Plugin303Params {
                     max: 999_999,
                 },
             ),
-
 
             pattern: std::sync::RwLock::new(SequencerPattern::default()),
         }

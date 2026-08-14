@@ -8,13 +8,14 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23", features = ["vst3"] }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23", optional = true }
 serde_json = "1.0.150"
 serde = { version = "1.0", features = ["derive"] }
-# nih_plug_egui re-added (behind a `gui` feature) when the GUI milestone starts.
 
 [features]
-default = ["standalone"]
+default = ["gui", "standalone"]
 standalone = ["nih_plug/standalone"]
+gui = ["dep:nih_plug_egui"]
 current-iteration = []
 
 [dev-dependencies]

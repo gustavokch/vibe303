@@ -1,184 +1,287 @@
 //! 16-step sequencer engine.
 
-use crate::params::{SequencerStep, StepGate};
+pub const MAX_STEPS: usize = 16;
 
-/// A 16-step sequencer tracking step playback position, timing phases,
-/// and generating frequency/trigger/gate/accent modulation signals.
-pub struct Sequencer {
-    /// Active playing step index.
-    step_idx: usize,
-    /// Counter tracking sample ticks inside the current step (for internal clock).
-    sample_counter: f64,
-    /// Previously processed step index (used to detect step boundary crossings).
-    prev_step_idx: usize,
-    /// Previously computed gate state.
-    prev_gate: bool,
-    /// Tracks if host was playing in the previous block.
-    was_playing: bool,
-
-    // Pitch slew state for slide/glide
-    /// Current slewed pitch frequency.
-    #[allow(dead_code)]
-    current_freq: f32,
-    /// target pitch frequency of the active step.
-    target_freq: f32,
-
-    // Output control values
-    /// Output slewed note frequency.
-    pub freq: f32,
-    /// Output envelope gate state.
-    pub gate: bool,
-    /// Output step accent modifier.
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct PitchEntry {
+    pub key: i8,
+    pub octave: i8,
     pub accent: bool,
-    /// Output step velocity.
-    pub velocity: f32,
-    /// Output envelope note trigger indicator.
-    pub trigger: bool,
-    /// Output step slide state.
     pub slide: bool,
 }
 
-/// Host transport and synchronization data passed to the sequencer.
-pub struct TransportInfo {
-    /// True if the host transport is currently playing.
-    pub playing: bool,
-    /// Current host playback position in beats (PPQ).
-    pub pos_beats: Option<f64>,
-    /// Current host tempo in BPM.
-    pub tempo: Option<f64>,
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TimeEntry {
+    #[default]
+    Note,
+    Tie,
+    Rest,
 }
 
-impl Sequencer {
-    pub fn new() -> Self {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pattern {
+    pub pitches: [PitchEntry; MAX_STEPS],
+    pub timing: [TimeEntry; MAX_STEPS],
+    pub num_steps: u8,
+    pub decoupled: bool,
+}
+
+impl Default for Pattern {
+    fn default() -> Self {
         Self {
-            step_idx: 0,
-            sample_counter: 0.0,
-            prev_step_idx: 99, // dummy initial value
-            prev_gate: false,
-            was_playing: false,
-            current_freq: 440.0,
-            target_freq: 440.0,
-            freq: 440.0,
-            gate: false,
-            accent: false,
-            velocity: 0.0,
-            trigger: false,
-            slide: false,
+            pitches: [PitchEntry::default(); MAX_STEPS],
+            timing: [TimeEntry::Note; MAX_STEPS],
+            num_steps: 16,
+            decoupled: false,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SeqEvent {
+    Trigger { key: i8, octave: i8, accent: bool },
+    SlideTo { key: i8, octave: i8, accent: bool },
+    GateOff,
+}
+
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
+
+pub use crate::params::Timebase;
+
+pub struct Sequencer {
+    sample_rate: f64,
+    running: bool,
+    step_idx: usize,
+    pitch_idx: usize,
+    next_step_sample: f64,
+    gate_off_sample: Option<f64>,
+    prev_note_slide: bool,
+    prev_was_sounding: bool,
+    isr_origin: f64,
+    pub current_step: Arc<AtomicU8>,
+}
+
+const ISR_PERIOD_S: f64 = 0.0018;
+const GATE_ON_LATENCY_S: f64 = 0.0010;
+const GATE_OFF_LATENCY_S: f64 = 0.00235;
+
+impl Sequencer {
+    pub fn new(sample_rate: f64) -> Self {
+        Self {
+            sample_rate,
+            running: false,
+            step_idx: 0,
+            pitch_idx: 0,
+            next_step_sample: 0.0,
+            gate_off_sample: None,
+            prev_note_slide: false,
+            prev_was_sounding: false,
+            isr_origin: 0.0,
+            current_step: Arc::new(AtomicU8::new(255)),
+        }
+    }
+
+    pub fn set_sample_rate(&mut self, sample_rate: f64) {
+        self.sample_rate = sample_rate;
+    }
+
+    pub fn set_running(&mut self, running: bool) {
+        if running && !self.running {
+            self.reset();
+        } else if !running && self.running {
+            self.current_step.store(255, Ordering::Relaxed);
+        }
+        self.running = running;
     }
 
     pub fn reset(&mut self) {
         self.step_idx = 0;
-        self.sample_counter = 0.0;
-        self.prev_step_idx = 99;
-        self.prev_gate = false;
-        self.was_playing = false;
-        self.gate = false;
-        self.trigger = false;
-        self.slide = false;
+        self.pitch_idx = 0;
+        self.next_step_sample = 0.0;
+        self.gate_off_sample = None;
+        self.prev_note_slide = false;
+        self.prev_was_sounding = false;
+        self.current_step.store(255, Ordering::Relaxed);
     }
 
-    /// Advance the sequencer by one sample. Returns (freq, gate, accent, velocity, trigger)
-    pub fn tick(
+    pub fn reset_transport(&mut self, _pos_beats: f64) {
+        self.next_step_sample = 0.0;
+    }
+
+    pub fn sync_to_transport(
         &mut self,
-        sr: f32,
-        transport: &TransportInfo,
-        steps: &[SequencerStep; 16],
-        length: usize,
-        tempo_param: f32,
-        sync: bool,
-        _glide_param: f32,
+        pos_samples: i64,
+        block_start: u64,
+        bpm: f64,
+        timebase: Timebase,
+        num_steps: u8,
+        pattern: Option<&Pattern>,
     ) {
-        if !transport.playing {
-            self.gate = false;
-            self.trigger = false;
-            self.was_playing = false;
+        let num_steps = (num_steps as usize).clamp(1, 16);
+        let step_len = self.samples_per_step(bpm, timebase);
+        let loop_len = step_len * (num_steps as f64);
+        if loop_len <= 0.0 {
             return;
         }
 
-        if !self.was_playing {
-            // Reset playback pointers when starting transport
-            self.reset();
-            self.was_playing = true;
-        }
+        let pos = pos_samples.max(0) as f64;
+        let phase_in_loop = pos.rem_euclid(loop_len);
+        let current_step = ((phase_in_loop / step_len).floor() as usize) % num_steps;
+        let sample_into_step = phase_in_loop - (current_step as f64 * step_len);
 
-        let length = length.clamp(1, 16);
-        let tempo = transport.tempo.unwrap_or(tempo_param as f64) as f32;
-        let step_duration_samples = (sr * 60.0) / (tempo * 4.0); // 16th note length in samples
-
-        let (step_idx, phase, step_changed) = if sync && transport.pos_beats.is_some() {
-            let ppq = transport.pos_beats.unwrap();
-            let step_float = ppq * 4.0; // 4 steps per beat (16th notes)
-            let raw_idx = step_float.floor() as i64;
-            let idx = (raw_idx.rem_euclid(length as i64)) as usize;
-            let phase = step_float.fract() as f32;
-
-            let changed = idx != self.prev_step_idx;
-            (idx, phase, changed)
+        if sample_into_step <= 1e-6 {
+            self.step_idx = current_step;
+            self.next_step_sample = block_start as f64;
         } else {
-            // Free-running internal clock
-            self.sample_counter += 1.0;
-            let mut changed = false;
-            if self.sample_counter >= step_duration_samples as f64 {
-                self.sample_counter -= step_duration_samples as f64;
-                self.step_idx = (self.step_idx + 1) % length;
-                changed = true;
-            }
-            let phase = (self.sample_counter / step_duration_samples as f64) as f32;
-            (self.step_idx, phase, changed)
-        };
-
-        if step_changed {
-            self.prev_step_idx = step_idx;
+            self.step_idx = (current_step + 1) % num_steps;
+            self.next_step_sample = block_start as f64 + (step_len - sample_into_step);
         }
 
-        let step = steps[step_idx];
-
-        // Calculate raw step frequency (pitch + octave offset)
-        // Midi base 36 (C1) as the 0-reference for sequencer pitch tracking.
-        let base_note = 36 + step.semitone + step.octave * 12;
-        let step_freq = 440.0 * 2.0f32.powf((base_note as f32 - 69.0) / 12.0);
-        self.target_freq = step_freq;
-
-        let prev_step = steps[(step_idx + length - 1) % length];
-        self.slide = prev_step.slide && prev_step.gate != StepGate::Rest;
-        self.freq = self.target_freq;
-
-        // Gate state:
-        let is_note_step = step.gate != StepGate::Rest;
-        let gate_on = if is_note_step {
-            if step.slide {
-                true // slide keeps gate open for the whole step duration
+        if let Some(pat) = pattern {
+            if pat.decoupled {
+                let mut note_count = 0;
+                for i in 0..self.step_idx {
+                    if pat.timing[i] == TimeEntry::Note {
+                        note_count += 1;
+                    }
+                }
+                self.pitch_idx = note_count % num_steps;
             } else {
-                phase < step.gate_len
+                self.pitch_idx = self.step_idx;
             }
         } else {
-            false
-        };
+            self.pitch_idx = self.step_idx;
+        }
 
-        // Note Trigger logic:
-        // We trigger a note when:
-        // 1. We just entered a note step, AND
-        // 2. Either the previous gate was off, OR (the previous step did not slide AND current step is not a Tie)
-        let mut trigger = false;
-        if step_changed && is_note_step {
-            let prev_was_slide = prev_step.slide && prev_step.gate != StepGate::Rest;
-            let is_tie = step.gate == StepGate::Tie;
-            if !self.prev_gate || (!prev_was_slide && !is_tie) {
-                trigger = true;
+        self.gate_off_sample = None;
+        self.prev_note_slide = false;
+        self.prev_was_sounding = false;
+    }
+
+    fn samples_per_step(&self, bpm: f64, timebase: Timebase) -> f64 {
+        self.sample_rate * 60.0 / (bpm * timebase.steps_per_beat())
+    }
+
+    fn isr_quantise(&self, t: f64, latency_s: f64, hw_jitter: bool) -> f64 {
+        if !hw_jitter {
+            return t;
+        }
+        let period = ISR_PERIOD_S * self.sample_rate;
+        let rel = t - self.isr_origin;
+        self.isr_origin + (rel / period).ceil() * period + latency_s * self.sample_rate
+    }
+
+    pub fn process_block(
+        &mut self,
+        pattern: &Pattern,
+        block_start: u64,
+        num_samples: u32,
+        out_events: &mut [(u32, SeqEvent); 64],
+        out_count: &mut usize,
+        bpm: f64,
+        timebase: Timebase,
+        hw_jitter: bool,
+    ) {
+        if !self.running {
+            return;
+        }
+        let block_end = block_start as f64 + num_samples as f64;
+        let num_steps = (pattern.num_steps as usize).clamp(1, 16);
+
+        // 1. Pending GateOff from previous block?
+        if let Some(g) = self.gate_off_sample {
+            let g_quant = self.isr_quantise(g, GATE_OFF_LATENCY_S, hw_jitter);
+            if g_quant < block_end {
+                let offset = (g_quant as u32).saturating_sub(block_start as u32);
+                if *out_count < 64 {
+                    out_events[*out_count] = (offset, SeqEvent::GateOff);
+                    *out_count += 1;
+                }
+                self.gate_off_sample = None;
             }
         }
 
-        self.gate = gate_on;
-        self.trigger = trigger;
-        self.accent = step.accent && gate_on;
-        self.velocity = step.velocity;
-        self.prev_gate = gate_on;
+        // 2. Step boundaries
+        while self.next_step_sample < block_end {
+            self.current_step
+                .store(self.step_idx as u8, Ordering::Relaxed);
+            let t = self.isr_quantise(self.next_step_sample, GATE_ON_LATENCY_S, hw_jitter);
+            let offset = (t as u32).saturating_sub(block_start as u32);
+
+            match pattern.timing[self.step_idx] {
+                TimeEntry::Rest => {
+                    self.prev_was_sounding = false;
+                }
+                TimeEntry::Tie => {
+                    // Gate continues sounding
+                }
+                TimeEntry::Note => {
+                    let p = if pattern.decoupled {
+                        pattern.pitches[self.pitch_idx]
+                    } else {
+                        pattern.pitches[self.step_idx]
+                    };
+                    let next_timing = pattern.timing[(self.step_idx + 1) % num_steps];
+
+                    let ev = if self.prev_note_slide && self.prev_was_sounding {
+                        SeqEvent::SlideTo {
+                            key: p.key,
+                            octave: p.octave,
+                            accent: p.accent,
+                        }
+                    } else {
+                        SeqEvent::Trigger {
+                            key: p.key,
+                            octave: p.octave,
+                            accent: p.accent,
+                        }
+                    };
+
+                    if *out_count < 64 {
+                        out_events[*out_count] = (offset, ev);
+                        *out_count += 1;
+                    }
+
+                    // Schedule gate-off unless this note slides into an active sounding step (Note or Tie)
+                    if !(p.slide && next_timing != TimeEntry::Rest) {
+                        let spt = self.samples_per_step(bpm, timebase) / timebase.ticks_per_step();
+                        let gate_off_time = self.next_step_sample + timebase.gate_on_ticks() * spt;
+                        let g_quant =
+                            self.isr_quantise(gate_off_time, GATE_OFF_LATENCY_S, hw_jitter);
+
+                        if g_quant < block_end {
+                            let off_offset = (g_quant as u32).saturating_sub(block_start as u32);
+                            if *out_count < 64 {
+                                out_events[*out_count] = (off_offset, SeqEvent::GateOff);
+                                *out_count += 1;
+                            }
+                            self.gate_off_sample = None;
+                        } else {
+                            self.gate_off_sample = Some(gate_off_time);
+                        }
+                    } else {
+                        self.gate_off_sample = None;
+                    }
+
+                    self.prev_note_slide = p.slide;
+                    self.prev_was_sounding = true;
+                    if pattern.decoupled {
+                        self.pitch_idx = (self.pitch_idx + 1) % num_steps;
+                    } else {
+                        self.pitch_idx = (self.step_idx + 1) % num_steps;
+                    }
+                }
+            }
+
+            self.next_step_sample += self.samples_per_step(bpm, timebase);
+            self.step_idx = (self.step_idx + 1) % num_steps;
+        }
     }
 }
 
 impl Default for Sequencer {
     fn default() -> Self {
-        Self::new()
+        Self::new(48000.0)
     }
 }

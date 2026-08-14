@@ -195,15 +195,19 @@ impl RcEnv {
         let out: f64;
 
         if self.time <= self.att_plus_hld {
-            out = self.previous_output + self.attack_coeff * (self.peak_scale * self.peak_level - self.previous_output);
+            out = self.previous_output
+                + self.attack_coeff * (self.peak_scale * self.peak_level - self.previous_output);
             self.time += self.increment;
         } else if self.time <= self.att_plus_hld_plus_dec {
-            out = self.previous_output + self.decay_coeff * (self.sustain_level - self.previous_output);
+            out = self.previous_output
+                + self.decay_coeff * (self.sustain_level - self.previous_output);
             self.time += self.increment;
         } else if self.note_is_on {
-            out = self.previous_output + self.decay_coeff * (self.sustain_level - self.previous_output);
+            out = self.previous_output
+                + self.decay_coeff * (self.sustain_level - self.previous_output);
         } else {
-            out = self.previous_output + self.release_coeff * (self.end_level - self.previous_output);
+            out =
+                self.previous_output + self.release_coeff * (self.end_level - self.previous_output);
             self.time += self.increment;
         }
 
@@ -222,7 +226,8 @@ impl RcEnv {
 
     fn update_attack_coeff(&mut self) {
         if self.attack_time > 0.0 {
-            let tau = (self.sample_rate * 0.001 * self.attack_time) * self.tau_scale / self.time_scale;
+            let tau =
+                (self.sample_rate * 0.001 * self.attack_time) * self.tau_scale / self.time_scale;
             self.attack_coeff = 1.0 - (-1.0 / tau).exp();
         } else {
             self.attack_coeff = 1.0;
@@ -231,7 +236,8 @@ impl RcEnv {
 
     fn update_decay_coeff(&mut self) {
         if self.decay_time > 0.0 {
-            let tau = (self.sample_rate * 0.001 * self.decay_time) * self.tau_scale / self.time_scale;
+            let tau =
+                (self.sample_rate * 0.001 * self.decay_time) * self.tau_scale / self.time_scale;
             self.decay_coeff = 1.0 - (-1.0 / tau).exp();
         } else {
             self.decay_coeff = 1.0;
@@ -240,7 +246,8 @@ impl RcEnv {
 
     fn update_release_coeff(&mut self) {
         if self.release_time > 0.0 {
-            let tau = (self.sample_rate * 0.001 * self.release_time) * self.tau_scale / self.time_scale;
+            let tau =
+                (self.sample_rate * 0.001 * self.release_time) * self.tau_scale / self.time_scale;
             self.release_coeff = 1.0 - (-1.0 / tau).exp();
         } else {
             self.release_coeff = 1.0;
@@ -363,4 +370,3 @@ impl AccentSweep {
         self.v_c13
     }
 }
-

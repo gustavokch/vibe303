@@ -191,7 +191,8 @@ impl VcoLutBuffer {
     /// Publish a freshly computed LUT set as the new active set.
     pub fn store(&self, luts: [[f64; LUT_K]; 22]) {
         self.buffer.write(luts);
-        self.completed_sequence.fetch_add(1, std::sync::atomic::Ordering::Release);
+        self.completed_sequence
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -285,7 +286,10 @@ impl Vco303 {
         let mut o = Self::raw(sr);
         o.cv_lut = Self::cv_lut_for(sr, 0, false); // Default to thermal_noise=0
         o.lut_buffer = Arc::new(VcoLutBuffer::new(o.cv_lut));
-        o.loaded_sequence = o.lut_buffer.completed_sequence.load(std::sync::atomic::Ordering::Acquire);
+        o.loaded_sequence = o
+            .lut_buffer
+            .completed_sequence
+            .load(std::sync::atomic::Ordering::Acquire);
         o
     }
 
@@ -555,7 +559,10 @@ impl Vco303 {
     }
 
     pub fn poll_lut_update(&mut self) {
-        let comp_seq = self.lut_buffer.completed_sequence.load(std::sync::atomic::Ordering::Acquire);
+        let comp_seq = self
+            .lut_buffer
+            .completed_sequence
+            .load(std::sync::atomic::Ordering::Acquire);
         if comp_seq != self.loaded_sequence {
             self.loaded_sequence = comp_seq;
             let noise_idx = self.thermal_noise.clamp(0, 21) as usize;
@@ -663,8 +670,7 @@ impl Vco303 {
         for noise_step in 0..22 {
             temp_vco.set_thermal_internal(noise_step);
             for i in 0..LUT_K {
-                local_luts[noise_step as usize][i] =
-                    temp_vco.secant_cv(midi_hz(lut_midi(i)));
+                local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
             }
         }
 

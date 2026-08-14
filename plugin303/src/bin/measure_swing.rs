@@ -18,9 +18,13 @@ fn main() {
     let mut max = -1000.0f32;
     for _ in 0..2000 {
         let val = vco.tick();
-        if val < min { min = val; }
-        if val > max { max = val; }
+        if val < min {
+            min = val;
+        }
+        if val > max {
+            max = val;
+        }
     }
-    
+
     println!("A2 Swing: min={}, max={}, pp={}", min, max, max - min);
 }

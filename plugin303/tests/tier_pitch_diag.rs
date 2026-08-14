@@ -43,7 +43,7 @@ fn tier_pitch_comparison() {
                     let mut v = Voice::new(sr);
                     v.set_tier_immediate(tier);
                     v.set_wave(wave);
-                    v.set_cutoff(4000.0);  // bright filter so pitch is clear
+                    v.set_cutoff(4000.0); // bright filter so pitch is clear
                     v.set_reso(0.0);
                     v.note_on(note);
                     v.set_gate(true, true, false, false);
@@ -57,7 +57,9 @@ fn tier_pitch_comparison() {
                     let buf: Vec<f32> = (0..n).map(|_| v.tick()).collect();
                     let hz = realized_hz(&buf, sr);
                     let cents = 1200.0 * (hz / target).log2();
-                    eprintln!("  {tier:?}: {hz:.2} Hz (target {target:.2} Hz, error {cents:+.1} cents)");
+                    eprintln!(
+                        "  {tier:?}: {hz:.2} Hz (target {target:.2} Hz, error {cents:+.1} cents)"
+                    );
                 }
             }
         }

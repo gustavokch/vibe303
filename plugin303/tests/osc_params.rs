@@ -33,12 +33,12 @@ fn blep_square_pw_modulation() {
     osc.set_pw(0.25);
     let mut count_pos = 0;
     let mut _count_neg = 0;
-    
+
     // Warm up
     for _ in 0..1000 {
         osc.tick();
     }
-    
+
     // Count one cycle
     for _ in 0..480 {
         let v = osc.tick();
@@ -48,7 +48,7 @@ fn blep_square_pw_modulation() {
             _count_neg += 1;
         }
     }
-    
+
     // Check that positive vs negative counts approximate 25% vs 75%
     let ratio = count_pos as f32 / 480.0;
     assert!((ratio - 0.25).abs() < 0.05, "Ratio was {}", ratio);
