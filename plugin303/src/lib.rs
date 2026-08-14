@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 pub mod dsp;
 pub mod params;
-use dsp::sequencer::{SeqEvent, Sequencer, Timebase};
+use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::Voice;
 use params::Plugin303Params;
 /// The main plugin structure implementing the nih-plug VST3/CLAP synth interface.
@@ -22,21 +22,36 @@ pub struct Plugin303 {
     sequencer: Sequencer,
     /// Tracked active MIDI note to manage note priority.
     active_midi_note: Option<u8>,
+    /// Monotonic running sample position for multi-block sequencer scheduling.
+    current_sample_pos: u64,
+    /// Previous transport sample position to detect jumps, loops, and seeks.
+    prev_transport_sample: Option<i64>,
+    /// Cached compiled sequencer pattern for non-blocking RT audio safety.
+    cached_pattern: crate::dsp::sequencer::Pattern,
 }
 
 impl Default for Plugin303 {
     fn default() -> Self {
         let sample_rate = 48_000.0;
+        let params = Arc::new(Plugin303Params::default());
+        let cached_pattern = params.pattern.read().unwrap().compile(
+            params.seq_length.value() as u8,
+            params.seq_mode.value(),
+        );
         Self {
-            params: Arc::new(Plugin303Params::default()),
+            params,
             sample_rate,
             voice: Voice::new(sample_rate),
             reported_latency: 0,
             sequencer: Sequencer::new(sample_rate as f64),
             active_midi_note: None,
+            current_sample_pos: 0,
+            prev_transport_sample: None,
+            cached_pattern,
         }
     }
 }
+
 
 const fn str_eq(a: &str, b: &str) -> bool {
     let ab = a.as_bytes();
@@ -149,6 +164,14 @@ impl Plugin for Plugin303 {
         self.voice = Voice::new(self.sample_rate);
         self.sequencer = Sequencer::new(self.sample_rate as f64);
         self.active_midi_note = None;
+        if let Ok(guard) = self.params.pattern.read() {
+            self.cached_pattern = guard.compile(
+                self.params.seq_length.value() as u8,
+                self.params.seq_mode.value(),
+            );
+        }
+        self.current_sample_pos = 0;
+        self.prev_transport_sample = None;
         // Apply the persisted tier (no fade — this is the initial state, not a
         // user change) and report its latency so the host can PDC the
         // oversampling group delay from the first block.
@@ -166,11 +189,14 @@ impl Plugin for Plugin303 {
         self.voice.reset();
         self.sequencer.reset();
         self.active_midi_note = None;
+        self.current_sample_pos = 0;
+        self.prev_transport_sample = None;
         // Re-apply the persisted tier immediately (no fade) — otherwise the voice
         // would silently revert to Low and the next block would crossfade up to
         // the user's tier on every transport start / loop-jump.
         self.voice.set_tier_immediate(self.params.tier.value());
     }
+
     fn process(
         &mut self,
         buffer: &mut Buffer,
@@ -226,39 +252,60 @@ impl Plugin for Plugin303 {
         }
 
         let seq_run = self.params.seq_run.value();
-        let pattern = if seq_run {
-            self.params
-                .pattern
-                .read()
-                .ok()
-                .map(|p| {
-                    p.compile(
-                        self.params.seq_length.value() as u8,
-                        self.params.seq_mode.value(),
-                    )
-                })
-        } else {
-            None
-        };
-        let seq_tempo = self.params.seq_tempo.value() as f64;
+        let seq_sync = self.params.seq_sync.value();
         let transport = context.transport();
-        let is_running = seq_run && (transport.playing || !self.params.seq_sync.value());
+        let is_running = seq_run && (transport.playing || !seq_sync);
         self.sequencer.set_running(is_running);
+
+        if seq_run {
+            if let Ok(guard) = self.params.pattern.try_read() {
+                self.cached_pattern = guard.compile(
+                    self.params.seq_length.value() as u8,
+                    self.params.seq_mode.value(),
+                );
+            }
+        }
+
+        let bpm = transport.tempo.unwrap_or(self.params.seq_tempo.value() as f64);
+        let timebase = self.params.seq_timebase.value();
+        let jitter = self.params.seq_jitter.value();
+        let num_steps = self.params.seq_length.value() as u8;
+
+        if is_running && seq_sync && transport.playing {
+            if let Some(pos_samples) = transport.pos_samples() {
+                let is_discontinuous = match self.prev_transport_sample {
+                    None => true,
+                    Some(prev) => (pos_samples - prev).abs() > (buffer.samples() as i64 + 64),
+                };
+                if is_discontinuous {
+                    self.sequencer.sync_to_transport(
+                        pos_samples,
+                        self.current_sample_pos,
+                        bpm,
+                        timebase,
+                        num_steps,
+                    );
+                }
+                self.prev_transport_sample = Some(pos_samples + buffer.samples() as i64);
+            }
+        } else {
+            self.prev_transport_sample = None;
+        }
 
         let mut seq_events = [(0, SeqEvent::GateOff); 64];
         let mut seq_event_count = 0;
         let mut seq_event_idx = 0;
 
-        if let Some(pat) = &pattern {
+        if is_running {
             self.sequencer.process_block(
-                pat,
-                0,
+                &self.cached_pattern,
+                self.current_sample_pos,
                 buffer.samples() as u32,
                 &mut seq_events,
                 &mut seq_event_count,
-                transport.tempo.unwrap_or(seq_tempo),
-                Timebase::Straight,
-                false,
+                bpm,
+                timebase,
+                jitter,
             );
         }
 
@@ -310,9 +357,14 @@ impl Plugin for Plugin303 {
                 *s = out;
             }
         }
+
+        // Advance monotonic sample counter
+        self.current_sample_pos += buffer.samples() as u64;
+
         ProcessStatus::Normal
     }
 }
+
 
 impl Vst3Plugin for Plugin303 {
     const VST3_CLASS_ID: [u8; 16] = VST3_CLASS_ID;
