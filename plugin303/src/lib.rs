@@ -231,7 +231,12 @@ impl Plugin for Plugin303 {
                 .pattern
                 .read()
                 .ok()
-                .map(|p| p.compile(self.params.seq_length.value() as u8))
+                .map(|p| {
+                    p.compile(
+                        self.params.seq_length.value() as u8,
+                        self.params.seq_mode.value(),
+                    )
+                })
         } else {
             None
         };

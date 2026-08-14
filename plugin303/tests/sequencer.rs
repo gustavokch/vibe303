@@ -141,3 +141,37 @@ fn test_slide_lookahead() {
     assert_eq!(events[1], (6000, SeqEvent::SlideTo { key: 2, octave: 0, accent: false }));
     assert_eq!(events[2], (9000, SeqEvent::GateOff));
 }
+
+#[test]
+fn test_sequencer_direct_vs_decoupled_mode() {
+    use plugin303::params::{SequencerMode, SequencerPattern, StepGate};
+
+    let mut pat = SequencerPattern::default();
+    // Step 0: Note C (semitone 0)
+    pat.steps[0].gate = StepGate::Note;
+    pat.steps[0].semitone = 0;
+    // Step 1: Rest
+    pat.steps[1].gate = StepGate::Rest;
+    // Step 2: Note D (semitone 2)
+    pat.steps[2].gate = StepGate::Note;
+    pat.steps[2].semitone = 2;
+    // Step 3: Rest
+    pat.steps[3].gate = StepGate::Rest;
+
+    // Direct Grid mode
+    let compiled_direct = pat.compile(4, SequencerMode::DirectGrid);
+    assert_eq!(compiled_direct.pitches[0].key, 0);
+    assert_eq!(compiled_direct.pitches[2].key, 2);
+    assert_eq!(compiled_direct.timing[0], TimeEntry::Note);
+    assert_eq!(compiled_direct.timing[1], TimeEntry::Rest);
+    assert_eq!(compiled_direct.timing[2], TimeEntry::Note);
+
+    // Decoupled Hardware mode
+    let compiled_decoupled = pat.compile(4, SequencerMode::DecoupledHardware);
+    assert_eq!(compiled_decoupled.pitches[0].key, 0);
+    assert_eq!(compiled_decoupled.pitches[1].key, 2); // note pitches packed sequentially
+    assert_eq!(compiled_decoupled.timing[0], TimeEntry::Note);
+    assert_eq!(compiled_decoupled.timing[1], TimeEntry::Rest);
+    assert_eq!(compiled_decoupled.timing[2], TimeEntry::Note);
+}
+

@@ -28,3 +28,12 @@ fn test_analog_character_parameter_ranges() {
     let format_zero = params.thermal_noise.to_string();
     assert_eq!(format_zero, "Off");
 }
+
+#[test]
+fn test_sequencer_parameters_declared() {
+    let params = Plugin303Params::default();
+    assert_eq!(params.seq_mode.value(), plugin303::params::SequencerMode::DirectGrid);
+    assert_eq!(params.seq_timebase.value(), plugin303::params::Timebase::Straight);
+    assert!(!params.seq_jitter.value());
+}
+
