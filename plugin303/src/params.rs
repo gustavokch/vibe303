@@ -240,7 +240,6 @@ pub struct Plugin303Params {
     #[id = "seq_jitter"]
     pub seq_jitter: BoolParam,
 
-
     // --- Souped-up ---
     #[id = "osc1_pitch"]
     pub osc1_pitch: FloatParam,

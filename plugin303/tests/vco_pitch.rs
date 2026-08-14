@@ -49,7 +49,12 @@ fn pitch_accurate_across_range() {
                 v.tick(); // settle
             }
             let f = realized_hz(&mut v, sr);
-            println!("  Target: {:.2} Hz, Realized: {:.2} Hz (error: {:.3}%)", target, f, (f / target - 1.0).abs() * 100.0);
+            println!(
+                "  Target: {:.2} Hz, Realized: {:.2} Hz (error: {:.3}%)",
+                target,
+                f,
+                (f / target - 1.0).abs() * 100.0
+            );
             assert!(
                 (f / target - 1.0).abs() < 0.015,
                 "pitch {target} -> {f} at SR {sr} exceeds 1.5% tolerance"

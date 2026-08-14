@@ -1,12 +1,14 @@
-use nih_plug_egui::egui::{
-    vec2, Color32, FontFamily, FontId, Sense, Ui,
-};
 use crate::gui::theme;
 use crate::params::{SequencerStep, StepGate};
+use nih_plug_egui::egui::{vec2, Color32, FontFamily, FontId, Sense, Ui};
 
 pub fn format_pitch(semitone: i8, octave: i8) -> String {
-    let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "C"];
-    let name = note_names.get(semitone.clamp(0, 12) as usize).unwrap_or(&"C");
+    let note_names = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "C",
+    ];
+    let name = note_names
+        .get(semitone.clamp(0, 12) as usize)
+        .unwrap_or(&"C");
     let oct_num = 3 + octave;
     format!("{}{}", name, oct_num)
 }
@@ -27,9 +29,11 @@ pub fn render_step_strip(
         let (led_rect, _) = ui.allocate_exact_size(vec2(width, 6.0), Sense::hover());
         if is_active {
             ui.painter().rect_filled(led_rect, 2.0, theme::PLAYHEAD_RED);
-            ui.painter().rect_filled(led_rect.expand(2.0), 3.0, theme::PLAYHEAD_RED_GLOW);
+            ui.painter()
+                .rect_filled(led_rect.expand(2.0), 3.0, theme::PLAYHEAD_RED_GLOW);
         } else {
-            ui.painter().rect_filled(led_rect, 2.0, Color32::from_rgb(0x22, 0x26, 0x2e));
+            ui.painter()
+                .rect_filled(led_rect, 2.0, Color32::from_rgb(0x22, 0x26, 0x2e));
         }
 
         ui.add_space(2.0);
@@ -38,13 +42,21 @@ pub fn render_step_strip(
         ui.label(
             nih_plug_egui::egui::RichText::new(format!("{:02}", step_idx + 1))
                 .font(FontId::new(9.5, FontFamily::Monospace))
-                .color(if is_active { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED }),
+                .color(if is_active {
+                    theme::TEXT_PRIMARY
+                } else {
+                    theme::TEXT_MUTED
+                }),
         );
 
         // 2. Modifiers: ACC and SLD
         ui.horizontal(|ui| {
             let acc_btn = nih_plug_egui::egui::Button::new("ACC")
-                .fill(if step.accent { theme::ACCENT_AMBER } else { Color32::from_rgb(0x24, 0x28, 0x30) })
+                .fill(if step.accent {
+                    theme::ACCENT_AMBER
+                } else {
+                    Color32::from_rgb(0x24, 0x28, 0x30)
+                })
                 .min_size(vec2(24.0, 16.0));
             if ui.add(acc_btn).clicked() {
                 step.accent = !step.accent;
@@ -52,7 +64,11 @@ pub fn render_step_strip(
             }
 
             let sld_btn = nih_plug_egui::egui::Button::new("SLD")
-                .fill(if step.slide { theme::SLIDE_CYAN } else { Color32::from_rgb(0x24, 0x28, 0x30) })
+                .fill(if step.slide {
+                    theme::SLIDE_CYAN
+                } else {
+                    Color32::from_rgb(0x24, 0x28, 0x30)
+                })
                 .min_size(vec2(24.0, 16.0));
             if ui.add(sld_btn).clicked() {
                 step.slide = !step.slide;
@@ -71,7 +87,11 @@ pub fn render_step_strip(
         let gate_btn = nih_plug_egui::egui::Button::new(
             nih_plug_egui::egui::RichText::new(gate_str)
                 .font(FontId::new(9.0, FontFamily::Proportional))
-                .color(if step.gate == StepGate::Rest { theme::TEXT_MUTED } else { Color32::BLACK }),
+                .color(if step.gate == StepGate::Rest {
+                    theme::TEXT_MUTED
+                } else {
+                    Color32::BLACK
+                }),
         )
         .fill(gate_color)
         .min_size(vec2(width, 22.0));
@@ -96,17 +116,18 @@ pub fn render_step_strip(
         );
 
         ui.horizontal(|ui| {
-            if ui.small_button("▲").clicked() {
-                if step.octave < 2 {
-                    step.octave += 1;
-                    changed = true;
-                }
+            ui.label(
+                nih_plug_egui::egui::RichText::new("OCT")
+                    .font(FontId::new(8.0, FontFamily::Proportional))
+                    .color(theme::TEXT_MUTED),
+            );
+            if ui.small_button("▲").on_hover_text("Octave up").clicked() && step.octave < 2 {
+                step.octave += 1;
+                changed = true;
             }
-            if ui.small_button("▼").clicked() {
-                if step.octave > -2 {
-                    step.octave -= 1;
-                    changed = true;
-                }
+            if ui.small_button("▼").on_hover_text("Octave down").clicked() && step.octave > -2 {
+                step.octave -= 1;
+                changed = true;
             }
         });
     });

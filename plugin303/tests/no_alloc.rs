@@ -254,7 +254,6 @@ fn sequencer_audio_path_is_alloc_free() {
 
     let mut plugin = Plugin303::new_with_params(Arc::new(params));
 
-
     let mut aux = AuxiliaryBuffers {
         inputs: &mut [],
         outputs: &mut [],
@@ -309,6 +308,3 @@ fn sequencer_audio_path_is_alloc_free() {
         "Plugin303::process with sequencer allocated on audio path"
     );
 }
-
-
-

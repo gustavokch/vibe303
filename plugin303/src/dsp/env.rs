@@ -86,7 +86,11 @@ impl AdsrEnv {
 
     pub fn tick(&mut self, gate: bool) -> f32 {
         // If gate goes low, transition to release stage (unless already idle)
-        if !gate && self.sus_level > 0.0 && self.stage != Stage::Release && self.stage != Stage::Idle {
+        if !gate
+            && self.sus_level > 0.0
+            && self.stage != Stage::Release
+            && self.stage != Stage::Idle
+        {
             self.stage = Stage::Release;
         }
 
@@ -166,13 +170,13 @@ mod tests {
         e.set_decay(10.0); // ~480 samples
         e.set_sustain(0.0);
         e.trigger();
-        
+
         let mut peak = 0.0f32;
         for _ in 0..96 {
             peak = e.tick(true);
         }
         assert!(peak > 0.95, "attack did not reach peak: {peak}");
-        
+
         let mut tail = 1.0f32;
         for _ in 0..600 {
             tail = e.tick(true);
@@ -189,13 +193,16 @@ mod tests {
         e.set_sustain(0.5);
         e.set_release(10.0);
         e.trigger();
-        
+
         for _ in 0..600 {
             e.tick(true);
         }
         let sus_level = e.tick(true);
-        assert!((sus_level - 0.5).abs() < 0.05, "did not sustain: {sus_level}");
-        
+        assert!(
+            (sus_level - 0.5).abs() < 0.05,
+            "did not sustain: {sus_level}"
+        );
+
         e.release();
         let mut tail = 0.5f32;
         for _ in 0..600 {

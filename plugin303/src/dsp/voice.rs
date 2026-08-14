@@ -37,7 +37,6 @@ const HIGH_LEVEL_TRIM: f32 = 1.55; // +3.8 dB
 const XFADE_SECS: f32 = 0.010;
 const COMP_BUF: usize = 64;
 
-
 const LOW_FC_POLY: [f32; 10] = [
     6.258712813859e+00,
     5.371432501979e-02,
@@ -556,7 +555,11 @@ impl Voice {
             }
         }
 
-        if self.thermal_noise != self.thermal_noise_state || age_changed || tolerance_changed || topology_changed {
+        if self.thermal_noise != self.thermal_noise_state
+            || age_changed
+            || tolerance_changed
+            || topology_changed
+        {
             self.ladder.set_thermal(thermal_noise);
             self.ladder_hi.set_thermal(thermal_noise);
             self.vco.set_thermal(thermal_noise);
@@ -933,7 +936,11 @@ impl Voice {
 
     pub fn on_seq_event(&mut self, ev: SeqEvent, accent_amount: f32, decay_knob_ms: f32) {
         match ev {
-            SeqEvent::Trigger { key, octave, accent } => {
+            SeqEvent::Trigger {
+                key,
+                octave,
+                accent,
+            } => {
                 let target = 60.0 + key as f32 + 12.0 * octave as f32;
                 let target = if self.topology == CircuitTopology::Accurate {
                     target.clamp(24.0, 72.0)
@@ -948,13 +955,21 @@ impl Voice {
                 self.gate = true;
                 self.accent_active = accent;
                 if accent {
-                    self.accent_gain = if accent_amount > 0.0 { accent_amount } else { self.accent_knob_val };
+                    self.accent_gain = if accent_amount > 0.0 {
+                        accent_amount
+                    } else {
+                        self.accent_knob_val
+                    };
                     self.meg_decay.set_decay(self.accent_decay_ms);
                     self.vca_env.set_release(50.0);
                     self.accent_acc += (1.0 - self.accent_acc) * 0.8;
                 } else {
                     self.accent_gain = 0.0;
-                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 { decay_knob_ms as f64 } else { self.normal_decay_ms });
+                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 {
+                        decay_knob_ms as f64
+                    } else {
+                        self.normal_decay_ms
+                    });
                     self.vca_env.set_release(0.5);
                 }
 
@@ -963,7 +978,11 @@ impl Voice {
                 self.meg_decay.trigger();
                 self.vca_env.note_on();
             }
-            SeqEvent::SlideTo { key, octave, accent } => {
+            SeqEvent::SlideTo {
+                key,
+                octave,
+                accent,
+            } => {
                 let target = 60.0 + key as f32 + 12.0 * octave as f32;
                 let target = if self.topology == CircuitTopology::Accurate {
                     target.clamp(24.0, 72.0)
@@ -975,13 +994,21 @@ impl Voice {
                 self.accent_active = accent;
 
                 if accent {
-                    self.accent_gain = if accent_amount > 0.0 { accent_amount } else { self.accent_knob_val };
+                    self.accent_gain = if accent_amount > 0.0 {
+                        accent_amount
+                    } else {
+                        self.accent_knob_val
+                    };
                     self.meg_decay.set_decay(self.accent_decay_ms);
                     self.vca_env.set_release(50.0);
                     self.accent_acc += (1.0 - self.accent_acc) * 0.8;
                 } else {
                     self.accent_gain = 0.0;
-                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 { decay_knob_ms as f64 } else { self.normal_decay_ms });
+                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 {
+                        decay_knob_ms as f64
+                    } else {
+                        self.normal_decay_ms
+                    });
                     self.vca_env.set_release(0.5);
                 }
             }
@@ -1120,7 +1147,8 @@ impl Voice {
         let tuning_st = self.tuning_offset / 100.0; // cents to semitones
 
         // Age-related pitch tracking stretch
-        let _stretch_st = (self.age as f32 / 100.0) * 0.2 * (self.current_note as f32 - 60.0) / 12.0;
+        let _stretch_st =
+            (self.age as f32 / 100.0) * 0.2 * (self.current_note as f32 - 60.0) / 12.0;
         let dp = 0.0f32;
 
         let vco1_f = 440.0

@@ -24,7 +24,16 @@ fn test_sequencer_drift_free() {
     let mut count = 0;
 
     // 16th note at 120 BPM @ 48000 Hz: (48000 * 60) / (120 * 4) = 6000 samples.
-    seq.process_block(&pat, 0, 6000, &mut events, &mut count, 120.0, Timebase::Straight, false);
+    seq.process_block(
+        &pat,
+        0,
+        6000,
+        &mut events,
+        &mut count,
+        120.0,
+        Timebase::Straight,
+        false,
+    );
     assert_eq!(count, 2); // Trigger + GateOff
 
     if let SeqEvent::Trigger { .. } = events[0].1 {
@@ -56,7 +65,16 @@ fn test_gate_duty_triplet() {
 
     // Triplet step duration: 48000 * 60 / (120 * 8/3) = 9000 samples.
     // Gate duration: 5/8 of 9000 = 5625 samples.
-    seq.process_block(&pat, 0, 9000, &mut events, &mut count, 120.0, Timebase::Triplet, false);
+    seq.process_block(
+        &pat,
+        0,
+        9000,
+        &mut events,
+        &mut count,
+        120.0,
+        Timebase::Triplet,
+        false,
+    );
     assert_eq!(count, 2);
 
     if let SeqEvent::Trigger { .. } = events[0].1 {
@@ -97,7 +115,16 @@ fn test_decoupled_pitch_memory() {
     let mut count = 0;
 
     // 4 steps of 6000 samples each = 24000 samples
-    seq.process_block(&pat, 0, 24000, &mut events, &mut count, 120.0, Timebase::Straight, false);
+    seq.process_block(
+        &pat,
+        0,
+        24000,
+        &mut events,
+        &mut count,
+        120.0,
+        Timebase::Straight,
+        false,
+    );
 
     let triggered_keys: Vec<i8> = events[..count]
         .iter()
@@ -132,13 +159,42 @@ fn test_slide_lookahead() {
     let mut events = [(0, SeqEvent::GateOff); 64];
     let mut count = 0;
 
-    seq.process_block(&pat, 0, 24000, &mut events, &mut count, 120.0, Timebase::Straight, false);
+    seq.process_block(
+        &pat,
+        0,
+        24000,
+        &mut events,
+        &mut count,
+        120.0,
+        Timebase::Straight,
+        false,
+    );
 
     // Step 0: Trigger(0) at sample 0, NO GateOff scheduled because it slides into Note 1.
     // Step 1: SlideTo(2) at sample 6000. It has slide=true, but next step is Rest, so it DOES schedule GateOff at 6000 + 3000 = 9000!
     assert_eq!(count, 3);
-    assert_eq!(events[0], (0, SeqEvent::Trigger { key: 0, octave: 0, accent: false }));
-    assert_eq!(events[1], (6000, SeqEvent::SlideTo { key: 2, octave: 0, accent: false }));
+    assert_eq!(
+        events[0],
+        (
+            0,
+            SeqEvent::Trigger {
+                key: 0,
+                octave: 0,
+                accent: false
+            }
+        )
+    );
+    assert_eq!(
+        events[1],
+        (
+            6000,
+            SeqEvent::SlideTo {
+                key: 2,
+                octave: 0,
+                accent: false
+            }
+        )
+    );
     assert_eq!(events[2], (9000, SeqEvent::GateOff));
 }
 
@@ -281,5 +337,3 @@ fn test_sequencer_transport_jump_and_loop_sync() {
     assert_eq!(events2[0].0, 2000);
     assert_eq!(events2[0].1, SeqEvent::GateOff);
 }
-
-

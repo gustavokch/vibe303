@@ -58,7 +58,11 @@ impl BlepOsc {
         let mut v = if phase < self.pw { 1.0 } else { -1.0 };
         v -= 2.0 * self.pw - 1.0; // remove DC
         v += 2.0 * poly_blep(phase, self.inc); // step up at 0
-        let t = if phase >= self.pw { phase - self.pw } else { phase - self.pw + 1.0 };
+        let t = if phase >= self.pw {
+            phase - self.pw
+        } else {
+            phase - self.pw + 1.0
+        };
         v -= 2.0 * poly_blep(t, self.inc); // step down at pw
         v
     }

@@ -243,8 +243,18 @@ mod tests {
             if v < d.vcrit {
                 let (i_std, g_std) = d.stamp(v);
                 let (i_ci, g_ci) = d.stamp_current_iteration(v);
-                assert_eq!(i_std.to_bits(), i_ci.to_bits(), "current mismatch at v={}", v);
-                assert_eq!(g_std.to_bits(), g_ci.to_bits(), "conductance mismatch at v={}", v);
+                assert_eq!(
+                    i_std.to_bits(),
+                    i_ci.to_bits(),
+                    "current mismatch at v={}",
+                    v
+                );
+                assert_eq!(
+                    g_std.to_bits(),
+                    g_ci.to_bits(),
+                    "conductance mismatch at v={}",
+                    v
+                );
             }
         }
     }
@@ -263,7 +273,10 @@ mod tests {
         let (_, g_ci) = d.stamp_current_iteration(v_above);
 
         // Conductances should differ significantly
-        assert!((g_std - g_ci).abs() > 1e-6, "current-iteration should differ from linear extension");
+        assert!(
+            (g_std - g_ci).abs() > 1e-6,
+            "current-iteration should differ from linear extension"
+        );
     }
 
     #[cfg(feature = "current-iteration")]
@@ -294,7 +307,16 @@ mod tests {
     fn stamp_current_iteration_conductance_always_positive() {
         // Current-iteration should maintain positive conductance for convergence
         let d = Diode1N4148::new();
-        for v in [-2.0, -0.5, 0.0, 0.3, 0.6, d.vcrit - 0.01, d.vcrit + 0.05, 1.0] {
+        for v in [
+            -2.0,
+            -0.5,
+            0.0,
+            0.3,
+            0.6,
+            d.vcrit - 0.01,
+            d.vcrit + 0.05,
+            1.0,
+        ] {
             let (_, g) = d.stamp_current_iteration(v);
             assert!(g > 0.0, "conductance must be positive at v={}", v);
         }

@@ -82,7 +82,10 @@ fn vco_blep_reduces_reset_discontinuity() {
 
     println!(
         "Reset step: raw={:.4} V  corrected={:.4} V  reduction={:.1} dB  (n={})",
-        mean_raw, mean_corrected, reduction_db, steps_raw.len()
+        mean_raw,
+        mean_corrected,
+        reduction_db,
+        steps_raw.len()
     );
 
     assert!(
@@ -113,7 +116,10 @@ fn vco_blep_now_fires_during_oscillation() {
             blep_fires += 1;
         }
     }
-    println!("blep_now fired {} times in 500 samples at 220 Hz", blep_fires);
+    println!(
+        "blep_now fired {} times in 500 samples at 220 Hz",
+        blep_fires
+    );
     // 220 Hz / 48000 sr → ~4.6 resets per 1000 samples = ~2.3 per 500
     assert!(
         blep_fires >= 1,
@@ -126,14 +132,8 @@ fn vco_blep_now_fires_during_oscillation() {
 fn vco_blep_now_is_zero_on_construction() {
     let sr = 48_000.0f32;
     let vco = Vco303::new(sr);
-    assert_eq!(
-        vco.blep_now, 0.0,
-        "blep_now must be zero on construction"
-    );
-    assert_eq!(
-        vco.blep_next, 0.0,
-        "blep_next must be zero on construction"
-    );
+    assert_eq!(vco.blep_now, 0.0, "blep_now must be zero on construction");
+    assert_eq!(vco.blep_next, 0.0, "blep_next must be zero on construction");
 }
 
 /// Verify reset() clears the BLEP state.
@@ -152,5 +152,8 @@ fn vco_blep_cleared_on_reset() {
     vco.reset();
     assert_eq!(vco.blep_now, 0.0, "blep_now must be cleared by reset()");
     assert_eq!(vco.blep_next, 0.0, "blep_next must be cleared by reset()");
-    assert!(vco.blep_frac.is_none(), "blep_frac must be None after reset()");
+    assert!(
+        vco.blep_frac.is_none(),
+        "blep_frac must be None after reset()"
+    );
 }

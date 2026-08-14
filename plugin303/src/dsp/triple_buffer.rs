@@ -50,7 +50,9 @@ impl<T: Clone> TripleBuffer<T> {
         unsafe {
             *self.buffers[current_write].get() = value;
         }
-        let prev = self.clean.swap((current_write as u8) | 0b100, Ordering::AcqRel);
+        let prev = self
+            .clean
+            .swap((current_write as u8) | 0b100, Ordering::AcqRel);
         self.write_idx.store(prev & 0b011, Ordering::Release);
     }
 }

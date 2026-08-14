@@ -1,5 +1,5 @@
-use nih_plug_egui::egui::{vec2, Color32, FontFamily, FontId, Ui};
 use crate::gui::theme;
+use nih_plug_egui::egui::{vec2, Color32, FontFamily, FontId, Ui};
 
 pub struct MiniKeyboard<'a> {
     semitone: &'a mut i8,
@@ -12,8 +12,12 @@ impl<'a> MiniKeyboard<'a> {
 
     pub fn show(self, ui: &mut Ui) -> bool {
         let mut changed = false;
-        let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "C'"];
-        let is_black = [false, true, false, true, false, false, true, false, true, false, true, false, false];
+        let note_names = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "C'",
+        ];
+        let is_black = [
+            false, true, false, true, false, false, true, false, true, false, true, false, false,
+        ];
 
         ui.horizontal(|ui| {
             for (idx, &name) in note_names.iter().enumerate() {

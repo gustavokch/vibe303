@@ -1,7 +1,5 @@
 use nih_plug::prelude::{Param, ParamSetter};
-use nih_plug_egui::egui::{
-    pos2, vec2, FontFamily, FontId, Response, Sense, Stroke, Ui, Widget,
-};
+use nih_plug_egui::egui::{pos2, vec2, FontFamily, FontId, Response, Sense, Stroke, Ui, Widget};
 use std::f32::consts::PI;
 
 use crate::gui::theme;

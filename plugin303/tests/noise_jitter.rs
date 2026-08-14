@@ -1,6 +1,6 @@
-use plugin303::dsp::vco::Vco303;
-use plugin303::dsp::ladder_wdf::LadderVcf;
 use plugin303::dsp::filter::Filter303;
+use plugin303::dsp::ladder_wdf::LadderVcf;
+use plugin303::dsp::vco::Vco303;
 
 #[test]
 fn test_vco_thermal_noise_injection() {
@@ -11,7 +11,7 @@ fn test_vco_thermal_noise_injection() {
     vco_quiet2.set_thermal(0);
     vco_quiet1.set_freq(440.0);
     vco_quiet2.set_freq(440.0);
-    
+
     for _ in 0..100 {
         let s1 = vco_quiet1.tick();
         let s2 = vco_quiet2.tick();
@@ -27,7 +27,7 @@ fn test_vco_thermal_noise_injection() {
     vco_noisy2.set_thermal(21);
     vco_noisy1.set_freq(440.0);
     vco_noisy2.set_freq(440.0);
-    
+
     let mut deviated = false;
     for _ in 0..100 {
         let s1 = vco_noisy1.tick();
@@ -48,7 +48,7 @@ fn test_vcf_thermal_noise_injection() {
     vcf_quiet2.set_thermal(0);
     vcf_quiet1.set_cutoff(1000.0);
     vcf_quiet2.set_cutoff(1000.0);
-    
+
     for _ in 0..100 {
         let s1 = vcf_quiet1.tick(0.5);
         let s2 = vcf_quiet2.tick(0.5);
@@ -63,7 +63,7 @@ fn test_vcf_thermal_noise_injection() {
     vcf_noisy2.set_thermal(21);
     vcf_noisy1.set_cutoff(1000.0);
     vcf_noisy2.set_cutoff(1000.0);
-    
+
     let mut deviated = false;
     for _ in 0..100 {
         let s1 = vcf_noisy1.tick(0.5);
@@ -73,5 +73,8 @@ fn test_vcf_thermal_noise_injection() {
             break;
         }
     }
-    assert!(deviated, "noisy VCFs should deviate due to companion current noise");
+    assert!(
+        deviated,
+        "noisy VCFs should deviate due to companion current noise"
+    );
 }

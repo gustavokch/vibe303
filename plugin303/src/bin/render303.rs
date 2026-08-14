@@ -58,13 +58,13 @@ fn main() {
     };
 
     v.update_params(
-        0.0, // tuning_cents
-        0.0, // osc1_pitch_st
-        0.0, // osc2_pitch_st
-        0.0, // osc2_vol
+        0.0,       // tuning_cents
+        0.0,       // osc1_pitch_st
+        0.0,       // osc2_pitch_st
+        0.0,       // osc2_vol
         wave_mode, // osc1_wave (keep wave set by set_wave)
-        0.5, // osc1_pw
-        0.0, // sub_vol
+        0.5,       // osc1_pw
+        0.0,       // sub_vol
         cutoff,
         reso / 100.0,
         env_mod,
@@ -72,18 +72,28 @@ fn main() {
         0.0, // accent_knob
         0.0, // volume_db
         plugin303::params::VcfTaps::FourPole,
-        0.0, // vcf_drive_db
+        0.0,   // vcf_drive_db
         false, // advanced_env
-        0.0, 0.0, 0.0, 0.0, // meg ADSR
-        0.0, 0.0, 0.0, 0.0, // veg ADSR
-        if gate_vca { plugin303::params::VcaEnvMode::Gate } else { plugin303::params::VcaEnvMode::Envelope },
-        0, // comp_age
+        0.0,
+        0.0,
+        0.0,
+        0.0, // meg ADSR
+        0.0,
+        0.0,
+        0.0,
+        0.0, // veg ADSR
+        if gate_vca {
+            plugin303::params::VcaEnvMode::Gate
+        } else {
+            plugin303::params::VcaEnvMode::Envelope
+        },
+        0,   // comp_age
         0.0, // comp_drift
         plugin303::params::CompTolerance::Zero,
         0, // thermal_noise
         topology_mode,
         0.0, // sweep_pos
-        0, // comp_seed
+        0,   // comp_seed
         0.5, // glide_knob
     );
 

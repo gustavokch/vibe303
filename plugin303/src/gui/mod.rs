@@ -23,18 +23,25 @@ pub fn create_editor(
         (),
         |_, _| {},
         move |egui_ctx, setter, _state| {
+            egui_ctx.send_viewport_cmd(nih_plug_egui::egui::ViewportCommand::Title(
+                "Vibe 303".into(),
+            ));
             egui_ctx.set_visuals(nih_plug_egui::egui::Visuals::dark());
             nih_plug_egui::egui::CentralPanel::default()
-                .frame(Frame::new().fill(theme::CHASSIS_BG).inner_margin(Margin::same(8)))
+                .frame(
+                    Frame::new()
+                        .fill(theme::CHASSIS_BG)
+                        .inner_margin(Margin::same(8)),
+                )
                 .show(egui_ctx, |ui| {
                     // Header Bar
                     panels::header_bar::render_header(ui, &params, setter);
                     ui.add_space(6.0);
 
                     // Top Split: Classic Panel (Left) & Souped-Up Drawer (Right)
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(8.0, 8.0);
                         panels::classic_panel::render_classic(ui, &params, setter);
-                        ui.add_space(8.0);
                         panels::souped_panel::render_souped(ui, &params, setter);
                     });
 

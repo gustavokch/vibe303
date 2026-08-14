@@ -3,7 +3,7 @@ use nih_plug_egui::egui::{CornerRadius, Frame, Margin, Ui};
 
 use crate::gui::theme;
 use crate::gui::widgets::{Knob303, SlideSwitch};
-use crate::params::Plugin303Params;
+use crate::params::{CircuitTopology, Plugin303Params};
 
 pub fn render_classic(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     Frame::new()
@@ -12,17 +12,20 @@ pub fn render_classic(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSette
         .corner_radius(CornerRadius::same(4))
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
-            ui.set_height(220.0);
-            ui.set_width(510.0);
+            ui.set_min_height(160.0);
+            ui.set_min_width(460.0);
 
             ui.label(
                 nih_plug_egui::egui::RichText::new("CLASSIC 303 FRONT PANEL")
-                    .font(nih_plug_egui::egui::FontId::new(11.0, nih_plug_egui::egui::FontFamily::Proportional))
+                    .font(nih_plug_egui::egui::FontId::new(
+                        11.0,
+                        nih_plug_egui::egui::FontFamily::Proportional,
+                    ))
                     .strong()
                     .color(theme::TEXT_SECONDARY),
             );
 
-            ui.add_space(6.0);
+            ui.add_space(12.0);
 
             // Row of main dials
             ui.horizontal(|ui| {
@@ -45,12 +48,25 @@ pub fn render_classic(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSette
                     &["SAW", "SQR", "SWEEP"],
                 ));
                 ui.add_space(20.0);
-                ui.add(SlideSwitch::new(
-                    &params.tier,
-                    setter,
-                    "FIDELITY TIER",
-                    &["LOW", "HIGH", "ULTRA"],
-                ));
+                let is_accurate = params.topology.value() == CircuitTopology::Accurate;
+                ui.add_enabled_ui(!is_accurate, |ui| {
+                    ui.add(SlideSwitch::new(
+                        &params.tier,
+                        setter,
+                        "FIDELITY TIER",
+                        &["LOW", "HIGH", "ULTRA"],
+                    ));
+                    if is_accurate {
+                        ui.label(
+                            nih_plug_egui::egui::RichText::new("(Bypassed)")
+                                .font(nih_plug_egui::egui::FontId::new(
+                                    8.5,
+                                    nih_plug_egui::egui::FontFamily::Proportional,
+                                ))
+                                .color(theme::TEXT_MUTED),
+                        );
+                    }
+                });
             });
         });
 }

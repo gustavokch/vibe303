@@ -34,7 +34,10 @@ fn test_sr(sr: f32) {
         }
         let f = realized_hz(&mut v, sr);
         let pct = (f / target - 1.0) * 100.0;
-        println!("  Target: {:.2} Hz -> Realized: {:.2} Hz ({:+.2}%)", target, f, pct);
+        println!(
+            "  Target: {:.2} Hz -> Realized: {:.2} Hz ({:+.2}%)",
+            target, f, pct
+        );
     }
 }
 

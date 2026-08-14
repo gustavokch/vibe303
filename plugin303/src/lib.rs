@@ -40,10 +40,11 @@ pub struct Plugin303 {
 impl Plugin303 {
     pub fn new_with_params(params: Arc<Plugin303Params>) -> Self {
         let sample_rate = 48_000.0;
-        let cached_pattern = params.pattern.read().unwrap().compile(
-            params.seq_length.value() as u8,
-            params.seq_mode.value(),
-        );
+        let cached_pattern = params
+            .pattern
+            .read()
+            .unwrap()
+            .compile(params.seq_length.value() as u8, params.seq_mode.value());
         let sequencer = Sequencer::new(sample_rate as f64);
         let current_playing_step = sequencer.current_step.clone();
         Self {
@@ -52,7 +53,10 @@ impl Plugin303 {
             voice: Voice::new(sample_rate),
             reported_latency: 0,
             #[cfg(feature = "gui")]
-            editor_state: nih_plug_egui::EguiState::from_size(crate::gui::GUI_WIDTH, crate::gui::GUI_HEIGHT),
+            editor_state: nih_plug_egui::EguiState::from_size(
+                crate::gui::GUI_WIDTH,
+                crate::gui::GUI_HEIGHT,
+            ),
             current_playing_step,
             sequencer,
             active_midi_note: None,
@@ -68,8 +72,6 @@ impl Default for Plugin303 {
         Self::new_with_params(Arc::new(Plugin303Params::default()))
     }
 }
-
-
 
 const fn str_eq(a: &str, b: &str) -> bool {
     let ab = a.as_bytes();
@@ -299,7 +301,9 @@ impl Plugin for Plugin303 {
             }
         }
 
-        let bpm = transport.tempo.unwrap_or(self.params.seq_tempo.value() as f64);
+        let bpm = transport
+            .tempo
+            .unwrap_or(self.params.seq_tempo.value() as f64);
         let timebase = self.params.seq_timebase.value();
         let jitter = self.params.seq_jitter.value();
         let num_steps = self.params.seq_length.value() as u8;
@@ -375,7 +379,9 @@ impl Plugin for Plugin303 {
 
             // If no MIDI note is held, run the sequencer events for this sample
             if active_midi_note.is_none() {
-                while seq_event_idx < seq_event_count && seq_events[seq_event_idx].0 == sample_idx as u32 {
+                while seq_event_idx < seq_event_count
+                    && seq_events[seq_event_idx].0 == sample_idx as u32
+                {
                     self.voice.on_seq_event(
                         seq_events[seq_event_idx].1,
                         self.params.accent.value(),
@@ -397,7 +403,6 @@ impl Plugin for Plugin303 {
         ProcessStatus::Normal
     }
 }
-
 
 impl Vst3Plugin for Plugin303 {
     const VST3_CLASS_ID: [u8; 16] = VST3_CLASS_ID;

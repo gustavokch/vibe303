@@ -23,19 +23,22 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                 .color(theme::TEXT_MUTED),
         );
 
-        ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
-            ui.add_space(12.0);
-            // Master Volume
-            ui.add(Knob303::new(&params.volume, setter, "MASTER", 12.0));
+        ui.with_layout(
+            nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
+            |ui| {
+                ui.add_space(12.0);
+                // Master Volume
+                ui.add(Knob303::new(&params.volume, setter, "MASTER", 12.0));
 
-            ui.add_space(16.0);
-            // Topology switch
-            ui.add(SlideSwitch::new(
-                &params.topology,
-                setter,
-                "TOPOLOGY",
-                &["ACCURATE", "FUN"],
-            ));
-        });
+                ui.add_space(16.0);
+                // Topology switch
+                ui.add(SlideSwitch::new(
+                    &params.topology,
+                    setter,
+                    "TOPOLOGY",
+                    &["ACCURATE", "FUN"],
+                ));
+            },
+        );
     });
 }

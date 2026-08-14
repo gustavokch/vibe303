@@ -3,7 +3,7 @@
 /// A slow random walk generator simulating thermal fluctuations in resistors and capacitors.
 ///
 /// Uses Paul Kellet's cascaded IIR filter method to generate high-quality -3 dB/octave pink noise
-/// from a white noise source. A slow lowpass filter is applied to constrain the high-frequency 
+/// from a white noise source. A slow lowpass filter is applied to constrain the high-frequency
 /// jitter and extract the slow macroscopic wandering drift.
 pub struct DriftGenerator {
     /// Internal LCG state seed.
@@ -49,18 +49,19 @@ impl DriftGenerator {
         self.b3 = 0.86650 * self.b3 + white * 0.3104856;
         self.b4 = 0.55000 * self.b4 + white * 0.5329522;
         self.b5 = -0.7616 * self.b5 - white * 0.0168980;
-        
-        let pink = self.b0 + self.b1 + self.b2 + self.b3 + self.b4 + self.b5 + self.b6 + white * 0.5362;
+
+        let pink =
+            self.b0 + self.b1 + self.b2 + self.b3 + self.b4 + self.b5 + self.b6 + white * 0.5362;
         self.b6 = white * 0.115926;
 
         // pink is roughly in [-3.0, 3.0]. Scale it down.
         let scaled_pink = pink * 0.15;
 
-        // Apply a slow 1-pole lowpass filter to extract the slow macroscopic drift 
+        // Apply a slow 1-pole lowpass filter to extract the slow macroscopic drift
         // while preserving the 1/f nature below the cutoff.
         let alpha = (2.0 * std::f32::consts::PI * cutoff_hz / sr).min(1.0);
         self.lp += alpha * (scaled_pink - self.lp);
-        
+
         self.lp
     }
 }

@@ -96,8 +96,18 @@ fn test_pitch_parity_accurate() {
             note, target, f_ultra, dev_ultra * 100.0, f_low, f_high
         );
 
-        assert!(err_low < 0.002, "Low pitch mismatch ({:.3}%) at note {}", err_low * 100.0, note);
-        assert!(err_high < 0.002, "High pitch mismatch ({:.3}%) at note {}", err_high * 100.0, note);
+        assert!(
+            err_low < 0.002,
+            "Low pitch mismatch ({:.3}%) at note {}",
+            err_low * 100.0,
+            note
+        );
+        assert!(
+            err_high < 0.002,
+            "High pitch mismatch ({:.3}%) at note {}",
+            err_high * 100.0,
+            note
+        );
     }
 }
 
@@ -120,10 +130,25 @@ fn test_pitch_parity_fun() {
             note, target, f_ultra, err_ultra * 100.0, f_low, err_low * 100.0, f_high, err_high * 100.0
         );
 
-        assert!(err_low < 0.002, "Low pitch mismatch ({:.3}%) at note {}", err_low * 100.0, note);
-        assert!(err_high < 0.002, "High pitch mismatch ({:.3}%) at note {}", err_high * 100.0, note);
+        assert!(
+            err_low < 0.002,
+            "Low pitch mismatch ({:.3}%) at note {}",
+            err_low * 100.0,
+            note
+        );
+        assert!(
+            err_high < 0.002,
+            "High pitch mismatch ({:.3}%) at note {}",
+            err_high * 100.0,
+            note
+        );
         if note <= 72 {
-            assert!(err_ultra < 0.01, "Ultra pitch mismatch ({:.3}%) at note {}", err_ultra * 100.0, note);
+            assert!(
+                err_ultra < 0.01,
+                "Ultra pitch mismatch ({:.3}%) at note {}",
+                err_ultra * 100.0,
+                note
+            );
         }
     }
 }
@@ -155,16 +180,38 @@ fn test_voicing_parity_sweeps() {
     let (lsd_high, corr_high) = spectral_match(&pcm_ultra, &pcm_high, SR);
     let (lsd_low, corr_low) = spectral_match(&pcm_ultra, &pcm_low, SR);
 
-    println!("High vs Ultra: LSD = {:.2} dB, corr = {:.3}", lsd_high, corr_high);
-    println!("Low vs Ultra: LSD = {:.2} dB, corr = {:.3}", lsd_low, corr_low);
+    println!(
+        "High vs Ultra: LSD = {:.2} dB, corr = {:.3}",
+        lsd_high, corr_high
+    );
+    println!(
+        "Low vs Ultra: LSD = {:.2} dB, corr = {:.3}",
+        lsd_low, corr_low
+    );
 
     // High vs Ultra target: LSD <= 15.0 dB, corr >= 0.975
-    assert!(lsd_high <= 15.0, "High vs Ultra LSD ({:.2} dB) exceeds budget", lsd_high);
-    assert!(corr_high >= 0.975, "High vs Ultra corr ({:.3}) below budget", corr_high);
+    assert!(
+        lsd_high <= 15.0,
+        "High vs Ultra LSD ({:.2} dB) exceeds budget",
+        lsd_high
+    );
+    assert!(
+        corr_high >= 0.975,
+        "High vs Ultra corr ({:.3}) below budget",
+        corr_high
+    );
 
     // Low vs Ultra target: LSD <= 42.0 dB, corr >= 0.94
     // (LSD budget widened from 28.0: classic RC envelope path produces more
     //  spectral divergence between tiers than the advanced MEG path)
-    assert!(lsd_low <= 42.0, "Low vs Ultra LSD ({:.2} dB) exceeds budget", lsd_low);
-    assert!(corr_low >= 0.94, "Low vs Ultra corr ({:.3}) below budget", corr_low);
+    assert!(
+        lsd_low <= 42.0,
+        "Low vs Ultra LSD ({:.2} dB) exceeds budget",
+        lsd_low
+    );
+    assert!(
+        corr_low >= 0.94,
+        "Low vs Ultra corr ({:.3}) below budget",
+        corr_low
+    );
 }

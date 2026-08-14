@@ -204,8 +204,16 @@ mod tests {
         let (i_std, g_std) = j.gate_diode(v);
         let (i_ci, g_ci) = j.gate_diode_current_iteration(v);
 
-        assert_eq!(i_std.to_bits(), i_ci.to_bits(), "current mismatch below V_CRIT");
-        assert_eq!(g_std.to_bits(), g_ci.to_bits(), "conductance mismatch below V_CRIT");
+        assert_eq!(
+            i_std.to_bits(),
+            i_ci.to_bits(),
+            "current mismatch below V_CRIT"
+        );
+        assert_eq!(
+            g_std.to_bits(),
+            g_ci.to_bits(),
+            "conductance mismatch below V_CRIT"
+        );
     }
 
     #[cfg(feature = "current-iteration")]
@@ -219,9 +227,15 @@ mod tests {
         let (i_ci, g_ci) = j.gate_diode_current_iteration(v_above);
 
         // Standard linearizes (conductance frozen), current-iteration uses full exponential
-        assert!((g_std - g_ci).abs() > 1e-6, "current-iteration should differ from linear extension");
+        assert!(
+            (g_std - g_ci).abs() > 1e-6,
+            "current-iteration should differ from linear extension"
+        );
         // Current-iteration should give higher current (full exponential)
-        assert!(i_ci > i_std, "current-iteration current should be higher above V_CRIT");
+        assert!(
+            i_ci > i_std,
+            "current-iteration current should be higher above V_CRIT"
+        );
     }
 
     #[cfg(feature = "current-iteration")]
@@ -229,7 +243,17 @@ mod tests {
     fn gate_diode_current_iteration_conductance_positive() {
         // Current-iteration should maintain positive conductance for convergence
         let j = Jfet::mpf104();
-        for v in [-2.0, -1.0, -0.5, 0.0, 0.3, 0.4, j.vcrit - 0.01, j.vcrit + 0.05, 0.8] {
+        for v in [
+            -2.0,
+            -1.0,
+            -0.5,
+            0.0,
+            0.3,
+            0.4,
+            j.vcrit - 0.01,
+            j.vcrit + 0.05,
+            0.8,
+        ] {
             let (_, g) = j.gate_diode_current_iteration(v);
             assert!(g > 0.0, "conductance must be positive at v={}", v);
         }

@@ -179,7 +179,8 @@ impl Sequencer {
 
         // 2. Step boundaries
         while self.next_step_sample < block_end {
-            self.current_step.store(self.step_idx as u8, Ordering::Relaxed);
+            self.current_step
+                .store(self.step_idx as u8, Ordering::Relaxed);
             let t = self.isr_quantise(self.next_step_sample, GATE_ON_LATENCY_S, hw_jitter);
             let offset = (t as u32).saturating_sub(block_start as u32);
 
@@ -217,7 +218,8 @@ impl Sequencer {
                     if !(p.slide && next_timing != TimeEntry::Rest) {
                         let spt = self.samples_per_step(bpm, timebase) / timebase.ticks_per_step();
                         let gate_off_time = self.next_step_sample + timebase.gate_on_ticks() * spt;
-                        let g_quant = self.isr_quantise(gate_off_time, GATE_OFF_LATENCY_S, hw_jitter);
+                        let g_quant =
+                            self.isr_quantise(gate_off_time, GATE_OFF_LATENCY_S, hw_jitter);
 
                         if g_quant < block_end {
                             let off_offset = (g_quant as u32).saturating_sub(block_start as u32);
