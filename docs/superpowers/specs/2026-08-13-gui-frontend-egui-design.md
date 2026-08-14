@@ -91,8 +91,10 @@ plugin303/src/
      - Clicking note opens `MiniKeyboard` popover for single-click pitch assignment.
      - Up/Down arrows (`▲` / `▼`) nudge octave up or down (`-2` to `+2`).
 
-### 3.4 `MiniKeyboard` Popover
-- Renders a floating 1-octave chromatic keyboard (C through C') directly above the selected step for intuitive pitch entry.
+### 3.4 `PianoRollPopup` (Multi-Octave Note Selection Dialog)
+- Renders an anchored, foreground overlay popover (`egui::Area` on `Order::Foreground`) above or below the selected sequencer step.
+- Displays a 61-row vertical scrollable keyboard spanning 5 octaves (C1 through C6 / octaves -2 to +2).
+- Features auto-centering scroll initialization on the current note, distinct white/black key styling with tactile borders, and single-click note + octave assignment with immediate dismissal on click-away or `Escape`.
 
 ---
 

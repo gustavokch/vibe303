@@ -27,12 +27,11 @@ pub fn render_classic(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSette
 
             ui.add_space(12.0);
 
-            // Row of main dials (classic 303 vintage rotary dials + resonance compensation)
+            // Row of main dials (canonical 7 vintage 303 rotary dials)
             ui.horizontal(|ui| {
                 ui.add(Knob303::new(&params.tuning, setter, "TUNING", 14.0));
                 ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 16.0));
                 ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 16.0));
-                ui.add(Knob303::new(&params.reso_comp, setter, "RESO COMP", 15.0));
                 ui.add(Knob303::new(&params.env_mod, setter, "ENV MOD", 15.0));
                 ui.add(Knob303::new(&params.decay, setter, "DECAY", 15.0));
                 ui.add(Knob303::new(&params.accent, setter, "ACCENT", 15.0));
@@ -52,12 +51,15 @@ pub fn render_classic(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSette
                 ui.add_space(20.0);
                 let is_accurate = params.topology.value() == CircuitTopology::Accurate;
                 ui.add_enabled_ui(!is_accurate, |ui| {
-                    ui.add(SlideSwitch::new(
-                        &params.tier,
-                        setter,
-                        "FIDELITY TIER",
-                        &["LOW", "HIGH", "ULTRA"],
-                    ));
+                    ui.add(
+                        SlideSwitch::new(
+                            &params.tier,
+                            setter,
+                            "FIDELITY TIER",
+                            &["LOW", "HIGH", "ULTRA"],
+                        )
+                        .with_thumb_color(theme::PLAYHEAD_RED),
+                    );
                     if is_accurate {
                         ui.label(
                             nih_plug_egui::egui::RichText::new("(Bypassed)")

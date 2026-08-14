@@ -63,6 +63,7 @@ pub fn render_step_strip(
             // ACC Button
             let (acc_rect, acc_resp) =
                 ui.allocate_exact_size(vec2(22.0, 18.0), Sense::click());
+            let acc_resp = acc_resp.on_hover_text("Toggle Accent (A)");
             if acc_resp.clicked() {
                 step.accent = !step.accent;
                 changed = true;
@@ -103,6 +104,7 @@ pub fn render_step_strip(
             // SLD Button
             let (sld_rect, sld_resp) =
                 ui.allocate_exact_size(vec2(22.0, 18.0), Sense::click());
+            let sld_resp = sld_resp.on_hover_text("Toggle Slide (S)");
             if sld_resp.clicked() {
                 step.slide = !step.slide;
                 changed = true;
@@ -149,7 +151,7 @@ pub fn render_step_strip(
             StepGate::Tie => ("TIE", theme::GATE_TIE_COLOR, Color32::BLACK),
             StepGate::Rest => (
                 "REST",
-                Color32::from_rgb(0x2c, 0x32, 0x3c),
+                theme::GATE_REST_COLOR,
                 Color32::from_rgb(0xd8, 0xde, 0xe8),
             ),
         };
