@@ -3,6 +3,7 @@ use nih_plug_egui::egui::{Color32, CornerRadius, Frame, Margin, Ui};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::gui::theme;
+use crate::gui::widgets::piano_roll_popup::render_piano_roll_popup;
 use crate::gui::widgets::step_button::render_step_strip;
 use crate::gui::widgets::{Knob303, SlideSwitch};
 use crate::params::Plugin303Params;
@@ -121,6 +122,8 @@ pub fn render_sequencer(
                                 });
                             });
                         }
+
+                        render_piano_roll_popup(ui.ctx(), &mut pattern_guard);
                     }
                 });
             });

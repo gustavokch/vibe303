@@ -184,10 +184,15 @@ pub fn render_step_strip(
         .fill(Color32::from_rgb(0x18, 0x1c, 0x24))
         .min_size(vec2(width, 18.0));
 
-        let pitch_resp = ui.add(pitch_btn).on_hover_text("Click or drag to change note");
+        let pitch_resp = ui
+            .add(pitch_btn)
+            .on_hover_text("Click to open piano roll (or drag/right-click to nudge)");
         if pitch_resp.clicked() {
-            step.semitone = (step.semitone + 1) % 13;
-            changed = true;
+            crate::gui::widgets::piano_roll_popup::toggle_open_state(
+                ui.ctx(),
+                step_idx,
+                pitch_resp.rect,
+            );
         } else if pitch_resp.secondary_clicked() {
             step.semitone = if step.semitone <= 0 { 12 } else { step.semitone - 1 };
             changed = true;
