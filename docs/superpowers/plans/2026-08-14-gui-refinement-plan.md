@@ -2,105 +2,94 @@
 
 **Date:** 2026-08-14  
 **Target Spec:** `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
-**Overall Visual QA Weighted Score:** 77.55 / 100  
+**Overall Visual QA Weighted Score:** 91.40 / 100  
 **Overall Spec Compliance:** Non-Compliant (`false`)
 
 ---
 
 ## 1. Executive Summary & Score Breakdown
 
-Visual QA inspection was conducted across all three GUI sections against the design specification in `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`. The overall weighted score is 77.55 / 100. `souped_drawer` failed visual spec compliance due to a critical layout collapse bug, rendering the overall GUI non-compliant.
+Visual QA inspection was conducted across all three GUI sections against the design specification in `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`. The overall weighted score is 91.40 / 100. `classic_panel` failed visual spec compliance due to missing top-right header branding and unformatted knob value readouts, rendering the overall GUI non-compliant.
 
 | Section | Alignment Score | Weight | Weighted Score | Spec Compliance |
 | :--- | :--- | :--- | :--- | :--- |
-| **Classic 303 Front Panel** | 88.00 | 35% | 30.800 | `true` |
-| **Souped-Up Drawer** | 45.00 | 30% | 13.500 | `false` |
-| **Sequencer Console** | 95.00 | 35% | 33.250 | `true` |
-| **Total / Overall** | **77.55** | **100%** | **77.550** | `false` |
+| **Classic 303 Front Panel** | 88.00 | 35% | 30.800 | `false` |
+| **Souped-Up Drawer** | 90.00 | 30% | 27.000 | `true` |
+| **Sequencer Console** | 96.00 | 35% | 33.600 | `true` |
+| **Total / Overall** | **91.40** | **100%** | **91.400** | `false` |
 
 ---
 
 ## 2. Detailed Findings & Defect Analysis
 
-### 2.1 Classic 303 Front Panel (`classic_panel`) — Compliant (88.00)
+### 2.1 Classic 303 Front Panel (`classic_panel`) — Non-Compliant (88.00)
 
-1. **Knob303 Parameter Labels and Value Readout (`typography` - Minor):**
-   - **Observed:** `Knob303` in `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/knob.rs` renders parameter labels above knobs and live formatted numeric values below knobs.
-   - **Expected:** Design mockup `ui-mockup.jpg` positions parameter labels directly below each knob without numeric value readouts.
-   - **Suggested Fix:** Adjust label positioning and optional value readout rendering to allow labels below knobs when matching classic hardware mockup layout.
+1. **Header Bar Branding (`missing_feature` - Minor):**
+   - **Observed:** Top-left header displays `VIBE 303 ANALOG CIRCUIT EMULATION`. Top-right orange `TB-303 PLUGIN` label is omitted.
+   - **Expected:** Top-left header bar displays `TECHNEO` branding logo. Top-right header bar includes orange `TB-303 PLUGIN` branding text per design specification.
+   - **Suggested Fix:** Update `/Users/gus/Git/vibe303/plugin303/src/gui/panels/header_bar.rs` to display `TECHNEO` branding on the left and render orange `TB-303 PLUGIN` text on the right side of the header bar.
 
-2. **Header Bar Ventilation Grill (`geometry` - Minor):**
-   - **Observed:** `render_header` in `/Users/gus/Git/vibe303/plugin303/src/gui/panels/header_bar.rs` renders a single continuous 18-slot grill rect (120px width).
-   - **Expected:** Design mockup `ui-mockup.jpg` features two distinct 7-slot ventilation grills separated by middle metallic spacing.
-   - **Suggested Fix:** Split grill slot rendering into two separate 7-slot groups with spacing between them.
+2. **Knob Value Readout Formatting (`typography` - Minor):**
+   - **Observed:** Knobs for Cutoff, Resonance, Env Mod, Decay, and Accent display unformatted raw float values (for example `0.5`).
+   - **Expected:** Knob value readouts below dials display formatted physical engineering units (e.g. Hz/kHz for Cutoff, % for Resonance/Env Mod/Accent, ms/s for Decay).
+   - **Suggested Fix:** Refactor value formatting in `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/knob.rs` to inspect parameter display strings or convert normalized values into physical unit strings.
 
-3. **Header Bar Branding and Topology Switch (`alignment` - Minor):**
-   - **Observed:** `render_header` in `/Users/gus/Git/vibe303/plugin303/src/gui/panels/header_bar.rs` groups `TECHNEO` and `TB-303 PLUGIN` together on top-left, and places `CIRCUIT TOPOLOGY` switch on top-right.
-   - **Expected:** Design mockup `ui-mockup.jpg` places `TECHNEO` on top-left and `TB-303 PLUGIN` branding on top-right.
-   - **Suggested Fix:** Reposition `TB-303 PLUGIN` text to the right side of the ventilation grills to preserve mockup header balance.
-
-4. **SlideSwitch Option Text Alignment (`geometry` - Minor):**
-   - **Observed:** `SlideSwitch` in `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/switch.rs` places option text horizontally beneath track detents.
-   - **Expected:** Design mockup `ui-mockup.jpg` stacks option text vertically to the right of the sliding handle tracks for `WAVEFORM` and `FIDELITY TIER`.
-   - **Suggested Fix:** Implement vertical option text layout option in `SlideSwitch` for side-stacked detent labels.
+3. **Classic Panel Layout (`alignment` - Compliant):**
+   - **Observed:** All 7 knobs and 2 slide switches render in alignment with 270-degree radial tick arcs and correct color tokens.
+   - **Expected:** 7 rotary dials positioned horizontally above Waveform and Fidelity Tier slide switches.
+   - **Suggested Fix:** Maintain current layout grid and widget proportions in `/Users/gus/Git/vibe303/plugin303/src/gui/panels/classic_panel.rs`.
 
 ---
 
-### 2.2 Souped-Up Engine Drawer (`souped_drawer`) — Non-Compliant (45.00)
+### 2.2 Souped-Up Engine Drawer (`souped_drawer`) — Compliant (90.00)
 
-1. **Souped-Up Drawer Controls Layout (`missing_feature` - Critical):**
-   - **Observed:** Drawer renders as empty dark panel area with extended controls invisible or collapsed.
-   - **Expected:** Drawer displays 10 extended rotary dials (OSC DET, MIX, PW, DRIVE, GLIDE, DRIFT, AGE, RESO COMP), 2 slide switches (VCF TAPS, TOLERANCE), and 8 vertical ADSR mini-faders (MEG/VEG).
-   - **Suggested Fix:** Adjust width constraints in `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs` and ensure child widgets allocate explicit layout space within horizontal containers.
+1. **Standalone GUI Capture Target (`missing_feature` - Major):**
+   - **Observed:** Screenshot capture tool captured Bitwig Studio window rendering Waldorf Blofeld VST interface instead of plugin303 standalone GUI window.
+   - **Expected:** Visual QA screenshot capturing plugin303 standalone GUI window rendering the Souped-Up Engine Drawer panel.
+   - **Suggested Fix:** Update `/Users/gus/Git/vibe303/scripts/capture_standalone.sh` to target and focus the plugin303 standalone window explicitly by PID or window title before capture.
 
-2. **Accurate-Mode Dimming Badge (`color` - Major):**
-   - **Observed:** Overlay dark tint renders over empty panel without ghosted background controls visible.
-   - **Expected:** Ghosted 30% opacity tint with centered overlay banner `ACCURATE MODE ACTIVE — SOUPED-UP ENGINE BYPASSED` and topology switch button over rendered controls.
-   - **Suggested Fix:** Ensure underlying control widgets render before calculating `overlay_rect` in `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs`.
+2. **MEG/VEG ADSR MiniFader Widgets (`alignment` - Compliant):**
+   - **Observed:** MiniFader implementation in `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/fader.rs` renders 45px vertical tracks with glowing orange fill bars, A/D/S/R labels, and formatted units (ms/s/%).
+   - **Expected:** Vertical fader tracks with glowing orange fill bars for MEG/VEG ADSR with A/D/S/R headers and formatted unit readouts.
+   - **Suggested Fix:** Maintain current implementation adhering to Section 3.2 of the GUI specification.
 
-3. **Drawer Header Title (`alignment` - Minor):**
-   - **Observed:** Header text `SOUPED-UP ENGINE DRAWER (Bypassed...` is truncated at right panel boundary.
-   - **Expected:** Header text `SOUPED-UP ENGINE DRAWER (Bypassed in Accurate Mode)` fits fully within panel bounds.
-   - **Suggested Fix:** Reduce font size or wrap title text inside flexible layout container in `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs`.
-
-4. **MiniFader Value Readout (`typography` - Minor):**
-   - **Observed:** Readout text is constrained near fader track bottom at height 45.0px.
-   - **Expected:** Clean value readout with ms/s/% units positioned with 8px margin below fader track.
-   - **Suggested Fix:** Increase vertical padding and bottom text offset in `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/fader.rs`.
+3. **Accurate-Mode Dimming Badge & Overlay (`color` - Compliant):**
+   - **Observed:** `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs` paints 30% (0x4d) alpha tint over disabled controls with animated hover switch button that updates topology parameter.
+   - **Expected:** 30% opacity overlay with non-interactive controls, orange-bordered banner, and topology switch button.
+   - **Suggested Fix:** Maintain current implementation matching Section 1 and Section 4.1 specifications.
 
 ---
 
-### 2.3 16-Step Sequencer Console (`sequencer`) — Compliant (95.00)
+### 2.3 16-Step Sequencer Console (`sequencer`) — Compliant (96.00)
 
-1. **ACC/SLD Button Labels (`typography` - Minor):**
-   - **Observed:** Font size set to 6.5px proportional font, which can be small on non-scaled standard DPI displays.
-   - **Expected:** High legibility text on small button targets across HiDPI scales.
-   - **Suggested Fix:** Increase font size from 6.5px to 7.5px with tight tracking or adjust button padding in `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/step_button.rs`.
+1. **Step Column Grid & Transport Bar (`alignment` - Compliant):**
+   - **Observed:** 16 step columns rendered with 42px width and 3px spacing. Transport bar fixed at 125px width with RUN/STOP, SYNC, TEMPO, MODE, and TIMEBASE controls.
+   - **Expected:** 16-step strip aligned horizontally in a continuous row alongside a 125px left transport control column.
+   - **Suggested Fix:** Maintain current grid structure and column spacing in `/Users/gus/Git/vibe303/plugin303/src/gui/panels/sequencer_panel.rs`.
 
-2. **16-Step Column Horizontal Grid (`geometry` - Minor):**
-   - **Observed:** Step columns fit flushly in continuous 16-step horizontal row with 3.0px spacing.
-   - **Expected:** 42px column width with 3px inter-step spacing matching total container width.
-   - **Suggested Fix:** Maintain explicit min/max width constraints on step cards to prevent flex stretching on wider windows in `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/step_button.rs` and `/Users/gus/Git/vibe303/plugin303/src/gui/panels/sequencer_panel.rs`.
+2. **LED States & Gate Tile Colors (`color` - Compliant):**
+   - **Observed:** Color tokens in `/Users/gus/Git/vibe303/plugin303/src/gui/theme.rs` and `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/step_button.rs` match design specification (Playhead LED `#ff3355`, ACC LED `#ffaa00`, SLD LED `#00e5ff`, Note `#00e5ff`, Tie `#ffd700`, Rest `#38404c`).
+   - **Expected:** High-contrast LED states and gate tile colors adhering to Section 3.3 and Section 5 design tokens.
+   - **Suggested Fix:** Maintain current color token assignments.
+
+3. **Pitch Display & Nudge Controls (`typography` - Compliant):**
+   - **Observed:** 9.5pt bold monospace text for note pitch, click opens PianoRollPopup, vector arrows for octave up/down nudge.
+   - **Expected:** Monospace pitch readout with clickable popover trigger and octave nudge controls per Section 3.3.
+   - **Suggested Fix:** Maintain current pitch display implementation.
 
 ---
 
 ## 3. Actionable Refinement Tasks by Target File
 
-### 3.1 `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs` & `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/fader.rs`
-- [ ] **Task 1 (Critical - Layout):** Fix drawer layout collapse by adjusting width constraints and explicit widget layout allocations in `souped_panel.rs`.
-- [ ] **Task 2 (Major - Color):** Ensure underlying control widgets render before calculating and drawing `overlay_rect` in `souped_panel.rs`.
-- [ ] **Task 3 (Minor - Alignment):** Reduce header text font size or wrap title text inside container in `souped_panel.rs`.
-- [ ] **Task 4 (Minor - Typography):** Increase vertical padding and bottom text offset in `fader.rs` for `MiniFader` value readouts.
+### 3.1 `/Users/gus/Git/vibe303/plugin303/src/gui/panels/header_bar.rs`
+- [ ] **Task 1 (Minor - Missing Feature):** Restore `TECHNEO` branding on top-left of header bar.
+- [ ] **Task 2 (Minor - Missing Feature):** Render orange `TB-303 PLUGIN` text on top-right of header bar.
 
-### 3.2 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/knob.rs`, `switch.rs`, & `/Users/gus/Git/vibe303/plugin303/src/gui/panels/header_bar.rs`
-- [ ] **Task 5 (Minor - Typography):** Support label placement below `Knob303` without live value readout to match hardware mockup layout in `knob.rs`.
-- [ ] **Task 6 (Minor - Geometry):** Split header ventilation grill rendering into two separate 7-slot groups in `header_bar.rs`.
-- [ ] **Task 7 (Minor - Alignment):** Reposition `TB-303 PLUGIN` branding to top-right of ventilation grills in `header_bar.rs`.
-- [ ] **Task 8 (Minor - Geometry):** Add vertical option text layout support to `SlideSwitch` in `switch.rs`.
+### 3.2 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/knob.rs`
+- [ ] **Task 3 (Minor - Typography):** Update knob value formatting to display physical engineering units (Hz/kHz, %, ms/s) instead of raw normalized float strings.
 
-### 3.3 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/step_button.rs` & `/Users/gus/Git/vibe303/plugin303/src/gui/panels/sequencer_panel.rs`
-- [ ] **Task 9 (Minor - Typography):** Increase `ACC` and `SLD` button label font size to 7.5px in `step_button.rs`.
-- [ ] **Task 10 (Minor - Geometry):** Set explicit 42px min/max width constraints on step cards in `sequencer_panel.rs` / `step_button.rs`.
+### 3.3 `/Users/gus/Git/vibe303/scripts/capture_standalone.sh`
+- [ ] **Task 4 (Major - Capture Harness):** Update capture script to target and bring plugin303 standalone window into focus before screen capture.
 
 ---
 
@@ -118,4 +107,4 @@ Visual QA inspection was conducted across all three GUI sections against the des
    Re-run screenshot inspection harness (`gui-visual-qa-loop`) and verify:
    - `overall_score >= 95.0`
    - `spec_compliance == true`
-   - All panels pass visual inspection without text truncation, layout collapse, or alignment defects.
+   - All header branding and knob value readouts pass visual inspection.

@@ -139,14 +139,15 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 Stroke::new(2.5_f32, theme::KNOB_POINTER),
             );
 
-            // Human-readable formatted value readout below
+            // Human-readable formatted value readout below (with physical units)
             let raw_str = self.param.to_string();
             let value_str = if let Ok(f) = raw_str.parse::<f32>() {
                 if self.label.contains("CUTOFF") {
-                    if f >= 1000.0 {
-                        format!("{:.1} kHz", f / 1000.0)
+                    let hz = 300.0 * (15000.0 / 300.0_f32).powf(f.clamp(0.0, 1.0));
+                    if hz >= 1000.0 {
+                        format!("{:.1} kHz", hz / 1000.0)
                     } else {
-                        format!("{:.0} Hz", f)
+                        format!("{:.0} Hz", hz)
                     }
                 } else if self.label.contains("RESONANCE")
                     || self.label.contains("ENV MOD")
@@ -155,6 +156,10 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     || self.label.contains("MIX")
                     || self.label.contains("DRIVE")
                     || self.label.contains("RESO")
+                    || self.label.contains("PW")
+                    || self.label.contains("VOL")
+                    || self.label.contains("DRIFT")
+                    || self.label.contains("AGE")
                 {
                     if f <= 1.0 && f >= 0.0 {
                         format!("{:.0}%", f * 100.0)
@@ -163,13 +168,19 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     } else {
                         format!("{:.1}%", f)
                     }
-                } else if self.label.contains("DECAY") || self.label.contains("GLIDE") {
-                    if f >= 1000.0 {
-                        format!("{:.2} s", f / 1000.0)
+                } else if self.label.contains("DECAY") {
+                    let ms = 200.0 + f.clamp(0.0, 1.0) * 1800.0;
+                    if ms >= 1000.0 {
+                        format!("{:.2} s", ms / 1000.0)
                     } else {
-                        format!("{:.0} ms", f)
+                        format!("{:.0} ms", ms)
                     }
-                } else if self.label.contains("TUNING") || self.label.contains("DET") {
+                } else if self.label.contains("GLIDE") {
+                    let ms = f.clamp(0.0, 1.0) * 500.0;
+                    format!("{:.0} ms", ms)
+                } else if self.label.contains("TUNING") {
+                    format!("{:+.0} ct", f)
+                } else if self.label.contains("DET") {
                     format!("{:+.1} st", f)
                 } else if self.label.contains("TEMPO") {
                     format!("{:.0} BPM", f)
