@@ -126,13 +126,6 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             let label_y = center.y + self.radius + 10.0;
             let label_pos = pos2(rect.center().x, label_y);
             painter.text(
-                pos2(label_pos.x + 0.3, label_pos.y),
-                nih_plug_egui::egui::Align2::CENTER_CENTER,
-                self.label.to_uppercase(),
-                FontId::new(9.0, FontFamily::Proportional),
-                theme::TEXT_PRIMARY,
-            );
-            painter.text(
                 label_pos,
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 self.label.to_uppercase(),
