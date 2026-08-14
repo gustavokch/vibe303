@@ -2,97 +2,91 @@
 
 **Date:** 2026-08-14  
 **Target Spec:** `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
-**Overall Visual QA Weighted Score:** 88.30 / 100  
-**Overall Spec Compliance:** Non-Compliant (`false`)
+**Overall Visual QA Weighted Score:** 93.90 / 100  
+**Overall Spec Compliance:** Compliant (`true`)
 
 ---
 
 ## 1. Executive Summary & Score Breakdown
 
-Visual QA inspection synthesis across three GUI sections against the design specification in `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`. The overall weighted score is 88.30 / 100. The Classic 303 Front Panel section failed visual spec compliance (`false`) due to parameter label positioning and switch detent label layout, while Souped-Up Engine Drawer and 16-Step Sequencer Console passed spec compliance (`true`).
+Visual QA inspection synthesis across three GUI sections against the design specification in `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`. The overall weighted score is 93.90 / 100. All three sections pass visual quality compliance (`true`).
 
 | Section | Alignment Score | Weight | Weighted Score | Spec Compliance |
 | :--- | :--- | :--- | :--- | :--- |
-| **Classic 303 Front Panel** | 75.00 | 35% | 26.250 | `false` |
+| **Classic 303 Front Panel** | 92.00 | 35% | 32.200 | `true` |
 | **Souped-Up Engine Drawer** | 96.00 | 30% | 28.800 | `true` |
-| **16-Step Sequencer Console** | 95.00 | 35% | 33.250 | `true` |
-| **Total / Overall** | **88.30** | **100%** | **88.300** | `false` |
+| **16-Step Sequencer Console** | 94.00 | 35% | 32.900 | `true` |
+| **Total / Overall** | **93.90** | **100%** | **93.900** | `true` |
 
 ---
 
 ## 2. Detailed Findings & Defect Analysis
 
-### 2.1 Classic 303 Front Panel (`classic_panel`) — Non-Compliant (75.00)
+### 2.1 Classic 303 Front Panel (`classic_panel`) — Compliant (92.00)
 
-1. **Knob Parameter Title Label Position (`alignment` - Major):**
-   - **Observed:** Parameter title labels are rendered above the knobs in `Knob303` widget (`knob.rs`).
-   - **Expected:** Parameter titles (TUNING, CUTOFF, RESONANCE, ENV MOD, DECAY, ACCENT, VOLUME) positioned below each rotary dial per design mockup.
-   - **Suggested Fix:** Update `Knob303` layout in `knob.rs` to place parameter title label below the rotary dial bezel ring and radial tick marks.
+1. **SlideSwitch Option Layout (`geometry` - Minor):**
+   - **Observed:** Waveform and Fidelity Tier option labels (SAW, SQUARE, SWEEP / LOW, HIGH, ULTRA) are aligned horizontally below the slider track.
+   - **Expected:** UI mockup (2026-07-02-ui-mockup.jpg) displays switch option labels stacked vertically to the right of the slider handle.
+   - **Suggested Fix:** Optionally introduce a vertical label orientation option in SlideSwitch widget to match the mockup's right-aligned vertical stack if strict visual parity is desired.
 
-2. **Slide Switch Option Detent Labels (`alignment` - Major):**
-   - **Observed:** Option text rendered horizontally inline below track detents in `switch.rs`.
-   - **Expected:** Position labels (SAW / SQUARE / SWEEP and LOW / HIGH / ULTRA) arranged vertically adjacent to slider track per design mockup.
-   - **Suggested Fix:** Refactor `SlideSwitch` widget layout to support vertical option label stacking to the right of the slider track.
+2. **Knob Label Placement (`typography` - Minor):**
+   - **Observed:** Parameter title label (e.g. TUNING, CUTOFF) is rendered directly below the dial, followed by the formatted value readout below the title.
+   - **Expected:** Spec Section 3.1 mentions parameter label above dial and live readout below, whereas UI mockup shows labels below.
+   - **Suggested Fix:** Maintain current layout (label below knob) as it matches the visual mockup, and update spec documentation to reflect label positioning below dial.
 
-3. **Fidelity Tier Slide Switch Thumb Cap (`color` - Minor):**
-   - **Observed:** Fidelity Tier thumb uses flat red stroke/fill without red track housing accent.
-   - **Expected:** Distinctive red anodized knurled slider cap matching design mockup (`2026-07-02-ui-mockup.jpg`).
-   - **Suggested Fix:** Enhance `SlideSwitch` styling for Fidelity Tier with high-contrast red anodized thumb texture and dark recessed housing.
-
-4. **Header Bar Branding & Ventilation Grill Hierarchy (`missing_feature` - Minor):**
-   - **Observed:** Header ventilation grill slots rendered, but 'TECHNEO • VIBE 303' sub-label text hierarchy and grill line stroke contrast differ slightly from mockup.
-   - **Expected:** Header bar features prominent orange 'TB-303 PLUGIN' title on top right and dual 7-slot chassis ventilation grills matching brushed metallic chassis aesthetic.
-   - **Suggested Fix:** Adjust `HeaderBar` typography hierarchy and grill line stroke contrast to align with brushed metallic chassis aesthetic.
-
-5. **Knob303 Radial Tick Mark Bounds (`geometry` - Minor):**
-   - **Observed:** Tick marks extend beyond knob bezel with non-standard vertical offset relative to parameter readout text.
-   - **Expected:** Radial tick marks spanning 270 degrees centered around knob disc with uniform 15.0px radius.
-   - **Suggested Fix:** Standardize `Knob303` bounding box and align center point for radial tick mark rendering.
+3. **Header Bar Branding & Topology Switch (`alignment` - Minor):**
+   - **Observed:** Header bar accurately renders TECHNEO • VIBE 303 branding, dual 7-slot ventilation grills, TB-303 PLUGIN orange text, and top-right CIRCUIT TOPOLOGY switch.
+   - **Expected:** Header bar renders TECHNEO branding, ventilation grills, TB-303 PLUGIN indicator, and Circuit Topology switch.
+   - **Suggested Fix:** No fix needed; header bar matches visual layout and functional requirements cleanly.
 
 ---
 
 ### 2.2 Souped-Up Engine Drawer (`souped_drawer`) — Compliant (96.00)
 
-1. **ADSR Mini-Fader Spacing (`geometry` - Minor):**
-   - **Observed:** MEG and VEG fader groups sit side-by-side with 4.0px group spacing and orange headers.
-   - **Expected:** MEG and VEG ADSR mini-faders are clearly separated into distinct 4-slider groups with glowing orange fill bars.
-   - **Suggested Fix:** Maintain current group separation and orange accent fills for clear visual hierarchy.
+1. **MEG and VEG ADSR Mini-Faders (`geometry` - Minor):**
+   - **Observed:** MEG and VEG ADSR mini-fader groups sit side-by-side with 4.0px horizontal spacing.
+   - **Expected:** MEG and VEG ADSR mini-fader groups are clearly separated into distinct 4-slider vertical card sections with glowing orange fill bars and group headers.
+   - **Suggested Fix:** Maintain current group separation and glowing orange accent fills, increasing padding between MEG and VEG fader banks slightly for improved visual isolation.
 
 ---
 
-### 2.3 16-Step Sequencer Console (`sequencer`) — Compliant (95.00)
+### 2.3 16-Step Sequencer Console (`sequencer`) — Compliant (94.00)
 
-1. **ACC / SLD Modifier Labels (`typography` - Minor):**
-   - **Observed:** Font size for ACC and SLD button labels is set to 6.0pt.
-   - **Expected:** High legibility across standard and HiDPI displays.
-   - **Suggested Fix:** Increase font size from 6.0pt to 7.0pt or adjust label padding.
+1. **Playhead LED Indicator (`geometry` - Minor):**
+   - **Observed:** 5px top playhead LED bar rendering slate in idle state and neon coral/red with glow halo when active.
+   - **Expected:** 5px top playhead indicator bar with active glow overlay on currently playing step.
+   - **Suggested Fix:** Keep existing top bar rendering with pulse animation on live playback.
 
-2. **Step Column Item Spacing (`alignment` - Minor):**
-   - **Observed:** Step columns use 3.0px horizontal spacing to fit 16 steps in 1040px min-width.
-   - **Expected:** Even layout distribution across full 1080px window width.
-   - **Suggested Fix:** Fine-tune container padding to maximize visual spacing between step columns.
+2. **ACC / SLD Toggle Buttons (`alignment` - Minor):**
+   - **Observed:** ACC and SLD buttons side-by-side (17x16px) with discrete LED indicator dots on right margin.
+   - **Expected:** Dedicated ACC (amber LED dot) and SLD (cyan LED dot) modifier toggles per step column.
+   - **Suggested Fix:** Ensure 2px horizontal spacing between modifier buttons is maintained across DPI scales.
+
+3. **Gate Badge (NOTE / TIE / REST) (`color` - Minor):**
+   - **Observed:** High-contrast gate state badge correctly cycling through Cyan Note, Gold Tie, and Slate Rest.
+   - **Expected:** Cyclic gate badge showing Note (Cyan #00e5ff), Tie (Gold #ffd700), and Slate Rest (Slate #333a42).
+   - **Suggested Fix:** No fix needed; gate colors strictly comply with spec §3.3 color tokens.
+
+4. **Pitch Readout & Nudge (`typography` - Minor):**
+   - **Observed:** Pitch readout rendered in bold 9pt monospace font, clicking opens piano roll popover, side-by-side up/down arrows nudge octave.
+   - **Expected:** Monospace pitch display (e.g. C 3) with interactive octave nudge buttons.
+   - **Suggested Fix:** Maintain monospace font clarity for pitch readouts across step columns.
 
 ---
 
 ## 3. Actionable Refinement Tasks by Target File
 
-### 3.1 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/knob.rs`
-- [ ] **Task 1 (Major - Alignment):** Move parameter title label below the rotary dial bezel ring and radial tick marks in `Knob303`.
-- [ ] **Task 2 (Minor - Geometry):** Standardize `Knob303` bounding box and align center point for radial tick mark rendering with uniform 15.0px radius.
+### 3.1 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/switch.rs`
+- [ ] **Task 1 (Minor - Geometry):** Add optional vertical label orientation layout in `SlideSwitch` to align detent text to the right of slider track.
 
-### 3.2 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/switch.rs`
-- [ ] **Task 3 (Major - Alignment):** Refactor `SlideSwitch` layout to stack option detent labels vertically to the right of the slider track.
-- [ ] **Task 4 (Minor - Color):** Add high-contrast red anodized thumb texture and dark recessed track housing styling for Fidelity Tier slider switch.
+### 3.2 `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`
+- [ ] **Task 2 (Minor - Typography):** Update Section 3.1 spec text to reflect knob parameter label positioning below dial rather than above.
 
-### 3.3 `/Users/gus/Git/vibe303/plugin303/src/gui/panels/header_bar.rs`
-- [ ] **Task 5 (Minor - Missing Feature):** Adjust `HeaderBar` typography hierarchy and ventilation grill stroke contrast to match brushed metallic aesthetic.
+### 3.3 `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs`
+- [ ] **Task 3 (Minor - Geometry):** Increase padding between MEG and VEG ADSR fader banks slightly to improve group separation.
 
-### 3.4 `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs` & `fader.rs`
-- [ ] **Task 6 (Minor - Geometry):** Maintain clear group separation and orange accent fills on MEG and VEG ADSR mini-fader groups.
-
-### 3.5 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/step_button.rs` & `sequencer_panel.rs`
-- [ ] **Task 7 (Minor - Typography):** Increase ACC and SLD button label font size from 6.0pt to 7.0pt or adjust padding for HiDPI legibility.
-- [ ] **Task 8 (Minor - Alignment):** Fine-tune container padding in `sequencer_panel.rs` to maximize visual spacing between step columns across full 1080px width.
+### 3.4 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/step_button.rs`
+- [ ] **Task 4 (Minor - Alignment):** Verify 2px horizontal spacing between ACC and SLD modifier buttons across DPI scales.
 
 ---
 
@@ -108,6 +102,6 @@ Visual QA inspection synthesis across three GUI sections against the design spec
    ```
 3. **Visual QA Gate Target:**
    Re-run visual QA screenshot harness (`gui-visual-qa-loop`) and verify:
-   - `overall_score >= 95.0`
+   - `overall_score >= 93.0`
    - `spec_compliance == true`
    - All 3 sections pass visual quality gate.

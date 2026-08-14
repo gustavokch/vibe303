@@ -66,7 +66,7 @@ plugin303/src/
 - **Geometry & Rendering:**
   - Outer bezel ring with radial tick marks spanning a 270° sweep (from 135° to 405° / 7 o'clock to 5 o'clock).
   - Cylindrical brushed-aluminum knob disc with top bevel and an engraved pointer line.
-  - Parameter label above (bold uppercase) and live formatted value readout below.
+  - Parameter label below the dial (bold uppercase) and live formatted engineering unit readout directly underneath.
 - **Gesture Handling & DAW Automation:**
   - Vertical drag gesture with fine-tune modifier (`Shift` key reduces speed 5×).
   - Double-click snaps back to default parameter value.
