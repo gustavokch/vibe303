@@ -175,3 +175,111 @@ fn test_sequencer_direct_vs_decoupled_mode() {
     assert_eq!(compiled_decoupled.timing[2], TimeEntry::Note);
 }
 
+#[test]
+fn test_sequencer_multiblock_chunked_processing() {
+    let mut seq = Sequencer::new(48000.0);
+    seq.set_running(true);
+    let mut pat = Pattern {
+        pitches: [PitchEntry::default(); 16],
+        timing: [TimeEntry::Rest; 16],
+        num_steps: 4,
+    };
+    pat.timing[0] = TimeEntry::Note;
+    pat.timing[1] = TimeEntry::Note;
+    pat.timing[2] = TimeEntry::Note;
+    pat.timing[3] = TimeEntry::Note;
+
+    let chunk_size = 512;
+    let total_samples = 24000; // 4 steps at 120 bpm = 0.5s = 24000 samples (6000 samples per step)
+    let mut current_sample: u64 = 0;
+    let mut all_events = Vec::new();
+
+    while current_sample < total_samples {
+        let mut events = [(0, SeqEvent::GateOff); 64];
+        let mut count = 0;
+        seq.process_block(
+            &pat,
+            current_sample,
+            chunk_size,
+            &mut events,
+            &mut count,
+            120.0,
+            Timebase::Straight,
+            false,
+        );
+
+        for i in 0..count {
+            let (offset, ev) = events[i];
+            let sample_time = current_sample + offset as u64;
+            if sample_time < total_samples {
+                all_events.push((sample_time, ev));
+            }
+        }
+        current_sample += chunk_size as u64;
+    }
+
+    // 4 notes: 4 triggers + 4 gate offs = 8 events within 24000 samples
+    assert_eq!(all_events.len(), 8);
+    assert_eq!(all_events[0].0, 0); // Step 0 Trigger
+    assert_eq!(all_events[1].0, 3000); // Step 0 GateOff (50% duty = 3000 samples)
+    assert_eq!(all_events[2].0, 6000); // Step 1 Trigger
+    assert_eq!(all_events[3].0, 9000); // Step 1 GateOff
+    assert_eq!(all_events[4].0, 12000); // Step 2 Trigger
+    assert_eq!(all_events[5].0, 15000); // Step 2 GateOff
+    assert_eq!(all_events[6].0, 18000); // Step 3 Trigger
+    assert_eq!(all_events[7].0, 21000); // Step 3 GateOff
+}
+
+#[test]
+fn test_sequencer_transport_jump_and_loop_sync() {
+    let mut seq = Sequencer::new(48000.0);
+    seq.set_running(true);
+
+    // 120 bpm, straight timebase => 6000 samples per step.
+    // Jump to 9000 samples (Step 1, exactly halfway through step).
+    seq.sync_to_transport(9000, 0, 120.0, Timebase::Straight, 16);
+
+    let pat = Pattern {
+        pitches: [PitchEntry::default(); 16],
+        timing: [TimeEntry::Note; 16],
+        num_steps: 16,
+    };
+
+    let mut events = [(0, SeqEvent::GateOff); 64];
+    let mut count = 0;
+    // Process block 1 from 0 to 4000. Next step (Step 2) is at sample 3000 relative to jump point.
+    seq.process_block(
+        &pat,
+        0,
+        4000,
+        &mut events,
+        &mut count,
+        120.0,
+        Timebase::Straight,
+        false,
+    );
+
+    assert_eq!(count, 1); // Step 2 Trigger at 3000
+    assert_eq!(events[0].0, 3000);
+
+    // Process block 2 from 4000 to 8000. GateOff for Step 2 is at 6000 (offset 2000).
+    // Step 3 Trigger is at 9000 (outside this block).
+    let mut events2 = [(0, SeqEvent::GateOff); 64];
+    let mut count2 = 0;
+    seq.process_block(
+        &pat,
+        4000,
+        4000,
+        &mut events2,
+        &mut count2,
+        120.0,
+        Timebase::Straight,
+        false,
+    );
+
+    assert_eq!(count2, 1);
+    assert_eq!(events2[0].0, 2000);
+    assert_eq!(events2[0].1, SeqEvent::GateOff);
+}
+
+

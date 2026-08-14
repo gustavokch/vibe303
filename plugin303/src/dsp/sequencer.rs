@@ -42,33 +42,7 @@ pub enum SeqEvent {
     GateOff,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Timebase {
-    #[default]
-    Straight,
-    Triplet,
-}
-
-impl Timebase {
-    pub fn ticks_per_step(self) -> f64 {
-        match self {
-            Self::Straight => 6.0,
-            Self::Triplet => 8.0,
-        }
-    }
-    pub fn gate_on_ticks(self) -> f64 {
-        match self {
-            Self::Straight => 3.0,
-            Self::Triplet => 5.0,
-        }
-    }
-    pub fn steps_per_beat(self) -> f64 {
-        match self {
-            Self::Straight => 4.0,
-            Self::Triplet => 8.0 / 3.0,
-        }
-    }
-}
+pub use crate::params::Timebase;
 
 pub struct Sequencer {
     sample_rate: f64,
@@ -123,6 +97,33 @@ impl Sequencer {
 
     pub fn reset_transport(&mut self, _pos_beats: f64) {
         self.next_step_sample = 0.0;
+    }
+
+    pub fn sync_to_transport(
+        &mut self,
+        pos_samples: i64,
+        block_start: u64,
+        bpm: f64,
+        timebase: Timebase,
+        num_steps: u8,
+    ) {
+        let num_steps = (num_steps as usize).clamp(1, 16);
+        let step_len = self.samples_per_step(bpm, timebase);
+        let loop_len = step_len * (num_steps as f64);
+        if loop_len <= 0.0 {
+            return;
+        }
+
+        let pos = pos_samples.max(0) as f64;
+        let phase_in_loop = pos.rem_euclid(loop_len);
+        self.step_idx = ((phase_in_loop / step_len).floor() as usize) % num_steps;
+        self.pitch_idx = self.step_idx;
+        let sample_into_step = phase_in_loop - (self.step_idx as f64 * step_len);
+
+        self.next_step_sample = block_start as f64 + (step_len - sample_into_step);
+        self.gate_off_sample = None;
+        self.prev_note_slide = false;
+        self.prev_was_sounding = false;
     }
 
     fn samples_per_step(&self, bpm: f64, timebase: Timebase) -> f64 {
