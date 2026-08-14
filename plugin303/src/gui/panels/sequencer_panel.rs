@@ -3,6 +3,7 @@ use nih_plug_egui::egui::{Color32, CornerRadius, Frame, Margin, Ui};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::gui::theme;
+use crate::gui::widgets::piano_roll_popup::render_piano_roll_popup;
 use crate::gui::widgets::step_button::render_step_strip;
 use crate::gui::widgets::{Knob303, SlideSwitch};
 use crate::params::Plugin303Params;
@@ -27,12 +28,12 @@ pub fn render_sequencer(
             ui.horizontal(|ui| {
                 // Left Transport & Config Column
                 ui.vertical(|ui| {
-                    ui.set_width(135.0);
+                    ui.set_width(100.0);
 
                     ui.label(
-                        nih_plug_egui::egui::RichText::new("16-STEP SEQUENCER CONSOLE")
+                        nih_plug_egui::egui::RichText::new("16-STEP SEQUENCER")
                             .font(nih_plug_egui::egui::FontId::new(
-                                11.0,
+                                10.5,
                                 nih_plug_egui::egui::FontFamily::Proportional,
                             ))
                             .strong()
@@ -110,17 +111,24 @@ pub fn render_sequencer(
                             let is_active = active_step as usize == step_idx;
                             let in_active_range = step_idx < num_steps;
 
-                            ui.group(|ui| {
-                                ui.add_enabled_ui(in_active_range, |ui| {
-                                    render_step_strip(
-                                        ui,
-                                        step_idx,
-                                        &mut pattern_guard.steps[step_idx],
-                                        is_active,
-                                    );
+                            Frame::new()
+                                .fill(Color32::from_rgb(0x18, 0x1b, 0x20))
+                                .stroke(theme::border_stroke())
+                                .corner_radius(CornerRadius::same(3))
+                                .inner_margin(Margin::symmetric(2, 3))
+                                .show(ui, |ui| {
+                                    ui.add_enabled_ui(in_active_range, |ui| {
+                                        render_step_strip(
+                                            ui,
+                                            step_idx,
+                                            &mut pattern_guard.steps[step_idx],
+                                            is_active,
+                                        );
+                                    });
                                 });
-                            });
                         }
+
+                        render_piano_roll_popup(ui.ctx(), &mut pattern_guard);
                     }
                 });
             });

@@ -39,8 +39,8 @@ pub fn create_editor(
                     ui.add_space(6.0);
 
                     // Top Split: Classic Panel (Left) & Souped-Up Drawer (Right)
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(8.0, 8.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(8.0, 0.0);
                         panels::classic_panel::render_classic(ui, &params, setter);
                         panels::souped_panel::render_souped(ui, &params, setter);
                     });

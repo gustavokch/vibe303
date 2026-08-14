@@ -34,13 +34,13 @@ impl<'a, P: Param> MiniFader<'a, P> {
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
         let width = 22.0;
-        let total_height = self.height + 24.0;
+        let total_height = self.height + 28.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
         let normalized = self.param.unmodulated_normalized_value();
         let track_top = rect.top() + 14.0;
-        let track_bottom = rect.bottom() - 10.0;
+        let track_bottom = rect.bottom() - 14.0;
         let track_height = track_bottom - track_top;
 
         // Interaction
@@ -133,17 +133,25 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 Stroke::new(1.0_f32, Color32::BLACK),
             );
 
-            // Readout / value below
+            // Readout / value below (with generous clearance and explicit unit formatting)
             let val_str = self.param.to_string();
-            let short_val = if val_str.len() > 5 {
-                &val_str[..5]
+            let formatted_val = if let Ok(f) = val_str.parse::<f32>() {
+                if self.label == "S" {
+                    format!("{:.0}%", f * 100.0)
+                } else if f >= 1000.0 {
+                    format!("{:.1}s", f / 1000.0)
+                } else {
+                    format!("{:.0}ms", f)
+                }
+            } else if val_str.len() > 5 {
+                val_str[..5].to_string()
             } else {
-                &val_str
+                val_str
             };
             painter.text(
-                pos2(rect.center().x, rect.bottom() - 3.0),
+                pos2(rect.center().x, rect.bottom() - 5.0),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
-                short_val,
+                formatted_val,
                 FontId::new(8.0, FontFamily::Monospace),
                 theme::TEXT_MUTED,
             );

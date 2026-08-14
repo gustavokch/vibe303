@@ -17,13 +17,13 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
             ui.set_min_height(160.0);
-            ui.set_min_width(520.0);
+            ui.set_min_width(580.0);
 
             // Header Row
             ui.horizontal(|ui| {
                 ui.label(
                     nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE DRAWER")
-                        .font(FontId::new(11.0, FontFamily::Proportional))
+                        .font(FontId::new(10.5, FontFamily::Proportional))
                         .strong()
                         .color(if is_accurate {
                             theme::TEXT_MUTED
@@ -34,7 +34,7 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                 if is_accurate {
                     ui.label(
                         nih_plug_egui::egui::RichText::new("(Bypassed in Accurate Mode)")
-                            .font(FontId::new(9.0, FontFamily::Proportional))
+                            .font(FontId::new(8.5, FontFamily::Proportional))
                             .color(theme::TEXT_MUTED),
                     );
                 }
@@ -42,86 +42,34 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
 
             ui.add_space(4.0);
 
-            if is_accurate {
-                // Dimmed / Ghosted Accurate Mode Overlay
-                let available_rect = ui.available_rect_before_wrap();
-                let painter = ui.painter();
-
-                // 30% opacity background tint
-                painter.rect_filled(
-                    available_rect,
-                    4.0,
-                    Color32::from_rgba_premultiplied(0x10, 0x14, 0x1a, 0xc0),
-                );
-
-                ui.vertical_centered(|ui| {
-                    ui.add_space(32.0);
-                    ui.label(
-                        nih_plug_egui::egui::RichText::new(
-                            "ACCURATE MODE ACTIVE — SOUPED-UP ENGINE BYPASSED",
-                        )
-                        .font(FontId::new(11.0, FontFamily::Proportional))
-                        .strong()
-                        .color(theme::TEXT_SECONDARY),
-                    );
-                    ui.label(
-                        nih_plug_egui::egui::RichText::new(
-                            "Dual oscillators, custom filter slopes, analog drift, and ADSR faders are disabled in 1:1 Accurate emulation.",
-                        )
-                        .font(FontId::new(9.0, FontFamily::Proportional))
-                        .color(theme::TEXT_MUTED),
-                    );
-                    ui.add_space(10.0);
-
-                    let enable_btn = nih_plug_egui::egui::Button::new(
-                        nih_plug_egui::egui::RichText::new("⚡ SWITCH TO FUN TOPOLOGY")
-                            .font(FontId::new(10.0, FontFamily::Proportional))
-                            .strong()
-                            .color(Color32::BLACK),
-                    )
-                    .fill(theme::SOUPED_ORANGE)
-                    .min_size(vec2(180.0, 24.0));
-
-                    if ui.add(enable_btn).clicked() {
-                        setter.begin_set_parameter(&params.topology);
-                        setter.set_parameter_normalized(&params.topology, 1.0);
-                        setter.end_set_parameter(&params.topology);
-
-                        setter.begin_set_parameter(&params.reso_comp);
-                        setter.set_parameter_normalized(&params.reso_comp, 0.5);
-                        setter.end_set_parameter(&params.reso_comp);
-                    }
-                });
-            } else {
-                // Interactive Fun Mode Controls
+            let content_response = ui.add_enabled_ui(!is_accurate, |ui| {
+                // Controls layout (rendered normally in Fun mode, ghosted/disabled in Accurate mode)
                 ui.horizontal(|ui| {
                     // Left Column: Dials & Slopes
                     ui.vertical(|ui| {
-                        // Section 1: Dual Osc & Drive
+                        // Section 1: Dual Osc & Sub
                         ui.label(
-                            nih_plug_egui::egui::RichText::new("OSCILLATOR & DRIVE")
+                            nih_plug_egui::egui::RichText::new("OSCILLATOR")
                                 .font(FontId::new(8.5, FontFamily::Proportional))
                                 .strong()
-                                .color(theme::TEXT_MUTED),
+                                .color(if is_accurate { theme::TEXT_MUTED } else { theme::TEXT_SECONDARY }),
                         );
                         ui.horizontal(|ui| {
-                            ui.add(Knob303::new(&params.osc1_pitch, setter, "OSC1 DET", 13.0));
-                            ui.add(Knob303::new(&params.osc2_pitch, setter, "OSC2 DET", 13.0));
-                            ui.add(Knob303::new(&params.osc2_vol, setter, "OSC2 MIX", 13.0));
-                            ui.add(Knob303::new(&params.osc1_pw, setter, "OSC1 PW", 13.0));
-                            ui.add(Knob303::new(&params.sub_vol, setter, "SUB VOL", 13.0));
-                            ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 13.0));
-                            ui.add(Knob303::new(&params.glide, setter, "GLIDE", 13.0));
+                            ui.add(Knob303::new(&params.osc1_pitch, setter, "OSC1 DET", 12.0));
+                            ui.add(Knob303::new(&params.osc2_pitch, setter, "OSC2 DET", 12.0));
+                            ui.add(Knob303::new(&params.osc2_vol, setter, "OSC2 MIX", 12.0));
+                            ui.add(Knob303::new(&params.osc1_pw, setter, "OSC1 PW", 12.0));
+                            ui.add(Knob303::new(&params.sub_vol, setter, "SUB VOL", 12.0));
                         });
 
-                        ui.add_space(4.0);
+                        ui.add_space(3.0);
 
-                        // Section 2: Filter Slopes & Analog Wear
+                        // Section 2: Filter Slopes, Drive & Analog Drift
                         ui.label(
                             nih_plug_egui::egui::RichText::new("FILTER & ANALOG DRIFT")
                                 .font(FontId::new(8.5, FontFamily::Proportional))
                                 .strong()
-                                .color(theme::TEXT_MUTED),
+                                .color(if is_accurate { theme::TEXT_MUTED } else { theme::TEXT_SECONDARY }),
                         );
                         ui.horizontal(|ui| {
                             ui.add(SlideSwitch::new(
@@ -130,10 +78,13 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                 "VCF TAPS",
                                 &["2-POLE", "3-POLE", "4-POLE"],
                             ));
-                            ui.add_space(6.0);
-                            ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 12.0));
-                            ui.add(Knob303::new(&params.comp_age, setter, "AGE", 12.0));
-                            ui.add(Knob303::new(&params.reso_comp, setter, "RESO COMP", 12.0));
+                            ui.add_space(4.0);
+                            ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 11.5));
+                            ui.add(Knob303::new(&params.glide, setter, "GLIDE", 11.5));
+                            ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.5));
+                            ui.add(Knob303::new(&params.comp_age, setter, "AGE", 11.5));
+                            ui.add(Knob303::new(&params.reso_comp, setter, "RESO COMP", 11.5));
+                            ui.add_space(4.0);
                             ui.add(SlideSwitch::new(
                                 &params.tolerance,
                                 setter,
@@ -156,7 +107,7 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                     nih_plug_egui::egui::RichText::new("MEG ADSR")
                                         .font(FontId::new(8.5, FontFamily::Proportional))
                                         .strong()
-                                        .color(theme::SOUPED_ORANGE),
+                                        .color(if is_accurate { theme::TEXT_MUTED } else { theme::SOUPED_ORANGE }),
                                 );
                                 ui.horizontal(|ui| {
                                     ui.add(MiniFader::new(
@@ -198,7 +149,7 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                     nih_plug_egui::egui::RichText::new("VEG ADSR")
                                         .font(FontId::new(8.5, FontFamily::Proportional))
                                         .strong()
-                                        .color(theme::ACCENT_AMBER),
+                                        .color(if is_accurate { theme::TEXT_MUTED } else { theme::SOUPED_ORANGE }),
                                 );
                                 ui.horizontal(|ui| {
                                     ui.add(MiniFader::new(
@@ -206,28 +157,28 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                         setter,
                                         "A",
                                         45.0,
-                                        theme::ACCENT_AMBER,
+                                        theme::SOUPED_ORANGE,
                                     ));
                                     ui.add(MiniFader::new(
                                         &params.veg_decay_adj,
                                         setter,
                                         "D",
                                         45.0,
-                                        theme::ACCENT_AMBER,
+                                        theme::SOUPED_ORANGE,
                                     ));
                                     ui.add(MiniFader::new(
                                         &params.veg_sustain,
                                         setter,
                                         "S",
                                         45.0,
-                                        theme::ACCENT_AMBER,
+                                        theme::SOUPED_ORANGE,
                                     ));
                                     ui.add(MiniFader::new(
                                         &params.veg_release,
                                         setter,
                                         "R",
                                         45.0,
-                                        theme::ACCENT_AMBER,
+                                        theme::SOUPED_ORANGE,
                                     ));
                                 });
                             });
@@ -245,6 +196,92 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                         });
                     });
                 });
+            });
+
+            if is_accurate {
+                // Dimmed / Ghosted Accurate Mode Overlay over controls
+                let overlay_rect = content_response.response.rect;
+                let visible_bounds = ui.min_rect();
+
+                let banner_width = 360.0;
+                let banner_height = 82.0;
+                let banner_rect = nih_plug_egui::egui::Rect::from_center_size(
+                    visible_bounds.center(),
+                    vec2(banner_width, banner_height),
+                );
+
+                let btn_rect = nih_plug_egui::egui::Rect::from_center_size(
+                    nih_plug_egui::egui::pos2(banner_rect.center().x, banner_rect.bottom() - 20.0),
+                    vec2(180.0, 20.0),
+                );
+                let btn_resp = ui.allocate_rect(btn_rect, nih_plug_egui::egui::Sense::click());
+                let btn_hovered = btn_resp.hovered();
+
+                let painter = ui.painter();
+
+                // 30% opacity dark overlay tint (preserves visibility of ghosted controls)
+                painter.rect_filled(
+                    overlay_rect,
+                    4.0,
+                    Color32::from_rgba_premultiplied(0x0e, 0x11, 0x16, 0x4d),
+                );
+                painter.rect_stroke(
+                    overlay_rect,
+                    4.0,
+                    nih_plug_egui::egui::Stroke::new(1.0_f32, theme::PANEL_BORDER),
+                    nih_plug_egui::egui::StrokeKind::Inside,
+                );
+
+                painter.rect_filled(
+                    banner_rect,
+                    6.0,
+                    Color32::from_rgb(0x16, 0x1a, 0x22),
+                );
+                painter.rect_stroke(
+                    banner_rect,
+                    6.0,
+                    nih_plug_egui::egui::Stroke::new(1.5_f32, theme::SOUPED_ORANGE),
+                    nih_plug_egui::egui::StrokeKind::Inside,
+                );
+
+                painter.text(
+                    nih_plug_egui::egui::pos2(banner_rect.center().x, banner_rect.top() + 16.0),
+                    nih_plug_egui::egui::Align2::CENTER_CENTER,
+                    "ACCURATE MODE ACTIVE — SOUPED-UP ENGINE BYPASSED",
+                    FontId::new(10.5, FontFamily::Proportional),
+                    theme::TEXT_PRIMARY,
+                );
+
+                painter.text(
+                    nih_plug_egui::egui::pos2(banner_rect.center().x, banner_rect.top() + 34.0),
+                    nih_plug_egui::egui::Align2::CENTER_CENTER,
+                    "Dual oscs, filter slopes, analog drift, and ADSR faders are bypassed in 1:1 emulation.",
+                    FontId::new(8.5, FontFamily::Proportional),
+                    theme::TEXT_MUTED,
+                );
+
+                painter.rect_filled(
+                    btn_rect,
+                    3.0,
+                    if btn_hovered { Color32::from_rgb(0xff, 0x90, 0x28) } else { theme::SOUPED_ORANGE },
+                );
+                painter.text(
+                    btn_rect.center(),
+                    nih_plug_egui::egui::Align2::CENTER_CENTER,
+                    "⚡ SWITCH TO FUN TOPOLOGY",
+                    FontId::new(9.5, FontFamily::Proportional),
+                    Color32::BLACK,
+                );
+
+                if btn_resp.clicked() {
+                    setter.begin_set_parameter(&params.topology);
+                    setter.set_parameter_normalized(&params.topology, 1.0);
+                    setter.end_set_parameter(&params.topology);
+
+                    setter.begin_set_parameter(&params.reso_comp);
+                    setter.set_parameter_normalized(&params.reso_comp, 0.5);
+                    setter.end_set_parameter(&params.reso_comp);
+                }
             }
         });
 }

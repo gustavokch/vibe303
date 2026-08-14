@@ -10,6 +10,7 @@ pub struct SlideSwitch<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> {
     setter: &'a ParamSetter<'a>,
     label: &'a str,
     options: &'a [&'a str],
+    thumb_color: Option<Color32>,
 }
 
 impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> SlideSwitch<'a, T> {
@@ -24,7 +25,13 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> SlideSwitch<'a, T> {
             setter,
             label,
             options,
+            thumb_color: None,
         }
+    }
+
+    pub fn with_thumb_color(mut self, color: Color32) -> Self {
+        self.thumb_color = Some(color);
+        self
     }
 }
 
@@ -126,17 +133,27 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 vec2(thumb_w, 16.0),
             );
 
-            // Silver body & bevel
-            painter.rect_filled(thumb_rect, 2.0, theme::KNOB_BODY_LIGHT);
+            // Sliding carriage (thumb) body & bevel
+            let body_color = self.thumb_color.unwrap_or(theme::KNOB_BODY_LIGHT);
+            let stroke_color = if self.thumb_color.is_some() {
+                Color32::from_rgb(0xff, 0x55, 0x77)
+            } else {
+                theme::KNOB_BEZEL
+            };
+            painter.rect_filled(thumb_rect, 2.0, body_color);
             painter.rect_stroke(
                 thumb_rect,
                 2.0,
-                Stroke::new(1.0_f32, theme::KNOB_BEZEL),
+                Stroke::new(1.2_f32, stroke_color),
                 StrokeKind::Inside,
             );
 
             // Vertical knurling ribs on thumb
-            let rib_color = Color32::from_rgb(0x70, 0x75, 0x82);
+            let rib_color = if self.thumb_color.is_some() {
+                Color32::from_rgb(0xaa, 0x18, 0x2e)
+            } else {
+                Color32::from_rgb(0x70, 0x75, 0x82)
+            };
             let num_ribs = 3;
             for r in 0..num_ribs {
                 let rib_offset = (r as f32 - (num_ribs - 1) as f32 / 2.0) * 3.0;
