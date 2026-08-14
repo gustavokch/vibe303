@@ -13,7 +13,7 @@ pub fn render_classic(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSette
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
             ui.set_min_height(160.0);
-            ui.set_min_width(460.0);
+            ui.set_min_width(430.0);
 
             ui.label(
                 nih_plug_egui::egui::RichText::new("CLASSIC 303 FRONT PANEL")

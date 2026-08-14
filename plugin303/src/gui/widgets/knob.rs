@@ -88,7 +88,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 let tick_angle = start_angle + frac * (end_angle - start_angle);
                 let tick_in = self.radius + 3.0;
                 let is_major = i == 0 || i == (num_ticks - 1) / 2 || i == num_ticks - 1;
-                let tick_out = self.radius + if is_major { 6.5 } else { 5.0 };
+                let tick_out = self.radius + if is_major { 8.0 } else { 6.0 };
 
                 let p1 = pos2(
                     center.x + tick_angle.cos() * tick_in,
@@ -104,7 +104,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 } else {
                     theme::PANEL_BORDER_HIGHLIGHT
                 };
-                let stroke_width = if is_major { 1.2_f32 } else { 0.8_f32 };
+                let stroke_width = if is_major { 1.4_f32 } else { 1.0_f32 };
                 painter.line_segment([p1, p2], Stroke::new(stroke_width, stroke_color));
             }
 
@@ -139,13 +139,55 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 Stroke::new(2.5_f32, theme::KNOB_POINTER),
             );
 
-            // Formatted value readout below
-            let value_str = self.param.to_string();
+            // Human-readable formatted value readout below
+            let raw_str = self.param.to_string();
+            let value_str = if let Ok(f) = raw_str.parse::<f32>() {
+                if self.label.contains("CUTOFF") {
+                    if f >= 1000.0 {
+                        format!("{:.1} kHz", f / 1000.0)
+                    } else {
+                        format!("{:.0} Hz", f)
+                    }
+                } else if self.label.contains("RESONANCE")
+                    || self.label.contains("ENV MOD")
+                    || self.label.contains("ACCENT")
+                    || self.label.contains("VOLUME")
+                    || self.label.contains("MIX")
+                    || self.label.contains("DRIVE")
+                    || self.label.contains("RESO")
+                {
+                    if f <= 1.0 && f >= 0.0 {
+                        format!("{:.0}%", f * 100.0)
+                    } else if f.abs() >= 100.0 {
+                        format!("{:.0}%", f)
+                    } else {
+                        format!("{:.1}%", f)
+                    }
+                } else if self.label.contains("DECAY") || self.label.contains("GLIDE") {
+                    if f >= 1000.0 {
+                        format!("{:.2} s", f / 1000.0)
+                    } else {
+                        format!("{:.0} ms", f)
+                    }
+                } else if self.label.contains("TUNING") || self.label.contains("DET") {
+                    format!("{:+.1} st", f)
+                } else if self.label.contains("TEMPO") {
+                    format!("{:.0} BPM", f)
+                } else if f.abs() >= 100.0 {
+                    format!("{:.0}", f)
+                } else if f.abs() >= 10.0 {
+                    format!("{:.1}", f)
+                } else {
+                    format!("{:.2}", f)
+                }
+            } else {
+                raw_str
+            };
             painter.text(
                 pos2(rect.center().x, rect.bottom() - 5.0),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 value_str,
-                FontId::new(9.0, FontFamily::Monospace),
+                FontId::new(8.5, FontFamily::Monospace),
                 theme::TEXT_PRIMARY,
             );
         }

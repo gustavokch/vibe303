@@ -17,7 +17,7 @@ pub fn render_souped(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
             ui.set_min_height(160.0);
-            ui.set_min_width(520.0);
+            ui.set_min_width(490.0);
 
             // Header Row
             ui.horizontal(|ui| {
