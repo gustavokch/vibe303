@@ -136,7 +136,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             // Sliding carriage (thumb) body & bevel
             let body_color = self.thumb_color.unwrap_or(theme::KNOB_BODY_LIGHT);
             let stroke_color = if self.thumb_color.is_some() {
-                theme::PANEL_BORDER_HIGHLIGHT
+                Color32::from_rgb(0xff, 0x55, 0x77)
             } else {
                 theme::KNOB_BEZEL
             };
@@ -144,13 +144,13 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             painter.rect_stroke(
                 thumb_rect,
                 2.0,
-                Stroke::new(1.0_f32, stroke_color),
+                Stroke::new(1.2_f32, stroke_color),
                 StrokeKind::Inside,
             );
 
             // Vertical knurling ribs on thumb
             let rib_color = if self.thumb_color.is_some() {
-                Color32::from_rgba_premultiplied(0x00, 0x00, 0x00, 0x60)
+                Color32::from_rgb(0xaa, 0x18, 0x2e)
             } else {
                 Color32::from_rgb(0x70, 0x75, 0x82)
             };

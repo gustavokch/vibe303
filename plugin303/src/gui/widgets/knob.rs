@@ -24,10 +24,10 @@ impl<'a, P: Param> Knob303<'a, P> {
 
 impl<'a, P: Param> Widget for Knob303<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let desired_size = vec2(self.radius * 2.0 + 20.0, self.radius * 2.0 + 36.0);
+        let desired_size = vec2(self.radius * 2.0 + 20.0, self.radius * 2.0 + 38.0);
         let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
-        let center = pos2(rect.center().x, rect.top() + self.radius + 16.0);
+        let center = pos2(rect.center().x, rect.top() + self.radius + 6.0);
         let normalized = self.param.unmodulated_normalized_value();
 
         // Interaction
@@ -59,23 +59,6 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
 
-            // Label above (bold uppercase)
-            let label_pos = pos2(rect.center().x, rect.top() + 4.0);
-            painter.text(
-                pos2(label_pos.x + 0.3, label_pos.y),
-                nih_plug_egui::egui::Align2::CENTER_CENTER,
-                self.label.to_uppercase(),
-                FontId::new(9.5, FontFamily::Proportional),
-                theme::TEXT_PRIMARY,
-            );
-            painter.text(
-                label_pos,
-                nih_plug_egui::egui::Align2::CENTER_CENTER,
-                self.label.to_uppercase(),
-                FontId::new(9.5, FontFamily::Proportional),
-                theme::TEXT_PRIMARY,
-            );
-
             // Tick arc (270 degrees: 135 deg to 405 deg)
             let start_angle = 135.0 * PI / 180.0;
             let end_angle = 405.0 * PI / 180.0;
@@ -88,7 +71,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 let tick_angle = start_angle + frac * (end_angle - start_angle);
                 let tick_in = self.radius + 3.0;
                 let is_major = i == 0 || i == (num_ticks - 1) / 2 || i == num_ticks - 1;
-                let tick_out = self.radius + if is_major { 8.0 } else { 6.0 };
+                let tick_out = self.radius + if is_major { 7.5 } else { 5.5 };
 
                 let p1 = pos2(
                     center.x + tick_angle.cos() * tick_in,
@@ -139,7 +122,25 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 Stroke::new(2.5_f32, theme::KNOB_POINTER),
             );
 
-            // Human-readable formatted value readout below (with physical units)
+            // Parameter Title Label below dial
+            let label_y = center.y + self.radius + 10.0;
+            let label_pos = pos2(rect.center().x, label_y);
+            painter.text(
+                pos2(label_pos.x + 0.3, label_pos.y),
+                nih_plug_egui::egui::Align2::CENTER_CENTER,
+                self.label.to_uppercase(),
+                FontId::new(9.0, FontFamily::Proportional),
+                theme::TEXT_PRIMARY,
+            );
+            painter.text(
+                label_pos,
+                nih_plug_egui::egui::Align2::CENTER_CENTER,
+                self.label.to_uppercase(),
+                FontId::new(9.0, FontFamily::Proportional),
+                theme::TEXT_PRIMARY,
+            );
+
+            // Human-readable formatted value readout below title (with physical units)
             let raw_str = self.param.to_string();
             let value_str = if let Ok(f) = raw_str.parse::<f32>() {
                 if self.label.contains("CUTOFF") {
@@ -195,11 +196,11 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 raw_str
             };
             painter.text(
-                pos2(rect.center().x, rect.bottom() - 5.0),
+                pos2(rect.center().x, rect.bottom() - 4.0),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 value_str,
-                FontId::new(8.5, FontFamily::Monospace),
-                theme::TEXT_PRIMARY,
+                FontId::new(8.0, FontFamily::Monospace),
+                theme::TEXT_MUTED,
             );
         }
 
