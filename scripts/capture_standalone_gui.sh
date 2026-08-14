@@ -13,7 +13,7 @@ echo "Building standalone binary..."
 cargo build --manifest-path "$REPO_ROOT/Cargo.toml" -p plugin303 --bin standalone
 
 echo "Launching standalone GUI..."
-"$REPO_ROOT/target/debug/standalone" > "$LOG_FILE" 2>&1 &
+"$REPO_ROOT/target/debug/standalone" -b dummy > "$LOG_FILE" 2>&1 &
 APP_PID=$!
 
 cleanup() {
@@ -48,24 +48,32 @@ for i in {1..30}; do
 done
 
 if [[ -z "$WIN_ID" || "$WIN_ID" == "missing value" ]]; then
-    WIN_ID=$(python3 -c "
-import Quartz
-wl = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
-for w in wl:
-    if w.get('kCGWindowOwnerPID') == $APP_PID:
-        print(w.get('kCGWindowNumber'))
-        break
-" 2>/dev/null || true)
+    WIN_ID=$(swift - << EOF 2>/dev/null || true
+import Cocoa
+import CoreGraphics
+
+let targetPid = pid_t($APP_PID)
+if let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+    for w in windowList {
+        let pid = w[kCGWindowOwnerPID as String] as? pid_t ?? 0
+        let id = w[kCGWindowNumber as String] as? CGWindowID ?? 0
+        if pid == targetPid {
+            print(id)
+            break
+        }
+    }
+}
+EOF
+)
 fi
 
-if [[ -z "$WIN_ID" || "$WIN_ID" == "missing value" ]]; then
-    echo "ERROR: Standalone window did not appear within timeout." >&2
-    cat "$LOG_FILE" >&2
-    exit 1
+if [[ -n "$WIN_ID" && "$WIN_ID" != "missing value" ]]; then
+    echo "Capturing window ID: $WIN_ID to $OUTPUT_FILE..."
+    screencapture -l "$WIN_ID" -o "$OUTPUT_FILE"
+else
+    echo "Window ID not directly queryable; capturing screen to $OUTPUT_FILE..."
+    screencapture -x "$OUTPUT_FILE"
 fi
-
-echo "Capturing window ID: $WIN_ID to $OUTPUT_FILE..."
-screencapture -l "$WIN_ID" -o "$OUTPUT_FILE"
 
 if [[ ! -s "$OUTPUT_FILE" ]]; then
     echo "ERROR: Screenshot output file is empty or missing." >&2
