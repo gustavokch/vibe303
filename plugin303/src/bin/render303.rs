@@ -95,6 +95,7 @@ fn main() {
         0.0, // sweep_pos
         0,   // comp_seed
         0.5, // glide_knob
+        0.0, // reso_comp
     );
 
     if gate_vca {

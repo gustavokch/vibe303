@@ -21,15 +21,18 @@ pub fn render_sequencer(
         .corner_radius(CornerRadius::same(4))
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
+            ui.set_min_height(160.0);
+            ui.set_min_width(1040.0);
+
             ui.horizontal(|ui| {
                 // Left Transport & Config Column
                 ui.vertical(|ui| {
-                    ui.set_width(140.0);
+                    ui.set_width(135.0);
 
                     ui.label(
-                        nih_plug_egui::egui::RichText::new("SEQUENCER")
+                        nih_plug_egui::egui::RichText::new("16-STEP SEQUENCER CONSOLE")
                             .font(nih_plug_egui::egui::FontId::new(
-                                12.0,
+                                11.0,
                                 nih_plug_egui::egui::FontFamily::Proportional,
                             ))
                             .strong()
@@ -70,13 +73,13 @@ pub fn render_sequencer(
                         }
                     });
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                     let sync_val = params.seq_sync.value();
                     ui.add_enabled_ui(!sync_val, |ui| {
-                        ui.add(Knob303::new(&params.seq_tempo, setter, "TEMPO", 13.0));
+                        ui.add(Knob303::new(&params.seq_tempo, setter, "TEMPO", 12.0));
                     });
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                     ui.add(SlideSwitch::new(
                         &params.seq_mode,
                         setter,
@@ -84,7 +87,7 @@ pub fn render_sequencer(
                         &["GRID", "303"],
                     ));
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                     ui.add(SlideSwitch::new(
                         &params.seq_timebase,
                         setter,
@@ -93,35 +96,33 @@ pub fn render_sequencer(
                     ));
                 });
 
+                ui.add_space(4.0);
                 ui.separator();
+                ui.add_space(4.0);
 
-                // 16 Step Columns
-                nih_plug_egui::egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(4.0, 4.0);
-                            if let Ok(mut pattern_guard) = params.pattern.write() {
-                                let num_steps = params.seq_length.value() as usize;
+                // 16 Step Columns in a single continuous row
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(3.0, 0.0);
+                    if let Ok(mut pattern_guard) = params.pattern.write() {
+                        let num_steps = params.seq_length.value() as usize;
 
-                                for step_idx in 0..16 {
-                                    let is_active = active_step as usize == step_idx;
-                                    let in_active_range = step_idx < num_steps;
+                        for step_idx in 0..16 {
+                            let is_active = active_step as usize == step_idx;
+                            let in_active_range = step_idx < num_steps;
 
-                                    ui.group(|ui| {
-                                        ui.add_enabled_ui(in_active_range, |ui| {
-                                            render_step_strip(
-                                                ui,
-                                                step_idx,
-                                                &mut pattern_guard.steps[step_idx],
-                                                is_active,
-                                            );
-                                        });
-                                    });
-                                }
-                            }
-                        });
-                    });
+                            ui.group(|ui| {
+                                ui.add_enabled_ui(in_active_range, |ui| {
+                                    render_step_strip(
+                                        ui,
+                                        step_idx,
+                                        &mut pattern_guard.steps[step_idx],
+                                        is_active,
+                                    );
+                                });
+                            });
+                        }
+                    }
+                });
             });
         });
 }

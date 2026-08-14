@@ -24,10 +24,10 @@ impl<'a, P: Param> Knob303<'a, P> {
 
 impl<'a, P: Param> Widget for Knob303<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let desired_size = vec2(self.radius * 2.0 + 16.0, self.radius * 2.0 + 34.0);
+        let desired_size = vec2(self.radius * 2.0 + 20.0, self.radius * 2.0 + 36.0);
         let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
-        let center = pos2(rect.center().x, rect.top() + self.radius + 14.0);
+        let center = pos2(rect.center().x, rect.top() + self.radius + 16.0);
         let normalized = self.param.unmodulated_normalized_value();
 
         // Interaction
@@ -59,19 +59,46 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
 
-            // Label above
+            // Label above (bold uppercase)
             painter.text(
                 pos2(rect.center().x, rect.top() + 4.0),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
-                self.label,
-                FontId::new(10.0, FontFamily::Proportional),
-                theme::TEXT_SECONDARY,
+                self.label.to_uppercase(),
+                FontId::new(9.5, FontFamily::Proportional),
+                theme::TEXT_PRIMARY,
             );
 
             // Tick arc (270 degrees: 135 deg to 405 deg)
             let start_angle = 135.0 * PI / 180.0;
             let end_angle = 405.0 * PI / 180.0;
             let current_angle = start_angle + normalized * (end_angle - start_angle);
+
+            // Radial tick marks along 270-degree sweep
+            let num_ticks = 11;
+            for i in 0..num_ticks {
+                let frac = i as f32 / (num_ticks - 1) as f32;
+                let tick_angle = start_angle + frac * (end_angle - start_angle);
+                let tick_in = self.radius + 3.0;
+                let is_major = i == 0 || i == (num_ticks - 1) / 2 || i == num_ticks - 1;
+                let tick_out = self.radius + if is_major { 6.5 } else { 5.0 };
+
+                let p1 = pos2(
+                    center.x + tick_angle.cos() * tick_in,
+                    center.y + tick_angle.sin() * tick_in,
+                );
+                let p2 = pos2(
+                    center.x + tick_angle.cos() * tick_out,
+                    center.y + tick_angle.sin() * tick_out,
+                );
+
+                let stroke_color = if is_major {
+                    theme::TEXT_SECONDARY
+                } else {
+                    theme::PANEL_BORDER_HIGHLIGHT
+                };
+                let stroke_width = if is_major { 1.2_f32 } else { 0.8_f32 };
+                painter.line_segment([p1, p2], Stroke::new(stroke_width, stroke_color));
+            }
 
             // Outer bezel ring
             painter.circle_filled(center, self.radius + 2.0, theme::KNOB_BEZEL);
@@ -96,8 +123,8 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 center.y + current_angle.sin() * pointer_len,
             );
             let pointer_start = pos2(
-                center.x + current_angle.cos() * (self.radius * 0.2),
-                center.y + current_angle.sin() * (self.radius * 0.2),
+                center.x + current_angle.cos() * (self.radius * 0.15),
+                center.y + current_angle.sin() * (self.radius * 0.15),
             );
             painter.line_segment(
                 [pointer_start, pointer_end],
@@ -107,10 +134,10 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             // Formatted value readout below
             let value_str = self.param.to_string();
             painter.text(
-                pos2(rect.center().x, rect.bottom() - 6.0),
+                pos2(rect.center().x, rect.bottom() - 5.0),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 value_str,
-                FontId::new(9.5, FontFamily::Monospace),
+                FontId::new(9.0, FontFamily::Monospace),
                 theme::TEXT_PRIMARY,
             );
         }

@@ -41,6 +41,7 @@ fn component_drift_produces_fluctuations() {
         0.0, // sweep_pos
         0,   // comp_seed
         0.5, // glide_knob
+        0.0, // reso_comp
     );
 
     v.note_on(60);
@@ -100,6 +101,7 @@ fn component_age_affects_tuning_and_cutoff() {
         0.0, // sweep_pos
         0,   // comp_seed
         0.5, // glide_knob
+        0.0, // reso_comp
     );
 
     // Aged (age = 1.0)
@@ -137,6 +139,7 @@ fn component_age_affects_tuning_and_cutoff() {
         0.0, // sweep_pos
         0,   // comp_seed
         0.5, // glide_knob
+        0.0, // reso_comp
     );
 
     v_new.note_on(60);

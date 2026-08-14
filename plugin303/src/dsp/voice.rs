@@ -294,6 +294,8 @@ pub struct Voice {
     target_pitch_st: f32,
     /// Glide knob.
     glide_knob: f32,
+    /// VCF resonance gain compensation amount in [0.0, 1.0].
+    reso_comp: f32,
     /// Whether the VCO LUTs need recalculation before running Tier::Ultra.
     vco_dirty: bool,
 }
@@ -423,8 +425,17 @@ impl Voice {
             current_pitch_st: 60.0,
             target_pitch_st: 60.0,
             glide_knob: 0.5,
+            reso_comp: 0.0,
             vco_dirty: true,
         }
+    }
+
+    pub fn get_reso_comp(&self) -> f32 {
+        self.reso_comp
+    }
+
+    pub fn set_reso_comp(&mut self, comp: f32) {
+        self.reso_comp = comp.clamp(0.0, 1.0);
     }
 
     pub fn get_accent_acc(&self) -> f32 {
@@ -507,6 +518,7 @@ impl Voice {
         sweep_pos: f32,
         comp_seed: i32,
         glide_knob: f32,
+        reso_comp: f32,
     ) {
         let age_changed = self.age != comp_age;
         let tolerance_changed = self.tolerance != tolerance || self.comp_seed != comp_seed;
@@ -579,6 +591,7 @@ impl Voice {
             final_drive_db,
             final_advanced_env,
             final_vca_env_mode,
+            final_reso_comp,
         ) = match topology {
             CircuitTopology::Accurate => {
                 // Coerce Sweep waveform to Saw (unsupported in accurate)
@@ -598,6 +611,7 @@ impl Voice {
                     0.0,                  // vcf_drive
                     false,                // advanced_env
                     VcaEnvMode::Envelope, // vca_env_mode
+                    reso_comp,            // reso_comp
                 )
             }
             CircuitTopology::Fun => {
@@ -615,6 +629,7 @@ impl Voice {
                     vcf_drive_db,
                     advanced_env,
                     vca_env_mode,
+                    reso_comp,
                 )
             }
         };
@@ -633,6 +648,7 @@ impl Voice {
         self.vca_env_mode = final_vca_env_mode;
         self.advanced_env = final_advanced_env;
         self.glide_knob = glide_knob;
+        self.reso_comp = final_reso_comp;
 
         // Propagate tap/pole count
         let poles_n = match final_poles {
@@ -815,6 +831,7 @@ impl Voice {
         self.current_pitch_st = 60.0;
         self.target_pitch_st = 60.0;
         self.glide_knob = 0.5;
+        self.reso_comp = 0.0;
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
@@ -1351,6 +1368,11 @@ impl Voice {
                 }
             }
         };
+
+        // VCF resonance gain compensation: tap into the VCF resonance CV rail and feed into VCA level rail.
+        // Inverse ladder compensation factor: k_eff = 4.0 * final_reso, G_comp = 1.0 + self.reso_comp * k_eff.
+        let reso_gain_comp = 1.0 + self.reso_comp * (4.0 * final_reso);
+        let vca_gain = vca_gain * reso_gain_comp;
 
         // Master Output volume db
         let master_gain = 10.0f32.powf(self.master_volume / 20.0);
