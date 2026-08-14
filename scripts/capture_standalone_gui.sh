@@ -68,10 +68,21 @@ EOF
 fi
 
 if [[ -n "$WIN_ID" && "$WIN_ID" != "missing value" ]]; then
+    echo "Activating standalone window (PID: $APP_PID, WIN_ID: $WIN_ID)..."
+    osascript -e '
+        tell application "System Events"
+            set proc to first process whose unix id is '"$APP_PID"'
+            if exists proc then
+                set frontmost of proc to true
+            end if
+        end tell
+    ' 2>/dev/null || true
+    sleep 0.5
     echo "Capturing window ID: $WIN_ID to $OUTPUT_FILE..."
     screencapture -l "$WIN_ID" -o "$OUTPUT_FILE"
 else
     echo "Window ID not directly queryable; capturing screen to $OUTPUT_FILE..."
+    sleep 0.5
     screencapture -x "$OUTPUT_FILE"
 fi
 

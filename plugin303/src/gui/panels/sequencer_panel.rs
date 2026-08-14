@@ -103,7 +103,7 @@ pub fn render_sequencer(
 
                 // 16 Step Columns in a single continuous row
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(2.0, 0.0);
+                    ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(3.0, 0.0);
                     if let Ok(mut pattern_guard) = params.pattern.write() {
                         let num_steps = params.seq_length.value() as usize;
 

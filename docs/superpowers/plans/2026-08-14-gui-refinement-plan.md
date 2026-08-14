@@ -2,21 +2,21 @@
 
 **Date:** 2026-08-14  
 **Target Spec:** `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
-**Overall Visual QA Weighted Score:** 83.75 / 100  
+**Overall Visual QA Weighted Score:** 82.00 / 100  
 **Overall Spec Compliance:** Non-Compliant (`false`)
 
 ---
 
 ## 1. Executive Summary & Score Breakdown
 
-Visual QA inspection was conducted across all three GUI panels against design spec `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`. The Souped-Up Engine Drawer passes spec compliance (96.00), while the Classic 303 Front Panel (82.00) and Sequencer Console (75.00) are currently non-compliant due to major layout clipping, unformatted raw float parameter readouts, and widget alignment/styling defects.
+Visual QA inspection was conducted across all three GUI panels against the design specification `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`. All three panels (`classic_panel`, `souped_drawer`, and `sequencer`) are currently non-compliant. The overall weighted score is 82.00 / 100.
 
 | Section | Alignment Score | Weight | Weighted Score | Spec Compliance |
 | :--- | :--- | :--- | :--- | :--- |
 | **Classic 303 Front Panel** | 82.00 | 35% | 28.700 | `false` |
-| **Souped-Up Drawer** | 96.00 | 30% | 28.800 | `true` |
-| **Sequencer Console** | 75.00 | 35% | 26.250 | `false` |
-| **Total / Overall** | **83.75** | **100%** | **83.750** | `false` |
+| **Souped-Up Drawer** | 75.00 | 30% | 22.500 | `false` |
+| **Sequencer Console** | 88.00 | 35% | 30.800 | `false` |
+| **Total / Overall** | **82.00** | **100%** | **82.000** | `false` |
 
 ---
 
@@ -27,59 +27,60 @@ Visual QA inspection was conducted across all three GUI panels against design sp
 1. **Knob303 Value Readout Formatting (`typography` - Major):**
    - **Observed:** Dials display raw unformatted float strings with up to 8 decimal places (e.g. Cutoff `0.08413537`, Resonance `0.6013354`).
    - **Expected:** Formatted parameter values with appropriate units (e.g., Hz for Cutoff, % for Resonance/Env Mod/Accent, ms for Decay, cents for Tuning) per Section 3.1.
-   - **Fix:** In `params.rs` parameter definitions or `Knob303` widget (`knob.rs`), implement human-readable string formatting callbacks or value mappers.
+   - **Suggested Fix:** In `params.rs` parameter definitions or `Knob303` widget (`knob.rs`), implement human-readable string formatting callbacks or value mappers.
 
 2. **Knob303 Radial Tick Marks (`color` - Minor):**
    - **Observed:** Radial tick marks along the 270-degree arc around dial bezels are faint with low contrast stroke and short line segments.
    - **Expected:** High-contrast vintage radial tick marks along 270° arc per Section 3.1.
-   - **Fix:** Increase tick line segment length (e.g. `tick_out + 2.0px`), bump stroke width, and upgrade stroke color to high-contrast `TEXT_SECONDARY` token in `knob.rs`.
+   - **Suggested Fix:** Increase tick line segment length (e.g., `tick_out + 2.0px`), bump stroke width, and upgrade stroke color to high-contrast `TEXT_SECONDARY` token in `knob.rs`.
 
 3. **Header Bar Logo & Branding (`typography` - Minor):**
    - **Observed:** Header branding text rendered inline with small font sizes (16pt / 11pt) without distinct metallic or glowing orange styling.
    - **Expected:** Prominent metallic `TECHNEO` logo on left and glowing orange `TB-303 PLUGIN` title on right per mockup and Section 1.
-   - **Fix:** Update `header_bar.rs` layout, font weights, glow effects, and color tokens.
+   - **Suggested Fix:** Update `header_bar.rs` layout, font weights, glow effects, and color tokens.
 
 4. **Fidelity Tier Switch (Accurate Mode State) (`color` - Minor):**
    - **Observed:** When Accurate mode is active, disabled tier switch text contrast drops significantly while red thumb retains highlight.
    - **Expected:** Fidelity Tier slide switch clearly indicates bypassed state while maintaining legible option text (LOW, HIGH, ULTRA).
-   - **Fix:** Refine disabled styling in `switch.rs` or `classic_panel.rs` wrapper so option text remains readable while thumb color dims appropriately.
+   - **Suggested Fix:** Refine disabled styling in `switch.rs` or `classic_panel.rs` wrapper so option text remains readable while thumb color dims appropriately.
 
 ---
 
-### 2.2 Souped-Up Engine Drawer (`souped_drawer`) — Compliant (96.00)
+### 2.2 Souped-Up Engine Drawer (`souped_drawer`) — Non-Compliant (75.00)
 
-1. **MiniFader Value Readout Clearance (`geometry` - Minor):**
-   - **Observed:** Readout text positioned near bottom margin (`rect.bottom() - 3.0`).
-   - **Expected:** Generous 6px bottom clearance beneath value readout for crisp fader alignment.
-   - **Fix:** Adjust baseline calculation in `fader.rs` to `rect.bottom() - 4.0` or increase vertical padding.
+1. **Custom Egui GUI Window Canvas (`missing_feature` - Major):**
+   - **Observed:** `target/gui-qa/latest.png` displays Bitwig Studio's generic DAW host parameter controls instead of bringing the custom egui window to the foreground.
+   - **Expected:** Standalone/VST3 window displaying the custom vector-rendered Souped-Up Engine Drawer with dark industrial brushed steel chassis (`#16181b`), MEG/VEG ADSR faders, extended rotary dials, and topology dimming overlay per Section 1 & 4.1.
+   - **Suggested Fix:** Update `capture_standalone_gui.sh` to focus/bring the standalone window to the foreground using window activation before calling `screencapture`.
 
-2. **Accurate Mode Dimming Tint (`color` - Pass):**
-   - **Observed:** Overlay uses 30.2% (`0x4d`) alpha dark tint with disabled container state, preserving ghosted control outlines while blocking interaction.
-   - **Expected:** 30% opacity overlay tint with non-interactive ghosting overlay per Section 4.1.
-   - **Fix:** Maintain current parameters.
+2. **MEG/VEG MiniFader Readout Text Alignment (`alignment` - Minor):**
+   - **Observed:** MiniFader width of 22.0px displays raw parameter float string truncated to 5 characters (e.g., `'94.49'`) when unformatted.
+   - **Expected:** Fader value readout formatted consistently below track with explicit units (e.g. ms / %) without string truncation per Section 3.2.
+   - **Suggested Fix:** Apply explicit integer/unit formatting (e.g., `format!("{:.0}ms", ms)`) in MiniFader value text rendering in `fader.rs`.
+
+3. **Accurate Mode Dimming Overlay Banner Centering (`geometry` - Minor):**
+   - **Observed:** Overlay implemented in `souped_panel.rs` using `painter.rect_filled` with `Color32::from_rgba_premultiplied(0x0e, 0x11, 0x16, 0x4d)` tint.
+   - **Expected:** 30% opacity background tint (`0x4d` alpha) over `content_response.response.rect` with centered banner (380x86px) and switch button per Section 4.1.
+   - **Suggested Fix:** Maintain current 30% alpha tint rect calculation and verify visual contrast when rendered on host display.
 
 ---
 
-### 2.3 16-Step Sequencer Console (`sequencer`) — Non-Compliant (75.00)
+### 2.3 16-Step Sequencer Console (`sequencer`) — Non-Compliant (88.00)
 
-1. **Sequencer Step Strip Container Overflow (`geometry` - Major):**
-   - **Observed:** Steps 15 and 16 are horizontally clipped past the right boundary of the window, rendering only steps 01 through 14.
-   - **Expected:** All 16 step columns must be fully visible and accessible within the 1080px window width per Section 1 & 3.3.
-   - **Fix:** Reduce individual step column width (e.g. from 48px to 42px) and adjust item spacing/margins in `step_button.rs` and `sequencer_panel.rs`.
+1. **ACC / SLD Toggle Buttons (`alignment` - Minor):**
+   - **Observed:** Label text `'ACC'`/`'SLD'` centered at left offset 7.0 visual center creates tight spacing near the 3px radius LED dot at right-4.0 in a 20px button frame.
+   - **Expected:** Un-crowded label typography with side-by-side LED status dot inside button frame per Section 3.3.
+   - **Suggested Fix:** Adjust text anchor x-position to left-align at 5.0 and place LED dot centered at right-3.5 for optimal spacing in `step_button.rs`.
 
-2. **Souped-Up Engine Drawer Panel Clipping (`alignment` - Major):**
-   - **Observed:** Right panel is clipped horizontally at the right edge of the window, truncating knobs and parameter labels.
-   - **Expected:** Right-hand Souped-Up Engine Drawer panel fits completely inside the main window frame.
-   - **Fix:** Rebalance top horizontal grid layout width distribution between Classic panel and Souped drawer in `gui/mod.rs` and `souped_panel.rs` to fit master 1080px canvas.
+2. **Pitch Readout Button (`typography` - Minor):**
+   - **Observed:** Monospace 10.0pt note font in 18px button height has tight top/bottom margins.
+   - **Expected:** Centered note string display badge with balanced vertical padding per Section 3.3.
+   - **Suggested Fix:** Set font size to 9.5pt monospace and increase button height to 20px in `step_button.rs`.
 
-3. **Octave Up/Down Nudge Buttons (`alignment` - Minor):**
-   - **Observed:** Octave buttons render small square outlines resembling empty boxes (`□ □`) rather than distinct arrow chevrons.
-   - **Expected:** Centered, distinct up and down arrow chevron icons (`▲` / `▼`) for octave shifting per Section 3.3.
-   - **Fix:** Adjust painter line stroke coordinates or use crisp rich text chevron symbols in `step_button.rs`.
-
-4. **Gate Badges & ACC/SLD LEDs (`color` - Pass):**
-   - **Observed:** Gate colors (Cyan NOTE / Gold TIE / Slate REST) and LED indicators (Amber ACC / Cyan SLD) match specification perfectly.
-   - **Fix:** Maintain existing color token definitions and LED rendering logic.
+3. **Step Column Spacing (`geometry` - Minor):**
+   - **Observed:** Item spacing between step frames is set to 2.0px, resulting in dense horizontal packing.
+   - **Expected:** Consistent column separation matching chassis grid rhythm per Section 3.3 & Section 5.
+   - **Suggested Fix:** Increase step item spacing to 3.0px for clearer step column separation in `sequencer_panel.rs`.
 
 ---
 
@@ -90,16 +91,18 @@ Visual QA inspection was conducted across all three GUI panels against design sp
 - [ ] **Task 2 (Minor - Color):** Lengthen tick mark lines (`tick_out + 2.0px`) and increase stroke contrast (`TEXT_SECONDARY`) on `Knob303` radial 270° dial sweeps.
 
 ### 3.2 `plugin303/src/gui/panels/header_bar.rs` & `plugin303/src/gui/panels/classic_panel.rs`
-- [ ] **Task 3 (Minor - Typography):** Update `TECHNEO` logo styling and glowing orange `TB-303 PLUGIN` text in header bar.
-- [ ] **Task 4 (Minor - Color):** Refine disabled option text contrast and thumb dimming for `Fidelity Tier` switch in Accurate mode.
+- [ ] **Task 3 (Minor - Typography):** Update `TECHNEO` logo styling and glowing orange `TB-303 PLUGIN` text in `header_bar.rs`.
+- [ ] **Task 4 (Minor - Color):** Refine disabled option text contrast and thumb dimming for `Fidelity Tier` switch in Accurate mode in `switch.rs` / `classic_panel.rs`.
 
-### 3.3 `plugin303/src/gui/panels/sequencer_panel.rs`, `plugin303/src/gui/widgets/step_button.rs`, & `plugin303/src/gui/mod.rs`
-- [ ] **Task 5 (Major - Geometry):** Reduce step strip width from 48px to 42px and item spacing to 2px so all 16 sequencer step columns fit completely inside 1080px width without horizontal clipping.
-- [ ] **Task 6 (Major - Alignment):** Adjust main horizontal panel container width bounds in `gui/mod.rs` and `souped_panel.rs` to ensure Souped drawer fits cleanly within window borders.
-- [ ] **Task 7 (Minor - Alignment):** Fix Octave Up/Down nudge button chevron drawing in `step_button.rs` so crisp `▲` and `▼` directional icons render without box artifacts.
+### 3.3 `plugin303/src/gui/widgets/fader.rs` & `capture_standalone_gui.sh`
+- [ ] **Task 5 (Major - Missing Feature):** Update `capture_standalone_gui.sh` to focus/bring the standalone application window to the foreground before triggering screenshot capture.
+- [ ] **Task 6 (Minor - Alignment):** Apply explicit integer and unit formatting (`format!("{:.0}ms", ms)`) to `MiniFader` value text in `fader.rs`.
+- [ ] **Task 7 (Minor - Geometry):** Verify and confirm 30% alpha tint rect calculation and banner centering in `souped_panel.rs`.
 
-### 3.4 `plugin303/src/gui/widgets/fader.rs`
-- [ ] **Task 8 (Minor - Geometry):** Increase bottom clearance beneath `MiniFader` value readouts from 3px to 4-6px.
+### 3.4 `plugin303/src/gui/widgets/step_button.rs` & `plugin303/src/gui/panels/sequencer_panel.rs`
+- [ ] **Task 8 (Minor - Alignment):** Left-align `'ACC'` / `'SLD'` text at offset 5.0 and center LED dot at right-3.5 in `step_button.rs`.
+- [ ] **Task 9 (Minor - Typography):** Set pitch button font size to 9.5pt monospace and increase button height to 20px in `step_button.rs`.
+- [ ] **Task 10 (Minor - Geometry):** Increase sequencer step item spacing from 2.0px to 3.0px in `sequencer_panel.rs`.
 
 ---
 
@@ -114,7 +117,7 @@ Visual QA inspection was conducted across all three GUI panels against design sp
    cargo test -p plugin303 --test no_alloc
    ```
 3. **Visual QA Gate Target:**
-   Re-run screenshot inspection harness and verify:
+   Re-run screenshot inspection harness (`gui-visual-qa-loop`) and verify:
    - `overall_score >= 95.0`
    - `spec_compliance == true`
-   - All 16 sequencer steps visible and legible within 1080px window frame.
+   - All panels pass visual inspection without text truncation, focus issues, or layout clipping.

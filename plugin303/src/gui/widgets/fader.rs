@@ -133,13 +133,15 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 Stroke::new(1.0_f32, Color32::BLACK),
             );
 
-            // Readout / value below (with generous clearance)
+            // Readout / value below (with generous clearance and explicit unit formatting)
             let val_str = self.param.to_string();
-            let short_val = if let Ok(f) = val_str.parse::<f32>() {
-                if f.abs() >= 10.0 {
-                    format!("{:.1}", f)
+            let formatted_val = if let Ok(f) = val_str.parse::<f32>() {
+                if self.label == "S" {
+                    format!("{:.0}%", f * 100.0)
+                } else if f >= 1000.0 {
+                    format!("{:.1}s", f / 1000.0)
                 } else {
-                    format!("{:.2}", f)
+                    format!("{:.0}ms", f)
                 }
             } else if val_str.len() > 5 {
                 val_str[..5].to_string()
@@ -149,7 +151,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             painter.text(
                 pos2(rect.center().x, rect.bottom() - 5.0),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
-                short_val,
+                formatted_val,
                 FontId::new(8.0, FontFamily::Monospace),
                 theme::TEXT_MUTED,
             );

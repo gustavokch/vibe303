@@ -86,13 +86,13 @@ pub fn render_step_strip(
                     nih_plug_egui::egui::StrokeKind::Inside,
                 );
                 p.text(
-                    pos2(acc_rect.left() + 7.0, acc_rect.center().y),
-                    nih_plug_egui::egui::Align2::CENTER_CENTER,
+                    pos2(acc_rect.left() + 3.5, acc_rect.center().y),
+                    nih_plug_egui::egui::Align2::LEFT_CENTER,
                     "ACC",
                     FontId::new(6.5, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(acc_rect.right() - 4.0, acc_rect.center().y);
+                let led_pos = pos2(acc_rect.right() - 3.5, acc_rect.center().y);
                 if step.accent {
                     p.circle_filled(led_pos, 3.0, theme::ACCENT_AMBER_GLOW);
                     p.circle_filled(led_pos, 1.8, theme::ACCENT_AMBER);
@@ -127,13 +127,13 @@ pub fn render_step_strip(
                     nih_plug_egui::egui::StrokeKind::Inside,
                 );
                 p.text(
-                    pos2(sld_rect.left() + 7.0, sld_rect.center().y),
-                    nih_plug_egui::egui::Align2::CENTER_CENTER,
+                    pos2(sld_rect.left() + 3.5, sld_rect.center().y),
+                    nih_plug_egui::egui::Align2::LEFT_CENTER,
                     "SLD",
                     FontId::new(6.5, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(sld_rect.right() - 4.0, sld_rect.center().y);
+                let led_pos = pos2(sld_rect.right() - 3.5, sld_rect.center().y);
                 if step.slide {
                     p.circle_filled(led_pos, 3.0, theme::SLIDE_CYAN_GLOW);
                     p.circle_filled(led_pos, 1.8, theme::SLIDE_CYAN);
@@ -179,12 +179,12 @@ pub fn render_step_strip(
         let pitch_str = format_pitch(step.semitone, step.octave);
         let pitch_btn = nih_plug_egui::egui::Button::new(
             nih_plug_egui::egui::RichText::new(pitch_str)
-                .font(FontId::new(10.0, FontFamily::Monospace))
+                .font(FontId::new(9.5, FontFamily::Monospace))
                 .strong()
                 .color(theme::TEXT_PRIMARY),
         )
         .fill(Color32::from_rgb(0x18, 0x1c, 0x24))
-        .min_size(vec2(width, 18.0));
+        .min_size(vec2(width, 20.0));
 
         let pitch_resp = ui
             .add(pitch_btn)
