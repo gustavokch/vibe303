@@ -232,3 +232,83 @@ fn oversampler_hot_path_is_alloc_free() {
         "Os4x up/down allocated on the audio path"
     );
 }
+
+#[test]
+fn sequencer_audio_path_is_alloc_free() {
+    ensure_lut_cache_warm();
+    use nih_plug::prelude::*;
+    use plugin303::params::{Plugin303Params, SequencerPattern, StepGate};
+    use plugin303::Plugin303;
+    use std::sync::Arc;
+
+    let mut pattern = SequencerPattern::default();
+    pattern.steps[0].gate = StepGate::Note;
+    pattern.steps[0].semitone = 0;
+    pattern.steps[1].gate = StepGate::Note;
+    pattern.steps[1].semitone = 2;
+    pattern.steps[1].slide = true;
+
+    let mut params = Plugin303Params::default();
+    params.seq_run = BoolParam::new("Seq Run", true);
+    *params.pattern.write().unwrap() = pattern;
+
+    let mut plugin = Plugin303::new_with_params(Arc::new(params));
+
+
+    let mut aux = AuxiliaryBuffers {
+        inputs: &mut [],
+        outputs: &mut [],
+    };
+    let mut buffer = Buffer::default();
+    let mut scratch_l = [0.0f32; 512];
+    let mut scratch_r = [0.0f32; 512];
+    unsafe {
+        buffer.set_slices(512, |slices| {
+            slices.push(&mut scratch_l);
+            slices.push(&mut scratch_r);
+        });
+    }
+
+    struct DummyContext {
+        transport: Transport,
+    }
+    impl ProcessContext<Plugin303> for DummyContext {
+        fn plugin_api(&self) -> PluginApi {
+            PluginApi::Clap
+        }
+        fn execute_background(&self, _: ()) {}
+        fn execute_gui(&self, _: ()) {}
+        fn send_event(&mut self, _: NoteEvent<()>) {}
+        fn transport(&self) -> &Transport {
+            &self.transport
+        }
+        fn next_event(&mut self) -> Option<PluginNoteEvent<Plugin303>> {
+            None
+        }
+        fn set_latency_samples(&self, _samples: u32) {}
+        fn set_current_voice_capacity(&self, _capacity: u32) {}
+    }
+
+    let transport: Transport = unsafe { std::mem::zeroed() };
+    let mut ctx = DummyContext { transport };
+
+    // Warm-up outside guard
+    for _ in 0..4 {
+        plugin.process(&mut buffer, &mut aux, &mut ctx);
+    }
+
+    reset_violation_count();
+    assert_no_alloc(|| {
+        for _ in 0..16 {
+            plugin.process(&mut buffer, &mut aux, &mut ctx);
+        }
+    });
+    assert_eq!(
+        violation_count(),
+        0,
+        "Plugin303::process with sequencer allocated on audio path"
+    );
+}
+
+
+

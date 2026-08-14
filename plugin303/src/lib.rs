@@ -10,7 +10,7 @@ use params::Plugin303Params;
 /// The main plugin structure implementing the nih-plug VST3/CLAP synth interface.
 pub struct Plugin303 {
     /// Shared parameters object.
-    params: Arc<Plugin303Params>,
+    pub params: Arc<Plugin303Params>,
     /// Active sample rate.
     sample_rate: f32,
     /// Monophonic synth voice.
@@ -30,10 +30,9 @@ pub struct Plugin303 {
     cached_pattern: crate::dsp::sequencer::Pattern,
 }
 
-impl Default for Plugin303 {
-    fn default() -> Self {
+impl Plugin303 {
+    pub fn new_with_params(params: Arc<Plugin303Params>) -> Self {
         let sample_rate = 48_000.0;
-        let params = Arc::new(Plugin303Params::default());
         let cached_pattern = params.pattern.read().unwrap().compile(
             params.seq_length.value() as u8,
             params.seq_mode.value(),
@@ -51,6 +50,13 @@ impl Default for Plugin303 {
         }
     }
 }
+
+impl Default for Plugin303 {
+    fn default() -> Self {
+        Self::new_with_params(Arc::new(Plugin303Params::default()))
+    }
+}
+
 
 
 const fn str_eq(a: &str, b: &str) -> bool {
