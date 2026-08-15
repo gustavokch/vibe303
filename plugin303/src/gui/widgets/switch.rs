@@ -130,11 +130,21 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
 
                 let body_color = self.thumb_color.unwrap_or(theme::KNOB_BODY_LIGHT);
                 let stroke_color = if self.thumb_color.is_some() {
-                    Color32::from_rgb(0xff, 0x55, 0x77)
+                    Color32::from_rgb(0x5a, 0x00, 0x00)
                 } else {
                     theme::KNOB_BEZEL
                 };
                 painter.rect_filled(thumb_rect, 2.0, body_color);
+                if self.thumb_color.is_some() {
+                    // Brushed metallic top highlight
+                    painter.line_segment(
+                        [
+                            pos2(thumb_rect.left() + 1.5, thumb_rect.top() + 1.0),
+                            pos2(thumb_rect.right() - 1.5, thumb_rect.top() + 1.0),
+                        ],
+                        Stroke::new(1.0_f32, Color32::from_rgb(0xb2, 0x22, 0x22)),
+                    );
+                }
                 painter.rect_stroke(
                     thumb_rect,
                     2.0,
@@ -144,7 +154,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
 
                 // Horizontal knurling ribs on thumb
                 let rib_color = if self.thumb_color.is_some() {
-                    Color32::from_rgb(0xaa, 0x18, 0x2e)
+                    Color32::from_rgb(0x4a, 0x00, 0x00)
                 } else {
                     Color32::from_rgb(0x70, 0x75, 0x82)
                 };
@@ -167,7 +177,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     let is_selected = i == current_idx;
                     let text_color = if is_selected {
                         if self.thumb_color.is_some() {
-                            Color32::from_rgb(0xff, 0x44, 0x66)
+                            Color32::from_rgb(0xff, 0x4a, 0x4a)
                         } else {
                             theme::ACCENT_AMBER
                         }
@@ -284,11 +294,21 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             // Sliding carriage (thumb) body & bevel
             let body_color = self.thumb_color.unwrap_or(theme::KNOB_BODY_LIGHT);
             let stroke_color = if self.thumb_color.is_some() {
-                Color32::from_rgb(0xff, 0x55, 0x77)
+                Color32::from_rgb(0x5a, 0x00, 0x00)
             } else {
                 theme::KNOB_BEZEL
             };
             painter.rect_filled(thumb_rect, 2.0, body_color);
+            if self.thumb_color.is_some() {
+                // Brushed metallic top highlight
+                painter.line_segment(
+                    [
+                        pos2(thumb_rect.left() + 1.5, thumb_rect.top() + 1.0),
+                        pos2(thumb_rect.right() - 1.5, thumb_rect.top() + 1.0),
+                    ],
+                    Stroke::new(1.0_f32, Color32::from_rgb(0xb2, 0x22, 0x22)),
+                );
+            }
             painter.rect_stroke(
                 thumb_rect,
                 2.0,
@@ -298,7 +318,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
 
             // Vertical knurling ribs on thumb
             let rib_color = if self.thumb_color.is_some() {
-                Color32::from_rgb(0xaa, 0x18, 0x2e)
+                Color32::from_rgb(0x4a, 0x00, 0x00)
             } else {
                 Color32::from_rgb(0x70, 0x75, 0x82)
             };
@@ -320,7 +340,11 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 let opt_x = track_rect.left() + slot_width * (i as f32 + 0.5);
                 let is_selected = i == current_idx;
                 let text_color = if is_selected {
-                    theme::ACCENT_AMBER
+                    if self.thumb_color.is_some() {
+                        Color32::from_rgb(0xff, 0x4a, 0x4a)
+                    } else {
+                        theme::ACCENT_AMBER
+                    }
                 } else {
                     theme::TEXT_MUTED
                 };
