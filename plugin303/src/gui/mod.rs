@@ -38,11 +38,15 @@ pub fn create_editor(
                     panels::header_bar::render_header(ui, &params, setter);
                     ui.add_space(8.0);
 
-                    // 2. Top Controls Row (Large Parameter Gauges, Segmented Selectors, Secondary Dials)
-                    panels::top_controls::render_top_controls(ui, &params, setter);
+                    // 2. Middle Row: Classic Panel (Left) & Souped-Up Engine Drawer (Right)
+                    ui.horizontal(|ui| {
+                        panels::top_controls::render_top_controls(ui, &params, setter);
+                        ui.add_space(8.0);
+                        panels::souped_panel::render_souped_panel(ui, &params, setter);
+                    });
                     ui.add_space(8.0);
 
-                    // 3. Bottom Sequencer Grid & Right Transport Column
+                    // 3. Bottom Sequencer Grid & Transport Column
                     panels::sequencer_panel::render_sequencer_and_transport(
                         ui,
                         &params,
