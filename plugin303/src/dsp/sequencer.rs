@@ -188,6 +188,58 @@ impl Sequencer {
         timebase: Timebase,
         hw_jitter: bool,
     ) {
+        let mut pat = pattern.clone();
+        self.process_block_internal(
+            &mut pat,
+            None,
+            block_start,
+            num_samples,
+            out_events,
+            out_count,
+            bpm,
+            timebase,
+            hw_jitter,
+        );
+    }
+
+    /// Process block with optional dynamic pattern mutation on loop wrap (step 0 boundary).
+    pub fn process_block_mutating(
+        &mut self,
+        pattern: &mut Pattern,
+        gen_params: Option<&crate::dsp::generator::GeneratorParams>,
+        block_start: u64,
+        num_samples: u32,
+        out_events: &mut [(u32, SeqEvent); 64],
+        out_count: &mut usize,
+        bpm: f64,
+        timebase: Timebase,
+        hw_jitter: bool,
+    ) {
+        self.process_block_internal(
+            pattern,
+            gen_params,
+            block_start,
+            num_samples,
+            out_events,
+            out_count,
+            bpm,
+            timebase,
+            hw_jitter,
+        );
+    }
+
+    fn process_block_internal(
+        &mut self,
+        pattern: &mut Pattern,
+        gen_params: Option<&crate::dsp::generator::GeneratorParams>,
+        block_start: u64,
+        num_samples: u32,
+        out_events: &mut [(u32, SeqEvent); 64],
+        out_count: &mut usize,
+        bpm: f64,
+        timebase: Timebase,
+        hw_jitter: bool,
+    ) {
         if !self.running {
             return;
         }
@@ -283,39 +335,11 @@ impl Sequencer {
             let next_step = (self.step_idx + 1) % num_steps;
             if next_step == 0 {
                 self.loop_count = self.loop_count.wrapping_add(1);
+                if let Some(params) = gen_params {
+                    crate::dsp::generator::AcidGenerator::mutate(pattern, params, self.loop_count);
+                }
             }
             self.step_idx = next_step;
-        }
-    }
-
-    /// Process block with optional dynamic pattern mutation on loop wrap (step 0 boundary).
-    pub fn process_block_mutating(
-        &mut self,
-        pattern: &mut Pattern,
-        gen_params: Option<&crate::dsp::generator::GeneratorParams>,
-        block_start: u64,
-        num_samples: u32,
-        out_events: &mut [(u32, SeqEvent); 64],
-        out_count: &mut usize,
-        bpm: f64,
-        timebase: Timebase,
-        hw_jitter: bool,
-    ) {
-        let prev_loop = self.loop_count;
-        self.process_block(
-            pattern,
-            block_start,
-            num_samples,
-            out_events,
-            out_count,
-            bpm,
-            timebase,
-            hw_jitter,
-        );
-        if self.loop_count != prev_loop {
-            if let Some(params) = gen_params {
-                crate::dsp::generator::AcidGenerator::mutate(pattern, params, self.loop_count);
-            }
         }
     }
 }

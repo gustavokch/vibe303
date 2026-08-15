@@ -233,3 +233,53 @@ fn test_root_note_euclidean_rem_safety() {
     }
 }
 
+#[test]
+fn test_sequencer_loop_wrap_mutates_before_step_zero_playback() {
+    let params = GeneratorParams {
+        rhythm_pulses: 16,
+        rhythm_length: 16,
+        mutation_rate: 1.0, // force 100% mutation
+        seed: 42,
+        ..Default::default()
+    };
+    let mut pat = AcidGenerator::generate(&params);
+    let pat_initial = pat.clone();
+
+    let mut seq = Sequencer::new(48000.0);
+    seq.set_running(true);
+
+    let mut events = [(0, SeqEvent::GateOff); 64];
+    let mut count = 0;
+
+    // Process steps 0..14 (90000 samples at 120bpm = 15 steps of 6000 samples)
+    seq.process_block_mutating(
+        &mut pat,
+        Some(&params),
+        0,
+        90000,
+        &mut events,
+        &mut count,
+        120.0,
+        Timebase::Straight,
+        false,
+    );
+
+    assert_eq!(pat, pat_initial, "Pattern should not mutate before loop wrap");
+
+    // Process block crossing step 15 and wrapping to step 0 of loop 1 (samples 90000..102000)
+    seq.process_block_mutating(
+        &mut pat,
+        Some(&params),
+        90000,
+        12000,
+        &mut events,
+        &mut count,
+        120.0,
+        Timebase::Straight,
+        false,
+    );
+
+    assert_ne!(pat, pat_initial, "Pattern should be mutated when loop count increments at step 0 boundary");
+}
+
+
