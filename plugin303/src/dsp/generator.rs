@@ -240,7 +240,7 @@ impl AcidGenerator {
             };
             prev_degree_idx = degree_idx;
 
-            let key = (params.root_note as i8 + intervals[degree_idx]) % 12;
+            let key = (params.root_note as i8 + intervals[degree_idx]).rem_euclid(12);
 
             // Octave selection
             let mut octave: i8 = 0;
@@ -294,14 +294,14 @@ impl AcidGenerator {
                         let current_key = pattern.pitches[i].key;
                         let mut degree = 0;
                         for (d, &interval) in intervals.iter().enumerate() {
-                            if (params.root_note as i8 + interval) % 12 == current_key {
+                            if (params.root_note as i8 + interval).rem_euclid(12) == current_key {
                                 degree = d;
                                 break;
                             }
                         }
                         let shift = if rng.next_f32() < 0.5 { 1 } else { num_degrees - 1 };
                         let new_degree = (degree + shift) % num_degrees;
-                        pattern.pitches[i].key = (params.root_note as i8 + intervals[new_degree]) % 12;
+                        pattern.pitches[i].key = (params.root_note as i8 + intervals[new_degree]).rem_euclid(12);
                     }
                     2 => {
                         // Flip note vs rest state (preserving slide ties)

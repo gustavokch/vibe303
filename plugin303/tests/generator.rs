@@ -222,3 +222,14 @@ fn test_sequencer_generative_pattern_playback() {
     assert!(count > 0, "Sequencer must generate sequence events from generative pattern");
     assert!(seq.loop_count > 0, "Sequencer loop count must increment upon wrapping step 0");
 }
+
+#[test]
+fn test_root_note_euclidean_rem_safety() {
+    let mut params = GeneratorParams::default();
+    params.root_note = 250; // Large u8, wraps i8 arithmetic
+    let pat = AcidGenerator::generate(&params);
+    for p in &pat.pitches {
+        assert!(p.key >= 0 && p.key < 12, "Key {} out of range 0..12", p.key);
+    }
+}
+
