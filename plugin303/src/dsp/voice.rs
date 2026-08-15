@@ -837,7 +837,7 @@ impl Voice {
         self.target_pitch_st = 60.0;
         self.glide_knob = 0.5;
         self.reso_comp = 0.0;
-        self.classic_slide_tau_ms = 22.0;
+        self.classic_slide_tau_ms = calculate_classic_slide_tau_ms(self.topology, self.glide_knob);
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
