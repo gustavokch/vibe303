@@ -18,6 +18,10 @@ pub fn create_editor(
     editor_state: Arc<EguiState>,
     current_playing_step: Arc<AtomicU8>,
 ) -> Option<Box<dyn Editor>> {
+    let gen_params_state = Arc::new(std::sync::Mutex::new(
+        crate::dsp::generator::GeneratorParams::default(),
+    ));
+
     create_egui_editor(
         editor_state,
         (),
@@ -34,6 +38,8 @@ pub fn create_editor(
                         .inner_margin(Margin::same(10)),
                 )
                 .show(egui_ctx, |ui| {
+                    let mut gen_params = gen_params_state.lock().unwrap();
+
                     // 1. Header Bar
                     panels::header_bar::render_header(ui, &params, setter);
                     ui.add_space(8.0);
@@ -50,6 +56,7 @@ pub fn create_editor(
                     panels::sequencer_panel::render_sequencer_and_transport(
                         ui,
                         &params,
+                        &mut gen_params,
                         setter,
                         &current_playing_step,
                     );

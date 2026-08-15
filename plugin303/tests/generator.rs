@@ -1,0 +1,224 @@
+use plugin303::dsp::generator::{AcidGenerator, GeneratorParams, MusicalScale};
+use plugin303::dsp::sequencer::{SeqEvent, Sequencer, TimeEntry, Timebase};
+
+#[test]
+fn test_bjorklund_pulse_counts() {
+    for n in 1..=16 {
+        for k in 0..=n {
+            let mask = AcidGenerator::bjorklund(k as u8, n as u8, 0);
+            let active_count = mask.iter().take(n).filter(|&&p| p).count();
+            assert_eq!(
+                active_count, k,
+                "Bjorklund pulse count mismatch for k={}, n={}",
+                k, n
+            );
+        }
+    }
+}
+
+#[test]
+fn test_bjorklund_shift_rotation() {
+    let base = AcidGenerator::bjorklund(5, 16, 0);
+    let shifted = AcidGenerator::bjorklund(5, 16, 2);
+
+    for i in 0..16 {
+        assert_eq!(
+            shifted[(i + 2) % 16],
+            base[i],
+            "Shift rotation mismatch at step {}",
+            i
+        );
+    }
+}
+
+#[test]
+fn test_generator_determinism() {
+    let params = GeneratorParams {
+        root_note: 2, // D
+        scale: MusicalScale::MinorPentatonic,
+        octave_min: -1,
+        octave_max: 1,
+        rhythm_pulses: 7,
+        rhythm_length: 16,
+        rhythm_shift: 3,
+        pitch_length: 16,
+        rest_probability: 0.1,
+        accent_probability: 0.4,
+        slide_probability: 0.3,
+        octave_up_prob: 0.2,
+        octave_down_prob: 0.2,
+        accent_pitch_bias: 0.6,
+        slide_chaining: false,
+        mutation_rate: 0.2,
+        seed: 0xDEAD_BEEF_CAFE_BABE,
+    };
+
+    let pat1 = AcidGenerator::generate(&params);
+    let pat2 = AcidGenerator::generate(&params);
+
+    assert_eq!(pat1, pat2, "Generator must be 100% deterministic for identical params & seed");
+}
+
+#[test]
+fn test_scale_quantization_and_octave_bounds() {
+    let scales = [
+        MusicalScale::MinorPentatonic,
+        MusicalScale::Dorian,
+        MusicalScale::Phrygian,
+        MusicalScale::Aeolian,
+        MusicalScale::HarmonicMinor,
+        MusicalScale::Chromatic,
+    ];
+
+    for scale in scales {
+        let params = GeneratorParams {
+            root_note: 5, // F
+            scale,
+            octave_min: -1,
+            octave_max: 1,
+            rhythm_pulses: 16, // all notes
+            rhythm_length: 16,
+            rest_probability: 0.0,
+            seed: 9999,
+            ..Default::default()
+        };
+
+        let pat = AcidGenerator::generate(&params);
+        let intervals = scale.intervals();
+
+        for i in 0..16 {
+            if pat.timing[i] == TimeEntry::Note {
+                let note_key = pat.pitches[i].key;
+                let valid_semitone = intervals
+                    .iter()
+                    .any(|&interval| (params.root_note as i8 + interval) % 12 == note_key);
+                assert!(
+                    valid_semitone,
+                    "Note key {} not in scale {:?} with root {}",
+                    note_key, scale, params.root_note
+                );
+                assert!(
+                    pat.pitches[i].octave >= params.octave_min && pat.pitches[i].octave <= params.octave_max,
+                    "Octave {} out of bounds [{}, {}]",
+                    pat.pitches[i].octave, params.octave_min, params.octave_max
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_slide_chaining_rule() {
+    let params = GeneratorParams {
+        slide_probability: 1.0, // force slide
+        slide_chaining: false,  // no consecutive slides
+        rest_probability: 0.0,
+        rhythm_pulses: 16,
+        rhythm_length: 16,
+        seed: 12345,
+        ..Default::default()
+    };
+
+    let pat = AcidGenerator::generate(&params);
+
+    for i in 1..16 {
+        if pat.timing[i] == TimeEntry::Note && pat.timing[i - 1] == TimeEntry::Note {
+            if pat.pitches[i - 1].slide {
+                assert!(
+                    !pat.pitches[i].slide,
+                    "Consecutive slides detected at step {} when slide_chaining is false",
+                    i
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_slide_into_rest_tie() {
+    // Manually test pattern where note slides into rest
+    let mut params = GeneratorParams::default();
+    params.slide_probability = 1.0;
+    params.rest_probability = 0.5;
+    params.seed = 42;
+
+    let pat = AcidGenerator::generate(&params);
+
+    for i in 1..16 {
+        if pat.timing[i] == TimeEntry::Tie {
+            assert_ne!(
+                pat.timing[i - 1],
+                TimeEntry::Rest,
+                "Tie at step {} must be preceded by active note/tie",
+                i
+            );
+            assert_eq!(
+                pat.pitches[i].key,
+                pat.pitches[i - 1].key,
+                "Tie at step {} must preserve previous note pitch",
+                i
+            );
+        }
+    }
+}
+
+#[test]
+fn test_mutation_determinism_and_zero_rate() {
+    let params = GeneratorParams {
+        seed: 55555,
+        mutation_rate: 0.0,
+        ..Default::default()
+    };
+
+    let original = AcidGenerator::generate(&params);
+    let mut mutated = original.clone();
+
+    // With mutation_rate 0.0, no change
+    AcidGenerator::mutate(&mut mutated, &params, 1);
+    assert_eq!(original, mutated, "Mutation with rate 0.0 must leave pattern unchanged");
+
+    // With active mutation, deterministic output for same loop count
+    let mut mut_params = params.clone();
+    mut_params.mutation_rate = 0.5;
+
+    let mut m1 = original.clone();
+    let mut m2 = original.clone();
+    AcidGenerator::mutate(&mut m1, &mut_params, 42);
+    AcidGenerator::mutate(&mut m2, &mut_params, 42);
+
+    assert_eq!(m1, m2, "Mutate must be deterministic for identical loop seed");
+    assert_ne!(original, m1, "Mutation with 0.5 rate must change pattern");
+}
+
+#[test]
+fn test_sequencer_generative_pattern_playback() {
+    let params = GeneratorParams {
+        rhythm_pulses: 8,
+        rhythm_length: 16,
+        seed: 777,
+        ..Default::default()
+    };
+
+    let mut pat = AcidGenerator::generate(&params);
+    let mut seq = Sequencer::new(48000.0);
+    seq.set_running(true);
+
+    let mut events = [(0, SeqEvent::GateOff); 64];
+    let mut count = 0;
+
+    // Process enough samples for full 16-step loop wrap (16 * 6000 = 96000 samples)
+    seq.process_block_mutating(
+        &mut pat,
+        Some(&params),
+        0,
+        120000,
+        &mut events,
+        &mut count,
+        120.0,
+        Timebase::Straight,
+        false,
+    );
+
+    assert!(count > 0, "Sequencer must generate sequence events from generative pattern");
+    assert!(seq.loop_count > 0, "Sequencer loop count must increment upon wrapping step 0");
+}

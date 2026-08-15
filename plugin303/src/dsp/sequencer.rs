@@ -1,8 +1,10 @@
 //! 16-step sequencer engine.
 
+use serde::{Deserialize, Serialize};
+
 pub const MAX_STEPS: usize = 16;
 
-#[derive(Clone, Copy, Default, Debug, PartialEq)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PitchEntry {
     pub key: i8,
     pub octave: i8,
@@ -10,7 +12,7 @@ pub struct PitchEntry {
     pub slide: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum TimeEntry {
     #[default]
     Note,
@@ -18,7 +20,7 @@ pub enum TimeEntry {
     Rest,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Pattern {
     pub pitches: [PitchEntry; MAX_STEPS],
     pub timing: [TimeEntry; MAX_STEPS],
@@ -60,6 +62,7 @@ pub struct Sequencer {
     prev_was_sounding: bool,
     isr_origin: f64,
     pub current_step: Arc<AtomicU8>,
+    pub loop_count: u64,
 }
 
 const ISR_PERIOD_S: f64 = 0.0018;
@@ -79,6 +82,7 @@ impl Sequencer {
             prev_was_sounding: false,
             isr_origin: 0.0,
             current_step: Arc::new(AtomicU8::new(255)),
+            loop_count: 0,
         }
     }
 
@@ -103,6 +107,7 @@ impl Sequencer {
         self.prev_note_slide = false;
         self.prev_was_sounding = false;
         self.current_step.store(255, Ordering::Relaxed);
+        self.loop_count = 0;
     }
 
     pub fn reset_transport(&mut self, _pos_beats: f64) {
@@ -275,7 +280,42 @@ impl Sequencer {
             }
 
             self.next_step_sample += self.samples_per_step(bpm, timebase);
-            self.step_idx = (self.step_idx + 1) % num_steps;
+            let next_step = (self.step_idx + 1) % num_steps;
+            if next_step == 0 {
+                self.loop_count = self.loop_count.wrapping_add(1);
+            }
+            self.step_idx = next_step;
+        }
+    }
+
+    /// Process block with optional dynamic pattern mutation on loop wrap (step 0 boundary).
+    pub fn process_block_mutating(
+        &mut self,
+        pattern: &mut Pattern,
+        gen_params: Option<&crate::dsp::generator::GeneratorParams>,
+        block_start: u64,
+        num_samples: u32,
+        out_events: &mut [(u32, SeqEvent); 64],
+        out_count: &mut usize,
+        bpm: f64,
+        timebase: Timebase,
+        hw_jitter: bool,
+    ) {
+        let prev_loop = self.loop_count;
+        self.process_block(
+            pattern,
+            block_start,
+            num_samples,
+            out_events,
+            out_count,
+            bpm,
+            timebase,
+            hw_jitter,
+        );
+        if self.loop_count != prev_loop {
+            if let Some(params) = gen_params {
+                crate::dsp::generator::AcidGenerator::mutate(pattern, params, self.loop_count);
+            }
         }
     }
 }
