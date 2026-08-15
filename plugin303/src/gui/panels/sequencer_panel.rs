@@ -10,10 +10,16 @@ use crate::params::Plugin303Params;
 pub fn render_sequencer_and_transport(
     ui: &mut Ui,
     params: &Plugin303Params,
+    gen_params: &mut crate::dsp::generator::GeneratorParams,
     setter: &ParamSetter,
     current_step_atomic: &AtomicU8,
 ) {
     let active_step = current_step_atomic.load(Ordering::Relaxed);
+
+    ui.horizontal(|ui| {
+        super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
+    });
+    ui.add_space(8.0);
 
     Frame::new()
         .fill(theme::PANEL_BG)

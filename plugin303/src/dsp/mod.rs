@@ -1,3 +1,4 @@
+pub mod generator;
 pub mod adaa;
 pub mod bjt;
 pub mod diode;
