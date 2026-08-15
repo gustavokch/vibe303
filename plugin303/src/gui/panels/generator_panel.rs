@@ -192,7 +192,8 @@ pub fn render_generator_panel(
                         let mode = params.seq_mode.value();
                         let num_steps = params.seq_length.value() as u8;
                         let mut pat = seq_pat.compile(num_steps, mode);
-                        AcidGenerator::mutate(&mut pat, gen_params, gen_params.seed.wrapping_add(1));
+                        gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                        AcidGenerator::mutate(&mut pat, gen_params, gen_params.seed);
 
                         for i in 0..16 {
                             seq_pat.steps[i].accent = pat.pitches[i].accent;
