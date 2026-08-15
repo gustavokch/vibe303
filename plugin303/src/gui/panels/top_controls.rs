@@ -1,0 +1,77 @@
+use nih_plug::prelude::ParamSetter;
+use nih_plug_egui::egui::{pos2, vec2, Color32, CornerRadius, Frame, Margin, Stroke, Ui};
+
+use crate::gui::theme;
+use crate::gui::widgets::{Knob303, SlideSwitch};
+use crate::params::Plugin303Params;
+
+pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
+    let frame_response = Frame::new()
+        .fill(theme::PANEL_BG)
+        .stroke(theme::border_stroke())
+        .corner_radius(CornerRadius::same(4))
+        .inner_margin(Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_width(480.0);
+            ui.vertical(|ui| {
+                // ROW 1: Classic 303 Parameter Gauges
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                    ui.add(Knob303::new(&params.tuning, setter, "TUNING", 20.0));
+                    ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
+                    ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 20.0));
+                    ui.add(Knob303::new(&params.env_mod, setter, "ENV MOD", 20.0));
+                    ui.add(Knob303::new(&params.decay, setter, "DECAY", 20.0));
+                    ui.add(Knob303::new(&params.accent, setter, "ACCENT", 20.0));
+                    ui.add(Knob303::new(&params.volume, setter, "VOLUME", 20.0));
+                });
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                // ROW 2: Waveform & Fidelity Tier Horizontal Slide Switches (Balanced)
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    ui.spacing_mut().item_spacing = vec2(30.0, 0.0);
+
+                    ui.add(SlideSwitch::new(
+                        &params.waveform,
+                        setter,
+                        "WAVEFORM",
+                        &["SAW", "SQUARE", "SWEEP"],
+                    ));
+
+                    ui.add(
+                        SlideSwitch::new(
+                            &params.tier,
+                            setter,
+                            "FIDELITY TIER",
+                            &["LOW", "HIGH", "ULTRA"],
+                        )
+                        .with_thumb_color(Color32::from_rgb(0xd9, 0x26, 0x38)),
+                    );
+                });
+            });
+        });
+
+    // Procedural corner mounting screws with realistic cross-head slots
+    let rect = frame_response.response.rect;
+    let painter = ui.painter();
+    let screw_positions = [
+        pos2(rect.left() + 7.0, rect.top() + 7.0),
+        pos2(rect.right() - 7.0, rect.top() + 7.0),
+        pos2(rect.left() + 7.0, rect.bottom() - 7.0),
+        pos2(rect.right() - 7.0, rect.bottom() - 7.0),
+    ];
+    for (idx, &pos) in screw_positions.iter().enumerate() {
+        painter.circle_filled(pos, 3.0, Color32::from_rgb(0x10, 0x16, 0x24));
+        painter.circle_filled(pos, 2.2, Color32::from_rgb(0x47, 0x55, 0x69));
+        let angle = idx as f32 * 0.45;
+        let dx = angle.cos() * 1.4;
+        let dy = angle.sin() * 1.4;
+        let slot_stroke = Stroke::new(0.9_f32, Color32::from_rgb(0x0f, 0x17, 0x2a));
+        painter.line_segment([pos2(pos.x - dx, pos.y - dy), pos2(pos.x + dx, pos.y + dy)], slot_stroke);
+        painter.line_segment([pos2(pos.x + dy, pos.y - dx), pos2(pos.x - dy, pos.y + dx)], slot_stroke);
+    }
+}

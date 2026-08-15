@@ -33,8 +33,8 @@ impl<'a, P: Param> MiniFader<'a, P> {
 
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let width = 22.0;
-        let total_height = self.height + 28.0;
+        let width = 24.0;
+        let total_height = self.height + 30.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
@@ -91,24 +91,23 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 StrokeKind::Inside,
             );
 
-            // Active level fill bar (glowing accent color from bottom to thumb)
+            // Active level fill bar (vivid glowing orange accent color from bottom to thumb)
             let thumb_y = track_bottom - normalized * track_height;
-            if normalized > 0.01 {
-                let fill_rect = Rect::from_min_max(
-                    pos2(rect.center().x - track_width * 0.5 + 0.5, thumb_y),
-                    pos2(rect.center().x + track_width * 0.5 - 0.5, track_bottom),
-                );
-                painter.rect_filled(fill_rect, 1.0, self.accent_color);
-
-                // Subtle glow
-                let glow_color = Color32::from_rgba_premultiplied(
-                    self.accent_color.r(),
-                    self.accent_color.g(),
-                    self.accent_color.b(),
-                    0x30,
-                );
-                painter.rect_filled(fill_rect.expand(2.0), 2.0, glow_color);
-            }
+            let fill_top = thumb_y.min(track_bottom - 1.0);
+            let fill_rect = Rect::from_min_max(
+                pos2(rect.center().x - 1.5, fill_top),
+                pos2(rect.center().x + 1.5, track_bottom - 1.0),
+            );
+            // Outer bright orange bloom glow
+            let glow_color = Color32::from_rgba_premultiplied(
+                self.accent_color.r(),
+                self.accent_color.g(),
+                self.accent_color.b(),
+                0x60,
+            );
+            painter.rect_filled(fill_rect.expand(1.5), 1.5, glow_color);
+            // Vivid solid orange core
+            painter.rect_filled(fill_rect, 1.0, self.accent_color);
 
             // Fader handle / thumb
             let thumb_width = 16.0;
@@ -133,7 +132,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 Stroke::new(1.0_f32, Color32::BLACK),
             );
 
-            // Readout / value below (with generous clearance and explicit unit formatting)
+            // Readout / value below (compact formatting to prevent horizontal collisions)
             let val_str = self.param.to_string();
             let formatted_val = if let Ok(f) = val_str.parse::<f32>() {
                 if self.label == "S" {
@@ -143,16 +142,14 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 } else {
                     format!("{:.0}ms", f)
                 }
-            } else if val_str.len() > 5 {
-                val_str[..5].to_string()
             } else {
-                val_str
+                val_str.replace(" ms", "ms").replace(" s", "s")
             };
             painter.text(
                 pos2(rect.center().x, rect.bottom() - 5.0),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 formatted_val,
-                FontId::new(8.0, FontFamily::Monospace),
+                FontId::new(7.5, FontFamily::Monospace),
                 theme::TEXT_MUTED,
             );
         }

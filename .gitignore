@@ -26,6 +26,7 @@ runs/
 *.flac
 *.f32
 *.png
+!docs/assets/*.png
 # Allow committed reference WAVs (Git LFS) — re-include after the broad exclude
 !tests/regression/refs/*.wav
 # Allow committed test fixtures (small, intentional)
