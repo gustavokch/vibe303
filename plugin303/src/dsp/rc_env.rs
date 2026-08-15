@@ -332,16 +332,31 @@ impl DecayEnv {
 pub struct AccentSweep {
     v_c13: f64,
     fs: f64,
+    coeff_chg: f64,
+    coeff_dis: f64,
 }
 
 impl AccentSweep {
     pub fn new(fs: f64) -> Self {
-        Self { v_c13: 0.0, fs }
+        let mut s = Self {
+            v_c13: 0.0,
+            fs: 0.0,
+            coeff_chg: 0.0,
+            coeff_dis: 0.0,
+        };
+        s.set_sample_rate(fs);
+        s
     }
 
     pub fn set_sample_rate(&mut self, fs: f64) {
         if fs > 0.0 {
             self.fs = fs;
+            // Charge: fast (diode D24 conducting, tau ~ 50ms)
+            let tau_chg = 50.0;
+            self.coeff_chg = 1.0 - (-1.0 / (0.001 * tau_chg * self.fs)).exp();
+            // Discharge: slow (diode D24 reverse-biased, tau ~ 130ms)
+            let tau_dis = 130.0;
+            self.coeff_dis = 1.0 - (-1.0 / (0.001 * tau_dis * self.fs)).exp();
         }
     }
 
@@ -353,19 +368,15 @@ impl AccentSweep {
     /// `resonance_knob` (0.0 to 1.0) controls the charge resistance and depth (VR4-B).
     #[inline]
     pub fn tick(&mut self, src: f64, resonance_knob: f64) -> f64 {
-        // VR4-B couples sweep depth with resonance. We use the resonance knob directly to scale the drive.
-        let drive = src * resonance_knob;
+        // VR4-B couples sweep depth with resonance. Provides baseline sweep depth at min resonance
+        // and expands to full depth as resonance knob is raised.
+        let sweep_scale = 0.35 + 0.65 * resonance_knob.clamp(0.0, 1.0);
+        let drive = src * sweep_scale;
 
         if drive > self.v_c13 {
-            // Charge: fast (tau roughly 47ms to 147ms, decreasing with higher resonance)
-            let tau_chg = 50.0;
-            let coeff = 1.0 - (-1.0 / (0.001 * tau_chg * self.fs)).exp();
-            self.v_c13 += coeff * (drive - self.v_c13);
+            self.v_c13 += self.coeff_chg * (drive - self.v_c13);
         } else {
-            // Discharge: slow (tau roughly 100-150ms)
-            let tau_dis = 120.0;
-            let coeff = 1.0 - (-1.0 / (0.001 * tau_dis * self.fs)).exp();
-            self.v_c13 += coeff * (0.0 - self.v_c13);
+            self.v_c13 += self.coeff_dis * (0.0 - self.v_c13);
         }
         self.v_c13
     }

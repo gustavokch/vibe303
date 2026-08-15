@@ -161,3 +161,152 @@ fn test_vca_gate_mode() {
     v.set_gate(false, false, false, false);
     assert_eq!(v.tick(), 0.0);
 }
+
+#[test]
+fn test_accent_decay_fixed_200ms() {
+    let sr = 48000.0;
+    let mut v_acc = Voice::new(sr);
+    let mut v_norm = Voice::new(sr);
+
+    // Accent knob set to maximum (1.0), Decay knob set to maximum (1.0)
+    // Cutoff set to min (0.0), env_mod set to max (1.0) to highlight filter decay difference
+    let update = |v: &mut Voice| {
+        v.update_params(
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            plugin303::params::OscWave::Saw,
+            0.5,
+            0.0,
+            0.0, // min cutoff
+            0.0, // min reso
+            1.0, // max env_mod
+            1.0, // max decay knob (3000ms for normal notes)
+            1.0, // max accent knob
+            0.0,
+            plugin303::params::VcfTaps::FourPole,
+            0.0,
+            false,
+            3.0,
+            200.0,
+            0.0,
+            200.0,
+            3.0,
+            200.0,
+            0.0,
+            200.0,
+            plugin303::params::VcaEnvMode::Envelope,
+            0,
+            0.0,
+            plugin303::params::CompTolerance::Zero,
+            0,
+            plugin303::params::CircuitTopology::Accurate,
+            0.0,
+            0,
+            0.4,
+            0.0,
+        );
+    };
+
+    update(&mut v_acc);
+    update(&mut v_norm);
+
+    // Accented note on v_acc, Normal note on v_norm
+    v_acc.set_gate(true, true, true, false);
+    v_acc.note_on(60);
+
+    v_norm.set_gate(true, true, false, false);
+    v_norm.note_on(60);
+
+    // Tick both voices for ~500ms (24000 samples at 48kHz)
+    // At 500ms:
+    // - Accented MEG decay (fixed ~200ms) will be near 0 (exp(-500/200) = ~0.082)
+    // - Normal MEG decay (knob set to 3000ms) will still be high (exp(-500/3000) = ~0.846)
+    let mut energy_acc = 0.0f32;
+    let mut energy_norm = 0.0f32;
+
+    for i in 0..24000 {
+        let s_acc = v_acc.tick();
+        let s_norm = v_norm.tick();
+        // Measure high-frequency derivative energy over the last 100ms (samples 19200..24000)
+        if i >= 19200 {
+            energy_acc += s_acc.abs();
+            energy_norm += s_norm.abs();
+        }
+    }
+
+    // High frequency / overall energy of accented note after 500ms should be noticeably lower
+    // than normal note with 3000ms decay knob because filter closed down to ~200ms decay.
+    assert!(
+        energy_acc < energy_norm * 0.7,
+        "Expected accented note energy ({}) after 500ms to be < 70% of normal 3000ms decay energy ({})",
+        energy_acc,
+        energy_norm
+    );
+}
+
+#[test]
+fn test_accent_sweep_resonance_coupling() {
+    use plugin303::dsp::rc_env::AccentSweep;
+    let mut sweep = AccentSweep::new(48000.0);
+
+    // With zero resonance, drive should still produce non-zero sweep modulation
+    let out_zero_reso = sweep.tick(1.0, 0.0);
+    assert!(
+        out_zero_reso > 0.0,
+        "Zero resonance should still produce baseline accent sweep"
+    );
+
+    sweep.reset();
+    // With maximum resonance, drive should produce stronger sweep modulation
+    let out_max_reso = sweep.tick(1.0, 1.0);
+    assert!(
+        out_max_reso > out_zero_reso,
+        "Max resonance should produce higher sweep output than zero resonance ({} vs {})",
+        out_max_reso,
+        out_zero_reso
+    );
+}
+
+#[test]
+fn test_accent_analog_memory_staircase() {
+    use plugin303::dsp::rc_env::AccentSweep;
+    let mut sweep = AccentSweep::new(48000.0);
+
+    // Simulate 4 consecutive 16th-note accents at 120 BPM (125ms = 6000 samples per note)
+    // 58.3% gate length = 3500 samples on, 2500 samples off
+    let mut peaks = Vec::new();
+
+    for _ in 0..4 {
+        let mut step_peak = 0.0f64;
+        // Gate on (MEG decaying)
+        for i in 0..3500 {
+            let meg = (-1.0f64 / (0.2 * 48000.0) * i as f64).exp();
+            let val = sweep.tick(meg, 0.8);
+            if val > step_peak {
+                step_peak = val;
+            }
+        }
+        // Gate off (MEG at 0, cap discharging slowly)
+        for _ in 0..2500 {
+            sweep.tick(0.0, 0.8);
+        }
+        peaks.push(step_peak);
+    }
+
+    // Successive peaks must rise (analog memory staircase)
+    assert!(
+        peaks[1] > peaks[0],
+        "Step 2 peak should exceed Step 1 peak ({} vs {})",
+        peaks[1],
+        peaks[0]
+    );
+    assert!(
+        peaks[2] > peaks[1],
+        "Step 3 peak should exceed Step 2 peak ({} vs {})",
+        peaks[2],
+        peaks[1]
+    );
+}
+

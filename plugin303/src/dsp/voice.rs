@@ -296,6 +296,8 @@ pub struct Voice {
     glide_knob: f32,
     /// VCF resonance gain compensation amount in [0.0, 1.0].
     reso_comp: f32,
+    /// Cached classic slide tau in ms.
+    classic_slide_tau_ms: f64,
     /// Whether the VCO LUTs need recalculation before running Tier::Ultra.
     vco_dirty: bool,
 }
@@ -379,7 +381,7 @@ impl Voice {
 
             pitch_slew: {
                 let mut li = LeakyIntegrator::new(sr as f64);
-                li.set_time_constant(12.0);
+                li.set_time_constant(22.0);
                 li.set_state(60.0);
                 li
             },
@@ -426,6 +428,7 @@ impl Voice {
             target_pitch_st: 60.0,
             glide_knob: 0.5,
             reso_comp: 0.0,
+            classic_slide_tau_ms: 22.0,
             vco_dirty: true,
         }
     }
@@ -649,6 +652,7 @@ impl Voice {
         self.advanced_env = final_advanced_env;
         self.glide_knob = glide_knob;
         self.reso_comp = final_reso_comp;
+        self.classic_slide_tau_ms = calculate_classic_slide_tau_ms(topology, glide_knob);
 
         // Propagate tap/pole count
         let poles_n = match final_poles {
@@ -724,8 +728,9 @@ impl Voice {
             // --- Classic RC-based settings (both topologies) ---
             // MEG decay from knob: 30..3000 ms (Devil Fish extended range)
             self.normal_decay_ms = 30.0 + decay_knob as f64 * 2970.0;
-            // Accent decay from knob: 30..3000 ms (Devil Fish)
-            self.accent_decay_ms = 30.0 + accent_knob as f64 * 2970.0;
+            // On hardware TB-303, the 4066 switch shorts the DECAY pot on accented notes,
+            // locking MEG decay to a fixed ~200 ms regardless of the panel Decay or Accent knob settings.
+            self.accent_decay_ms = 200.0;
 
             // VCA envelope: fixed 303 timings
             self.vca_env.set_attack(0.0);
@@ -809,7 +814,7 @@ impl Voice {
         self.amp_declicker.reset();
         self.pitch_slew.reset();
         self.pitch_slew.set_sample_rate(self.sr as f64);
-        self.pitch_slew.set_time_constant(12.0);
+        self.pitch_slew.set_time_constant(22.0);
         self.pitch_slew.set_state(60.0);
         self.accent_gain = 0.0;
         self.normal_decay_ms = 200.0;
@@ -832,6 +837,7 @@ impl Voice {
         self.target_pitch_st = 60.0;
         self.glide_knob = 0.5;
         self.reso_comp = 0.0;
+        self.classic_slide_tau_ms = calculate_classic_slide_tau_ms(self.topology, self.glide_knob);
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
@@ -1145,9 +1151,9 @@ impl Voice {
             self.pitch_slew.set_time_constant(glide_time_ms as f64);
             self.current_pitch_st = self.pitch_slew.tick(self.target_pitch_st as f64) as f32;
         } else {
-            // Classic mode: CV-domain exponential lag (tau = 12 ms -> 60 ms slide)
+            // Classic mode: CV-domain exponential lag (hardware C35 0.22uF + R93 100k gives tau = 22 ms -> ~60 ms slide settling time)
             if self.slide_active {
-                self.pitch_slew.set_time_constant(12.0);
+                self.pitch_slew.set_time_constant(self.classic_slide_tau_ms);
                 self.current_pitch_st = self.pitch_slew.tick(self.target_pitch_st as f64) as f32;
             } else {
                 self.current_pitch_st = self.target_pitch_st;
@@ -1418,6 +1424,7 @@ impl Voice {
     pub fn set_topology(&mut self, topology: CircuitTopology) {
         if self.topology != topology {
             self.topology = topology;
+            self.classic_slide_tau_ms = calculate_classic_slide_tau_ms(topology, self.glide_knob);
             let is_fun = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun);
             self.vco2.set_fun(is_fun);
@@ -1437,6 +1444,16 @@ impl Voice {
             self.vco.set_thermal(self.thermal_noise_state);
             self.vco2.set_thermal(self.thermal_noise_state);
         }
+    }
+}
+
+#[inline]
+fn calculate_classic_slide_tau_ms(topology: CircuitTopology, glide_knob: f32) -> f64 {
+    if topology == CircuitTopology::Fun {
+        let k = (glide_knob as f64).clamp(0.0, 1.0);
+        2.0 * 55.0f64.powf(k.powf(1.5))
+    } else {
+        22.0
     }
 }
 

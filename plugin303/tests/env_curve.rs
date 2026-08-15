@@ -373,9 +373,9 @@ fn test_glide_slew_behavior() {
         pitch_after_tick
     );
 
-    // Constant-time slide tau = 12ms (60ms total slide).
-    // At t = tau (12ms = ~529 samples), pitch should reach ~ 60 + 12 * (1 - 1/e) = 67.585
-    let tau_samples = (44.1 * 12.0) as usize;
+    // Constant-time slide hardware tau = 22ms (~60ms total slide settling time).
+    // At t = tau (22ms = ~970 samples), pitch should reach ~ 60 + 12 * (1 - 1/e) = 67.585
+    let tau_samples = (44.1 * 22.0) as usize;
     for _ in 1..tau_samples {
         voice.tick();
     }
@@ -383,12 +383,12 @@ fn test_glide_slew_behavior() {
     let expected_at_tau = 60.0 + 12.0 * (1.0 - (-1.0f32).exp());
     assert!(
         (pitch_at_tau - expected_at_tau).abs() < 0.2,
-        "Expected pitch at tau (~12ms) to be ~{}, got {}",
+        "Expected pitch at tau (~22ms) to be ~{}, got {}",
         expected_at_tau,
         pitch_at_tau
     );
 
-    // At 5 * tau (~60ms = ~2646 samples), pitch should be within 0.1 of 72.0
+    // At 5 * tau (~110ms = ~4851 samples), pitch should be within 0.1 of 72.0
     for _ in 0..(4 * tau_samples) {
         voice.tick();
     }
