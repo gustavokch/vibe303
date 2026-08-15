@@ -49,7 +49,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             "FIDELITY TIER",
                             &["LOW", "HIGH", "ULTRA"],
                         )
-                        .with_thumb_color(Color32::from_rgb(0xd9, 0x26, 0x38)),
+                        .with_thumb_color(Color32::from_rgb(0x8b, 0x00, 0x00)),
                     );
                 });
             });
