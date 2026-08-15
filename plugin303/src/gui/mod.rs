@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::params::Plugin303Params;
 
-pub const GUI_WIDTH: u32 = 1080;
-pub const GUI_HEIGHT: u32 = 640;
+pub const GUI_WIDTH: u32 = 1100;
+pub const GUI_HEIGHT: u32 = 460;
 
 pub fn create_editor(
     params: Arc<Plugin303Params>,
@@ -31,24 +31,19 @@ pub fn create_editor(
                 .frame(
                     Frame::new()
                         .fill(theme::CHASSIS_BG)
-                        .inner_margin(Margin::same(8)),
+                        .inner_margin(Margin::same(10)),
                 )
                 .show(egui_ctx, |ui| {
-                    // Header Bar
+                    // 1. Header Bar
                     panels::header_bar::render_header(ui, &params, setter);
-                    ui.add_space(6.0);
-
-                    // Top Split: Classic Panel (Left) & Souped-Up Drawer (Right)
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = nih_plug_egui::egui::vec2(8.0, 0.0);
-                        panels::classic_panel::render_classic(ui, &params, setter);
-                        panels::souped_panel::render_souped(ui, &params, setter);
-                    });
-
                     ui.add_space(8.0);
 
-                    // Bottom: 16-Step Hardware Sequencer Console
-                    panels::sequencer_panel::render_sequencer(
+                    // 2. Top Controls Row (Large Parameter Gauges, Segmented Selectors, Secondary Dials)
+                    panels::top_controls::render_top_controls(ui, &params, setter);
+                    ui.add_space(8.0);
+
+                    // 3. Bottom Sequencer Grid & Right Transport Column
+                    panels::sequencer_panel::render_sequencer_and_transport(
                         ui,
                         &params,
                         setter,

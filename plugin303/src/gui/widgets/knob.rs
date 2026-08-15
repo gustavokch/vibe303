@@ -64,47 +64,40 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             let end_angle = 405.0 * PI / 180.0;
             let current_angle = start_angle + normalized * (end_angle - start_angle);
 
-            // Radial tick marks along 270-degree sweep
-            let num_ticks = 11;
-            for i in 0..num_ticks {
-                let frac = i as f32 / (num_ticks - 1) as f32;
-                let tick_angle = start_angle + frac * (end_angle - start_angle);
-                let tick_in = self.radius + 3.0;
-                let is_major = i == 0 || i == (num_ticks - 1) / 2 || i == num_ticks - 1;
-                let tick_out = self.radius + if is_major { 7.5 } else { 5.5 };
+            // Outer track background & active progress arc
+            let track_radius = self.radius + 3.0;
+            let track_width = 3.5_f32;
 
-                let p1 = pos2(
-                    center.x + tick_angle.cos() * tick_in,
-                    center.y + tick_angle.sin() * tick_in,
-                );
-                let p2 = pos2(
-                    center.x + tick_angle.cos() * tick_out,
-                    center.y + tick_angle.sin() * tick_out,
-                );
-
-                let stroke_color = if is_major {
-                    theme::TEXT_SECONDARY
-                } else {
-                    theme::PANEL_BORDER_HIGHLIGHT
-                };
-                let stroke_width = if is_major { 1.4_f32 } else { 1.0_f32 };
-                painter.line_segment([p1, p2], Stroke::new(stroke_width, stroke_color));
+            // Draw background track ring arc
+            let track_pts = 32;
+            for i in 0..track_pts {
+                let f1 = i as f32 / track_pts as f32;
+                let f2 = (i + 1) as f32 / track_pts as f32;
+                let a1 = start_angle + f1 * (end_angle - start_angle);
+                let a2 = start_angle + f2 * (end_angle - start_angle);
+                let p1 = pos2(center.x + a1.cos() * track_radius, center.y + a1.sin() * track_radius);
+                let p2 = pos2(center.x + a2.cos() * track_radius, center.y + a2.sin() * track_radius);
+                painter.line_segment([p1, p2], Stroke::new(track_width, theme::PANEL_BORDER));
             }
 
-            // Outer bezel ring
-            painter.circle_filled(center, self.radius + 2.0, theme::KNOB_BEZEL);
+            // Draw active value arc (vivid orange glow)
+            let active_pts = (normalized * track_pts as f32).ceil() as usize;
+            for i in 0..active_pts {
+                let f1 = i as f32 / track_pts as f32;
+                let f2 = ((i + 1) as f32 / track_pts as f32).min(normalized);
+                let a1 = start_angle + f1 * (end_angle - start_angle);
+                let a2 = start_angle + f2 * (end_angle - start_angle);
+                let p1 = pos2(center.x + a1.cos() * track_radius, center.y + a1.sin() * track_radius);
+                let p2 = pos2(center.x + a2.cos() * track_radius, center.y + a2.sin() * track_radius);
+                painter.line_segment([p1, p2], Stroke::new(track_width, theme::SOUPED_ORANGE));
+            }
+
+            // Inner dark center dial body
+            painter.circle_filled(center, self.radius, theme::KNOB_BODY_DARK);
             painter.circle_stroke(
                 center,
-                self.radius + 2.0,
-                Stroke::new(1.0_f32, theme::PANEL_BORDER),
-            );
-
-            // Metallic gradient disc
-            painter.circle_filled(center, self.radius, theme::KNOB_BODY_DARK);
-            painter.circle_filled(
-                pos2(center.x - self.radius * 0.2, center.y - self.radius * 0.2),
-                self.radius * 0.8,
-                theme::KNOB_BODY_LIGHT,
+                self.radius,
+                Stroke::new(1.2_f32, theme::PANEL_BORDER_HIGHLIGHT),
             );
 
             // Pointer line
