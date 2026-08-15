@@ -1,107 +1,123 @@
-# GUI Visual Refinement Plan (`vibe303`)
+# Vibe303 GUI Visual Refinement Plan
 
 **Date:** 2026-08-14  
-**Target Spec:** `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
-**Overall Visual QA Weighted Score:** 93.90 / 100  
-**Overall Spec Compliance:** Compliant (`true`)
+**Target:** `nih_plug_egui` frontend implementation for `plugin303`  
+**Design Spec Reference:** `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
 
 ---
 
-## 1. Executive Summary & Score Breakdown
+## Executive Summary & Scorecard
 
-Visual QA inspection synthesis across three GUI sections against the design specification in `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`. The overall weighted score is 93.90 / 100. All three sections pass visual quality compliance (`true`).
+A visual QA audit was conducted comparing the current GUI implementation against the approved design specification (`docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`). The overall weighted alignment score is **71.1 / 100**, and the GUI currently **fails** spec compliance (`spec_compliance: false`).
 
-| Section | Alignment Score | Weight | Weighted Score | Spec Compliance |
-| :--- | :--- | :--- | :--- | :--- |
-| **Classic 303 Front Panel** | 92.00 | 35% | 32.200 | `true` |
-| **Souped-Up Engine Drawer** | 96.00 | 30% | 28.800 | `true` |
-| **16-Step Sequencer Console** | 94.00 | 35% | 32.900 | `true` |
-| **Total / Overall** | **93.90** | **100%** | **93.900** | `true` |
-
----
-
-## 2. Detailed Findings & Defect Analysis
-
-### 2.1 Classic 303 Front Panel (`classic_panel`) — Compliant (92.00)
-
-1. **SlideSwitch Option Layout (`geometry` - Minor):**
-   - **Observed:** Waveform and Fidelity Tier option labels (SAW, SQUARE, SWEEP / LOW, HIGH, ULTRA) are aligned horizontally below the slider track.
-   - **Expected:** UI mockup (2026-07-02-ui-mockup.jpg) displays switch option labels stacked vertically to the right of the slider handle.
-   - **Suggested Fix:** Optionally introduce a vertical label orientation option in SlideSwitch widget to match the mockup's right-aligned vertical stack if strict visual parity is desired.
-
-2. **Knob Label Placement (`typography` - Minor):**
-   - **Observed:** Parameter title label (e.g. TUNING, CUTOFF) is rendered directly below the dial, followed by the formatted value readout below the title.
-   - **Expected:** Spec Section 3.1 mentions parameter label above dial and live readout below, whereas UI mockup shows labels below.
-   - **Suggested Fix:** Maintain current layout (label below knob) as it matches the visual mockup, and update spec documentation to reflect label positioning below dial.
-
-3. **Header Bar Branding & Topology Switch (`alignment` - Minor):**
-   - **Observed:** Header bar accurately renders TECHNEO • VIBE 303 branding, dual 7-slot ventilation grills, TB-303 PLUGIN orange text, and top-right CIRCUIT TOPOLOGY switch.
-   - **Expected:** Header bar renders TECHNEO branding, ventilation grills, TB-303 PLUGIN indicator, and Circuit Topology switch.
-   - **Suggested Fix:** No fix needed; header bar matches visual layout and functional requirements cleanly.
+| Section | Spec Weight | Section Alignment Score | Weighted Contribution | Compliance Status |
+| :--- | :---: | :---: | :---: | :---: |
+| **Classic 303 Front Panel** | 35% | 85.0 | 29.75 | Needs Minor Refinement |
+| **Souped-Up Engine Drawer** | 30% | 62.0 | 18.60 | **Non-Compliant (Critical)** |
+| **16-Step Hardware Sequencer** | 35% | 65.0 | 22.75 | **Non-Compliant (Critical)** |
+| **Overall Score** | **100%** | — | **71.1 / 100** | **FAIL (`spec_compliance: false`)** |
 
 ---
 
-### 2.2 Souped-Up Engine Drawer (`souped_drawer`) — Compliant (96.00)
+## Top Visual & Structural Defects
 
-1. **MEG and VEG ADSR Mini-Faders (`geometry` - Minor):**
-   - **Observed:** MEG and VEG ADSR mini-fader groups sit side-by-side with 4.0px horizontal spacing.
-   - **Expected:** MEG and VEG ADSR mini-fader groups are clearly separated into distinct 4-slider vertical card sections with glowing orange fill bars and group headers.
-   - **Suggested Fix:** Maintain current group separation and glowing orange accent fills, increasing padding between MEG and VEG fader banks slightly for improved visual isolation.
+### Critical Severity Defects
+1. **Unpopulated Souped-Up Engine Drawer (`souped_drawer`)**
+   - *Observation:* The right drawer panel area titled 'SOUPED-UP ENGINE DRAWER' is unpopulated except for a small inline `(Bypassed)` text label. All MEG/VEG ADSR vertical faders, extended oscillator controls, filter slope selectors, and analog drift controls are missing from the panel.
+   - *Spec Requirement:* Section 1.2, 3.2, 5. Dedicated drawer containing dual oscillator controls, pulse width, filter slope taps, drive, glide, wear/drift dials, and MEG/VEG ADSR faders.
+   - *File(s):* `plugin303/src/gui/panels/souped_panel.rs`, `plugin303/src/gui/mod.rs`
+
+2. **Missing MEG/VEG ADSR Vertical Mini-Faders (`souped_drawer`)**
+   - *Observation:* `MiniFader` widget is implemented in `widgets/fader.rs`, but zero faders are rendered on screen in the captured layout.
+   - *Spec Requirement:* Section 3.2. Vertical mini-faders with glowing orange fill bars for MEG (A, D, S, R) and VEG (A, D, S, R).
+   - *File(s):* `plugin303/src/gui/panels/souped_panel.rs`, `plugin303/src/gui/widgets/fader.rs`
+
+3. **16-Step Sequencer Column Overflow (`sequencer`)**
+   - *Observation:* Steps 12 through 16 overflow past the right boundary of the 1080px panel width and are clipped off screen.
+   - *Spec Requirement:* Section 1.4, 5. All 16 step columns must be fully visible and fit cleanly within the 1080px fixed window width.
+   - *File(s):* `plugin303/src/gui/panels/sequencer_panel.rs`, `plugin303/src/gui/widgets/step_button.rs`
+
+### Major Severity Defects
+4. **Incorrect Extended Dials Location (`souped_drawer`)**
+   - *Observation:* Extended dials (Distortion/Drive, Sub Vol, Envelope, Glide, Osc2 Pitch, Reso Comp, Osc2 Mix) are placed horizontally in `top_controls.rs` across the middle bar rather than inside the dedicated right-hand Souped-Up Drawer panel.
+   - *Spec Requirement:* Section 1.2, 3.2. Extended controls must reside within the Souped-Up Engine Drawer panel on the right side.
+   - *File(s):* `plugin303/src/gui/panels/top_controls.rs`, `plugin303/src/gui/panels/souped_panel.rs`
+
+5. **Incomplete Accurate Mode Dimming Badge & Overlay (`souped_drawer`)**
+   - *Observation:* In Accurate mode, the right drawer panel is completely unpopulated with a small inline text label `(Bypassed)` rather than a dimmed layout with an interactive quick-switch overlay badge.
+   - *Spec Requirement:* Section 1.3, 4.1. Full panel controls rendered at ~30% opacity with non-interactive overlay badge indicating *"Accurate Mode Active (Souped-up Engine Bypassed)"* and a quick-switch button to enable Fun mode.
+   - *File(s):* `plugin303/src/gui/panels/souped_panel.rs`
+
+6. **Missing Sequencer Playhead LED Bar (`sequencer`)**
+   - *Observation:* No playhead LED indicators are rendered above step numbers.
+   - *Spec Requirement:* Section 3.3. Top LED bar above each step column that illuminates in neon coral (`#ff3355`) when playing.
+   - *File(s):* `plugin303/src/gui/panels/sequencer_panel.rs`, `plugin303/src/gui/widgets/step_button.rs`, `plugin303/src/gui/widgets/led.rs`
+
+7. **Missing ACC / SLD LED Indicator Dots (`sequencer`)**
+   - *Observation:* ACC and SLD buttons are rendered as plain text pills without indicator LED dots.
+   - *Spec Requirement:* Section 3.3. ACC button with amber (`#ffaa00`) LED dot and SLD button with cyan (`#00e5ff`) LED dot.
+   - *File(s):* `plugin303/src/gui/widgets/step_button.rs`
+
+8. **Clipped Pitch Nudge Octave Arrow Controls (`sequencer`)**
+   - *Observation:* Octave up/down nudge arrow buttons (`▲` / `▼`) are vertically clipped at the bottom edge of step column cards.
+   - *Spec Requirement:* Section 3.3. Nudge buttons fully visible and interactive below pitch note readout.
+   - *File(s):* `plugin303/src/gui/widgets/step_button.rs`
+
+9. **Knob Disc Fill Color (`classic_panel`)**
+   - *Observation:* Knob body fill is flat dark slate (`theme::KNOB_BODY_DARK #1a1d21`) instead of brushed aluminum.
+   - *Spec Requirement:* Section 3.1, 5. Brushed-aluminum metallic disc styling with silver gradient (`#d0d4d8` to `#888e96`).
+   - *File(s):* `plugin303/src/gui/widgets/knob.rs`, `plugin303/src/gui/theme.rs`
+
+### Minor Severity Defects
+10. **Knob Bezel Tick Marks (`classic_panel`)**
+    - *Observation:* Continuous arc progress bar rendered around the knob without discrete radial tick marks.
+    - *Spec Requirement:* Section 3.1. Outer bezel ring with discrete radial tick marks spanning a 270° sweep (from 135° to 405°).
+    - *File(s):* `plugin303/src/gui/widgets/knob.rs`
+
+11. **Pitch Note Readout Spacing (`sequencer`)**
+    - *Observation:* Note readout displayed without space separator (`C3`).
+    - *Spec Requirement:* Section 3.3. Formatted note readout with space separator (e.g. `C 3`, `F# 2`).
+    - *File(s):* `plugin303/src/gui/widgets/step_button.rs`
 
 ---
 
-### 2.3 16-Step Sequencer Console (`sequencer`) — Compliant (94.00)
+## Step-by-Step Actionable Refinement Plan
 
-1. **Playhead LED Indicator (`geometry` - Minor):**
-   - **Observed:** 5px top playhead LED bar rendering slate in idle state and neon coral/red with glow halo when active.
-   - **Expected:** 5px top playhead indicator bar with active glow overlay on currently playing step.
-   - **Suggested Fix:** Keep existing top bar rendering with pulse animation on live playback.
+### Phase 1: Classic Panel & Knob Visual Polish (`classic_panel`)
+- **Task 1.1: Update `Knob303` Metallic Styling & Bezel Ticks (`knob.rs`, `theme.rs`)**
+  - Modify `Knob303` rendering in `plugin303/src/gui/widgets/knob.rs` to draw discrete radial tick lines across the 270° sweep angle range (135° to 405°).
+  - Update center knob circle fill to use brushed aluminum metallic tokens (`#d0d4d8` to `#888e96`) defined in `plugin303/src/gui/theme.rs`.
 
-2. **ACC / SLD Toggle Buttons (`alignment` - Minor):**
-   - **Observed:** ACC and SLD buttons side-by-side (17x16px) with discrete LED indicator dots on right margin.
-   - **Expected:** Dedicated ACC (amber LED dot) and SLD (cyan LED dot) modifier toggles per step column.
-   - **Suggested Fix:** Ensure 2px horizontal spacing between modifier buttons is maintained across DPI scales.
+### Phase 2: Souped-Up Engine Drawer Implementation & Topology Overlay (`souped_drawer`)
+- **Task 2.1: Re-architect Souped-Up Panel Layout (`souped_panel.rs`, `top_controls.rs`, `mod.rs`)**
+  - Create `plugin303/src/gui/panels/souped_panel.rs` and wire it into the master layout grid in `plugin303/src/gui/mod.rs` on the right side.
+  - Relocate extended controls (Distortion/Drive, Sub Vol, Envelope, Glide, Osc2 Pitch, Reso Comp, Osc2 Mix) from `top_controls.rs` into `souped_panel.rs`.
+- **Task 2.2: Implement MEG/VEG ADSR Mini-Faders (`souped_panel.rs`, `fader.rs`)**
+  - Add MEG ADSR vertical fader group (Attack, Decay, Sustain, Release) and VEG ADSR vertical fader group (Attack, Decay, Sustain, Release) using `MiniFader` instances with orange accent fill bars (`#ff8800`).
+- **Task 2.3: Implement Accurate Mode Dimming & Quick-Switch Overlay (`souped_panel.rs`)**
+  - When `params.topology` is set to `CircuitTopology::Accurate`, render the complete `souped_panel` visual hierarchy at ~30% opacity with input handling disabled (`Ui::set_enabled(false)`).
+  - Add a floating/centered overlay badge indicating *"Accurate Mode Active (Souped-up Engine Bypassed)"* containing a quick-switch button to enable `Fun` mode.
 
-3. **Gate Badge (NOTE / TIE / REST) (`color` - Minor):**
-   - **Observed:** High-contrast gate state badge correctly cycling through Cyan Note, Gold Tie, and Slate Rest.
-   - **Expected:** Cyclic gate badge showing Note (Cyan #00e5ff), Tie (Gold #ffd700), and Slate Rest (Slate #333a42).
-   - **Suggested Fix:** No fix needed; gate colors strictly comply with spec §3.3 color tokens.
-
-4. **Pitch Readout & Nudge (`typography` - Minor):**
-   - **Observed:** Pitch readout rendered in bold 9pt monospace font, clicking opens piano roll popover, side-by-side up/down arrows nudge octave.
-   - **Expected:** Monospace pitch display (e.g. C 3) with interactive octave nudge buttons.
-   - **Suggested Fix:** Maintain monospace font clarity for pitch readouts across step columns.
-
----
-
-## 3. Actionable Refinement Tasks by Target File
-
-### 3.1 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/switch.rs`
-- [ ] **Task 1 (Minor - Geometry):** Add optional vertical label orientation layout in `SlideSwitch` to align detent text to the right of slider track.
-
-### 3.2 `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`
-- [ ] **Task 2 (Minor - Typography):** Update Section 3.1 spec text to reflect knob parameter label positioning below dial rather than above.
-
-### 3.3 `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs`
-- [ ] **Task 3 (Minor - Geometry):** Increase padding between MEG and VEG ADSR fader banks slightly to improve group separation.
-
-### 3.4 `/Users/gus/Git/vibe303/plugin303/src/gui/widgets/step_button.rs`
-- [ ] **Task 4 (Minor - Alignment):** Verify 2px horizontal spacing between ACC and SLD modifier buttons across DPI scales.
+### Phase 3: 16-Step Sequencer Console Layout & Visual Refinements (`sequencer`)
+- **Task 3.1: Fix Step Column Grid Spacing & Overflow (`sequencer_panel.rs`)**
+  - Adjust step column width, margins, and padding in `plugin303/src/gui/panels/sequencer_panel.rs` so all 16 step columns fit within the available 1080px panel width without clipping or horizontal scroll.
+- **Task 3.2: Implement Playhead LED Bar (`step_button.rs`, `led.rs`, `sequencer_panel.rs`)**
+  - Add a neon coral (`#ff3355`) top LED bar indicator at the top of each step column in `step_button.rs`, driven by `current_playing_step` atomic state read from `Plugin303`.
+- **Task 3.3: Add ACC / SLD LED Indicator Dots (`step_button.rs`)**
+  - Render an explicit amber (`#ffaa00`) glowing LED dot next to the `ACC` text label and a cyan (`#00e5ff`) LED dot next to the `SLD` text label on step modifier buttons.
+- **Task 3.4: Fix Pitch Nudge Button Vertical Bounds & Note Readout Formatting (`step_button.rs`)**
+  - Increase vertical bounds / adjust padding inside step card widgets so octave up/down arrows (`▲` / `▼`) fit completely without bottom truncation.
+  - Format pitch readout string to include a space separator between note name and octave number (e.g. `C 3` instead of `C3`).
 
 ---
 
-## 4. Verification & Quality Gates
+## Verification & Acceptance Criteria
 
-1. **Cargo Build Verification:**
-   ```bash
-   cargo check -p plugin303 --all-features
-   ```
-2. **Audio Thread Zero-Allocation Gate:**
-   ```bash
-   cargo test -p plugin303 --test no_alloc
-   ```
-3. **Visual QA Gate Target:**
-   Re-run visual QA screenshot harness (`gui-visual-qa-loop`) and verify:
-   - `overall_score >= 93.0`
-   - `spec_compliance == true`
-   - All 3 sections pass visual quality gate.
+1. **Visual QA Re-Audit Gate:**
+   - `classic_panel` alignment score >= 95
+   - `souped_drawer` alignment score >= 95
+   - `sequencer` alignment score >= 95
+   - **Overall Weighted Alignment Score >= 95** with `spec_compliance: true`.
+2. **Build & Automated Verification:**
+   - `cargo test -p plugin303 --all-features` passes cleanly without warnings or errors.
+   - `cargo test -p plugin303 --test no_alloc` passes to confirm zero UI thread lock leakage into audio processing.

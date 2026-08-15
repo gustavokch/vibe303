@@ -10,8 +10,8 @@ pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xf8, 0xfa, 0xfc);
 pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0x94, 0xa3, 0xb8);
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x64, 0x74, 0x8b);
 
-pub const KNOB_BODY_LIGHT: Color32 = Color32::from_rgb(0x1e, 0x29, 0x3b);
-pub const KNOB_BODY_DARK: Color32 = Color32::from_rgb(0x0f, 0x17, 0x2a);
+pub const KNOB_BODY_LIGHT: Color32 = Color32::from_rgb(0xd0, 0xd4, 0xd8);
+pub const KNOB_BODY_DARK: Color32 = Color32::from_rgb(0x88, 0x8e, 0x96);
 pub const KNOB_BEZEL: Color32 = Color32::from_rgb(0x1e, 0x29, 0x3b);
 pub const KNOB_POINTER: Color32 = Color32::from_rgb(0xff, 0x77, 0x00);
 

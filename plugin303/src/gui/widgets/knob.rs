@@ -66,7 +66,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
 
             // Outer track background & active progress arc
             let track_radius = self.radius + 3.0;
-            let track_width = 3.5_f32;
+            let track_width = 2.5_f32;
 
             // Draw background track ring arc
             let track_pts = 32;
@@ -92,8 +92,28 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 painter.line_segment([p1, p2], Stroke::new(track_width, theme::SOUPED_ORANGE));
             }
 
-            // Inner dark center dial body
-            painter.circle_filled(center, self.radius, theme::KNOB_BODY_DARK);
+            // Discrete radial tick marks around bezel
+            let num_ticks = 11;
+            for i in 0..num_ticks {
+                let frac = i as f32 / (num_ticks - 1) as f32;
+                let tick_angle = start_angle + frac * (end_angle - start_angle);
+                let is_major = i == 0 || i == (num_ticks - 1) || i == (num_ticks / 2);
+                let r_inner = self.radius + 4.5;
+                let r_outer = if is_major { self.radius + 8.0 } else { self.radius + 6.5 };
+                let p_in = pos2(center.x + tick_angle.cos() * r_inner, center.y + tick_angle.sin() * r_inner);
+                let p_out = pos2(center.x + tick_angle.cos() * r_outer, center.y + tick_angle.sin() * r_outer);
+                let tick_color = if frac <= normalized {
+                    theme::SOUPED_ORANGE
+                } else {
+                    theme::PANEL_BORDER_HIGHLIGHT
+                };
+                let tick_stroke_width = if is_major { 1.5_f32 } else { 1.0_f32 };
+                painter.line_segment([p_in, p_out], Stroke::new(tick_stroke_width, tick_color));
+            }
+
+            // Inner brushed aluminum metallic dial body
+            painter.circle_filled(center, self.radius, theme::KNOB_BODY_LIGHT);
+            painter.circle_filled(center, self.radius * 0.85, theme::KNOB_BODY_DARK);
             painter.circle_stroke(
                 center,
                 self.radius,
