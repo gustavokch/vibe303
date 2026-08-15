@@ -292,13 +292,10 @@ impl AcidGenerator {
                     1 => {
                         // Nudge pitch scale degree by +-1
                         let current_key = pattern.pitches[i].key;
-                        let mut degree = 0;
-                        for (d, &interval) in intervals.iter().enumerate() {
-                            if (params.root_note as i8 + interval).rem_euclid(12) == current_key {
-                                degree = d;
-                                break;
-                            }
-                        }
+                        let degree = intervals
+                            .iter()
+                            .position(|&interval| (params.root_note as i8 + interval).rem_euclid(12) == current_key)
+                            .unwrap_or(0);
                         let shift = if rng.next_f32() < 0.5 { 1 } else { num_degrees - 1 };
                         let new_degree = (degree + shift) % num_degrees;
                         pattern.pitches[i].key = (params.root_note as i8 + intervals[new_degree]).rem_euclid(12);
