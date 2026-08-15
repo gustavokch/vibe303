@@ -25,15 +25,32 @@ pub fn render_step_strip(
     ui.vertical(|ui| {
         ui.set_width(width);
 
-        // 1. Playhead LED bar
+        // 1. Playhead LED bar with metallic bezel rims and bloom halo
         let (led_rect, _) = ui.allocate_exact_size(vec2(width, 5.0), Sense::hover());
-        if is_active {
-            ui.painter().rect_filled(led_rect, 2.0, theme::PLAYHEAD_RED);
-            ui.painter()
-                .rect_filled(led_rect.expand(2.0), 3.0, theme::PLAYHEAD_RED_GLOW);
-        } else {
-            ui.painter()
-                .rect_filled(led_rect, 2.0, Color32::from_rgb(0x22, 0x26, 0x2e));
+        if ui.is_rect_visible(led_rect) {
+            let p = ui.painter();
+            // Outer metallic rim
+            p.rect_filled(led_rect, 2.0, Color32::from_rgb(0x18, 0x1c, 0x24));
+            p.rect_stroke(
+                led_rect,
+                2.0,
+                Stroke::new(1.0_f32, Color32::from_rgb(0x38, 0x42, 0x52)),
+                nih_plug_egui::egui::StrokeKind::Inside,
+            );
+
+            let inner_led = led_rect.shrink(1.0);
+            if is_active {
+                // Neon coral bloom halo
+                p.rect_filled(
+                    led_rect.expand(2.0),
+                    3.0,
+                    Color32::from_rgba_premultiplied(0xff, 0x33, 0x55, 0x55),
+                );
+                // Active neon coral lens
+                p.rect_filled(inner_led, 1.5, Color32::from_rgb(0xff, 0x33, 0x55));
+            } else {
+                p.rect_filled(inner_led, 1.5, Color32::from_rgb(0x22, 0x26, 0x2e));
+            }
         }
 
         ui.add_space(2.0);
@@ -89,15 +106,18 @@ pub fn render_step_strip(
                     pos2(acc_rect.left() + 2.0, acc_rect.center().y),
                     nih_plug_egui::egui::Align2::LEFT_CENTER,
                     "ACC",
-                    FontId::new(6.0, FontFamily::Proportional),
+                    FontId::new(5.5, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(acc_rect.right() - 3.0, acc_rect.center().y);
+                let led_pos = pos2(acc_rect.right() - 3.5, acc_rect.center().y);
+                // Metallic bezel around LED dot
+                p.circle_stroke(led_pos, 2.2, Stroke::new(0.8_f32, Color32::from_rgb(0x47, 0x55, 0x69)));
                 if step.accent {
-                    p.circle_filled(led_pos, 2.5, theme::ACCENT_AMBER_GLOW);
-                    p.circle_filled(led_pos, 1.5, theme::ACCENT_AMBER);
+                    p.circle_filled(led_pos, 3.2, Color32::from_rgba_premultiplied(0xff, 0xaa, 0x00, 0x50));
+                    p.circle_filled(led_pos, 1.8, Color32::from_rgb(0xff, 0xaa, 0x00));
+                    p.circle_filled(led_pos, 0.7, Color32::WHITE);
                 } else {
-                    p.circle_filled(led_pos, 1.3, Color32::from_rgb(0x14, 0x16, 0x1c));
+                    p.circle_filled(led_pos, 1.5, Color32::from_rgb(0x28, 0x1c, 0x10));
                 }
             }
 
@@ -130,15 +150,18 @@ pub fn render_step_strip(
                     pos2(sld_rect.left() + 2.0, sld_rect.center().y),
                     nih_plug_egui::egui::Align2::LEFT_CENTER,
                     "SLD",
-                    FontId::new(6.0, FontFamily::Proportional),
+                    FontId::new(5.5, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(sld_rect.right() - 3.0, sld_rect.center().y);
+                let led_pos = pos2(sld_rect.right() - 3.5, sld_rect.center().y);
+                // Metallic bezel around LED dot
+                p.circle_stroke(led_pos, 2.2, Stroke::new(0.8_f32, Color32::from_rgb(0x47, 0x55, 0x69)));
                 if step.slide {
-                    p.circle_filled(led_pos, 2.5, theme::SLIDE_CYAN_GLOW);
-                    p.circle_filled(led_pos, 1.5, theme::SLIDE_CYAN);
+                    p.circle_filled(led_pos, 3.2, Color32::from_rgba_premultiplied(0x00, 0xe5, 0xff, 0x50));
+                    p.circle_filled(led_pos, 1.8, Color32::from_rgb(0x00, 0xe5, 0xff));
+                    p.circle_filled(led_pos, 0.7, Color32::WHITE);
                 } else {
-                    p.circle_filled(led_pos, 1.3, Color32::from_rgb(0x14, 0x16, 0x1c));
+                    p.circle_filled(led_pos, 1.5, Color32::from_rgb(0x10, 0x20, 0x28));
                 }
             }
         });
@@ -207,7 +230,7 @@ pub fn render_step_strip(
             }
         }
 
-        ui.add_space(2.0);
+        ui.add_space(4.0);
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
@@ -243,14 +266,15 @@ pub fn render_step_strip(
                 } else {
                     theme::TEXT_MUTED
                 };
-                p.line_segment(
-                    [pos2(cx - 2.5, cy + 1.5), pos2(cx, cy - 2.0)],
-                    Stroke::new(1.3_f32, arrow_color),
-                );
-                p.line_segment(
-                    [pos2(cx, cy - 2.0), pos2(cx + 2.5, cy + 1.5)],
-                    Stroke::new(1.3_f32, arrow_color),
-                );
+                p.add(nih_plug_egui::egui::Shape::convex_polygon(
+                    vec![
+                        pos2(cx, cy - 3.5),
+                        pos2(cx - 3.5, cy + 2.5),
+                        pos2(cx + 3.5, cy + 2.5),
+                    ],
+                    arrow_color,
+                    Stroke::NONE,
+                ));
             }
 
             // Octave Down Button
@@ -284,14 +308,15 @@ pub fn render_step_strip(
                 } else {
                     theme::TEXT_MUTED
                 };
-                p.line_segment(
-                    [pos2(cx - 2.5, cy - 1.5), pos2(cx, cy + 2.0)],
-                    Stroke::new(1.3_f32, arrow_color),
-                );
-                p.line_segment(
-                    [pos2(cx, cy + 2.0), pos2(cx + 2.5, cy - 1.5)],
-                    Stroke::new(1.3_f32, arrow_color),
-                );
+                p.add(nih_plug_egui::egui::Shape::convex_polygon(
+                    vec![
+                        pos2(cx - 3.5, cy - 2.5),
+                        pos2(cx + 3.5, cy - 2.5),
+                        pos2(cx, cy + 3.5),
+                    ],
+                    arrow_color,
+                    Stroke::NONE,
+                ));
             }
         });
     });

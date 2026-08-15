@@ -9,11 +9,14 @@ LOG_FILE="$OUTPUT_DIR/standalone.log"
 
 mkdir -p "$OUTPUT_DIR"
 
-echo "Building standalone binary..."
-cargo build --manifest-path "$REPO_ROOT/Cargo.toml" -p plugin303 --bin standalone
+echo "Cleaning previous release build artifacts..."
+cargo clean --manifest-path "$REPO_ROOT/Cargo.toml" -p plugin303 --release
+
+echo "Building standalone binary (release)..."
+cargo build --release --manifest-path "$REPO_ROOT/Cargo.toml" -p plugin303 --bin standalone
 
 echo "Launching standalone GUI..."
-"$REPO_ROOT/target/debug/standalone" -b dummy > "$LOG_FILE" 2>&1 &
+"$REPO_ROOT/target/release/standalone" -b dummy > "$LOG_FILE" 2>&1 &
 APP_PID=$!
 
 cleanup() {
@@ -48,16 +51,19 @@ for i in {1..30}; do
 done
 
 if [[ -z "$WIN_ID" || "$WIN_ID" == "missing value" ]]; then
-    WIN_ID=$(swift - << EOF 2>/dev/null || true
+    WIN_ID=$(PROCESS_PID=$APP_PID swift - << 'EOF' 2>/dev/null || true
 import Cocoa
 import CoreGraphics
+import Foundation
 
-let targetPid = pid_t($APP_PID)
+let envPid = Int32(ProcessInfo.processInfo.environment["PROCESS_PID"] ?? "0") ?? 0
 if let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
     for w in windowList {
         let pid = w[kCGWindowOwnerPID as String] as? pid_t ?? 0
         let id = w[kCGWindowNumber as String] as? CGWindowID ?? 0
-        if pid == targetPid {
+        let bounds = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+        let height = bounds["Height"] as? Int ?? 0
+        if pid == envPid && height > 300 {
             print(id)
             break
         }

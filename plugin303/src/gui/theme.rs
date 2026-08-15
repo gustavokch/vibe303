@@ -25,7 +25,7 @@ pub const PLAYHEAD_RED: Color32 = Color32::from_rgb(0xff, 0x77, 0x00);
 pub const PLAYHEAD_RED_GLOW: Color32 = Color32::from_rgba_premultiplied(0xff, 0x77, 0x00, 0x60);
 
 pub const SOUPED_ORANGE: Color32 = Color32::from_rgb(0xff, 0x77, 0x00);
-pub const GATE_NOTE_COLOR: Color32 = Color32::from_rgb(0xff, 0x77, 0x00);
+pub const GATE_NOTE_COLOR: Color32 = Color32::from_rgb(0x00, 0xe5, 0xff);
 pub const GATE_TIE_COLOR: Color32 = Color32::from_rgb(0xf5, 0x9e, 0x0b);
 pub const GATE_REST_COLOR: Color32 = Color32::from_rgb(0x1e, 0x29, 0x3b);
 

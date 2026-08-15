@@ -24,10 +24,10 @@ impl<'a, P: Param> Knob303<'a, P> {
 
 impl<'a, P: Param> Widget for Knob303<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let desired_size = vec2(self.radius * 2.0 + 20.0, self.radius * 2.0 + 38.0);
+        let desired_size = vec2(self.radius * 2.0 + 20.0, self.radius * 2.0 + 40.0);
         let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
-        let center = pos2(rect.center().x, rect.top() + self.radius + 6.0);
+        let center = pos2(rect.center().x, rect.top() + self.radius + 9.0);
         let normalized = self.param.unmodulated_normalized_value();
 
         // Interaction
@@ -102,10 +102,10 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 let r_outer = if is_major { self.radius + 8.0 } else { self.radius + 6.5 };
                 let p_in = pos2(center.x + tick_angle.cos() * r_inner, center.y + tick_angle.sin() * r_inner);
                 let p_out = pos2(center.x + tick_angle.cos() * r_outer, center.y + tick_angle.sin() * r_outer);
-                let tick_color = if frac <= normalized {
-                    theme::SOUPED_ORANGE
+                let tick_color = if is_major {
+                    nih_plug_egui::egui::Color32::from_rgb(0xe2, 0xe8, 0xf0)
                 } else {
-                    theme::PANEL_BORDER_HIGHLIGHT
+                    nih_plug_egui::egui::Color32::from_rgb(0xa0, 0xa8, 0xb0)
                 };
                 let tick_stroke_width = if is_major { 1.5_f32 } else { 1.0_f32 };
                 painter.line_segment([p_in, p_out], Stroke::new(tick_stroke_width, tick_color));
@@ -120,7 +120,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 Stroke::new(1.2_f32, theme::PANEL_BORDER_HIGHLIGHT),
             );
 
-            // Pointer line
+            // Engraved metallic silver/white pointer line
             let pointer_len = self.radius * 0.85;
             let pointer_end = pos2(
                 center.x + current_angle.cos() * pointer_len,
@@ -132,7 +132,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             );
             painter.line_segment(
                 [pointer_start, pointer_end],
-                Stroke::new(2.5_f32, theme::KNOB_POINTER),
+                Stroke::new(2.2_f32, nih_plug_egui::egui::Color32::from_rgb(0xe2, 0xe8, 0xf0)),
             );
 
             // Parameter Title Label below dial
@@ -206,7 +206,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 value_str,
                 FontId::new(8.0, FontFamily::Monospace),
-                theme::TEXT_MUTED,
+                nih_plug_egui::egui::Color32::from_rgb(0xd0, 0xd8, 0xe0),
             );
         }
 

@@ -141,9 +141,31 @@ pub struct SequencerPattern {
 
 impl Default for SequencerPattern {
     fn default() -> Self {
-        Self {
-            steps: [SequencerStep::default(); 16],
-        }
+        let mut steps = [SequencerStep::default(); 16];
+        // Classic acid baseline initial pattern with NOTE, TIE, REST variation
+        steps[0].accent = true;
+        steps[1].gate = StepGate::Tie;
+        steps[2].semitone = 3; // D#
+        steps[2].slide = true;
+        steps[3].gate = StepGate::Rest;
+        steps[4].accent = true;
+        steps[5].gate = StepGate::Tie;
+        steps[6].semitone = 7; // G
+        steps[6].slide = true;
+        steps[7].gate = StepGate::Rest;
+        steps[8].semitone = 10; // A#
+        steps[8].accent = true;
+        steps[9].gate = StepGate::Tie;
+        steps[10].semitone = 12; // C4
+        steps[10].slide = true;
+        steps[11].gate = StepGate::Rest;
+        steps[12].accent = true;
+        steps[13].gate = StepGate::Tie;
+        steps[14].semitone = 7; // G
+        steps[14].slide = true;
+        steps[15].gate = StepGate::Rest;
+
+        Self { steps }
     }
 }
 

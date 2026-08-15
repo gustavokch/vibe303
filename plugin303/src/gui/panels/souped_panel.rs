@@ -8,14 +8,13 @@ use crate::params::{CircuitTopology, Plugin303Params};
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
 
-    Frame::new()
+    let response = Frame::new()
         .fill(theme::PANEL_BG_SOUPED)
         .stroke(theme::border_stroke())
         .corner_radius(CornerRadius::same(4))
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {
-            let panel_rect_start = ui.cursor().min;
-
+            ui.set_width(570.0);
             ui.vertical(|ui| {
                 // Header Bar
                 ui.horizontal(|ui| {
@@ -45,21 +44,11 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.horizontal(|ui| {
                         // Left Column: Toggles & Dials
                         ui.vertical(|ui| {
+                            ui.set_width(280.0);
+
                             // Selectors Row
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
-
-                                ui.add(
-                                    SlideSwitch::new(
-                                        &params.tier,
-                                        setter,
-                                        "FIDELITY TIER",
-                                        &["LOW", "HIGH", "ULTRA"],
-                                    )
-                                    .with_thumb_color(theme::PLAYHEAD_RED),
-                                );
-
-                                ui.add_space(6.0);
 
                                 ui.add(SlideSwitch::new(
                                     &params.vcf_taps,
@@ -69,63 +58,66 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 ));
                             });
 
-                            ui.add_space(6.0);
+                            ui.add_space(4.0);
                             ui.separator();
                             ui.add_space(4.0);
 
                             // Extended Rotary Dials
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
-                                ui.add(Knob303::new(&params.vcf_drive, setter, "DISTORTION", 13.0));
-                                ui.add(Knob303::new(&params.sub_vol, setter, "SUB VOL", 13.0));
-                                ui.add(Knob303::new(&params.glide, setter, "GLIDE", 13.0));
-                                ui.add(Knob303::new(&params.osc2_pitch, setter, "OSC2 PITCH", 13.0));
-                                ui.add(Knob303::new(&params.reso_comp, setter, "RESO COMP", 13.0));
-                                ui.add(Knob303::new(&params.osc2_vol, setter, "OSC2 MIX", 13.0));
+                                ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+                                ui.add(Knob303::new(&params.vcf_drive, setter, "DISTORTION", 12.0));
+                                ui.add(Knob303::new(&params.sub_vol, setter, "SUB VOL", 12.0));
+                                ui.add(Knob303::new(&params.glide, setter, "GLIDE", 12.0));
+                                ui.add(Knob303::new(&params.osc2_pitch, setter, "OSC2 PITCH", 12.0));
+                                ui.add(Knob303::new(&params.reso_comp, setter, "RESO COMP", 12.0));
+                                ui.add(Knob303::new(&params.osc2_vol, setter, "OSC2 MIX", 12.0));
                             });
                         });
 
-                        ui.add_space(10.0);
+                        ui.add_space(4.0);
                         ui.separator();
-                        ui.add_space(10.0);
+                        ui.add_space(4.0);
 
                         // Right Column: MEG & VEG ADSR Vertical Mini-Faders
-                        ui.horizontal(|ui| {
-                            // MEG ADSR Group
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    nih_plug_egui::egui::RichText::new("MEG ADSR")
-                                        .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
-                                        .strong()
-                                        .color(theme::TEXT_SECONDARY),
-                                );
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                                    ui.add(MiniFader::new(&params.meg_attack, setter, "A", 36.0, theme::SOUPED_ORANGE));
-                                    ui.add(MiniFader::new(&params.meg_decay_adj, setter, "D", 36.0, theme::SOUPED_ORANGE));
-                                    ui.add(MiniFader::new(&params.meg_sustain, setter, "S", 36.0, theme::SOUPED_ORANGE));
-                                    ui.add(MiniFader::new(&params.meg_release, setter, "R", 36.0, theme::SOUPED_ORANGE));
+                        ui.vertical(|ui| {
+                            ui.set_width(230.0);
+                            ui.horizontal(|ui| {
+                                // MEG ADSR Group
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        nih_plug_egui::egui::RichText::new("MEG ADSR")
+                                            .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
+                                            .strong()
+                                            .color(theme::TEXT_SECONDARY),
+                                    );
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                                        ui.add(MiniFader::new(&params.meg_attack, setter, "A", 34.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.meg_decay_adj, setter, "D", 34.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.meg_sustain, setter, "S", 34.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.meg_release, setter, "R", 34.0, theme::SOUPED_ORANGE));
+                                    });
                                 });
-                            });
 
-                            ui.add_space(6.0);
+                                ui.add_space(6.0);
 
-                            // VEG ADSR Group
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    nih_plug_egui::egui::RichText::new("VEG ADSR")
-                                        .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
-                                        .strong()
-                                        .color(theme::TEXT_SECONDARY),
-                                );
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                                    ui.add(MiniFader::new(&params.veg_attack, setter, "A", 36.0, theme::SOUPED_ORANGE));
-                                    ui.add(MiniFader::new(&params.veg_decay_adj, setter, "D", 36.0, theme::SOUPED_ORANGE));
-                                    ui.add(MiniFader::new(&params.veg_sustain, setter, "S", 36.0, theme::SOUPED_ORANGE));
-                                    ui.add(MiniFader::new(&params.veg_release, setter, "R", 36.0, theme::SOUPED_ORANGE));
+                                // VEG ADSR Group
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        nih_plug_egui::egui::RichText::new("VEG ADSR")
+                                            .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
+                                            .strong()
+                                            .color(theme::TEXT_SECONDARY),
+                                    );
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                                        ui.add(MiniFader::new(&params.veg_attack, setter, "A", 34.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.veg_decay_adj, setter, "D", 34.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.veg_sustain, setter, "S", 34.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.veg_release, setter, "R", 34.0, theme::SOUPED_ORANGE));
+                                    });
                                 });
                             });
                         });
@@ -133,74 +125,78 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 });
             });
 
-            // Accurate Mode Overlay Badge
-            if is_accurate {
-                let panel_rect_end = ui.cursor().min;
-                let overlay_rect = Rect::from_min_max(
-                    panel_rect_start,
-                    pos2(panel_rect_end.x.max(panel_rect_start.x + 480.0), panel_rect_end.y + 100.0),
-                );
-
-                let painter = ui.painter();
-                // Semi-transparent dimming ground
-                painter.rect_filled(
-                    overlay_rect,
-                    4.0,
-                    Color32::from_rgba_premultiplied(0x0a, 0x10, 0x1d, 0xb0),
-                );
-
-                // Centered Badge
-                let center = overlay_rect.center();
-                let badge_width = 300.0;
-                let badge_height = 54.0;
-                let badge_rect = Rect::from_center_size(center, vec2(badge_width, badge_height));
-
-                painter.rect_filled(badge_rect, 6.0, Color32::from_rgb(0x13, 0x1b, 0x2e));
-                painter.rect_stroke(
-                    badge_rect,
-                    6.0,
-                    Stroke::new(1.0_f32, theme::PANEL_BORDER_HIGHLIGHT),
-                    nih_plug_egui::egui::StrokeKind::Inside,
-                );
-
-                painter.text(
-                    pos2(center.x, center.y - 12.0),
-                    Align2::CENTER_CENTER,
-                    "ACCURATE MODE ACTIVE",
-                    FontId::new(10.5, nih_plug_egui::egui::FontFamily::Proportional),
-                    theme::TEXT_PRIMARY,
-                );
-
-                painter.text(
-                    pos2(center.x, center.y + 2.0),
-                    Align2::CENTER_CENTER,
-                    "Souped-up engine is bypassed",
-                    FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional),
-                    theme::TEXT_MUTED,
-                );
-
-                // Quick Switch Button
-                let btn_rect = Rect::from_center_size(pos2(center.x, center.y + 16.0), vec2(120.0, 16.0));
-                let btn_resp = ui.put(
-                    btn_rect,
-                    Button::new(
-                        nih_plug_egui::egui::RichText::new("SWITCH TO FUN")
-                            .font(FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional))
-                            .color(theme::SOUPED_ORANGE),
-                    )
-                    .fill(Color32::from_rgb(0x1e, 0x29, 0x3b))
-                    .corner_radius(CornerRadius::same(3)),
-                );
-
-                if btn_resp.clicked() {
-                    setter.begin_set_parameter(&params.topology);
-                    setter.set_parameter(&params.topology, CircuitTopology::Fun);
-                    setter.end_set_parameter(&params.topology);
-
-                    setter.begin_set_parameter(&params.reso_comp);
-                    setter.set_parameter_normalized(&params.reso_comp, 0.5);
-                    setter.end_set_parameter(&params.reso_comp);
-                }
-            }
         });
+
+    // Accurate Mode Overlay Badge
+    if is_accurate {
+        let overlay_rect = response.response.rect;
+
+        let painter = ui.painter();
+        // 30% opacity dimming ground (0x4d out of 0xff = ~30%)
+        painter.rect_filled(
+            overlay_rect,
+            4.0,
+            Color32::from_rgba_premultiplied(0x0a, 0x10, 0x1d, 0x4d),
+        );
+
+        // Centered Badge with Drop Shadow
+        let center = overlay_rect.center();
+        let badge_width = 240.0;
+        let badge_height = 56.0;
+        let badge_rect = Rect::from_center_size(center, vec2(badge_width, badge_height));
+
+        // Soft drop shadow
+        painter.rect_filled(
+            badge_rect.translate(vec2(0.0, 3.0)),
+            8.0,
+            Color32::from_rgba_premultiplied(0x00, 0x00, 0x00, 0x80),
+        );
+
+        painter.rect_filled(badge_rect, 6.0, Color32::from_rgb(0x13, 0x1b, 0x2e));
+        painter.rect_stroke(
+            badge_rect,
+            6.0,
+            Stroke::new(1.0_f32, theme::PANEL_BORDER_HIGHLIGHT),
+            nih_plug_egui::egui::StrokeKind::Inside,
+        );
+
+        painter.text(
+            pos2(center.x, center.y - 12.0),
+            Align2::CENTER_CENTER,
+            "ACCURATE MODE ACTIVE",
+            FontId::new(10.5, nih_plug_egui::egui::FontFamily::Proportional),
+            theme::TEXT_PRIMARY,
+        );
+
+        painter.text(
+            pos2(center.x, center.y + 0.0),
+            Align2::CENTER_CENTER,
+            "Souped-up engine is bypassed",
+            FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional),
+            theme::TEXT_MUTED,
+        );
+
+        // Quick Switch Button
+        let btn_rect = Rect::from_center_size(pos2(center.x, center.y + 14.0), vec2(110.0, 16.0));
+        let btn_resp = ui.put(
+            btn_rect,
+            Button::new(
+                nih_plug_egui::egui::RichText::new("SWITCH TO FUN")
+                    .font(FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional))
+                    .color(theme::SOUPED_ORANGE),
+            )
+            .fill(Color32::from_rgb(0x1e, 0x29, 0x3b))
+            .corner_radius(CornerRadius::same(3)),
+        );
+
+        if btn_resp.clicked() {
+            setter.begin_set_parameter(&params.topology);
+            setter.set_parameter(&params.topology, CircuitTopology::Fun);
+            setter.end_set_parameter(&params.topology);
+
+            setter.begin_set_parameter(&params.reso_comp);
+            setter.set_parameter_normalized(&params.reso_comp, 0.5);
+            setter.end_set_parameter(&params.reso_comp);
+        }
+    }
 }
