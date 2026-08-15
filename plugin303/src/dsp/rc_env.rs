@@ -340,7 +340,7 @@ impl AccentSweep {
     pub fn new(fs: f64) -> Self {
         let mut s = Self {
             v_c13: 0.0,
-            fs: 44100.0,
+            fs: 0.0,
             coeff_chg: 0.0,
             coeff_dis: 0.0,
         };
