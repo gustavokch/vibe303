@@ -466,7 +466,7 @@ impl Default for Plugin303Params {
                 },
             ),
 
-            glide: FloatParam::new("Glide", 0.1, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            glide: FloatParam::new("Glide", 0.4, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
             advanced_env: BoolParam::new("Advanced Env", false),
 

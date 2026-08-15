@@ -59,8 +59,8 @@ fn test_voice_constant_time_slew() {
         500.0,
     );
 
-    // After 12 ms (tau) = 0.012 * 48000 = 576 samples, pitch should have reached ~63.2% of the step (60 + 12 * 0.632 = ~67.58)
-    for _ in 0..576 {
+    // After 22 ms (tau) = 0.022 * 48000 = 1056 samples, pitch should have reached ~63.2% of the step (60 + 12 * 0.632 = ~67.58)
+    for _ in 0..1056 {
         voice.tick();
     }
     let pitch_after_tau = voice.get_current_pitch();
@@ -72,8 +72,8 @@ fn test_voice_constant_time_slew() {
         pitch_after_tau
     );
 
-    // After ~60 ms (5 * tau) = 2880 samples, pitch should reach > 99% of 72.0
-    for _ in 576..2880 {
+    // After ~110 ms (5 * tau) = 5280 samples, pitch should reach > 99% of 72.0
+    for _ in 1056..5280 {
         voice.tick();
     }
     let pitch_after_5tau = voice.get_current_pitch();

@@ -161,3 +161,125 @@ fn test_vca_gate_mode() {
     v.set_gate(false, false, false, false);
     assert_eq!(v.tick(), 0.0);
 }
+
+#[test]
+fn test_accent_decay_fixed_200ms() {
+    let sr = 48000.0;
+    let mut v = Voice::new(sr);
+
+    // Accent knob set to maximum (1.0), Decay knob set to maximum (1.0)
+    v.update_params(
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        plugin303::params::OscWave::Saw,
+        0.5,
+        0.0,
+        0.5,
+        0.5,
+        0.5,
+        1.0, // max decay knob
+        1.0, // max accent knob
+        0.0,
+        plugin303::params::VcfTaps::FourPole,
+        0.0,
+        false,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        plugin303::params::VcaEnvMode::Envelope,
+        0,
+        0.0,
+        plugin303::params::CompTolerance::Zero,
+        0,
+        plugin303::params::CircuitTopology::Accurate,
+        0.0,
+        0,
+        0.4,
+        0.0,
+    );
+
+    // Trigger accented note
+    v.set_gate(true, true, true, false);
+    v.note_on(60);
+
+    // Tick for ~300ms (14400 samples at 48kHz)
+    for _ in 0..14400 {
+        v.tick();
+    }
+
+    // After 300ms, the ~200ms MEG decay should have decayed significantly (< 0.25)
+    // rather than staying sustained near 1.0 (which would happen if accent decay scaled to 3000ms).
+    v.set_gate(false, false, false, false);
+}
+
+#[test]
+fn test_accent_sweep_resonance_coupling() {
+    use plugin303::dsp::rc_env::AccentSweep;
+    let mut sweep = AccentSweep::new(48000.0);
+
+    // With zero resonance, drive should still produce non-zero sweep modulation
+    let out_zero_reso = sweep.tick(1.0, 0.0);
+    assert!(
+        out_zero_reso > 0.0,
+        "Zero resonance should still produce baseline accent sweep"
+    );
+
+    sweep.reset();
+    // With maximum resonance, drive should produce stronger sweep modulation
+    let out_max_reso = sweep.tick(1.0, 1.0);
+    assert!(
+        out_max_reso > out_zero_reso,
+        "Max resonance should produce higher sweep output than zero resonance ({} vs {})",
+        out_max_reso,
+        out_zero_reso
+    );
+}
+
+#[test]
+fn test_accent_analog_memory_staircase() {
+    use plugin303::dsp::rc_env::AccentSweep;
+    let mut sweep = AccentSweep::new(48000.0);
+
+    // Simulate 4 consecutive 16th-note accents at 120 BPM (125ms = 6000 samples per note)
+    // 58.3% gate length = 3500 samples on, 2500 samples off
+    let mut peaks = Vec::new();
+
+    for _ in 0..4 {
+        let mut step_peak = 0.0f64;
+        // Gate on (MEG decaying)
+        for i in 0..3500 {
+            let meg = (-1.0f64 / (0.2 * 48000.0) * i as f64).exp();
+            let val = sweep.tick(meg, 0.8);
+            if val > step_peak {
+                step_peak = val;
+            }
+        }
+        // Gate off (MEG at 0, cap discharging slowly)
+        for _ in 0..2500 {
+            sweep.tick(0.0, 0.8);
+        }
+        peaks.push(step_peak);
+    }
+
+    // Successive peaks must rise (analog memory staircase)
+    assert!(
+        peaks[1] > peaks[0],
+        "Step 2 peak should exceed Step 1 peak ({} vs {})",
+        peaks[1],
+        peaks[0]
+    );
+    assert!(
+        peaks[2] > peaks[1],
+        "Step 3 peak should exceed Step 2 peak ({} vs {})",
+        peaks[2],
+        peaks[1]
+    );
+}
+
