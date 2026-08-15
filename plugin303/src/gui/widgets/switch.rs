@@ -5,6 +5,120 @@ use nih_plug_egui::egui::{
 
 use crate::gui::theme;
 
+#[derive(Clone, Copy)]
+struct ThumbColors {
+    body: Color32,
+    stroke: Color32,
+    top_highlight: Option<Color32>,
+    rib: Color32,
+    active_text: Color32,
+}
+
+impl ThumbColors {
+    fn from_thumb_color(thumb_color: Option<Color32>) -> Self {
+        match thumb_color {
+            Some(base) => {
+                let r = base.r() as f32;
+                let g = base.g() as f32;
+                let b = base.b() as f32;
+
+                let stroke = Color32::from_rgb(
+                    (r * 0.65) as u8,
+                    (g * 0.65) as u8,
+                    (b * 0.65) as u8,
+                );
+
+                let top_highlight = Some(Color32::from_rgb(
+                    ((r * 1.28) + 20.0).min(255.0) as u8,
+                    ((g * 1.28) + 34.0).min(255.0) as u8,
+                    ((b * 1.28) + 34.0).min(255.0) as u8,
+                ));
+
+                let rib = Color32::from_rgb(
+                    (r * 0.53) as u8,
+                    (g * 0.53) as u8,
+                    (b * 0.53) as u8,
+                );
+
+                let active_text = Color32::from_rgb(
+                    ((r * 1.84) + 74.0).min(255.0) as u8,
+                    ((g * 1.84) + 74.0).min(255.0) as u8,
+                    ((b * 1.84) + 74.0).min(255.0) as u8,
+                );
+
+                Self {
+                    body: base,
+                    stroke,
+                    top_highlight,
+                    rib,
+                    active_text,
+                }
+            }
+            None => Self {
+                body: theme::KNOB_BODY_LIGHT,
+                stroke: theme::KNOB_BEZEL,
+                top_highlight: None,
+                rib: Color32::from_rgb(0x70, 0x75, 0x82),
+                active_text: theme::ACCENT_AMBER,
+            },
+        }
+    }
+}
+
+fn draw_thumb_carriage(
+    painter: &nih_plug_egui::egui::Painter,
+    thumb_rect: Rect,
+    colors: &ThumbColors,
+    is_vertical: bool,
+) {
+    painter.rect_filled(thumb_rect, 2.0, colors.body);
+    if let Some(highlight_color) = colors.top_highlight {
+        // Brushed metallic top highlight
+        painter.line_segment(
+            [
+                pos2(thumb_rect.left() + 1.5, thumb_rect.top() + 1.0),
+                pos2(thumb_rect.right() - 1.5, thumb_rect.top() + 1.0),
+            ],
+            Stroke::new(1.0_f32, highlight_color),
+        );
+    }
+    painter.rect_stroke(
+        thumb_rect,
+        2.0,
+        Stroke::new(1.2_f32, colors.stroke),
+        StrokeKind::Inside,
+    );
+
+    let num_ribs = 3;
+    if is_vertical {
+        // Horizontal knurling ribs on vertical thumb
+        for r in 0..num_ribs {
+            let rib_offset = (r as f32 - (num_ribs - 1) as f32 / 2.0) * 2.5;
+            let ry = thumb_rect.center().y + rib_offset;
+            painter.line_segment(
+                [
+                    pos2(thumb_rect.left() + 2.0, ry),
+                    pos2(thumb_rect.right() - 2.0, ry),
+                ],
+                Stroke::new(1.0_f32, colors.rib),
+            );
+        }
+    } else {
+        // Vertical knurling ribs on horizontal thumb
+        for r in 0..num_ribs {
+            let rib_offset = (r as f32 - (num_ribs - 1) as f32 / 2.0) * 3.0;
+            let rx = thumb_rect.center().x + rib_offset;
+            painter.line_segment(
+                [
+                    pos2(rx, thumb_rect.top() + 3.0),
+                    pos2(rx, thumb_rect.bottom() - 3.0),
+                ],
+                Stroke::new(1.0_f32, colors.rib),
+            );
+        }
+    }
+}
+
 pub struct SlideSwitch<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> {
     param: &'a EnumParam<T>,
     setter: &'a ParamSetter<'a>,
@@ -46,6 +160,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
     fn ui(self, ui: &mut Ui) -> Response {
         let num_opts = self.options.len().max(1);
         let opt_font = FontId::new(8.5, FontFamily::Proportional);
+        let colors = ThumbColors::from_thumb_color(self.thumb_color);
 
         if self.is_vertical {
             let max_text_width = self
@@ -128,59 +243,14 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     vec2(16.0, 12.0),
                 );
 
-                let body_color = self.thumb_color.unwrap_or(theme::KNOB_BODY_LIGHT);
-                let stroke_color = if self.thumb_color.is_some() {
-                    Color32::from_rgb(0x5a, 0x00, 0x00)
-                } else {
-                    theme::KNOB_BEZEL
-                };
-                painter.rect_filled(thumb_rect, 2.0, body_color);
-                if self.thumb_color.is_some() {
-                    // Brushed metallic top highlight
-                    painter.line_segment(
-                        [
-                            pos2(thumb_rect.left() + 1.5, thumb_rect.top() + 1.0),
-                            pos2(thumb_rect.right() - 1.5, thumb_rect.top() + 1.0),
-                        ],
-                        Stroke::new(1.0_f32, Color32::from_rgb(0xb2, 0x22, 0x22)),
-                    );
-                }
-                painter.rect_stroke(
-                    thumb_rect,
-                    2.0,
-                    Stroke::new(1.2_f32, stroke_color),
-                    StrokeKind::Inside,
-                );
-
-                // Horizontal knurling ribs on thumb
-                let rib_color = if self.thumb_color.is_some() {
-                    Color32::from_rgb(0x4a, 0x00, 0x00)
-                } else {
-                    Color32::from_rgb(0x70, 0x75, 0x82)
-                };
-                let num_ribs = 3;
-                for r in 0..num_ribs {
-                    let rib_offset = (r as f32 - (num_ribs - 1) as f32 / 2.0) * 2.5;
-                    let ry = thumb_rect.center().y + rib_offset;
-                    painter.line_segment(
-                        [
-                            pos2(thumb_rect.left() + 2.0, ry),
-                            pos2(thumb_rect.right() - 2.0, ry),
-                        ],
-                        Stroke::new(1.0_f32, rib_color),
-                    );
-                }
+                draw_thumb_carriage(painter, thumb_rect, &colors, true);
 
                 // Option labels stacked vertically to the right of each detent
                 for (i, opt) in self.options.iter().enumerate() {
                     let detent_y = track_rect.top() + slot_height * (i as f32 + 0.5);
                     let is_selected = i == current_idx;
                     let text_color = if is_selected {
-                        if self.thumb_color.is_some() {
-                            Color32::from_rgb(0xff, 0x4a, 0x4a)
-                        } else {
-                            theme::ACCENT_AMBER
-                        }
+                        colors.active_text
                     } else {
                         theme::TEXT_MUTED
                     };
@@ -291,60 +361,14 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 vec2(thumb_w, 16.0),
             );
 
-            // Sliding carriage (thumb) body & bevel
-            let body_color = self.thumb_color.unwrap_or(theme::KNOB_BODY_LIGHT);
-            let stroke_color = if self.thumb_color.is_some() {
-                Color32::from_rgb(0x5a, 0x00, 0x00)
-            } else {
-                theme::KNOB_BEZEL
-            };
-            painter.rect_filled(thumb_rect, 2.0, body_color);
-            if self.thumb_color.is_some() {
-                // Brushed metallic top highlight
-                painter.line_segment(
-                    [
-                        pos2(thumb_rect.left() + 1.5, thumb_rect.top() + 1.0),
-                        pos2(thumb_rect.right() - 1.5, thumb_rect.top() + 1.0),
-                    ],
-                    Stroke::new(1.0_f32, Color32::from_rgb(0xb2, 0x22, 0x22)),
-                );
-            }
-            painter.rect_stroke(
-                thumb_rect,
-                2.0,
-                Stroke::new(1.2_f32, stroke_color),
-                StrokeKind::Inside,
-            );
-
-            // Vertical knurling ribs on thumb
-            let rib_color = if self.thumb_color.is_some() {
-                Color32::from_rgb(0x4a, 0x00, 0x00)
-            } else {
-                Color32::from_rgb(0x70, 0x75, 0x82)
-            };
-            let num_ribs = 3;
-            for r in 0..num_ribs {
-                let rib_offset = (r as f32 - (num_ribs - 1) as f32 / 2.0) * 3.0;
-                let rx = thumb_rect.center().x + rib_offset;
-                painter.line_segment(
-                    [
-                        pos2(rx, thumb_rect.top() + 3.0),
-                        pos2(rx, thumb_rect.bottom() - 3.0),
-                    ],
-                    Stroke::new(1.0_f32, rib_color),
-                );
-            }
+            draw_thumb_carriage(painter, thumb_rect, &colors, false);
 
             // Option labels positioned below the track at each detent
             for (i, opt) in self.options.iter().enumerate() {
                 let opt_x = track_rect.left() + slot_width * (i as f32 + 0.5);
                 let is_selected = i == current_idx;
                 let text_color = if is_selected {
-                    if self.thumb_color.is_some() {
-                        Color32::from_rgb(0xff, 0x4a, 0x4a)
-                    } else {
-                        theme::ACCENT_AMBER
-                    }
+                    colors.active_text
                 } else {
                     theme::TEXT_MUTED
                 };
