@@ -8,6 +8,10 @@ Circuit-grounded emulation of the Roland TB-303 bass synthesizer, built in Rust 
 
 ---
 
+<img width="1100" height="492" alt="latest" src="https://github.com/user-attachments/assets/7a8df9c0-56cc-4c72-89c4-07a26980ffcf" />
+
+---
+
 ## Key Features
 
 ### 1. Multi-Tier Circuit Modeling
