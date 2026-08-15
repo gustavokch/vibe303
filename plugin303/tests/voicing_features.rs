@@ -165,58 +165,85 @@ fn test_vca_gate_mode() {
 #[test]
 fn test_accent_decay_fixed_200ms() {
     let sr = 48000.0;
-    let mut v = Voice::new(sr);
+    let mut v_acc = Voice::new(sr);
+    let mut v_norm = Voice::new(sr);
 
     // Accent knob set to maximum (1.0), Decay knob set to maximum (1.0)
-    v.update_params(
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        plugin303::params::OscWave::Saw,
-        0.5,
-        0.0,
-        0.5,
-        0.5,
-        0.5,
-        1.0, // max decay knob
-        1.0, // max accent knob
-        0.0,
-        plugin303::params::VcfTaps::FourPole,
-        0.0,
-        false,
-        3.0,
-        200.0,
-        0.0,
-        200.0,
-        3.0,
-        200.0,
-        0.0,
-        200.0,
-        plugin303::params::VcaEnvMode::Envelope,
-        0,
-        0.0,
-        plugin303::params::CompTolerance::Zero,
-        0,
-        plugin303::params::CircuitTopology::Accurate,
-        0.0,
-        0,
-        0.4,
-        0.0,
-    );
+    // Cutoff set to min (0.0), env_mod set to max (1.0) to highlight filter decay difference
+    let update = |v: &mut Voice| {
+        v.update_params(
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            plugin303::params::OscWave::Saw,
+            0.5,
+            0.0,
+            0.0, // min cutoff
+            0.0, // min reso
+            1.0, // max env_mod
+            1.0, // max decay knob (3000ms for normal notes)
+            1.0, // max accent knob
+            0.0,
+            plugin303::params::VcfTaps::FourPole,
+            0.0,
+            false,
+            3.0,
+            200.0,
+            0.0,
+            200.0,
+            3.0,
+            200.0,
+            0.0,
+            200.0,
+            plugin303::params::VcaEnvMode::Envelope,
+            0,
+            0.0,
+            plugin303::params::CompTolerance::Zero,
+            0,
+            plugin303::params::CircuitTopology::Accurate,
+            0.0,
+            0,
+            0.4,
+            0.0,
+        );
+    };
 
-    // Trigger accented note
-    v.set_gate(true, true, true, false);
-    v.note_on(60);
+    update(&mut v_acc);
+    update(&mut v_norm);
 
-    // Tick for ~300ms (14400 samples at 48kHz)
-    for _ in 0..14400 {
-        v.tick();
+    // Accented note on v_acc, Normal note on v_norm
+    v_acc.set_gate(true, true, true, false);
+    v_acc.note_on(60);
+
+    v_norm.set_gate(true, true, false, false);
+    v_norm.note_on(60);
+
+    // Tick both voices for ~500ms (24000 samples at 48kHz)
+    // At 500ms:
+    // - Accented MEG decay (fixed ~200ms) will be near 0 (exp(-500/200) = ~0.082)
+    // - Normal MEG decay (knob set to 3000ms) will still be high (exp(-500/3000) = ~0.846)
+    let mut energy_acc = 0.0f32;
+    let mut energy_norm = 0.0f32;
+
+    for i in 0..24000 {
+        let s_acc = v_acc.tick();
+        let s_norm = v_norm.tick();
+        // Measure high-frequency derivative energy over the last 100ms (samples 19200..24000)
+        if i >= 19200 {
+            energy_acc += s_acc.abs();
+            energy_norm += s_norm.abs();
+        }
     }
 
-    // After 300ms, the ~200ms MEG decay should have decayed significantly (< 0.25)
-    // rather than staying sustained near 1.0 (which would happen if accent decay scaled to 3000ms).
-    v.set_gate(false, false, false, false);
+    // High frequency / overall energy of accented note after 500ms should be noticeably lower
+    // than normal note with 3000ms decay knob because filter closed down to ~200ms decay.
+    assert!(
+        energy_acc < energy_norm * 0.7,
+        "Expected accented note energy ({}) after 500ms to be < 70% of normal 3000ms decay energy ({})",
+        energy_acc,
+        energy_norm
+    );
 }
 
 #[test]
