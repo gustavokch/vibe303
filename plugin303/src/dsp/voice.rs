@@ -296,6 +296,8 @@ pub struct Voice {
     glide_knob: f32,
     /// VCF resonance gain compensation amount in [0.0, 1.0].
     reso_comp: f32,
+    /// Cached classic slide tau in ms.
+    classic_slide_tau_ms: f64,
     /// Whether the VCO LUTs need recalculation before running Tier::Ultra.
     vco_dirty: bool,
 }
@@ -426,6 +428,7 @@ impl Voice {
             target_pitch_st: 60.0,
             glide_knob: 0.5,
             reso_comp: 0.0,
+            classic_slide_tau_ms: 22.0,
             vco_dirty: true,
         }
     }
@@ -649,6 +652,7 @@ impl Voice {
         self.advanced_env = final_advanced_env;
         self.glide_knob = glide_knob;
         self.reso_comp = final_reso_comp;
+        self.classic_slide_tau_ms = calculate_classic_slide_tau_ms(topology, glide_knob);
 
         // Propagate tap/pole count
         let poles_n = match final_poles {
@@ -833,6 +837,7 @@ impl Voice {
         self.target_pitch_st = 60.0;
         self.glide_knob = 0.5;
         self.reso_comp = 0.0;
+        self.classic_slide_tau_ms = 22.0;
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
@@ -1148,14 +1153,7 @@ impl Voice {
         } else {
             // Classic mode: CV-domain exponential lag (hardware C35 0.22uF + R93 100k gives tau = 22 ms -> ~60 ms slide settling time)
             if self.slide_active {
-                let tau_ms = if self.topology == CircuitTopology::Fun {
-                    // Fun mode: glide knob scales tau from 2 ms to 110 ms with skewed taper
-                    let k = (self.glide_knob as f64).clamp(0.0, 1.0);
-                    2.0 * 55.0f64.powf(k.powf(1.5))
-                } else {
-                    22.0 // Accurate stock 303 hardware tau = 22 ms
-                };
-                self.pitch_slew.set_time_constant(tau_ms);
+                self.pitch_slew.set_time_constant(self.classic_slide_tau_ms);
                 self.current_pitch_st = self.pitch_slew.tick(self.target_pitch_st as f64) as f32;
             } else {
                 self.current_pitch_st = self.target_pitch_st;
@@ -1426,6 +1424,7 @@ impl Voice {
     pub fn set_topology(&mut self, topology: CircuitTopology) {
         if self.topology != topology {
             self.topology = topology;
+            self.classic_slide_tau_ms = calculate_classic_slide_tau_ms(topology, self.glide_knob);
             let is_fun = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun);
             self.vco2.set_fun(is_fun);
@@ -1445,6 +1444,16 @@ impl Voice {
             self.vco.set_thermal(self.thermal_noise_state);
             self.vco2.set_thermal(self.thermal_noise_state);
         }
+    }
+}
+
+#[inline]
+fn calculate_classic_slide_tau_ms(topology: CircuitTopology, glide_knob: f32) -> f64 {
+    if topology == CircuitTopology::Fun {
+        let k = (glide_knob as f64).clamp(0.0, 1.0);
+        2.0 * 55.0f64.powf(k.powf(1.5))
+    } else {
+        22.0
     }
 }
 

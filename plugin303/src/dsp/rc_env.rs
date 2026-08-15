@@ -332,16 +332,31 @@ impl DecayEnv {
 pub struct AccentSweep {
     v_c13: f64,
     fs: f64,
+    coeff_chg: f64,
+    coeff_dis: f64,
 }
 
 impl AccentSweep {
     pub fn new(fs: f64) -> Self {
-        Self { v_c13: 0.0, fs }
+        let mut s = Self {
+            v_c13: 0.0,
+            fs: 44100.0,
+            coeff_chg: 0.0,
+            coeff_dis: 0.0,
+        };
+        s.set_sample_rate(fs);
+        s
     }
 
     pub fn set_sample_rate(&mut self, fs: f64) {
         if fs > 0.0 {
             self.fs = fs;
+            // Charge: fast (diode D24 conducting, tau ~ 50ms)
+            let tau_chg = 50.0;
+            self.coeff_chg = 1.0 - (-1.0 / (0.001 * tau_chg * self.fs)).exp();
+            // Discharge: slow (diode D24 reverse-biased, tau ~ 130ms)
+            let tau_dis = 130.0;
+            self.coeff_dis = 1.0 - (-1.0 / (0.001 * tau_dis * self.fs)).exp();
         }
     }
 
@@ -359,15 +374,9 @@ impl AccentSweep {
         let drive = src * sweep_scale;
 
         if drive > self.v_c13 {
-            // Charge: fast (diode D24 conducting, tau ~ 50ms)
-            let tau_chg = 50.0;
-            let coeff = 1.0 - (-1.0 / (0.001 * tau_chg * self.fs)).exp();
-            self.v_c13 += coeff * (drive - self.v_c13);
+            self.v_c13 += self.coeff_chg * (drive - self.v_c13);
         } else {
-            // Discharge: slow (diode D24 reverse-biased, tau ~ 130ms)
-            let tau_dis = 130.0;
-            let coeff = 1.0 - (-1.0 / (0.001 * tau_dis * self.fs)).exp();
-            self.v_c13 += coeff * (0.0 - self.v_c13);
+            self.v_c13 += self.coeff_dis * (0.0 - self.v_c13);
         }
         self.v_c13
     }
