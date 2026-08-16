@@ -143,7 +143,7 @@ pub fn render_generator_panel(
                         .color(Color32::BLACK),
                 )
                 .fill(theme::SOUPED_ORANGE)
-                .min_size(vec2(90.0, 26.0));
+                .min_size(vec2(120.0, 26.0));
 
                 if ui.add(gen_btn).clicked() {
                     let pat = AcidGenerator::generate(gen_params);
@@ -185,7 +185,7 @@ pub fn render_generator_panel(
                         .color(theme::TEXT_PRIMARY),
                 )
                 .fill(Color32::from_rgb(0x33, 0x41, 0x55))
-                .min_size(vec2(80.0, 26.0));
+                .min_size(vec2(100.0, 26.0));
 
                 if ui.add(mutate_btn).clicked() {
                     if let Ok(mut seq_pat) = params.pattern.write() {
@@ -217,7 +217,7 @@ pub fn render_generator_panel(
                         .color(theme::TEXT_SECONDARY),
                 )
                 .fill(Color32::from_rgb(0x1e, 0x29, 0x3b))
-                .min_size(vec2(70.0, 26.0));
+                .min_size(vec2(80.0, 26.0));
 
                 if ui.add(new_seed_btn).clicked() {
                     gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);

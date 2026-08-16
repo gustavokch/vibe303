@@ -14,7 +14,8 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .corner_radius(CornerRadius::same(4))
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {
-            ui.set_width(570.0);
+            ui.set_min_width(700.0);
+            ui.set_min_height(140.0);
             ui.vertical(|ui| {
                 // Header Bar
                 ui.horizontal(|ui| {
@@ -44,7 +45,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.horizontal(|ui| {
                         // Left Column: Toggles & Dials
                         ui.vertical(|ui| {
-                            ui.set_width(280.0);
+                            ui.set_width(350.0);
 
                             // Selectors Row
                             ui.horizontal(|ui| {
@@ -64,13 +65,15 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                             // Extended Rotary Dials
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-                                ui.add(Knob303::new(&params.vcf_drive, setter, "DISTORTION", 12.0));
-                                ui.add(Knob303::new(&params.sub_vol, setter, "SUB VOL", 12.0));
+                                ui.spacing_mut().item_spacing = vec2(5.0, 0.0);
+                                ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 12.0));
+                                ui.add(Knob303::new(&params.sub_vol, setter, "SUB", 12.0));
                                 ui.add(Knob303::new(&params.glide, setter, "GLIDE", 12.0));
-                                ui.add(Knob303::new(&params.osc2_pitch, setter, "OSC2 PITCH", 12.0));
-                                ui.add(Knob303::new(&params.reso_comp, setter, "RESO COMP", 12.0));
-                                ui.add(Knob303::new(&params.osc2_vol, setter, "OSC2 MIX", 12.0));
+                                ui.add(Knob303::new(&params.osc2_pitch, setter, "PITCH2", 12.0));
+                                ui.add(Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));
+                                ui.add(Knob303::new(&params.osc2_vol, setter, "MIX2", 12.0));
+                                ui.add(Knob303::new(&params.osc1_pw, setter, "PW", 12.0));
+                                ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 12.0));
                             });
                         });
 
@@ -80,7 +83,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         // Right Column: MEG & VEG ADSR Vertical Mini-Faders
                         ui.vertical(|ui| {
-                            ui.set_width(230.0);
+                            ui.set_width(330.0);
                             ui.horizontal(|ui| {
                                 // MEG ADSR Group
                                 ui.vertical(|ui| {
@@ -92,11 +95,11 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     );
                                     ui.add_space(2.0);
                                     ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                                        ui.add(MiniFader::new(&params.meg_attack, setter, "A", 34.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.meg_decay_adj, setter, "D", 34.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.meg_sustain, setter, "S", 34.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.meg_release, setter, "R", 34.0, theme::SOUPED_ORANGE));
+                                        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
+                                        ui.add(MiniFader::new(&params.meg_attack, setter, "A", 44.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.meg_decay_adj, setter, "D", 44.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.meg_sustain, setter, "S", 44.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.meg_release, setter, "R", 44.0, theme::SOUPED_ORANGE));
                                     });
                                 });
 
@@ -112,11 +115,11 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     );
                                     ui.add_space(2.0);
                                     ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                                        ui.add(MiniFader::new(&params.veg_attack, setter, "A", 34.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.veg_decay_adj, setter, "D", 34.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.veg_sustain, setter, "S", 34.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.veg_release, setter, "R", 34.0, theme::SOUPED_ORANGE));
+                                        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
+                                        ui.add(MiniFader::new(&params.veg_attack, setter, "A", 44.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.veg_decay_adj, setter, "D", 44.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.veg_sustain, setter, "S", 44.0, theme::SOUPED_ORANGE));
+                                        ui.add(MiniFader::new(&params.veg_release, setter, "R", 44.0, theme::SOUPED_ORANGE));
                                     });
                                 });
                             });
