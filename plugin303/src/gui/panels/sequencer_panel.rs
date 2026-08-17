@@ -19,13 +19,13 @@ pub fn render_sequencer_and_transport(
     ui.horizontal(|ui| {
         super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
     });
-    ui.add_space(8.0);
+    ui.add_space(4.0);
 
     Frame::new()
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
         .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin::same(10))
+        .inner_margin(Margin { left: 10, right: 10, top: 4, bottom: 8 })
         .show(ui, |ui| {
             ui.set_min_width(1060.0);
 
@@ -63,7 +63,7 @@ pub fn render_sequencer_and_transport(
                             .color(theme::TEXT_PRIMARY),
                     );
 
-                    ui.add_space(12.0);
+                    ui.add_space(8.0);
 
                     // Large Run/Sync Button
                     let run_val = params.seq_run.value();
@@ -82,7 +82,7 @@ pub fn render_sequencer_and_transport(
                         setter.end_set_parameter(&params.seq_run);
                     }
 
-                    ui.add_space(16.0);
+                    ui.add_space(8.0);
 
                     // Tempo Value Adjustment Box
                     ui.label(

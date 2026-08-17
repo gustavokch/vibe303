@@ -64,34 +64,6 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             let end_angle = 405.0 * PI / 180.0;
             let current_angle = start_angle + normalized * (end_angle - start_angle);
 
-            // Outer track background & active progress arc
-            let track_radius = self.radius + 3.0;
-            let track_width = 2.5_f32;
-
-            // Draw background track ring arc
-            let track_pts = 32;
-            for i in 0..track_pts {
-                let f1 = i as f32 / track_pts as f32;
-                let f2 = (i + 1) as f32 / track_pts as f32;
-                let a1 = start_angle + f1 * (end_angle - start_angle);
-                let a2 = start_angle + f2 * (end_angle - start_angle);
-                let p1 = pos2(center.x + a1.cos() * track_radius, center.y + a1.sin() * track_radius);
-                let p2 = pos2(center.x + a2.cos() * track_radius, center.y + a2.sin() * track_radius);
-                painter.line_segment([p1, p2], Stroke::new(track_width, theme::PANEL_BORDER));
-            }
-
-            // Draw active value arc (vivid orange glow)
-            let active_pts = (normalized * track_pts as f32).ceil() as usize;
-            for i in 0..active_pts {
-                let f1 = i as f32 / track_pts as f32;
-                let f2 = ((i + 1) as f32 / track_pts as f32).min(normalized);
-                let a1 = start_angle + f1 * (end_angle - start_angle);
-                let a2 = start_angle + f2 * (end_angle - start_angle);
-                let p1 = pos2(center.x + a1.cos() * track_radius, center.y + a1.sin() * track_radius);
-                let p2 = pos2(center.x + a2.cos() * track_radius, center.y + a2.sin() * track_radius);
-                painter.line_segment([p1, p2], Stroke::new(track_width, theme::SOUPED_ORANGE));
-            }
-
             // Discrete radial tick marks around bezel
             let num_ticks = 11;
             for i in 0..num_ticks {
