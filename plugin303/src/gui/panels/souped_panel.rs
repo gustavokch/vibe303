@@ -46,7 +46,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.horizontal(|ui| {
                         // Left/Main Area: Engine & Analog Controls
                         ui.vertical(|ui| {
-                            ui.set_width(700.0);
+                            ui.set_width(680.0);
 
                             // Row 1: Selectors & Mode Toggles
                             ui.horizontal(|ui| {
@@ -224,7 +224,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         // Right Column: MEG & VEG ADSR Vertical Mini-Faders
                         ui.vertical(|ui| {
-                            ui.set_width(320.0);
+                            ui.set_width(340.0);
                             ui.horizontal(|ui| {
                                 // MEG ADSR Group
                                 ui.vertical(|ui| {
