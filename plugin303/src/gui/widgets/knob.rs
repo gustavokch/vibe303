@@ -70,16 +70,13 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 let frac = i as f32 / (num_ticks - 1) as f32;
                 let tick_angle = start_angle + frac * (end_angle - start_angle);
                 let is_major = i == 0 || i == (num_ticks - 1) || i == (num_ticks / 2);
-                let r_inner = self.radius + 2.0;
-                let r_outer = self.radius + 10.0;
+                let r_inner = self.radius + 4.5;
+                let r_outer = if is_major { self.radius + 8.0 } else { self.radius + 6.5 };
                 let p_in = pos2(center.x + tick_angle.cos() * r_inner, center.y + tick_angle.sin() * r_inner);
                 let p_out = pos2(center.x + tick_angle.cos() * r_outer, center.y + tick_angle.sin() * r_outer);
-                let tick_color = if is_major {
-                    nih_plug_egui::egui::Color32::WHITE
-                } else {
-                    nih_plug_egui::egui::Color32::from_rgb(0xc0, 0xc8, 0xd0)
-                };
-                let tick_stroke_width = if is_major { 2.0_f32 } else { 1.2_f32 };
+                let alpha = if is_major { 115 } else { 75 };
+                let tick_color = nih_plug_egui::egui::Color32::from_rgba_unmultiplied(0xe2, 0xe8, 0xf0, alpha);
+                let tick_stroke_width = 1.0_f32;
                 painter.line_segment([p_in, p_out], Stroke::new(tick_stroke_width, tick_color));
             }
 
