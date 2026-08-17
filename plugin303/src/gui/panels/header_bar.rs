@@ -36,6 +36,13 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
             nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
             |ui| {
                 ui.add_space(4.0);
+                ui.label(
+                    nih_plug_egui::egui::RichText::new("TB-303 PLUGIN")
+                        .font(FontId::new(11.0, FontFamily::Proportional))
+                        .strong()
+                        .color(theme::SOUPED_ORANGE),
+                );
+                ui.add_space(12.0);
                 let prev_topology = params.topology.value();
                 let switch_resp = ui.add(SlideSwitch::new(
                     &params.topology,
