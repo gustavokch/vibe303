@@ -30,8 +30,8 @@ pub fn render_generator_panel(
                         |ui| {
                             ui.label(
                                 nih_plug_egui::egui::RichText::new(format!(
-                                    "SEED: {:08X}",
-                                    gen_params.seed & 0xFFFF_FFFF
+                                    "SEED: {:016X}",
+                                    gen_params.seed
                                 ))
                                 .font(FontId::monospace(9.0))
                                 .color(theme::TEXT_MUTED),
