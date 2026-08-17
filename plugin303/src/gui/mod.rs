@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::params::Plugin303Params;
 
-pub const GUI_WIDTH: u32 = 1280;
-pub const GUI_HEIGHT: u32 = 600;
+pub const GUI_WIDTH: u32 = 1080;
+pub const GUI_HEIGHT: u32 = 640;
 
 pub fn create_editor(
     params: Arc<Plugin303Params>,
@@ -44,12 +44,12 @@ pub fn create_editor(
                     panels::header_bar::render_header(ui, &params, setter);
                     ui.add_space(8.0);
 
-                    // 2. Middle Row: Classic Panel (Left) & Souped-Up Engine Drawer (Right)
-                    ui.horizontal(|ui| {
-                        panels::top_controls::render_top_controls(ui, &params, setter);
-                        ui.add_space(8.0);
-                        panels::souped_panel::render_souped_panel(ui, &params, setter);
-                    });
+                    // 2. Classic 303 Control Panel (Top)
+                    panels::top_controls::render_top_controls(ui, &params, setter);
+                    ui.add_space(8.0);
+
+                    // 3. Souped-Up Engine Drawer Panel (Middle)
+                    panels::souped_panel::render_souped_panel(ui, &params, setter);
                     ui.add_space(8.0);
 
                     // 3. Bottom Sequencer Grid & Transport Column

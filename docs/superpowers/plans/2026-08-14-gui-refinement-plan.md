@@ -6,77 +6,73 @@ Evaluation compares visual QA test output against `docs/superpowers/specs/2026-0
 ## 1. Visual QA Scores Summary
 
 Section visual quality scores and weighted calculation:
-- **Classic Panel** (35% weight): **85 / 100**
-- **Souped-Up Drawer Panel** (30% weight): **65 / 100**
-- **Hardware Sequencer Panel** (35% weight): **96 / 100**
+- **Classic Panel** (35% weight): **72 / 100**
+- **Souped-Up Drawer Panel** (30% weight): **70 / 100**
+- **Hardware Sequencer Panel** (35% weight): **98 / 100**
 
 ### Weighted Overall Score
-`Overall Score = (0.35 * 85) + (0.30 * 65) + (0.35 * 96) = 29.75 + 19.50 + 33.60 = 82.85 / 100`
+`Overall Score = (0.35 * 72) + (0.30 * 70) + (0.35 * 98) = 25.20 + 21.00 + 34.30 = 80.50 / 100`
 
-Specification Compliance Status: **`false`** (FAIL due to critical drawer fader clipping and missing branding/radial ticks).
+Specification Compliance Status: **`false`** (FAIL due to drawer mini-fader clipping and missing classic panel styling features).
 
 ---
 
 ## 2. Synthesized QA Findings & Defect Analysis
 
-### 2.1 Classic Panel (Score: 85)
-- **Header Bar Branding (Major - Missing Feature):**
-  - *Expected:* 'TB-303 PLUGIN' title branding rendered in orange on top-right of header bar.
-  - *Observed:* Contains Circuit Topology switch but lacks 'TB-303 PLUGIN' text branding.
-  - *Fix:* Add 'TB-303 PLUGIN' text branding in orange color (`#ff8800` / `#ffaa00`) to top-right header bar in `plugin303/src/gui/panels/header_bar.rs`.
-- **Knob Tick Marks (Minor - Geometry):**
-  - *Expected:* Discrete radial tick mark lines surrounding each knob outer bezel across a 270° sweep.
-  - *Observed:* Knobs render smooth orange indicator arcs without radial tick mark lines around outer bezels.
-  - *Fix:* Render procedural radial tick marks along knob outer bezel 270° sweep in `plugin303/src/gui/widgets/knob.rs`.
-- **Waveform Selector Switch (Minor - Alignment):**
-  - *Expected:* Horizontal slide switch track with SAW, SQUARE, SWEEP detents as depicted in UI mockup.
-  - *Observed:* Waveform selector uses vertical sliding track orientation.
-  - *Fix:* Update Waveform `SlideSwitch` layout orientation from vertical to horizontal track in `plugin303/src/gui/panels/classic_panel.rs` / `plugin303/src/gui/widgets/switch.rs`.
+### 2.1 Classic Panel (Score: 72)
+- **Knob Radial Tick Marks (Major - Missing Feature):**
+  - *Expected:* Outer bezel ring with radial tick marks spanning a 270° sweep (from 135° to 405° / 7 o'clock to 5 o'clock) as detailed in spec §3.1.
+  - *Observed:* Classic knobs feature a smooth orange arc outline around the dial without radial tick marks.
+  - *Fix:* Draw radial tick mark lines along the outer arc bezel in `knob.rs` widget implementation.
+- **Knob Metallic Finish (Major - Color):**
+  - *Expected:* Brushed-aluminum rotary dials with silver metallic gradient (`#d0d4d8` to `#888e96`) as detailed in spec §5 and mockup.
+  - *Observed:* Knobs are rendered with flat dark grey disc faces and bright orange perimeter arcs.
+  - *Fix:* Apply multi-stop metallic silver gradients to knob face rendering in `knob.rs`.
+- **Waveform Switch Layout (Minor - Geometry):**
+  - *Expected:* Vertical 3-position toggle/slide switch detent layout matching the 303 front panel design mockup.
+  - *Observed:* Waveform control is laid out as a horizontal track slider.
+  - *Fix:* Update `switch.rs` / `classic_panel.rs` to support vertical orientation detents for the Waveform selector.
+- **Header Chassis Vent Slits (Minor - Missing Feature):**
+  - *Expected:* Vertical cooling vent/grille slits in the top center aluminum chassis between TECHNEO logo and TB-303 PLUGIN header text.
+  - *Observed:* Header bar features a plain dark panel strip without vent slits.
+  - *Fix:* Add procedural vent slit lines to `header_bar.rs` top panel area.
+- **TECHNEO Logo & Header Branding (Minor - Typography):**
+  - *Expected:* Custom stylized metallic TECHNEO brand mark with horizontal bar block logo.
+  - *Observed:* Header uses an orange square dot next to flat sans-serif text.
+  - *Fix:* Update `header_bar.rs` branding draw routines to match mockup logotype.
 
-### 2.2 Souped-Up Engine Drawer Panel (Score: 65)
-- **MEG and VEG ADSR Faders (Critical - Missing Feature/Clipping):**
-  - *Expected:* Eight vertical mini-faders with glowing orange fill bars for MEG (Attack, Decay, Sustain, Release) and VEG (Attack, Decay, Sustain, Release) rendered inside the Souped-Up Drawer.
-  - *Observed:* MEG and VEG faders are clipped and missing from drawer view; only faint text 'MEG A 3ms' is partially visible at extreme right edge.
-  - *Fix:* Adjust panel width allocation, padding, or dial layout in `plugin303/src/gui/panels/souped_panel.rs` so all 8 envelope faders fit completely within drawer bounds.
-- **Drawer Control Layout (Major - Geometry):**
-  - *Expected:* Rotary dials, filter tap switches, age/noise inputs, and MEG/VEG faders proportioned to fit cleanly within right panel grid.
-  - *Observed:* Rotary dials (Drive, Sub, Glide, Pitch1, Pitch2, Mix2, PW, Sweep, R-Comp) and Age/Noise controls span full drawer width, forcing envelope section out of bounds.
-  - *Fix:* Re-align extended dials into tighter columns or stacked sub-rows to preserve layout budget for right-hand fader strip.
-- **Accurate Mode Dimming Overlay Badge (Minor - Validation):**
-  - *Expected:* When Circuit Topology is set to Accurate, Souped-Up Drawer renders at 30% opacity with non-interactive overlay badge 'Accurate Mode Active (Souped-up Engine Bypassed)'.
-  - *Observed:* Needs explicit toggle layer verification to ensure overlay banner badge renders properly when Accurate mode is enabled.
-  - *Fix:* Verify and enforce egui layer painting for Accurate mode banner overlay and opacity response in `plugin303/src/gui/panels/souped_panel.rs`.
+### 2.2 Souped-Up Engine Drawer Panel (Score: 70)
+- **MEG / VEG ADSR Mini-Faders (Major - Geometry / Clipping):**
+  - *Expected:* All 4 MEG ADSR faders (Attack, Decay, Sustain, Release) and 4 VEG ADSR faders should be fully visible inside the Souped-Up panel container.
+  - *Observed:* MEG ADSR faders are truncated at the right edge of the window (only Attack 'A' is partially visible; Decay, Sustain, Release and all VEG faders are cut off beyond the window boundary).
+  - *Fix:* Refactor the Souped-Up panel layout grid or reduce panel horizontal padding so that MEG and VEG ADSR vertical fader blocks fit within the 1080px layout bounds.
+- **Accurate Mode Dimming Overlay & Badge (Minor - Missing Feature / Validation):**
+  - *Expected:* When Circuit Topology is toggled to Accurate mode, the Souped-Up Drawer should render at 30% opacity with an 'Accurate Mode Active (Souped-up Engine Bypassed)' overlay badge and disabled controls.
+  - *Observed:* The Circuit Topology switch is currently set to FUN mode, leaving the drawer fully vibrant; Accurate mode dimming and badge overlay are not engaged in this capture.
+  - *Fix:* Capture QA screenshot with Circuit Topology set to Accurate mode to verify 30% opacity dimming and overlay badge rendering.
 
-### 2.3 Hardware Sequencer Panel (Score: 96)
-- **Gate Tiles Color Mapping (Pass - Minor):** NOTE in cyan (`#00e5ff`), TIE in gold (`#ffd700`), REST in dark slate (`#333a42`) strictly adhere to color specs.
-  - *Action:* Maintain current distinct color mapping for step visibility.
-- **ACC and SLD LED Status Indicators (Pass - Minor):** Amber dot for ACC toggle, cyan dot for SLD toggle illumination.
-  - *Action:* Maintain high-contrast LED dot rendering across step columns.
-- **16-Step Grid Alignment & Pitch Controls (Pass - Minor):** Uniform step column widths, playhead LEDs, note readouts, and pitch nudge buttons (`▲` / `▼`).
-  - *Action:* Retain precise column grid layout and alignment in `plugin303/src/gui/widgets/step_button.rs` and `plugin303/src/gui/panels/sequencer_panel.rs`.
+### 2.3 Hardware Sequencer Panel (Score: 98)
+- **Grid Layout & Interactive Note Cycling (Pass):** 16 step columns, playhead LED tracking, step gate cycling (Note/Tie/Rest), ACC/SLD toggles, and pitch nudge function cleanly as specified.
+  - *Action:* Retain existing layout structure and verified visual presentation.
 
 ---
 
 ## 3. Actionable Refinement Implementation Plan
 
-### Step 1: Fix Souped-Up Drawer Layout & Envelope Fader Clipping
-1. Modify `plugin303/src/gui/panels/souped_panel.rs` column structure.
-2. Re-arrange rotary dials into compact sub-grids (e.g. 3×3 or 4×2 tight grid).
-3. Allocate dedicated width (e.g. 260px) for MEG and VEG ADSR vertical mini-faders.
-4. Ensure full drawer width fits within the 1080px layout bounds without clipping.
+### Priority 1: Fix Souped-Up Drawer Fader Clipping & Layout Constraints
+1. Edit `plugin303/src/gui/panels/souped_panel.rs` to adjust column spacing and padding.
+2. Re-arrange controls so all 4 MEG ADSR faders (Attack, Decay, Sustain, Release) and 4 VEG ADSR faders fit comfortably inside the 1080px layout boundaries.
 
-### Step 2: Add Header Bar Orange 'TB-303 PLUGIN' Branding
-1. Open `plugin303/src/gui/panels/header_bar.rs`.
-2. Add orange title branding label `'TB-303 PLUGIN'` on the top-right section preceding the Topology toggle switch.
+### Priority 2: Refine Knob Rendering in `knob.rs`
+1. Implement multi-stop metallic silver gradients (`#d0d4d8` to `#888e96`) on the knob face.
+2. Add procedural radial tick marks along the 270° sweep (135° to 405° / 7 o'clock to 5 o'clock) around the outer bezel ring.
 
-### Step 3: Implement Knob Bezel Procedural Radial Tick Marks
-1. Open `plugin303/src/gui/widgets/knob.rs`.
-2. Draw 11 procedural radial tick mark lines along the 270° sweep (135° to 405°) around outer bezel ring.
+### Priority 3: Reorient Waveform Switch Layout
+1. Update `plugin303/src/gui/panels/classic_panel.rs` and `plugin303/src/gui/widgets/switch.rs` to support vertical detent switch rendering for the Waveform selector.
 
-### Step 4: Reorient Waveform Selector Switch to Horizontal Track
-1. Open `plugin303/src/gui/panels/classic_panel.rs` / `plugin303/src/gui/widgets/switch.rs`.
-2. Configure Waveform slide switch layout orientation to render as horizontal track with SAW, SQUARE, SWEEP detents.
+### Priority 4: Polish Header Bar Visuals
+1. Update `plugin303/src/gui/panels/header_bar.rs` to render procedural chassis vent slits between the TECHNEO logo and header title.
+2. Refine TECHNEO logotype rendering to feature a stylized metallic brand mark.
 
-### Step 5: Verification & Quality Gate Check
-1. Run `cargo test -p plugin303 --all-features`.
-2. Confirm overall weighted visual quality score meets target gate (>= 90/100) with zero clipping and `spec_compliance: true`.
+### Priority 5: Verify Accurate Mode Dimming & Badge
+1. Ensure `souped_panel.rs` correctly renders at 30% opacity with an interactive override badge when topology is set to `Accurate`.

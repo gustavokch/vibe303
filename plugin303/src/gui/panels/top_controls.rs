@@ -7,7 +7,7 @@ use crate::params::Plugin303Params;
 
 pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     // Exact sizing for panel background
-    let desired_size = vec2(500.0, 190.0);
+    let desired_size = vec2(1060.0, 110.0);
     let (rect, _) = ui.allocate_exact_size(desired_size, nih_plug_egui::egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {
@@ -34,49 +34,42 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
     ui.allocate_new_ui(
         nih_plug_egui::egui::UiBuilder::new().max_rect(rect.shrink(10.0)),
         |ui| {
-            ui.vertical(|ui| {
-                ui.set_width(480.0);
-                // ROW 1: Classic 303 Parameter Gauges
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
-                    ui.add(Knob303::new(&params.tuning, setter, "TUNING", 20.0));
-                    ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
-                    ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 20.0));
-                    ui.add(Knob303::new(&params.env_mod, setter, "ENV MOD", 20.0));
-                    ui.add(Knob303::new(&params.decay, setter, "DECAY", 20.0));
-                    ui.add(Knob303::new(&params.accent, setter, "ACCENT", 20.0));
-                    ui.add(Knob303::new(&params.volume, setter, "VOLUME", 20.0));
-                });
+            ui.horizontal(|ui| {
+                ui.set_width(1040.0);
+                // Classic 303 Parameter Gauges (7 Knobs)
+                ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                ui.add(Knob303::new(&params.tuning, setter, "TUNING", 18.0));
+                ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 18.0));
+                ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 18.0));
+                ui.add(Knob303::new(&params.env_mod, setter, "ENV MOD", 18.0));
+                ui.add(Knob303::new(&params.decay, setter, "DECAY", 18.0));
+                ui.add(Knob303::new(&params.accent, setter, "ACCENT", 18.0));
+                ui.add(Knob303::new(&params.volume, setter, "VOLUME", 18.0));
 
-                ui.add_space(8.0);
+                ui.add_space(12.0);
                 ui.separator();
-                ui.add_space(6.0);
+                ui.add_space(12.0);
 
-                // ROW 2: Waveform & Fidelity Tier Vertical Slide Switches
-                ui.horizontal(|ui| {
-                    ui.add_space(20.0);
-                    ui.spacing_mut().item_spacing = vec2(30.0, 0.0);
+                // Waveform & Fidelity Tier Slide Switches
+                ui.spacing_mut().item_spacing = vec2(16.0, 0.0);
+                ui.add(
+                    SlideSwitch::new(
+                        &params.waveform,
+                        setter,
+                        "WAVEFORM",
+                        &["SAW", "SQUARE", "SWEEP"],
+                    ),
+                );
 
-                    ui.add(
-                        SlideSwitch::new(
-                            &params.waveform,
-                            setter,
-                            "WAVEFORM",
-                            &["SAW", "SQUARE", "SWEEP"],
-                        ),
-                    );
-
-                    ui.add(
-                        SlideSwitch::new(
-                            &params.tier,
-                            setter,
-                            "FIDELITY TIER",
-                            &["LOW", "HIGH", "ULTRA"],
-                        )
-                        .with_thumb_color(Color32::from_rgb(0x8b, 0x00, 0x00))
-                        .vertical(),
-                    );
-                });
+                ui.add(
+                    SlideSwitch::new(
+                        &params.tier,
+                        setter,
+                        "FIDELITY TIER",
+                        &["LOW", "HIGH", "ULTRA"],
+                    )
+                    .with_thumb_color(Color32::from_rgb(0x8b, 0x00, 0x00)),
+                );
             });
         },
     );
