@@ -20,13 +20,13 @@ pub fn render_step_strip(
     is_active: bool,
 ) -> bool {
     let mut changed = false;
-    let width = 36.0;
+    let width = 42.0;
 
     ui.vertical(|ui| {
         ui.set_width(width);
 
         // 1. Playhead LED bar with metallic bezel rims and bloom halo
-        let (led_rect, _) = ui.allocate_exact_size(vec2(width, 5.0), Sense::hover());
+        let (led_rect, _) = ui.allocate_exact_size(vec2(width, 10.0), Sense::hover());
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             // Outer metallic rim
@@ -38,18 +38,18 @@ pub fn render_step_strip(
                 nih_plug_egui::egui::StrokeKind::Inside,
             );
 
-            let inner_led = led_rect.shrink(1.0);
+            let inner_led = led_rect.shrink(1.5);
             if is_active {
                 // Neon coral bloom halo
                 p.rect_filled(
-                    led_rect.expand(2.0),
-                    3.0,
-                    Color32::from_rgba_premultiplied(0xff, 0x33, 0x55, 0x55),
+                    led_rect.expand(4.0),
+                    4.0,
+                    Color32::from_rgba_premultiplied(0xff, 0x33, 0x55, 0xa0),
                 );
                 // Active neon coral lens
-                p.rect_filled(inner_led, 1.5, Color32::from_rgb(0xff, 0x33, 0x55));
+                p.rect_filled(inner_led, 2.0, Color32::from_rgb(0xff, 0x44, 0x66));
             } else {
-                p.rect_filled(inner_led, 1.5, Color32::from_rgb(0x22, 0x26, 0x2e));
+                p.rect_filled(inner_led, 2.0, Color32::from_rgb(0x40, 0x10, 0x15));
             }
         }
 
@@ -74,12 +74,12 @@ pub fn render_step_strip(
         ui.add_space(2.0);
 
         // 2. Modifiers: ACC and SLD with discrete LED dots
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
 
             // ACC Button
             let (acc_rect, acc_resp) =
-                ui.allocate_exact_size(vec2(17.0, 16.0), Sense::click());
+                ui.allocate_exact_size(vec2(width, 14.0), Sense::click());
             let acc_resp = acc_resp.on_hover_text("Toggle Accent (A)");
             if acc_resp.clicked() {
                 step.accent = !step.accent;
@@ -106,10 +106,10 @@ pub fn render_step_strip(
                     pos2(acc_rect.left() + 2.0, acc_rect.center().y),
                     nih_plug_egui::egui::Align2::LEFT_CENTER,
                     "ACC",
-                    FontId::new(5.5, FontFamily::Proportional),
+                    FontId::new(5.0, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(acc_rect.right() - 3.5, acc_rect.center().y);
+                let led_pos = pos2(acc_rect.right() - 6.0, acc_rect.center().y);
                 // Metallic bezel around LED dot
                 p.circle_stroke(led_pos, 2.2, Stroke::new(0.8_f32, Color32::from_rgb(0x47, 0x55, 0x69)));
                 if step.accent {
@@ -123,7 +123,7 @@ pub fn render_step_strip(
 
             // SLD Button
             let (sld_rect, sld_resp) =
-                ui.allocate_exact_size(vec2(17.0, 16.0), Sense::click());
+                ui.allocate_exact_size(vec2(width, 14.0), Sense::click());
             let sld_resp = sld_resp.on_hover_text("Toggle Slide (S)");
             if sld_resp.clicked() {
                 step.slide = !step.slide;
@@ -150,10 +150,10 @@ pub fn render_step_strip(
                     pos2(sld_rect.left() + 2.0, sld_rect.center().y),
                     nih_plug_egui::egui::Align2::LEFT_CENTER,
                     "SLD",
-                    FontId::new(5.5, FontFamily::Proportional),
+                    FontId::new(5.0, FontFamily::Proportional),
                     theme::TEXT_PRIMARY,
                 );
-                let led_pos = pos2(sld_rect.right() - 3.5, sld_rect.center().y);
+                let led_pos = pos2(sld_rect.right() - 6.0, sld_rect.center().y);
                 // Metallic bezel around LED dot
                 p.circle_stroke(led_pos, 2.2, Stroke::new(0.8_f32, Color32::from_rgb(0x47, 0x55, 0x69)));
                 if step.slide {
@@ -236,7 +236,7 @@ pub fn render_step_strip(
             ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
 
             // Octave Up Button
-            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(17.0, 16.0), Sense::click());
+            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(20.0, 16.0), Sense::click());
             let up_resp = up_resp.on_hover_text("Octave up (+1)");
             if up_resp.clicked() && step.octave < 2 {
                 step.octave += 1;
@@ -278,7 +278,7 @@ pub fn render_step_strip(
             }
 
             // Octave Down Button
-            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(17.0, 16.0), Sense::click());
+            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(20.0, 16.0), Sense::click());
             let dn_resp = dn_resp.on_hover_text("Octave down (-1)");
             if dn_resp.clicked() && step.octave > -2 {
                 step.octave -= 1;

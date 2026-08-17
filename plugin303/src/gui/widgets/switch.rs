@@ -255,7 +255,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                         theme::TEXT_MUTED
                     };
                     painter.text(
-                        pos2(track_rect.right() + 8.0, detent_y),
+                        pos2(track_rect.right() + 8.0, detent_y - 1.5),
                         nih_plug_egui::egui::Align2::LEFT_CENTER,
                         *opt,
                         FontId::new(8.0, FontFamily::Proportional),

@@ -33,7 +33,7 @@ impl<'a, P: Param> MiniFader<'a, P> {
 
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let width = 24.0;
+        let width = 28.0;
         let total_height = self.height + 30.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
@@ -70,50 +70,52 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
 
             // Label above (A, D, S, R)
             painter.text(
-                pos2(rect.center().x, rect.top() + 4.0),
-                nih_plug_egui::egui::Align2::CENTER_CENTER,
+                pos2(rect.center().x, rect.top() + 2.0),
+                nih_plug_egui::egui::Align2::CENTER_TOP,
                 self.label,
                 FontId::new(9.5, FontFamily::Proportional),
                 theme::TEXT_PRIMARY,
             );
 
             // Recessed vertical track
-            let track_width = 4.0;
+            let track_width = 6.0;
             let track_rect = Rect::from_min_max(
                 pos2(rect.center().x - track_width * 0.5, track_top),
                 pos2(rect.center().x + track_width * 0.5, track_bottom),
             );
-            painter.rect_filled(track_rect, 2.0, Color32::from_rgb(0x10, 0x12, 0x16));
+            painter.rect_filled(track_rect, 3.0, Color32::from_rgb(0x10, 0x12, 0x16));
             painter.rect_stroke(
                 track_rect,
-                2.0,
+                3.0,
                 Stroke::new(1.0_f32, theme::PANEL_BORDER),
                 StrokeKind::Inside,
             );
 
             // Active level fill bar (vivid glowing orange accent color from bottom to thumb)
-            let thumb_y = track_bottom - normalized * track_height;
-            let fill_top = thumb_y.min(track_bottom - 1.0);
-            let fill_rect = Rect::from_min_max(
-                pos2(rect.center().x - 1.5, fill_top),
-                pos2(rect.center().x + 1.5, track_bottom - 1.0),
-            );
-            // Outer bright orange bloom glow
-            let glow_color = Color32::from_rgba_premultiplied(
-                self.accent_color.r(),
-                self.accent_color.g(),
-                self.accent_color.b(),
-                0x60,
-            );
-            painter.rect_filled(fill_rect.expand(1.5), 1.5, glow_color);
-            // Vivid solid orange core
-            painter.rect_filled(fill_rect, 1.0, self.accent_color);
+            if normalized > 0.001 {
+                let thumb_y = track_bottom - normalized * track_height;
+                let fill_top = thumb_y.min(track_bottom - 1.0);
+                let fill_rect = Rect::from_min_max(
+                    pos2(rect.center().x - 2.0, fill_top),
+                    pos2(rect.center().x + 2.0, track_bottom),
+                );
+                // Outer bright orange bloom glow
+                let glow_color = Color32::from_rgba_premultiplied(
+                    self.accent_color.r(),
+                    self.accent_color.g(),
+                    self.accent_color.b(),
+                    0x50,
+                );
+                painter.rect_filled(fill_rect.expand(1.0), 1.0, glow_color);
+                // Vivid solid orange core
+                painter.rect_filled(fill_rect, 1.0, self.accent_color);
+            }
 
             // Fader handle / thumb
             let thumb_width = 16.0;
             let thumb_height = 6.0;
             let thumb_rect = Rect::from_center_size(
-                pos2(rect.center().x, thumb_y),
+                pos2(rect.center().x, track_bottom - normalized * track_height),
                 vec2(thumb_width, thumb_height),
             );
             painter.rect_filled(thumb_rect, 1.5, theme::KNOB_BODY_LIGHT);
@@ -124,6 +126,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 StrokeKind::Inside,
             );
             // Center indicator notch on thumb
+            let thumb_y = track_bottom - normalized * track_height;
             painter.line_segment(
                 [
                     pos2(thumb_rect.left() + 2.0, thumb_y),
@@ -134,7 +137,8 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
 
             // Readout / value below (compact formatting to prevent horizontal collisions)
             let val_str = self.param.to_string();
-            let formatted_val = if let Ok(f) = val_str.parse::<f32>() {
+            let val_clean = val_str.trim_end_matches(" ms").trim_end_matches(" s").trim_end_matches('%');
+            let formatted_val = if let Ok(f) = val_clean.parse::<f32>() {
                 if self.label == "S" {
                     format!("{:.0}%", f * 100.0)
                 } else if f >= 1000.0 {
@@ -142,12 +146,16 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 } else {
                     format!("{:.0}ms", f)
                 }
+            } else if val_str.ends_with(" ms") {
+                format!("{}ms", &val_str[..val_str.len() - 3])
+            } else if val_str.ends_with(" s") {
+                format!("{}s", &val_str[..val_str.len() - 2])
             } else {
-                val_str.replace(" ms", "ms").replace(" s", "s")
+                val_str
             };
             painter.text(
-                pos2(rect.center().x, rect.bottom() - 5.0),
-                nih_plug_egui::egui::Align2::CENTER_CENTER,
+                pos2(rect.center().x, rect.bottom() - 1.0),
+                nih_plug_egui::egui::Align2::CENTER_BOTTOM,
                 formatted_val,
                 FontId::new(7.5, FontFamily::Monospace),
                 theme::TEXT_MUTED,
