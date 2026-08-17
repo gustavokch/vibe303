@@ -133,7 +133,7 @@ pub fn render_sequencer_and_transport(
                                 .color(theme::TEXT_SECONDARY),
                         );
 
-                        let tempo_val = params.seq_tempo.value();
+                        let mut tempo_val = params.seq_tempo.value();
                         let dn_btn = nih_plug_egui::egui::Button::new("-")
                             .fill(Color32::from_rgb(0x28, 0x28, 0x28))
                             .min_size(vec2(20.0, 20.0));
@@ -146,11 +146,19 @@ pub fn render_sequencer_and_transport(
                             setter.end_set_parameter(&params.seq_tempo);
                         }
 
-                        ui.label(
-                            nih_plug_egui::egui::RichText::new(format!("{:.1}", tempo_val))
-                                .font(FontId::monospace(12.0))
-                                .color(theme::SOUPED_ORANGE),
-                        );
+                        if ui
+                            .add(
+                                DragValue::new(&mut tempo_val)
+                                    .range(40.0..=300.0)
+                                    .speed(0.1)
+                                    .custom_formatter(|n, _| format!("{:.1}", n)),
+                            )
+                            .changed()
+                        {
+                            setter.begin_set_parameter(&params.seq_tempo);
+                            setter.set_parameter(&params.seq_tempo, tempo_val);
+                            setter.end_set_parameter(&params.seq_tempo);
+                        }
 
                         let up_btn = nih_plug_egui::egui::Button::new("+")
                             .fill(Color32::from_rgb(0x28, 0x28, 0x28))
