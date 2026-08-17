@@ -30,17 +30,20 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.separator();
                 ui.add_space(6.0);
 
-                // ROW 2: Waveform & Fidelity Tier Horizontal Slide Switches (Balanced)
+                // ROW 2: Waveform & Fidelity Tier Vertical Slide Switches
                 ui.horizontal(|ui| {
                     ui.add_space(20.0);
                     ui.spacing_mut().item_spacing = vec2(30.0, 0.0);
 
-                    ui.add(SlideSwitch::new(
-                        &params.waveform,
-                        setter,
-                        "WAVEFORM",
-                        &["SAW", "SQUARE", "SWEEP"],
-                    ));
+                    ui.add(
+                        SlideSwitch::new(
+                            &params.waveform,
+                            setter,
+                            "WAVEFORM",
+                            &["SAW", "SQUARE", "SWEEP"],
+                        )
+                        .vertical(),
+                    );
 
                     ui.add(
                         SlideSwitch::new(
@@ -49,7 +52,8 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             "FIDELITY TIER",
                             &["LOW", "HIGH", "ULTRA"],
                         )
-                        .with_thumb_color(Color32::from_rgb(0x8b, 0x00, 0x00)),
+                        .with_thumb_color(Color32::from_rgb(0x8b, 0x00, 0x00))
+                        .vertical(),
                     );
                 });
             });
