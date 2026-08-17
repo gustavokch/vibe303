@@ -63,8 +63,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             setter,
                             "WAVEFORM",
                             &["SAW", "SQUARE", "SWEEP"],
-                        )
-                        .vertical(),
+                        ),
                     );
 
                     ui.add(
