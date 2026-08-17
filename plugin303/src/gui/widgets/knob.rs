@@ -80,6 +80,22 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 painter.line_segment([p_in, p_out], Stroke::new(tick_stroke_width, tick_color));
             }
 
+            // Active metallic amber arc around bezel
+            let arc_r = self.radius + 2.5;
+            if normalized > 0.001 {
+                let arc_points: Vec<_> = (0..=24)
+                    .map(|i| {
+                        let t = i as f32 / 24.0;
+                        let a = start_angle + t * normalized * (end_angle - start_angle);
+                        pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r)
+                    })
+                    .collect();
+                painter.add(nih_plug_egui::egui::Shape::line(
+                    arc_points,
+                    Stroke::new(1.8_f32, theme::SOUPED_ORANGE),
+                ));
+            }
+
             // Inner brushed aluminum metallic dial body
             painter.circle_filled(center, self.radius, theme::KNOB_BODY_LIGHT);
             painter.circle_filled(center, self.radius * 0.85, theme::KNOB_BODY_DARK);
@@ -117,7 +133,8 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
 
             // Human-readable formatted value readout below title (with physical units)
             let raw_str = self.param.to_string();
-            let value_str = if let Ok(f) = raw_str.parse::<f32>() {
+            let clean_str = raw_str.split_whitespace().next().unwrap_or(&raw_str);
+            let value_str = if let Ok(f) = clean_str.parse::<f32>() {
                 if self.label.contains("CUTOFF") {
                     let hz = 300.0 * (15000.0 / 300.0_f32).powf(f.clamp(0.0, 1.0));
                     if hz >= 1000.0 {
@@ -155,7 +172,11 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     let ms = f.clamp(0.0, 1.0) * 500.0;
                     format!("{:.0} ms", ms)
                 } else if self.label.contains("TUNING") {
-                    format!("{:+.0} ct", f)
+                    if f.abs() < 0.01 {
+                        "+0 ct".to_string()
+                    } else {
+                        format!("{:+.0} ct", f)
+                    }
                 } else if self.label.contains("DET") {
                     format!("{:+.1} st", f)
                 } else if self.label.contains("TEMPO") {
