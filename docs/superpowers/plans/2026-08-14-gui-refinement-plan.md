@@ -6,73 +6,65 @@ Evaluation compares visual QA test output against `docs/superpowers/specs/2026-0
 ## 1. Visual QA Scores Summary
 
 Section visual quality scores and weighted calculation:
-- **Classic Panel** (35% weight): **72 / 100**
-- **Souped-Up Drawer Panel** (30% weight): **70 / 100**
-- **Hardware Sequencer Panel** (35% weight): **98 / 100**
+- **Classic Panel** (35% weight): **88 / 100**
+- **Souped-Up Drawer Panel** (30% weight): **95 / 100**
+- **Hardware Sequencer Panel** (35% weight): **92 / 100**
 
 ### Weighted Overall Score
-`Overall Score = (0.35 * 72) + (0.30 * 70) + (0.35 * 98) = 25.20 + 21.00 + 34.30 = 80.50 / 100`
+`Overall Score = (0.35 * 88) + (0.30 * 95) + (0.35 * 92) = 30.80 + 28.50 + 32.20 = 91.50 / 100`
 
-Specification Compliance Status: **`false`** (FAIL due to drawer mini-fader clipping and missing classic panel styling features).
+Specification Compliance Status: **`false`** (FAIL due to minor non-compliant features across classic panel and sequencer).
 
 ---
 
 ## 2. Synthesized QA Findings & Defect Analysis
 
-### 2.1 Classic Panel (Score: 72)
-- **Knob Radial Tick Marks (Major - Missing Feature):**
-  - *Expected:* Outer bezel ring with radial tick marks spanning a 270° sweep (from 135° to 405° / 7 o'clock to 5 o'clock) as detailed in spec §3.1.
-  - *Observed:* Classic knobs feature a smooth orange arc outline around the dial without radial tick marks.
-  - *Fix:* Draw radial tick mark lines along the outer arc bezel in `knob.rs` widget implementation.
-- **Knob Metallic Finish (Major - Color):**
-  - *Expected:* Brushed-aluminum rotary dials with silver metallic gradient (`#d0d4d8` to `#888e96`) as detailed in spec §5 and mockup.
-  - *Observed:* Knobs are rendered with flat dark grey disc faces and bright orange perimeter arcs.
-  - *Fix:* Apply multi-stop metallic silver gradients to knob face rendering in `knob.rs`.
-- **Waveform Switch Layout (Minor - Geometry):**
-  - *Expected:* Vertical 3-position toggle/slide switch detent layout matching the 303 front panel design mockup.
-  - *Observed:* Waveform control is laid out as a horizontal track slider.
-  - *Fix:* Update `switch.rs` / `classic_panel.rs` to support vertical orientation detents for the Waveform selector.
-- **Header Chassis Vent Slits (Minor - Missing Feature):**
-  - *Expected:* Vertical cooling vent/grille slits in the top center aluminum chassis between TECHNEO logo and TB-303 PLUGIN header text.
-  - *Observed:* Header bar features a plain dark panel strip without vent slits.
-  - *Fix:* Add procedural vent slit lines to `header_bar.rs` top panel area.
-- **TECHNEO Logo & Header Branding (Minor - Typography):**
-  - *Expected:* Custom stylized metallic TECHNEO brand mark with horizontal bar block logo.
-  - *Observed:* Header uses an orange square dot next to flat sans-serif text.
-  - *Fix:* Update `header_bar.rs` branding draw routines to match mockup logotype.
+### 2.1 Classic Panel (Score: 88)
+- **Header Bar Grill Vents (Minor - Missing Feature):**
+  - *Expected:* Header bar features industrial brushed metal texture with centered speaker/grill vent slots between TECHNEO logo and TB-303 PLUGIN branding per design mockup.
+  - *Observed:* Flat dark header background without metallic grill or vent slots.
+  - *Fix:* Add procedural grill vent lines and metallic gradient background in `header_bar.rs`.
+- **Waveform & Fidelity Tier Slide Switches (Minor - Geometry):**
+  - *Expected:* Slide switches with vertical detent position labels aligned cleanly next to detent tracks as depicted in hardware mockup.
+  - *Observed:* Horizontal slide switches with detent labels positioned horizontally underneath the track.
+  - *Fix:* Adjust detent label alignment and track margins in `switch.rs` to match detent positions cleanly.
+- **Knob Value Readouts (Minor - Typography):**
+  - *Expected:* Clear separation and high contrast between parameter name and value readout.
+  - *Observed:* Value readouts (+0 ct, 2.1 kHz, 50%) are displayed in low-contrast grey text close to parameter label.
+  - *Fix:* Increase text contrast and vertical padding for knob value readouts in `knob.rs`.
+- **Panel Background & Metallic Borders (Minor - Color):**
+  - *Expected:* Bevelled metallic lines (`#2a2e33`) and industrial brushed steel chassis background (`#16181b`) surrounding classic 7-knob panel per Spec §5.
+  - *Observed:* Flat dark panel frame without metallic gradient strokes or bevelled inset lines.
+  - *Fix:* Apply bevelled stroke borders and metallic gradient background to `classic_panel.rs` container frame.
 
-### 2.2 Souped-Up Engine Drawer Panel (Score: 70)
-- **MEG / VEG ADSR Mini-Faders (Major - Geometry / Clipping):**
-  - *Expected:* All 4 MEG ADSR faders (Attack, Decay, Sustain, Release) and 4 VEG ADSR faders should be fully visible inside the Souped-Up panel container.
-  - *Observed:* MEG ADSR faders are truncated at the right edge of the window (only Attack 'A' is partially visible; Decay, Sustain, Release and all VEG faders are cut off beyond the window boundary).
-  - *Fix:* Refactor the Souped-Up panel layout grid or reduce panel horizontal padding so that MEG and VEG ADSR vertical fader blocks fit within the 1080px layout bounds.
-- **Accurate Mode Dimming Overlay & Badge (Minor - Missing Feature / Validation):**
-  - *Expected:* When Circuit Topology is toggled to Accurate mode, the Souped-Up Drawer should render at 30% opacity with an 'Accurate Mode Active (Souped-up Engine Bypassed)' overlay badge and disabled controls.
-  - *Observed:* The Circuit Topology switch is currently set to FUN mode, leaving the drawer fully vibrant; Accurate mode dimming and badge overlay are not engaged in this capture.
-  - *Fix:* Capture QA screenshot with Circuit Topology set to Accurate mode to verify 30% opacity dimming and overlay badge rendering.
+### 2.2 Souped-Up Engine Drawer Panel (Score: 95)
+- **Circuit Topology Accurate-Mode Dimming Overlay (Minor - Alignment / Validation):**
+  - *Expected:* In Accurate mode, Souped-Up Drawer should dim to ~30% opacity with non-interactive overlay badge 'Accurate Mode Active (Souped-up Engine Bypassed)'.
+  - *Observed:* Circuit Topology switch is currently set to FUN mode; drawer is fully vibrant and active as specified for FUN mode.
+  - *Fix:* Ensure Accurate mode visual state testing confirms 30% opacity dimming and overlay badge presentation when toggled to ACCURATE.
 
-### 2.3 Hardware Sequencer Panel (Score: 98)
-- **Grid Layout & Interactive Note Cycling (Pass):** 16 step columns, playhead LED tracking, step gate cycling (Note/Tie/Rest), ACC/SLD toggles, and pitch nudge function cleanly as specified.
-  - *Action:* Retain existing layout structure and verified visual presentation.
+### 2.3 Hardware Sequencer Panel (Score: 92)
+- **Step Pitch Readout Octave Nudge Buttons (Minor - Missing Feature):**
+  - *Expected:* Step pitch buttons should feature Up/Down arrows (▲ / ▼) to nudge octaves up or down (-2 to +2) per section 3.3 of design spec.
+  - *Observed:* Pitch buttons display formatted note text (e.g., 'C 3', 'D# 3') without dedicated octave nudge arrows (▲ / ▼).
+  - *Fix:* Add ▲ / ▼ nudge buttons inside or adjacent to pitch readout tile in `step_button.rs` for quick octave transposition.
 
 ---
 
 ## 3. Actionable Refinement Implementation Plan
 
-### Priority 1: Fix Souped-Up Drawer Fader Clipping & Layout Constraints
-1. Edit `plugin303/src/gui/panels/souped_panel.rs` to adjust column spacing and padding.
-2. Re-arrange controls so all 4 MEG ADSR faders (Attack, Decay, Sustain, Release) and 4 VEG ADSR faders fit comfortably inside the 1080px layout boundaries.
+### Priority 1: Add Sequencer Octave Nudge Buttons
+1. Update `plugin303/src/gui/widgets/step_button.rs` and `sequencer_panel.rs` to render dedicated ▲ / ▼ octave nudge arrows adjacent to pitch readout tiles.
 
-### Priority 2: Refine Knob Rendering in `knob.rs`
-1. Implement multi-stop metallic silver gradients (`#d0d4d8` to `#888e96`) on the knob face.
-2. Add procedural radial tick marks along the 270° sweep (135° to 405° / 7 o'clock to 5 o'clock) around the outer bezel ring.
+### Priority 2: Refine Header Bar Industrial Finish & Grill Vents
+1. Update `plugin303/src/gui/panels/header_bar.rs` to apply procedural brushed metal background texture and centered speaker/grill vent slots between branding elements.
 
-### Priority 3: Reorient Waveform Switch Layout
-1. Update `plugin303/src/gui/panels/classic_panel.rs` and `plugin303/src/gui/widgets/switch.rs` to support vertical detent switch rendering for the Waveform selector.
+### Priority 3: Polish Classic Panel Frame & Knob Readouts
+1. Update `plugin303/src/gui/panels/classic_panel.rs` container frame with bevelled metallic stroke borders (`#2a2e33`) and brushed steel background (`#16181b`).
+2. Update `plugin303/src/gui/widgets/knob.rs` to increase contrast and vertical spacing for engineering unit value readouts.
 
-### Priority 4: Polish Header Bar Visuals
-1. Update `plugin303/src/gui/panels/header_bar.rs` to render procedural chassis vent slits between the TECHNEO logo and header title.
-2. Refine TECHNEO logotype rendering to feature a stylized metallic brand mark.
+### Priority 4: Re-align Slide Switch Labels & Track Geometry
+1. Update `plugin303/src/gui/widgets/switch.rs` to align detent position labels cleanly with vertical detent tracks.
 
-### Priority 5: Verify Accurate Mode Dimming & Badge
-1. Ensure `souped_panel.rs` correctly renders at 30% opacity with an interactive override badge when topology is set to `Accurate`.
+### Priority 5: Verify Accurate-Mode Drawer Dimming & Overlay Badge
+1. Verify `souped_panel.rs` 30% opacity dimming overlay and non-interactive badge when Circuit Topology is set to `ACCURATE`.
