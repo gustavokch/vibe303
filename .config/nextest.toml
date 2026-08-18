@@ -1,0 +1,14 @@
+# Fast suite is the default; slow render/calibration gates run under
+# `--profile slow`. Exclusion list is measurement-driven (2026-08-18,
+# post [profile.test] opt bump): binaries whose serial runtime exceeds ~15s.
+[profile.default]
+default-filter = '''not (
+    binary_id(plugin303::test_vco_sr) |
+    binary_id(plugin303::vco_pitch) |
+    binary_id(plugin303::tier_calibration)
+)'''
+slow-timeout = { period = "10s", terminate-after = 6 }
+
+[profile.slow]
+default-filter = 'all()'
+slow-timeout = { period = "60s", terminate-after = 10 }

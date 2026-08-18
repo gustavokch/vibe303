@@ -89,11 +89,22 @@ cargo run --bin standalone
 
 ### Running Tests
 ```bash
-# Run all DSP, sequencer, and realtime safety tests
-cargo test
+# Fast suite (default nextest profile): skips slow spectral/calibration
+# render gates; also skips gui-gated tests. Target: under 60s.
+cargo nextest run -p plugin303 --no-default-features
+
+# Full suite including slow render gates
+cargo nextest run -p plugin303 --no-default-features --profile slow
+
+# Run everything with plain cargo test (no partitioning)
+cargo test -p plugin303
 
 # Run allocation-free audio thread verification
-cargo test --test no_alloc
+cargo test -p plugin303 --test no_alloc
+
+# Note: --no-default-features skips gui-gated tests. To cover
+# gui_build / piano_roll_mapping, run with default features:
+cargo test -p plugin303 --test gui_build --test piano_roll_mapping
 ```
 
 ### Building VST3 and CLAP Bundles

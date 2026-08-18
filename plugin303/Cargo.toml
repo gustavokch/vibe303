@@ -24,3 +24,43 @@ assert_no_alloc = { version = "1.1", default-features = false, features = [
     "warn_release",
 ] }
 serde_json = "1.0.150"
+
+# standalone needs nih_plug/standalone; without this, --no-default-features
+# test builds fail.
+[[bin]]
+name = "standalone"
+required-features = ["standalone"]
+
+# Bins are test-exempt by policy (no #[test] in any bin; skips codegen+link
+# of these bins in test builds). Does not affect `cargo run --bin ...`.
+[[bin]]
+name = "debug_note84"
+test = false
+
+[[bin]]
+name = "eval_clipper"
+test = false
+
+[[bin]]
+name = "gen_acid"
+test = false
+
+[[bin]]
+name = "measure_swing"
+test = false
+
+[[bin]]
+name = "render303"
+test = false
+
+[[bin]]
+name = "scratch_pitch"
+test = false
+
+[[bin]]
+name = "scratch_voice"
+test = false
+
+[[bin]]
+name = "vco_pitch_sweep"
+test = false
