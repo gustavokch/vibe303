@@ -766,26 +766,26 @@ impl Voice {
     pub fn update_clipper_params(
         &mut self, bypass: bool, os: ClipperOversampling, drive: f32,
         threshold: f32, bass: f32, tone: f32, asym: bool,
+        mix: f32, in_db: f32, out_db: f32, tilt_db: f32, dynamics: f32,
     ) {
         self.clipper.set_params(ClipperParams {
             bypass,
             os: match os { ClipperOversampling::X2 => ClipperOs::X2, ClipperOversampling::X4 => ClipperOs::X4 },
             drive_ohms: drive, threshold_ohms: threshold, bass_ohms: bass,
-            tone_f: tone, asym,
-            ..ClipperParams::default()
+            tone_f: tone, asym, mix, in_db, out_db, tilt_db, dynamics,
         });
     }
 
     pub fn update_clipper_params_immediate(
         &mut self, bypass: bool, os: ClipperOversampling, drive: f32,
         threshold: f32, bass: f32, tone: f32, asym: bool,
+        mix: f32, in_db: f32, out_db: f32, tilt_db: f32, dynamics: f32,
     ) {
         self.clipper.set_params_immediate(ClipperParams {
             bypass,
             os: match os { ClipperOversampling::X2 => ClipperOs::X2, ClipperOversampling::X4 => ClipperOs::X4 },
             drive_ohms: drive, threshold_ohms: threshold, bass_ohms: bass,
-            tone_f: tone, asym,
-            ..ClipperParams::default()
+            tone_f: tone, asym, mix, in_db, out_db, tilt_db, dynamics,
         });
     }
 

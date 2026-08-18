@@ -33,7 +33,7 @@ const CORR_MIN: f32 = 0.95; // achieved 0.964; Low's 0.931 fails → real discri
 
 fn render_high(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize) -> Vec<f32> {
     let mut v = Voice::new(sr);
-    v.update_clipper_params_immediate(true, plugin303::params::ClipperOversampling::X2, 47000.0, 4700.0, 8200.0, 1e-9, false);
+    v.update_clipper_params_immediate(true, plugin303::params::ClipperOversampling::X2, 47000.0, 4700.0, 8200.0, 1e-9, false, 1.0, 0.0, 0.0, 0.0, 0.0);
     v.set_tier_immediate(Tier::High);
     v.set_advanced_env(true);
     v.set_cutoff(cutoff);
@@ -47,7 +47,7 @@ fn render_high(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize) -> Vec<f32> 
 
 fn render_tier(tier: Tier, op: &common::GoldOp, n: usize) -> Vec<f32> {
     let mut v = Voice::new(op.sr);
-    v.update_clipper_params_immediate(true, plugin303::params::ClipperOversampling::X2, 47000.0, 4700.0, 8200.0, 1e-9, false);
+    v.update_clipper_params_immediate(true, plugin303::params::ClipperOversampling::X2, 47000.0, 4700.0, 8200.0, 1e-9, false, 1.0, 0.0, 0.0, 0.0, 0.0);
     v.set_tier_immediate(tier);
     v.set_advanced_env(true);
     v.set_cutoff(op.cutoff);

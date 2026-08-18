@@ -155,7 +155,7 @@ fn test_pitch_parity_fun() {
 
 fn render_sweep(tier: Tier, note: u8, cutoff_knob: f32, reso_knob: f32, n: usize) -> Vec<f32> {
     let mut v = Voice::new(SR);
-    v.update_clipper_params_immediate(true, plugin303::params::ClipperOversampling::X2, 47000.0, 4700.0, 8200.0, 1e-9, false);
+    v.update_clipper_params_immediate(true, plugin303::params::ClipperOversampling::X2, 47000.0, 4700.0, 8200.0, 1e-9, false, 1.0, 0.0, 0.0, 0.0, 0.0);
     v.set_tier_immediate(tier);
     v.set_vca_env_mode(plugin303::params::VcaEnvMode::Gate);
     v.set_cutoff(200.0 * 20.0f32.powf(cutoff_knob));

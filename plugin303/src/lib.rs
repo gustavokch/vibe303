@@ -280,6 +280,9 @@ impl Plugin for Plugin303 {
             self.params.clipper_drive.value(), self.params.clipper_threshold.value(),
             self.params.clipper_bass.value(), self.params.clipper_tone.value(),
             self.params.clipper_asym.value(),
+            self.params.clipper_mix.value(), self.params.clipper_in_gain.value(),
+            self.params.clipper_out_gain.value(), self.params.clipper_tilt.value(),
+            self.params.clipper_dynamics.value(),
         );
 
         // Block-rate read of the fidelity tier (starts a crossfade on change).

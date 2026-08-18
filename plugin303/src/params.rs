@@ -353,6 +353,18 @@ pub struct Plugin303Params {
     pub clipper_tone: FloatParam,
     #[id = "clipper_asym"]
     pub clipper_asym: BoolParam,
+    #[id = "clipper_mix"]
+    pub clipper_mix: FloatParam,
+    #[id = "clipper_in_gain"]
+    pub clipper_in_gain: FloatParam,
+    #[id = "clipper_out_gain"]
+    pub clipper_out_gain: FloatParam,
+    #[id = "clipper_gain_link"]
+    pub clipper_gain_link: BoolParam,
+    #[id = "clipper_tilt"]
+    pub clipper_tilt: FloatParam,
+    #[id = "clipper_dynamics"]
+    pub clipper_dynamics: FloatParam,
     // Sequencer pattern persistence
     #[persist = "pattern"]
     pub pattern: std::sync::RwLock<SequencerPattern>,
@@ -622,6 +634,17 @@ impl Default for Plugin303Params {
             clipper_bass: FloatParam::new("Clipper Bass", 8_200.0, FloatRange::Skewed { min: 4_700.0, max: 22_000.0, factor: FloatRange::skew_factor(-1.5) }).with_unit(" ohm"),
             clipper_tone: FloatParam::new("Clipper Tone", 1e-9, FloatRange::Skewed { min: 470e-12, max: 4.7e-9, factor: FloatRange::skew_factor(-1.5) }).with_value_to_string(std::sync::Arc::new(|v| format!("{:.2} nF", v * 1e9))),
             clipper_asym: BoolParam::new("Clipper Asym", false),
+            clipper_mix: FloatParam::new("Clipper Mix", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_in_gain: FloatParam::new("Clipper In", 0.0, FloatRange::Linear { min: -18.0, max: 18.0 })
+                .with_unit(" dB"),
+            clipper_out_gain: FloatParam::new("Clipper Out", 0.0, FloatRange::Linear { min: -18.0, max: 18.0 })
+                .with_unit(" dB"),
+            clipper_gain_link: BoolParam::new("Clipper Gain Link", true),
+            clipper_tilt: FloatParam::new("Clipper Tilt", 0.0, FloatRange::Linear { min: -6.0, max: 6.0 })
+                .with_unit(" dB"),
+            clipper_dynamics: FloatParam::new("Clipper Dynamics", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
 
             pattern: std::sync::RwLock::new(SequencerPattern::default()),
         }
