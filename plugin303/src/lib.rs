@@ -275,6 +275,12 @@ impl Plugin for Plugin303 {
             self.params.glide.value(),
             self.params.reso_comp.value(),
         );
+        self.voice.update_clipper_params(
+            self.params.clipper_bypass.value(), self.params.clipper_os.value(),
+            self.params.clipper_drive.value(), self.params.clipper_threshold.value(),
+            self.params.clipper_bass.value(), self.params.clipper_tone.value(),
+            self.params.clipper_asym.value(),
+        );
 
         // Block-rate read of the fidelity tier (starts a crossfade on change).
         self.voice.set_tier(self.params.tier.value());

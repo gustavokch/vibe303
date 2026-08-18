@@ -52,6 +52,10 @@ pub fn create_editor(
                     panels::souped_panel::render_souped_panel(ui, &params, setter);
                     ui.add_space(8.0);
 
+                    // Always active: this sits after either topology's voice path.
+                    panels::output_clipper::render_output_clipper(ui, &params, setter);
+                    ui.add_space(8.0);
+
                     // 3. Bottom Sequencer Grid & Transport Column
                     panels::sequencer_panel::render_sequencer_and_transport(
                         ui,
