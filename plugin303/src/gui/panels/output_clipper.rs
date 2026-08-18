@@ -34,5 +34,51 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                 }
                 ui.colored_label(Color32::from_gray(120), "GE / JFET");
             });
+
+            let bypassed = params.clipper_bypass.value();
+            ui.add_enabled_ui(!bypassed, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(Knob303::new(&params.clipper_in_gain, setter, "IN", 13.0));
+                    let mut link = params.clipper_gain_link.value();
+                    if ui.checkbox(&mut link, "LINK").changed() {
+                        setter.begin_set_parameter(&params.clipper_gain_link);
+                        setter.set_parameter(&params.clipper_gain_link, link);
+                        setter.end_set_parameter(&params.clipper_gain_link);
+                        if link {
+                            // Snap OUT to the inverse of IN when link engages.
+                            setter.begin_set_parameter(&params.clipper_out_gain);
+                            setter.set_parameter(&params.clipper_out_gain, -params.clipper_in_gain.value());
+                            setter.end_set_parameter(&params.clipper_out_gain);
+                        }
+                    }
+                    ui.add(Knob303::new(&params.clipper_out_gain, setter, "OUT", 13.0));
+                    ui.add(Knob303::new(&params.clipper_tilt, setter, "TILT", 13.0));
+                    ui.add(Knob303::new(&params.clipper_dynamics, setter, "DYN", 13.0));
+                    ui.add(Knob303::new(&params.clipper_mix, setter, "MIX", 13.0));
+                });
+            });
+
+            // Gain link enforcement: edit-time only. Compare against the values
+            // seen last frame; whichever knob moved drives its counterpart.
+            if params.clipper_gain_link.value() {
+                let id = ui.id().with("clipper_gain_link_last");
+                let last: Option<(f32, f32)> = ui.ctx().data_mut(|d| d.get_temp(id));
+                let cur_in = params.clipper_in_gain.value();
+                let cur_out = params.clipper_out_gain.value();
+                if let Some((li, lo)) = last {
+                    if cur_in != li {
+                        setter.begin_set_parameter(&params.clipper_out_gain);
+                        setter.set_parameter(&params.clipper_out_gain, -cur_in);
+                        setter.end_set_parameter(&params.clipper_out_gain);
+                    } else if cur_out != lo {
+                        setter.begin_set_parameter(&params.clipper_in_gain);
+                        setter.set_parameter(&params.clipper_in_gain, -cur_out);
+                        setter.end_set_parameter(&params.clipper_in_gain);
+                    }
+                }
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(id, (params.clipper_in_gain.value(), params.clipper_out_gain.value()));
+                });
+            }
         });
 }
