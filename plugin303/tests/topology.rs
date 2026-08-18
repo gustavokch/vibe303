@@ -73,7 +73,7 @@ fn test_accurate_topology_dsp_coercion() {
 
     v_base.note_on(60);
     v_base.set_gate(true, true, false, false);
-    for _ in 0..50 {
+    for _ in 0..120 {
         v_base.tick();
     }
     let base_sample = v_base.tick();
@@ -119,7 +119,7 @@ fn test_accurate_topology_dsp_coercion() {
 
     v_adv.note_on(60);
     v_adv.set_gate(true, true, false, false);
-    for _ in 0..50 {
+    for _ in 0..120 {
         v_adv.tick();
     }
     let adv_sample = v_adv.tick();
@@ -215,7 +215,7 @@ fn test_fun_topology_dsp_activation() {
     v_fun.note_on(60);
     v_fun.set_gate(true, true, false, false);
 
-    for _ in 0..50 {
+    for _ in 0..120 {
         v_base.tick();
         v_fun.tick();
     }
