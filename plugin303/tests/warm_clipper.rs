@@ -87,7 +87,7 @@ fn static_thd_ladder() {
         println!("In: {:.2} Vpk -> Out RMS: {:.3} (target {:.3}), THD: {:.1}% (target {:.1}%)",
                  in_pk, rms, target_rms, thd * 100.0, target_thd * 100.0);
 
-        // Verify within ±25% tolerance for simplified real-time engine
+        // Verify within ±35% tolerance for simplified real-time engine
         assert!((rms - target_rms).abs() < target_rms * 0.35,
                 "RMS mismatch at {:.2}Vpk: got {:.3}, expected {:.3}", in_pk, rms, target_rms);
     }
