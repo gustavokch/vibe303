@@ -10,7 +10,8 @@ use super::oversample::{Os2x, Os4x};
 use super::rc_env::{AccentSweep, DecayEnv, LeakyIntegrator, RcEnv};
 use super::sequencer::SeqEvent;
 use super::vco::Vco303;
-use crate::params::{CircuitTopology, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
+use super::warm_clipper::{ClipperOs, ClipperParams, WarmClipper};
+use crate::params::{CircuitTopology, ClipperOversampling, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
 pub fn midi_to_freq(note: u8) -> f32 {
@@ -228,6 +229,8 @@ pub struct Voice {
     comp_ultra: CompDelay,
     /// Common reported latency (base samples) = max OS group delay over all tiers.
     max_latency: usize,
+    /// Global staged Germanium/JFET output clipper, after VCA/resonance compensation.
+    clipper: WarmClipper,
     /// Sample rate.
     sr: f32,
 
@@ -395,6 +398,7 @@ impl Voice {
             comp_high: CompDelay::new(max_latency - lat_high),
             comp_ultra: CompDelay::new(max_latency - lat_ultra),
             max_latency,
+            clipper: WarmClipper::new(sr),
             sr,
 
             current_note: 60,
@@ -757,6 +761,32 @@ impl Voice {
         self.vco2.poll_lut_update();
     }
 
+    /// Update global clipper controls at block rate without widening the long
+    /// established `update_params` API used by diagnostics and integration tests.
+    pub fn update_clipper_params(
+        &mut self, bypass: bool, os: ClipperOversampling, drive: f32,
+        threshold: f32, bass: f32, tone: f32, asym: bool,
+    ) {
+        self.clipper.set_params(ClipperParams {
+            bypass,
+            os: match os { ClipperOversampling::X2 => ClipperOs::X2, ClipperOversampling::X4 => ClipperOs::X4 },
+            drive_ohms: drive, threshold_ohms: threshold, bass_ohms: bass,
+            tone_f: tone, asym,
+        });
+    }
+
+    pub fn update_clipper_params_immediate(
+        &mut self, bypass: bool, os: ClipperOversampling, drive: f32,
+        threshold: f32, bass: f32, tone: f32, asym: bool,
+    ) {
+        self.clipper.set_params_immediate(ClipperParams {
+            bypass,
+            os: match os { ClipperOversampling::X2 => ClipperOs::X2, ClipperOversampling::X4 => ClipperOs::X4 },
+            drive_ohms: drive, threshold_ohms: threshold, bass_ohms: bass,
+            tone_f: tone, asym,
+        });
+    }
+
     /// Set the tier with no crossfade — for the initial/persisted selection at
     /// construction or `initialize`, where there is no prior audio to fade from.
     /// Runtime changes go through [`set_tier`] (faded).
@@ -844,6 +874,7 @@ impl Voice {
         self.comp_low.reset();
         self.comp_high.reset();
         self.comp_ultra.reset();
+        self.clipper.reset();
     }
 
     /// Select the fidelity tier. Low routes to the TPT path; High routes to the
@@ -878,12 +909,11 @@ impl Voice {
         self.tier = tier;
     }
 
-    /// Reported host latency (base samples). Constant across tiers: every tier is
-    /// padded to the max OS group delay (Ultra's 4×), so the PDC value never
-    /// changes at runtime — no host graph re-init on a tier switch, and the
-    /// crossfade blends paths that share the same total latency.
+    /// Reported host latency is the tier alignment plus the constant 48-sample
+    /// clipper alignment. It is therefore 96 samples for every tier and clipper
+    /// state, including bypass and OS crossfades.
     pub fn latency_samples(&self) -> usize {
-        self.max_latency
+        self.max_latency + self.clipper.latency_samples()
     }
 
     pub fn note_on(&mut self, note: u8) {
@@ -1380,10 +1410,14 @@ impl Voice {
         let reso_gain_comp = 1.0 + self.reso_comp * (4.0 * final_reso);
         let vca_gain = vca_gain * reso_gain_comp;
 
+        // Global output clipper is after the VCA/resonance chain and before the
+        // master fader. Thus volume changes never alter drive or sidechain state.
+        let clipped = self.clipper.tick(f * vca_gain);
+
         // Master Output volume db
         let master_gain = 10.0f32.powf(self.master_volume / 20.0);
 
-        f * vca_gain * master_gain
+        clipped * master_gain
     }
 
     pub fn set_cutoff(&mut self, hz: f32) {

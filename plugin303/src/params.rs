@@ -58,6 +58,15 @@ pub enum VcaEnvMode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
+pub enum ClipperOversampling {
+    #[default]
+    #[name = "2x"]
+    X2,
+    #[name = "4x"]
+    X4,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
 pub enum SequencerMode {
     #[default]
     #[name = "Direct Grid"]
@@ -328,6 +337,22 @@ pub struct Plugin303Params {
 
     #[id = "comp_seed"]
     pub comp_seed: IntParam,
+
+    // Global WARMCLIPPER output stage; intentionally active in both topologies.
+    #[id = "clipper_bypass"]
+    pub clipper_bypass: BoolParam,
+    #[id = "clipper_os"]
+    pub clipper_os: EnumParam<ClipperOversampling>,
+    #[id = "clipper_drive"]
+    pub clipper_drive: FloatParam,
+    #[id = "clipper_threshold"]
+    pub clipper_threshold: FloatParam,
+    #[id = "clipper_bass"]
+    pub clipper_bass: FloatParam,
+    #[id = "clipper_tone"]
+    pub clipper_tone: FloatParam,
+    #[id = "clipper_asym"]
+    pub clipper_asym: BoolParam,
     // Sequencer pattern persistence
     #[persist = "pattern"]
     pub pattern: std::sync::RwLock<SequencerPattern>,
@@ -589,6 +614,14 @@ impl Default for Plugin303Params {
                     max: 999_999,
                 },
             ),
+
+            clipper_bypass: BoolParam::new("Clipper Bypass", false),
+            clipper_os: EnumParam::new("Clipper OS", ClipperOversampling::X2),
+            clipper_drive: FloatParam::new("Clipper Drive", 47_000.0, FloatRange::Skewed { min: 22_000.0, max: 100_000.0, factor: FloatRange::skew_factor(-1.5) }).with_unit(" ohm"),
+            clipper_threshold: FloatParam::new("Clipper Threshold", 4_700.0, FloatRange::Skewed { min: 2_200.0, max: 22_000.0, factor: FloatRange::skew_factor(-1.5) }).with_unit(" ohm"),
+            clipper_bass: FloatParam::new("Clipper Bass", 8_200.0, FloatRange::Skewed { min: 4_700.0, max: 22_000.0, factor: FloatRange::skew_factor(-1.5) }).with_unit(" ohm"),
+            clipper_tone: FloatParam::new("Clipper Tone", 1e-9, FloatRange::Skewed { min: 470e-12, max: 4.7e-9, factor: FloatRange::skew_factor(-1.5) }).with_value_to_string(std::sync::Arc::new(|v| format!("{:.2} nF", v * 1e9))),
+            clipper_asym: BoolParam::new("Clipper Asym", false),
 
             pattern: std::sync::RwLock::new(SequencerPattern::default()),
         }

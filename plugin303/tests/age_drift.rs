@@ -148,8 +148,8 @@ fn component_age_affects_tuning_and_cutoff() {
     v_old.set_gate(true, true, false, false);
 
     // Verify they output different waveforms because age modifies cutoff and tuning.
-    // We tick 50 times to pass the latency compensation delay line.
-    for _ in 0..50 {
+    // We tick past the latency compensation delay line.
+    for _ in 0..120 {
         v_new.tick();
         v_old.tick();
     }
