@@ -17,6 +17,11 @@ fn print_usage() {
          --bass <float>      Bass resistance in Ohms (4700.0..22000.0, default: 8200.0)\n\
          --tone <float>      Tone capacitance in Farads (default: 1e-9)\n\
          --asym              Asymmetric clipping mode\n\
+         --mix <float>       Dry/wet mix 0.0..1.0 (default: 1.0)\n\
+         --in-gain <float>   Input gain dB -18..18 (default: 0.0)\n\
+         --out-gain <float>  Output gain dB -18..18 (default: 0.0)\n\
+         --tilt <float>      Pre/post tilt dB -6..6 (default: 0.0)\n\
+         --dynamics <float>  Transient ducking 0.0..1.0 (default: 0.0)\n\
          --signal <mode>     Signal type: sine, sweep, raw (default: sine)\n\
          --freq <float>      Fundamental frequency in Hz for sine signal (default: 1700.0)\n\
          --amp <float>       Peak amplitude (default: 1.0)\n\
@@ -41,6 +46,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bass: f32 = 8200.0;
     let mut tone: f32 = 1e-9;
     let mut asym = false;
+    let mut mix: f32 = 1.0;
+    let mut in_gain: f32 = 0.0;
+    let mut out_gain: f32 = 0.0;
+    let mut tilt: f32 = 0.0;
+    let mut dynamics: f32 = 0.0;
     let mut signal_type = String::from("sine");
     let mut freq: f32 = 1700.0;
     let mut amp: f32 = 1.0;
@@ -81,6 +91,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tone = args[i].parse()?;
             }
             "--asym" => asym = true,
+            "--mix" => {
+                i += 1;
+                mix = args[i].parse()?;
+            }
+            "--in-gain" => {
+                i += 1;
+                in_gain = args[i].parse()?;
+            }
+            "--out-gain" => {
+                i += 1;
+                out_gain = args[i].parse()?;
+            }
+            "--tilt" => {
+                i += 1;
+                tilt = args[i].parse()?;
+            }
+            "--dynamics" => {
+                i += 1;
+                dynamics = args[i].parse()?;
+            }
             "--signal" => {
                 i += 1;
                 signal_type = args[i].to_lowercase();
@@ -169,7 +199,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         bass_ohms: bass,
         tone_f: tone,
         asym,
-        ..ClipperParams::default()
+        mix,
+        in_db: in_gain,
+        out_db: out_gain,
+        tilt_db: tilt,
+        dynamics,
     };
 
     let mut clipper = WarmClipper::new(sr);
