@@ -17,6 +17,9 @@ const JFET_FLOOR: f32 = 0.089_125;
 
 const GAIN_MINUS_12DB: f32 = 0.251_188_64;
 
+/// Peak level (normalised audio volts) at which dynamics ducking saturates.
+const DYN_REF: f32 = 0.5;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipperOs {
     X2,
@@ -125,6 +128,10 @@ struct StagedEngine {
     tilt_post_k: f32, // 1/b0
     tilt_post_b: f32, // b1/b0
     tilt_active: bool,
+    // Dynamics: fast peak follower ducking effective drive (1 ms / 50 ms).
+    peak_env: f32,
+    dyn_attack: f32,
+    dyn_release: f32,
     params: ClipperParams,
 }
 
@@ -135,6 +142,8 @@ impl StagedEngine {
         let env_attack = 1.0 - (-1.0 / (0.001 * sr)).exp();
         let env_release = 1.0 - (-1.0 / (0.220 * sr)).exp();
         let bass_alpha = 1.0 - (-2.0 * core::f32::consts::PI * 106.0 / sr).exp();
+        let dyn_attack = 1.0 - (-1.0 / (0.001 * sr)).exp();
+        let dyn_release = 1.0 - (-1.0 / (0.050 * sr)).exp();
 
         let mut engine = Self {
             sr,
@@ -149,6 +158,7 @@ impl StagedEngine {
             tilt_pre_x1: 0.0, tilt_pre_y1: 0.0, tilt_post_x1: 0.0, tilt_post_y1: 0.0,
             tilt_a1: 0.0, tilt_b0: 1.0, tilt_b1: 0.0, tilt_post_k: 1.0, tilt_post_b: 0.0,
             tilt_active: false,
+            peak_env: 0.0, dyn_attack, dyn_release,
             params: ClipperParams::default(),
         };
         engine.update_tone_alpha();
@@ -207,8 +217,23 @@ impl StagedEngine {
 
         // A: U1 buffer + saturating U2. `tanh` is the anti-windup ±12.6 V
         // op-amp clamp expressed in normalised audio volts.
+        // Dynamics: fast peak detector ducks drive on loud passages, letting
+        // transient attacks through before the Ge/JFET stage saturates.
+        let drive_ohms = if p.dynamics > 0.0 {
+            let ax = x.abs();
+            let a = if ax > self.peak_env { self.dyn_attack } else { self.dyn_release };
+            self.peak_env += a * (ax - self.peak_env);
+            if !self.peak_env.is_finite() {
+                self.peak_env = 0.0;
+            }
+            let duck = p.dynamics.clamp(0.0, 1.0) * (self.peak_env / DYN_REF).min(1.0);
+            (p.drive_ohms * (1.0 - duck)).max(22_000.0)
+        } else {
+            p.drive_ohms
+        };
+
         let buf = x * 2.0;
-        let gain = 1.0 + p.drive_ohms.clamp(22_000.0, 100_000.0) / 4_700.0;
+        let gain = 1.0 + drive_ohms.clamp(22_000.0, 100_000.0) / 4_700.0;
         let target_drv = 12.0 * (buf * gain / 12.0).tanh();
         self.drive_state = Self::one_pole(&mut self.drive_state, target_drv, self.drive_alpha);
         let drv = self.drive_state;

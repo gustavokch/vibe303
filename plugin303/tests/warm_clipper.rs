@@ -293,3 +293,149 @@ fn gain_round_trip_unity_small_signal() {
         "+6 dB in / -6 dB out must be unity within 1% RMS"
     );
 }
+
+#[test]
+fn tilt_inversion_flat_small_signal() {
+    // Below the clip threshold the core is linear, so pre/post tilt cancel:
+    // tilt=+6 dB output must match tilt=0 output within 1% RMS.
+    let sr = 48_000.0;
+    let run = |tilt_db: f32| -> Vec<f32> {
+        let mut c = WarmClipper::new(sr);
+        let mut p = ClipperParams::default();
+        p.mix = 1.0;
+        p.drive_ohms = 22_000.0;
+        p.tilt_db = tilt_db;
+        c.set_params_immediate(p);
+        (0..9600)
+            .map(|i| {
+                let t = i as f32 / sr;
+                c.tick(1e-3 * (2.0 * std::f32::consts::PI * 5000.0 * t).sin())
+            })
+            .collect()
+    };
+    let flat = run(0.0);
+    let tilted = run(6.0);
+    let tail_f = &flat[4800..];
+    let tail_t = &tilted[4800..];
+    let rms = |v: &[f32]| (v.iter().map(|x| x * x).sum::<f32>() / v.len() as f32).sqrt();
+    let diff: Vec<f32> = tail_f.iter().zip(tail_t).map(|(x, y)| x - y).collect();
+    assert!(
+        rms(&diff) / rms(tail_f).max(1e-12) < 0.01,
+        "pre/post tilt must cancel in the linear region"
+    );
+}
+
+#[test]
+fn tilt_pre_emphasis_changes_distortion() {
+    // Boosting highs into the clipper distorts a 4 kHz tone more than cutting.
+    // The post-shelf reshapes the measured spectrum (harmonics sit higher on
+    // the shelf than the fundamental), so compensate each harmonic's power by
+    // the known post-shelf gain before forming the THD ratio.
+    fn shelf_gain_sq(freq_hz: f32, engine_sr: f32, tilt_db: f32) -> f32 {
+        let k = (std::f32::consts::PI * 2_000.0 / engine_sr).tan();
+        let g = 10f32.powf(tilt_db / 20.0);
+        let a1 = (k - 1.0) / (k + 1.0);
+        let b0 = (k + g) / (k + 1.0);
+        let b1 = (k - g) / (k + 1.0);
+        let w = 2.0 * std::f32::consts::PI * freq_hz / engine_sr;
+        let c = w.cos();
+        let num = b0 * b0 + b1 * b1 + 2.0 * b0 * b1 * c;
+        let den = 1.0 + a1 * a1 + 2.0 * a1 * c;
+        num / den
+    }
+
+    fn thd_tilt_compensated(samples: &[f32], freq_hz: f32, sr: f32, tilt_db: f32) -> f32 {
+        let engine_sr = sr * 2.0; // default ClipperOs::X2
+        let n = samples.len();
+        let bin_k = (freq_hz * n as f32 / sr).round() as usize;
+        let mut harm_pwr = [0.0f32; 10];
+        for h in 1..=8 {
+            let k = bin_k * h;
+            if k >= n / 2 {
+                break;
+            }
+            let mut re = 0.0f32;
+            let mut im = 0.0f32;
+            let omega = 2.0 * std::f32::consts::PI * (k as f32) / (n as f32);
+            for (i, &s) in samples.iter().enumerate() {
+                re += s * (omega * i as f32).cos();
+                im -= s * (omega * i as f32).sin();
+            }
+            // Undo the post-shelf gain at this harmonic's frequency.
+            harm_pwr[h] = (re * re + im * im) * shelf_gain_sq(freq_hz * h as f32, engine_sr, tilt_db);
+        }
+        let fund_pwr = harm_pwr[1];
+        if fund_pwr < 1e-12 {
+            return 0.0;
+        }
+        (harm_pwr[2..].iter().sum::<f32>() / fund_pwr).sqrt()
+    }
+
+    let sr = 48_000.0;
+    let run_thd = |tilt_db: f32| -> f32 {
+        let mut c = WarmClipper::new(sr);
+        let mut p = ClipperParams::default();
+        p.mix = 1.0;
+        p.drive_ohms = 47_000.0;
+        p.tilt_db = tilt_db;
+        c.set_params_immediate(p);
+        let n = (sr * 0.2) as usize;
+        let mut buf = Vec::new();
+        for i in 0..n {
+            let t = i as f32 / sr;
+            let y = c.tick(0.5 * (2.0 * std::f32::consts::PI * 4000.0 * t).sin());
+            if i >= n / 2 {
+                buf.push(y);
+            }
+        }
+        thd_tilt_compensated(&buf, 4000.0, sr, tilt_db)
+    };
+    let thd_boost = run_thd(6.0);
+    let thd_cut = run_thd(-6.0);
+    println!("THD +6 dB tilt: {:.2}%, -6 dB tilt: {:.2}%", thd_boost * 100.0, thd_cut * 100.0);
+    assert!(thd_boost > thd_cut, "boosting highs pre-clip must increase THD");
+}
+
+#[test]
+fn dynamics_zero_is_transparent() {
+    let sr = 48_000.0;
+    let mut a = WarmClipper::new(sr);
+    a.set_params_immediate(ClipperParams::default());
+    let mut b = WarmClipper::new(sr);
+    let mut p = ClipperParams::default();
+    p.dynamics = 0.0;
+    b.set_params_immediate(p);
+    for i in 0..1024 {
+        let t = i as f32 / sr;
+        let x = 0.8 * (2.0 * std::f32::consts::PI * 700.0 * t).sin();
+        assert_eq!(a.tick(x), b.tick(x), "dynamics=0 must not alter the signal");
+    }
+}
+
+#[test]
+fn dynamics_reduces_sustained_distortion() {
+    // Loud sustained tone at max drive: ducking lowers effective drive → less THD.
+    let sr = 48_000.0;
+    let run_thd = |dynamics: f32| -> f32 {
+        let mut c = WarmClipper::new(sr);
+        let mut p = ClipperParams::default();
+        p.mix = 1.0;
+        p.drive_ohms = 100_000.0;
+        p.dynamics = dynamics;
+        c.set_params_immediate(p);
+        let n = (sr * 0.4) as usize;
+        let mut buf = Vec::new();
+        for i in 0..n {
+            let t = i as f32 / sr;
+            let y = c.tick((2.0 * std::f32::consts::PI * 800.0 * t).sin());
+            if i >= n / 2 {
+                buf.push(y);
+            }
+        }
+        compute_thd(&buf, 800.0, sr)
+    };
+    let thd_off = run_thd(0.0);
+    let thd_on = run_thd(1.0);
+    println!("THD dynamics off: {:.2}%, on: {:.2}%", thd_off * 100.0, thd_on * 100.0);
+    assert!(thd_on < thd_off, "dynamics must duck drive on sustained loud signal");
+}
