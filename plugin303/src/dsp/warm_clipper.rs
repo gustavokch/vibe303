@@ -114,6 +114,17 @@ struct StagedEngine {
     bass1: f32,
     bass2: f32,
     bass_alpha: f32,
+    // Pre/post tilt shelf state (exact-inverse first-order pair at 2 kHz).
+    tilt_pre_x1: f32,
+    tilt_pre_y1: f32,
+    tilt_post_x1: f32,
+    tilt_post_y1: f32,
+    tilt_a1: f32,
+    tilt_b0: f32,
+    tilt_b1: f32,
+    tilt_post_k: f32, // 1/b0
+    tilt_post_b: f32, // b1/b0
+    tilt_active: bool,
     params: ClipperParams,
 }
 
@@ -135,9 +146,13 @@ impl StagedEngine {
             env_release,
             env: GB, gate: GB, tone: 0.0, tone_alpha: 0.0, bass1: 0.0, bass2: 0.0,
             bass_alpha,
+            tilt_pre_x1: 0.0, tilt_pre_y1: 0.0, tilt_post_x1: 0.0, tilt_post_y1: 0.0,
+            tilt_a1: 0.0, tilt_b0: 1.0, tilt_b1: 0.0, tilt_post_k: 1.0, tilt_post_b: 0.0,
+            tilt_active: false,
             params: ClipperParams::default(),
         };
         engine.update_tone_alpha();
+        engine.update_tilt_coeffs();
         engine
     }
 
@@ -147,9 +162,22 @@ impl StagedEngine {
         self.tone_alpha = 1.0 - (-2.0 * core::f32::consts::PI * tone_hz / self.sr).exp();
     }
 
+    fn update_tilt_coeffs(&mut self) {
+        let tilt = self.params.tilt_db.clamp(-6.0, 6.0);
+        self.tilt_active = tilt != 0.0;
+        let k = (core::f32::consts::PI * 2_000.0 / self.sr).tan();
+        let g = 10f32.powf(tilt / 20.0);
+        self.tilt_a1 = (k - 1.0) / (k + 1.0);
+        self.tilt_b0 = (k + g) / (k + 1.0);
+        self.tilt_b1 = (k - g) / (k + 1.0);
+        self.tilt_post_k = 1.0 / self.tilt_b0;
+        self.tilt_post_b = self.tilt_b1 / self.tilt_b0;
+    }
+
     fn set_params(&mut self, params: ClipperParams) {
         self.params = params;
         self.update_tone_alpha();
+        self.update_tilt_coeffs();
     }
 
     fn reset(&mut self) { *self = Self::new(self.sr); }
@@ -166,6 +194,16 @@ impl StagedEngine {
     fn tick(&mut self, input: f32) -> f32 {
         let x = if input.is_finite() { input.clamp(-16.0, 16.0) } else { 0.0 };
         let p = self.params;
+
+        // Pre-tilt: first-order high shelf boosting highs into the clipper.
+        let x = if self.tilt_active {
+            let y = self.tilt_b0 * x + self.tilt_b1 * self.tilt_pre_x1 - self.tilt_a1 * self.tilt_pre_y1;
+            self.tilt_pre_x1 = x;
+            self.tilt_pre_y1 = y;
+            y
+        } else {
+            x
+        };
 
         // A: U1 buffer + saturating U2. `tanh` is the anti-windup ±12.6 V
         // op-amp clamp expressed in normalised audio volts.
@@ -213,6 +251,17 @@ impl StagedEngine {
         let bass = Self::one_pole(&mut self.bass2, b1, self.bass_alpha);
         let bass_mix = (8_200.0 / p.bass_ohms.clamp(4_700.0, 22_000.0)).clamp(0.37, 1.75);
         let out = (clp * 1.35 + bass * 0.20 * bass_mix) * GAIN_MINUS_12DB;
+        // Post-tilt: exact inverse of the pre shelf, restoring the overall
+        // frequency balance while keeping the tilted distortion products.
+        let out = if self.tilt_active {
+            let y = self.tilt_post_k * (out + self.tilt_a1 * self.tilt_post_x1)
+                - self.tilt_post_b * self.tilt_post_y1;
+            self.tilt_post_x1 = out;
+            self.tilt_post_y1 = y;
+            y
+        } else {
+            out
+        };
         if out.is_finite() { out } else { 0.0 }
     }
 }
