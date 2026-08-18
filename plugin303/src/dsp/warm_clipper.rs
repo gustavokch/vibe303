@@ -15,6 +15,8 @@ const XFADE_SECONDS: f32 = 0.010;
 const GB: f32 = -3.826;
 const JFET_FLOOR: f32 = 0.089_125;
 
+const GAIN_MINUS_12DB: f32 = 0.251_188_64;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipperOs {
     X2,
@@ -85,39 +87,66 @@ struct StagedEngine {
     sr: f32,
     // A: buffer / drive amp state
     drive_state: f32,
+    drive_alpha: f32,
     // B: two HPF sections, envelope and gate (all referenced to GB at rest)
     hp_x1: f32,
     hp_y1: f32,
     hp_x2: f32,
     hp_y2: f32,
+    hp_a: f32,
+    env_attack: f32,
+    env_release: f32,
     env: f32,
     gate: f32,
     // C: tone capacitor; D: two bass low-pass capacitors
     tone: f32,
+    tone_alpha: f32,
     bass1: f32,
     bass2: f32,
+    bass_alpha: f32,
     params: ClipperParams,
 }
 
 impl StagedEngine {
     fn new(sr: f32) -> Self {
-        Self {
+        let drive_alpha = 1.0 - (-2.0 * core::f32::consts::PI * 10_000.0 / sr).exp();
+        let hp_a = (-2.0 * core::f32::consts::PI * 234.0 / sr).exp();
+        let env_attack = 1.0 - (-1.0 / (0.001 * sr)).exp();
+        let env_release = 1.0 - (-1.0 / (0.220 * sr)).exp();
+        let bass_alpha = 1.0 - (-2.0 * core::f32::consts::PI * 106.0 / sr).exp();
+
+        let mut engine = Self {
             sr,
             drive_state: 0.0,
+            drive_alpha,
             hp_x1: 0.0, hp_y1: 0.0, hp_x2: 0.0, hp_y2: 0.0,
-            env: GB, gate: GB, tone: 0.0, bass1: 0.0, bass2: 0.0,
+            hp_a,
+            env_attack,
+            env_release,
+            env: GB, gate: GB, tone: 0.0, tone_alpha: 0.0, bass1: 0.0, bass2: 0.0,
+            bass_alpha,
             params: ClipperParams::default(),
-        }
+        };
+        engine.update_tone_alpha();
+        engine
     }
 
-    fn set_params(&mut self, params: ClipperParams) { self.params = params; }
+    fn update_tone_alpha(&mut self) {
+        let tone_hz = (1.0 / (2.0 * core::f32::consts::PI * 22_000.0 * self.params.tone_f.clamp(470e-12, 4.7e-9)))
+            .clamp(1_500.0, 16_000.0);
+        self.tone_alpha = 1.0 - (-2.0 * core::f32::consts::PI * tone_hz / self.sr).exp();
+    }
+
+    fn set_params(&mut self, params: ClipperParams) {
+        self.params = params;
+        self.update_tone_alpha();
+    }
 
     fn reset(&mut self) { *self = Self::new(self.sr); }
 
     #[inline]
-    fn one_pole(state: &mut f32, x: f32, hz: f32, sr: f32) -> f32 {
-        let a = 1.0 - (-2.0 * core::f32::consts::PI * hz / sr).exp();
-        *state += a * (x - *state);
+    fn one_pole(state: &mut f32, x: f32, alpha: f32) -> f32 {
+        *state += alpha * (x - *state);
         *state
     }
 
@@ -133,27 +162,24 @@ impl StagedEngine {
         let buf = x * 2.0;
         let gain = 1.0 + p.drive_ohms.clamp(22_000.0, 100_000.0) / 4_700.0;
         let target_drv = 12.0 * (buf * gain / 12.0).tanh();
-        self.drive_state = Self::one_pole(&mut self.drive_state, target_drv, 10_000.0, self.sr);
+        self.drive_state = Self::one_pole(&mut self.drive_state, target_drv, self.drive_alpha);
         let drv = self.drive_state;
 
         // B: GB-referenced two-pole HPF → U5/Rsens gain → D3/Cenv and
         // D4/Ratk/Cg. Detector caps are deliberately separate so their rest
         // voltage remains GB, not ground.
-        let hp_a = (-2.0 * core::f32::consts::PI * 234.0 / self.sr).exp();
-        let h1 = hp_a * (self.hp_y1 + drv - self.hp_x1);
+        let h1 = self.hp_a * (self.hp_y1 + drv - self.hp_x1);
         self.hp_x1 = drv; self.hp_y1 = h1;
-        let h2 = hp_a * (self.hp_y2 + h1 - self.hp_x2);
+        let h2 = self.hp_a * (self.hp_y2 + h1 - self.hp_x2);
         self.hp_x2 = h1; self.hp_y2 = h2;
         let sens_gain = (p.threshold_ohms.clamp(2_200.0, 22_000.0) / 4_700.0).recip();
         let rectified = (h2 * 0.18 * sens_gain - 0.50).max(0.0);
-        let env_attack = 1.0 - (-1.0 / (0.001 * self.sr)).exp();
-        let env_release = 1.0 - (-1.0 / (0.220 * self.sr)).exp();
         let env_target = GB + rectified.min(12.0);
-        let env_a = if env_target > self.env { env_attack } else { env_release };
+        let env_a = if env_target > self.env { self.env_attack } else { self.env_release };
         self.env += env_a * (env_target - self.env);
         // D4/Ratk attack and Rg1 release into Cg. The envelope cannot exceed
         // the U5 rail, preventing release time from growing with overdrive.
-        let gate_a = if self.env > self.gate { env_attack } else { env_release };
+        let gate_a = if self.env > self.gate { self.env_attack } else { self.env_release };
         self.gate += gate_a * (self.env.clamp(GB, 0.0) - self.gate);
 
         // C: Rs/Rpad and 2N5457 shunt. Gate moves from GB (off) to 0 (on),
@@ -169,16 +195,14 @@ impl StagedEngine {
         } else {
             ge_knee * (vca / ge_knee).tanh()
         };
-        let tone_hz = (1.0 / (2.0 * core::f32::consts::PI * 22_000.0 * p.tone_f.clamp(470e-12, 4.7e-9)))
-            .clamp(1_500.0, 16_000.0);
-        let clp = Self::one_pole(&mut self.tone, clipped, tone_hz, self.sr);
+        let clp = Self::one_pole(&mut self.tone, clipped, self.tone_alpha);
 
         // D: clean 106 Hz 2-pole bass leg (U6 polarity correction) and U4
         // summer with make-up gain.
-        let b1 = Self::one_pole(&mut self.bass1, buf, 106.0, self.sr);
-        let bass = Self::one_pole(&mut self.bass2, b1, 106.0, self.sr);
+        let b1 = Self::one_pole(&mut self.bass1, buf, self.bass_alpha);
+        let bass = Self::one_pole(&mut self.bass2, b1, self.bass_alpha);
         let bass_mix = (8_200.0 / p.bass_ohms.clamp(4_700.0, 22_000.0)).clamp(0.37, 1.75);
-        let out = (clp * 1.35 + bass * 0.20 * bass_mix) * 10.0_f32.powf(-12.0 / 20.0);
+        let out = (clp * 1.35 + bass * 0.20 * bass_mix) * GAIN_MINUS_12DB;
         if out.is_finite() { out } else { 0.0 }
     }
 }
