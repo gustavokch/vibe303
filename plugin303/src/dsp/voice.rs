@@ -772,6 +772,7 @@ impl Voice {
             os: match os { ClipperOversampling::X2 => ClipperOs::X2, ClipperOversampling::X4 => ClipperOs::X4 },
             drive_ohms: drive, threshold_ohms: threshold, bass_ohms: bass,
             tone_f: tone, asym,
+            ..ClipperParams::default()
         });
     }
 
@@ -784,6 +785,7 @@ impl Voice {
             os: match os { ClipperOversampling::X2 => ClipperOs::X2, ClipperOversampling::X4 => ClipperOs::X4 },
             drive_ohms: drive, threshold_ohms: threshold, bass_ohms: bass,
             tone_f: tone, asym,
+            ..ClipperParams::default()
         });
     }
 

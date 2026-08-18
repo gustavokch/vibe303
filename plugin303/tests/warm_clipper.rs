@@ -228,3 +228,68 @@ fn knob_behavior() {
     println!("Low drive THD: {:.1}%, High drive THD: {:.1}%", thd_low * 100.0, thd_hi * 100.0);
     assert!(thd_hi > thd_low, "Higher drive must increase THD");
 }
+
+#[test]
+fn mix_zero_matches_bypass() {
+    let sr = 48_000.0;
+    let mut c_byp = WarmClipper::new(sr);
+    let mut p = ClipperParams::default();
+    p.bypass = true;
+    c_byp.set_params_immediate(p);
+
+    let mut c_dry = WarmClipper::new(sr);
+    let mut p2 = ClipperParams::default();
+    p2.mix = 0.0;
+    c_dry.set_params_immediate(p2);
+
+    for i in 0..256 {
+        let x = if i == 0 { 0.75 } else { 0.0 };
+        assert_eq!(c_byp.tick(x), c_dry.tick(x), "mix=0 must equal bypass output");
+    }
+}
+
+#[test]
+fn mix_one_matches_default_wet() {
+    let sr = 48_000.0;
+    let mut a = WarmClipper::new(sr);
+    a.set_params_immediate(ClipperParams::default());
+    let mut b = WarmClipper::new(sr);
+    let mut p = ClipperParams::default();
+    p.mix = 1.0;
+    b.set_params_immediate(p);
+    for i in 0..512 {
+        let t = i as f32 / sr;
+        let x = (2.0 * std::f32::consts::PI * 440.0 * t).sin();
+        assert_eq!(a.tick(x), b.tick(x));
+    }
+}
+
+#[test]
+fn gain_round_trip_unity_small_signal() {
+    let sr = 48_000.0;
+    let run = |in_db: f32, out_db: f32| -> Vec<f32> {
+        let mut c = WarmClipper::new(sr);
+        let mut p = ClipperParams::default();
+        p.mix = 1.0;
+        p.in_db = in_db;
+        p.out_db = out_db;
+        p.drive_ohms = 22_000.0; // minimum drive: near-linear small-signal region
+        c.set_params_immediate(p);
+        (0..9600)
+            .map(|i| {
+                let t = i as f32 / sr;
+                c.tick(1e-3 * (2.0 * std::f32::consts::PI * 1000.0 * t).sin())
+            })
+            .collect()
+    };
+    let a = run(0.0, 0.0);
+    let b = run(6.0, -6.0);
+    let tail_a = &a[4800..];
+    let tail_b = &b[4800..];
+    let rms = |v: &[f32]| (v.iter().map(|x| x * x).sum::<f32>() / v.len() as f32).sqrt();
+    let diff: Vec<f32> = tail_a.iter().zip(tail_b).map(|(x, y)| x - y).collect();
+    assert!(
+        rms(&diff) / rms(tail_a).max(1e-12) < 0.01,
+        "+6 dB in / -6 dB out must be unity within 1% RMS"
+    );
+}

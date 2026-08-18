@@ -32,6 +32,11 @@ pub struct ClipperParams {
     pub bass_ohms: f32,
     pub tone_f: f32,
     pub asym: bool,
+    pub mix: f32,      // 0.0 = dry, 1.0 = wet; equal-power law
+    pub in_db: f32,    // pre-clipper input gain
+    pub out_db: f32,   // post-clipper output gain
+    pub tilt_db: f32,  // pre/post shelf pair (Task 2)
+    pub dynamics: f32, // transient drive ducking (Task 3)
 }
 
 impl Default for ClipperParams {
@@ -44,6 +49,11 @@ impl Default for ClipperParams {
             bass_ohms: 8_200.0,
             tone_f: 1e-9,
             asym: false,
+            mix: 1.0, // DSP default stays wet; the plugin param defaults to dry
+            in_db: 0.0,
+            out_db: 0.0,
+            tilt_db: 0.0,
+            dynamics: 0.0,
         }
     }
 }
@@ -224,6 +234,12 @@ pub struct WarmClipper {
     fade_from_os: ClipperOs,
     fade: f32,
     fade_step: f32,
+    // Base-rate smoothed scalars for the new control dimensions.
+    smooth_k: f32,
+    in_t: f32, in_s: f32,
+    out_t: f32, out_s: f32,
+    dry_t: f32, dry_s: f32,
+    wet_t: f32, wet_s: f32,
 }
 
 impl WarmClipper {
@@ -233,9 +249,27 @@ impl WarmClipper {
             pad2: Delay16::new(), dry: Delay48::new(), params: ClipperParams::default(),
             active_bypass: false, active_os: ClipperOs::X2, fade_from_bypass: false,
             fade_from_os: ClipperOs::X2, fade: 1.0, fade_step: 1.0 / (sr * XFADE_SECONDS).max(1.0),
+            smooth_k: 1.0 - (-1.0 / (0.010 * sr)).exp(),
+            in_t: 1.0, in_s: 1.0,
+            out_t: 1.0, out_s: 1.0,
+            dry_t: 0.0, dry_s: 0.0,
+            wet_t: 1.0, wet_s: 1.0,
         }
     }
     pub fn latency_samples(&self) -> usize { CLIPPER_LATENCY }
+    fn set_targets(&mut self, p: &ClipperParams) {
+        self.in_t = 10f32.powf(p.in_db.clamp(-18.0, 18.0) / 20.0);
+        self.out_t = 10f32.powf(p.out_db.clamp(-18.0, 18.0) / 20.0);
+        let angle = p.mix.clamp(0.0, 1.0) * core::f32::consts::FRAC_PI_2;
+        self.dry_t = angle.cos();
+        self.wet_t = angle.sin();
+    }
+    fn snap_smoothers(&mut self) {
+        self.in_s = self.in_t;
+        self.out_s = self.out_t;
+        self.dry_s = self.dry_t;
+        self.wet_s = self.wet_t;
+    }
     pub fn set_params(&mut self, params: ClipperParams) {
         self.e2.set_params(params); self.e4.set_params(params);
         if params.bypass != self.active_bypass || params.os != self.active_os {
@@ -245,6 +279,7 @@ impl WarmClipper {
             self.active_os = params.os;
             self.fade = 0.0;
         }
+        self.set_targets(&params);
         self.params = params;
     }
     pub fn set_params_immediate(&mut self, params: ClipperParams) {
@@ -254,6 +289,8 @@ impl WarmClipper {
         self.fade_from_bypass = params.bypass;
         self.fade_from_os = params.os;
         self.fade = 1.0;
+        self.set_targets(&params);
+        self.snap_smoothers();
         self.params = params;
     }
     fn wet2(&mut self, x: f32) -> f32 {
@@ -265,15 +302,33 @@ impl WarmClipper {
         let hi = self.os4.up(x);
         self.os4.down([self.e4.tick(hi[0]), self.e4.tick(hi[1]), self.e4.tick(hi[2]), self.e4.tick(hi[3])])
     }
-    fn render(&mut self, bypass: bool, os: ClipperOs, x: f32) -> f32 {
-        if bypass { self.dry.tick(x) } else { match os { ClipperOs::X2 => self.wet2(x), ClipperOs::X4 => self.wet4(x) } }
+    fn branch(&mut self, bypass: bool, os: ClipperOs, x: f32, d: f32) -> f32 {
+        if bypass {
+            d
+        } else {
+            let xg = x * self.in_s;
+            let wet = match os {
+                ClipperOs::X2 => self.wet2(xg),
+                ClipperOs::X4 => self.wet4(xg),
+            } * self.out_s;
+            self.dry_s * d + self.wet_s * wet
+        }
     }
     pub fn tick(&mut self, x: f32) -> f32 {
+        // Dry delay runs every sample so the mix path always has a warm buffer.
+        // Sanitise: 0.0 * NaN is NaN, so a poisoned dry buffer would leak
+        // through the mix law even at dry_s = 0.
+        let d = self.dry.tick(x);
+        let d = if d.is_finite() { d } else { 0.0 };
+        self.in_s += self.smooth_k * (self.in_t - self.in_s);
+        self.out_s += self.smooth_k * (self.out_t - self.out_s);
+        self.dry_s += self.smooth_k * (self.dry_t - self.dry_s);
+        self.wet_s += self.smooth_k * (self.wet_t - self.wet_s);
         // Both paths are only rendered during a transition. A bypassed steady
         // engine therefore incurs no nonlinear solve.
-        let to = self.render(self.active_bypass, self.active_os, x);
+        let to = self.branch(self.active_bypass, self.active_os, x, d);
         if self.fade >= 1.0 { return to; }
-        let from = self.render(self.fade_from_bypass, self.fade_from_os, x);
+        let from = self.branch(self.fade_from_bypass, self.fade_from_os, x, d);
         let theta = self.fade * core::f32::consts::FRAC_PI_2;
         let y = from * theta.cos() + to * theta.sin();
         self.fade = (self.fade + self.fade_step).min(1.0);
@@ -282,6 +337,7 @@ impl WarmClipper {
     pub fn reset(&mut self) {
         self.os2 = Os2x::new(); self.os4 = Os4x::new(); self.e2.reset(); self.e4.reset();
         self.pad2.reset(); self.dry.reset(); self.fade = 1.0;
+        self.snap_smoothers();
         self.active_bypass = self.params.bypass;
         self.active_os = self.params.os;
         self.fade_from_bypass = self.params.bypass;
@@ -313,5 +369,15 @@ mod tests {
         for &x in &[f32::NAN, f32::INFINITY, -f32::INFINITY, 1000.0] {
             for _ in 0..128 { let y = c.tick(x); assert!(y.is_finite() && y.abs() < 8.0); }
         }
+    }
+    #[test]
+    fn mix_half_equal_power_gains() {
+        let mut c = WarmClipper::new(48_000.0);
+        let mut p = ClipperParams::default();
+        p.mix = 0.5;
+        c.set_params_immediate(p);
+        let expect = (0.5f32 * core::f32::consts::FRAC_PI_2).sin(); // 0.7071
+        assert!((c.dry_s - expect).abs() < 1e-6);
+        assert!((c.wet_s - expect).abs() < 1e-6);
     }
 }
