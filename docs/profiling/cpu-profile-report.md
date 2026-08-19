@@ -193,7 +193,7 @@ Findings:
   figure above (1.773 s / 5.64×) — different machine/conditions; only
   same-session interleaved ratios are comparable.
 
-Evidence files: `docs/profiling/baseline-step1.txt`, `step1.txt`, `step2.txt`,
-`step3.txt`, `iters-baseline.txt`, `iters-step2.txt`. Reverted code remains in
+Evidence files: `step1.txt`, `step2.txt`, `step3.txt`, `iters-baseline.txt`,
+`iters-step2.txt`. Reverted code remains in
 git history (commits ffc2d46, 5edeca0, reverted in the tip commit) with the two
 bitwise regression tests, should an x86_64-v3 re-evaluation be wanted.
