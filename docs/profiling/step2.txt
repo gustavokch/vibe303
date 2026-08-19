@@ -1,0 +1,6 @@
+
+NOTE (2026-08-19): runs above taken under heavy external system load (clean-room
+baseline ~0.75 s; loaded runs 1.38-1.89 s) — absolute times not comparable.
+Iteration histogram (iters-step2.txt vs iters-baseline.txt) is the reliable
+evidence: ladder mean 2.944 -> 2.632 iters (-10.6%), 2-iter share 6% -> 37%,
+homotopy fallbacks 0 -> 0. TODO: re-benchmark on a quiet machine.

@@ -66,10 +66,13 @@ const CAPS: [(usize, usize, f64); 4] = [
 
 const MAX_ITERS: usize = 50;
 const TOL: f64 = 1e-9;
-/// Absolute tolerance for convergence (document eq. 3.30: ε_abs).
-const TOL_ABS: f64 = 1e-11;
-/// Relative tolerance for convergence (document eq. 3.30: ε_rel).
-const TOL_REL: f64 = 1e-9;
+/// Absolute tolerance for convergence (document eq. 3.30: ε_abs). Recalibrated
+/// from 1e-11: node voltages are ~±10 V, so 1e-10 is far below audible need and
+/// still 10× tighter than the VCO's absolute floor.
+const TOL_ABS: f64 = 1e-10;
+/// Relative tolerance for convergence (document eq. 3.30: ε_rel). Recalibrated
+/// from 1e-9 (VCO uses 1e-7); guarded by the ultra_spectral LSD gate.
+const TOL_REL: f64 = 1e-8;
 const DENORM: f64 = 1e-30;
 /// Always-on leakage so reverse-biased nodes never float the matrix.
 const GMIN_BASE: f64 = 1e-12;

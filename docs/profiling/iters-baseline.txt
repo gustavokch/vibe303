@@ -1,0 +1,49 @@
+   Compiling plugin303 v0.1.0 (/Users/gus/Git/vibe303/plugin303)
+warning: method `assemble` is never used
+   --> plugin303/src/dsp/ladder_wdf.rs:251:8
+    |
+160 | impl LadderVcf {
+    | -------------- method in this implementation
+...
+251 |     fn assemble(
+    |        ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `plugin303` (lib) generated 1 warning
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.70s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests/newton_iters.rs (target/debug/deps/newton_iters-a282cd3073b9e200)
+
+running 1 test
+
+== VCO (per base sample) ==  samples=189600  mean_iters=2.640  homotopy_fallbacks=435 (0.23%)
+    2 iters :   134110  70.73%   cum  70.73%
+    3 iters :    45619  24.06%   cum  94.79%
+    4 iters :     6973   3.68%   cum  98.47%
+    5 iters :      979   0.52%   cum  98.99%
+    6 iters :      175   0.09%   cum  99.08%
+    7 iters :        7   0.00%   cum  99.08%
+    8 iters :        1   0.00%   cum  99.08%
+    9 iters :        6   0.00%   cum  99.09%
+   10 iters :        3   0.00%   cum  99.09%
+   11 iters :      440   0.23%   cum  99.32%
+   12 iters :      261   0.14%   cum  99.46%
+   13 iters :       13   0.01%   cum  99.47%
+   14 iters :      143   0.08%   cum  99.54%
+   38 iters :      435   0.23%   cum  99.77%
+   80 iters :      435   0.23%   cum 100.00%
+
+== LADDER (per 4× sample) ==  samples=758400  mean_iters=2.944  homotopy_fallbacks=0 (0.00%)
+    2 iters :    45940   6.06%   cum   6.06%
+    3 iters :   708980  93.48%   cum  99.54%
+    4 iters :     3480   0.46%   cum 100.00%
+
+== per-base-sample LU calls ==
+  VCO  17x17 : 2.640 factorizations
+  LADDER 12x12: 11.776 factorizations (4 ticks × 2.944 iters)
+test ultra_newton_iter_histogram ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.86s
+
