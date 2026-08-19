@@ -64,7 +64,3 @@ test = false
 [[bin]]
 name = "vco_pitch_sweep"
 test = false
-
-[[bin]]
-name = "profile_voice"
-test = false
