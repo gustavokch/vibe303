@@ -244,12 +244,8 @@ impl LadderVcf {
     /// Assemble the MNA system `(G, b)` at iterate `v`, fixed cap companions, the
     /// Q9 feedback coefficients `(kfb, cfb)`, and `gmin` on the diagonal. The only
     /// `v`-dependent stamps are the 8 diode companions; everything else (caps,
-    /// bias, pins, feedback, VCCS drive, gmin) is iteration-invariant — assembled
-    /// once per sample via `assemble_skeleton` and cached by `newton`.
-    ///
-    /// Canonical stamp order: skeleton stamps first (caps, bias, pins, feedback,
-    /// VCCS drive, gmin), diodes last — both paths share it, so this composition
-    /// is bit-identical to `assemble_skeleton` + `stamp_diodes`.
+    /// bias, pins, feedback, VCCS drive, gmin) is iteration-invariant — the seam
+    /// the skeleton-cache lever will exploit.
     #[inline]
     fn assemble(
         &self,
@@ -261,28 +257,27 @@ impl LadderVcf {
         cieq: &[f64; 4],
         gmin: f64,
     ) -> ([[f64; N]; N], [f64; N]) {
-        let (mut g, mut b) = self.assemble_skeleton(vin, kfb, cfb, cgeq, cieq, gmin);
-        self.stamp_diodes(&mut g, &mut b, v);
-        (g, b)
-    }
-
-    /// Assemble the iteration-invariant part of the MNA system: cap companions,
-    /// bias, input pins, Q9 feedback, VCCS drive, and the `gmin + GMIN_BASE`
-    /// diagonal. Everything except the 8 diode stamps. Built once per Newton
-    /// solve (per `gmin` step on the homotopy path) and re-stamped per iteration
-    /// by `stamp_diodes`.
-    #[inline]
-    fn assemble_skeleton(
-        &self,
-        vin: f64,
-        kfb: f64,
-        cfb: f64,
-        cgeq: &[f64; 4],
-        cieq: &[f64; 4],
-        gmin: f64,
-    ) -> ([[f64; N]; N], [f64; N]) {
         let mut g = [[0.0f64; N]; N];
         let mut b = [0.0f64; N];
+
+        // Diode companion stamps (Geq = dI/dV, Ieq = I − g·v). Gather the 8
+        // junction voltages, evaluate the exps in one branchless batch (LLVM
+        // packs it 4-wide under x86-64-v3), then scatter the companions.
+        let mut vds = [0.0f64; 8];
+        for (j, &(a, k)) in DIODES.iter().enumerate() {
+            vds[j] = v[a] - v[k];
+        }
+        let (ids, gds) = self.diode.stamp8(&vds);
+        for (j, &(a, k)) in DIODES.iter().enumerate() {
+            let gd = gds[j];
+            let ieq = ids[j] - gd * vds[j];
+            g[a][a] += gd;
+            g[k][k] += gd;
+            g[a][k] -= gd;
+            g[k][a] -= gd;
+            b[a] -= ieq;
+            b[k] += ieq;
+        }
 
         // Cap trapezoidal companions.
         for j in 0..4 {
@@ -337,43 +332,21 @@ impl LadderVcf {
         (g, b)
     }
 
-    /// Stamp the 8 diode companions (Geq = dI/dV, Ieq = I − g·v) at iterate `v`
-    /// into a pre-assembled skeleton. Op-for-op identical to the diode block the
-    /// legacy `assemble` ran: gather the 8 junction voltages, evaluate the exps
-    /// in one branchless batch (LLVM packs it 4-wide under x86-64-v3), scatter.
-    #[inline]
-    fn stamp_diodes(&self, g: &mut [[f64; N]; N], b: &mut [f64; N], v: &[f64; N]) {
-        let mut vds = [0.0f64; 8];
-        for (j, &(a, k)) in DIODES.iter().enumerate() {
-            vds[j] = v[a] - v[k];
-        }
-        let (ids, gds) = self.diode.stamp8(&vds);
-        for (j, &(a, k)) in DIODES.iter().enumerate() {
-            let gd = gds[j];
-            let ieq = ids[j] - gd * vds[j];
-            g[a][a] += gd;
-            g[k][k] += gd;
-            g[a][k] -= gd;
-            g[k][a] -= gd;
-            b[a] -= ieq;
-            b[k] += ieq;
-        }
-    }
-
-    /// One Newton solve at a fixed `gmin`, warm-started from `v0`. `skeleton` is
-    /// the iteration-invariant MNA system (caps, bias, pins, feedback, drive,
-    /// `gmin` diagonal) assembled once by the caller; each iteration re-stamps
-    /// only the diode companions. Returns the converged node voltages, or `None`
-    /// if it stalled within `MAX_ITERS`.
+    /// One Newton solve at a fixed `gmin`, warm-started from `v0`. Returns the
+    /// converged node voltages, or `None` if it stalled within `MAX_ITERS`.
     fn newton(
         &self,
-        skeleton: ([[f64; N]; N], [f64; N]),
+        gmin: f64,
         v0: [f64; N],
+        vin: f64,
+        kfb: f64,
+        cfb: f64,
+        cgeq: &[f64; 4],
+        cieq: &[f64; 4],
     ) -> Option<([f64; N], u32)> {
         let mut v = v0;
         for it in 0..MAX_ITERS {
-            let (mut g, mut b) = skeleton;
-            self.stamp_diodes(&mut g, &mut b, &v);
+            let (g, b) = self.assemble(&v, vin, kfb, cfb, cgeq, cieq, gmin);
             // Static-pattern, no-pivot LU (validated bit-equal to dense
             // `lu_solve::<N>` over the operating range; ~2.5× faster). A singular
             // diagonal would yield NaN — caught by the `is_finite` guard below,
@@ -433,12 +406,8 @@ impl LadderVcf {
         }
 
         // Fast path: warm-started Newton at gmin = 0. On stall, descend a gmin
-        // homotopy carrying the solution forward, ending at gmin = 0. The
-        // skeleton (everything but the diode stamps) is built once per Newton
-        // solve — per `gmin` step on the homotopy, since gmin sits on the
-        // diagonal — and only re-stamped with diodes per iteration.
-        let skeleton = self.assemble_skeleton(vin, kfb, cfb, &cgeq, &cieq, 0.0);
-        let v = match self.newton(skeleton, self.v) {
+        // homotopy carrying the solution forward, ending at gmin = 0.
+        let v = match self.newton(0.0, self.v, vin, kfb, cfb, &cgeq, &cieq) {
             Some((v, it)) => {
                 self.dbg_iters = it;
                 v
@@ -448,8 +417,7 @@ impl LadderVcf {
                 let mut ok = None;
                 let mut its = 0;
                 for &gmin in &[1e-1, 1e-2, 1e-3, 1e-4, 0.0] {
-                    let sk = self.assemble_skeleton(vin, kfb, cfb, &cgeq, &cieq, gmin);
-                    match self.newton(sk, vh) {
+                    match self.newton(gmin, vh, vin, kfb, cfb, &cgeq, &cieq) {
                         Some((v, it)) => {
                             vh = v;
                             its += it;
@@ -809,74 +777,6 @@ mod tests {
         eprintln!("  dense  lu_solve<12> : {dn:6.2} ns/solve");
         eprintln!("  static ladder_lu    : {sn:6.2} ns/solve");
         eprintln!("  speedup             : {:.2}×", dn / sn);
-    }
-
-    #[test]
-    fn skeleton_plus_diodes_matches_full_assemble_bitwise() {
-        // The skeleton-cache refactor (assemble_skeleton + stamp_diodes) must
-        // reproduce the legacy `assemble` bit-for-bit: both paths stamp in the
-        // same canonical order (skeleton stamps first, diodes last), so every
-        // g/b cell must match to_bits.
-        let sr = 192_000.0f32;
-        for &(fc, reso, cal) in &[
-            (200.0f32, 0.0f32, 1.0f64),
-            (1e3, 0.5, 0.70),
-            (5e3, 0.9, 0.50),
-            (12e3, 0.99, 1.0),
-        ] {
-            let mut f = LadderVcf::new(sr);
-            f.set_cal(cal);
-            f.set_cutoff(fc);
-            f.set_reso(reso);
-            // Per-sample constants as solve_sample computes them (:378-403),
-            // thermal_noise = 0 so cieq is deterministic (state zeroed post-new).
-            let dt = 1.0 / f.sr;
-            let vin = 0.3f64 * f.vscale;
-            let kfb = f.reso * f.reso_gain;
-            let cfb = -kfb * f.dc_lp;
-            let mut cgeq = [0.0f64; 4];
-            let mut cieq = [0.0f64; 4];
-            for j in 0..4 {
-                let (_, _, cap) = CAPS[j];
-                let cap_m = cap * f.c_mults[j];
-                let geq = 2.0 * cap_m / dt;
-                cgeq[j] = geq;
-                cieq[j] = geq * f.vc_prev[j] + f.i_prev[j];
-            }
-            // Iterate vectors: all-zeros, alternating ±10 V rails, mid-scale.
-            let mut alt = [0.0f64; N];
-            for (i, x) in alt.iter_mut().enumerate() {
-                *x = if i % 2 == 0 { 10.0 } else { -10.0 };
-            }
-            let mut mid = [0.0f64; N];
-            for (i, x) in mid.iter_mut().enumerate() {
-                *x = (i as f64 - 5.5) * 0.05;
-            }
-            for v in [&[0.0f64; N], &alt, &mid] {
-                for &gmin in &[0.0f64, 1e-1] {
-                    let (g0, b0) = f.assemble(v, vin, kfb, cfb, &cgeq, &cieq, gmin);
-                    let (mut g1, mut b1) =
-                        f.assemble_skeleton(vin, kfb, cfb, &cgeq, &cieq, gmin);
-                    f.stamp_diodes(&mut g1, &mut b1, v);
-                    for r in 0..N {
-                        for c in 0..N {
-                            assert_eq!(
-                                g0[r][c].to_bits(),
-                                g1[r][c].to_bits(),
-                                "g[{r}][{c}] fc={fc} reso={reso} gmin={gmin}"
-                            );
-                        }
-                    }
-                    for r in 0..N {
-                        assert_eq!(
-                            b0[r].to_bits(),
-                            b1[r].to_bits(),
-                            "b[{r}] fc={fc} reso={reso} gmin={gmin}"
-                        );
-                    }
-                }
-            }
-        }
     }
 
     #[test]
