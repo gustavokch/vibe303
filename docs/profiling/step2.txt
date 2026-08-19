@@ -1,0 +1,4 @@
+NOTE (2026-08-19): iteration histogram (iters-step2.txt vs iters-baseline.txt)
+is the reliable evidence: ladder mean 2.944 -> 2.632 iters (-10.6%),
+2-iter share 6% -> 37%, homotopy fallbacks 0 -> 0.
+Quiet-machine interleaved medians are recorded in `cpu-profile-report.md`.
