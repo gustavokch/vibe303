@@ -5,7 +5,7 @@
   Elapsed:        1.913 s
   Checksum:       -8853.544644
 
-NOTE (2026-08-19): runs taken under heavy external load (load avg ~7) -- absolute
-times not comparable to the ~0.75 s clean baseline. Checksum matches the Task-2
-build exactly (-8853.544644): solve_batch6 is bit-identical end-to-end.
-TODO: re-benchmark on a quiet machine.
+NOTE (2026-08-19): these loaded-run timings are not comparable to the quiet
+baseline. The checksum matches the Task-2 build exactly (-8853.544644), so
+`solve_batch6` is bit-identical end-to-end. Quiet-machine conclusion
+(regression on aarch64, revert) is in `cpu-profile-report.md`.

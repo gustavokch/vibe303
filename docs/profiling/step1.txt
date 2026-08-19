@@ -1,6 +1,5 @@
-
 NOTE (2026-08-19): interleaved A/B vs pre-refactor binary showed skeleton cache
 NEUTRAL (~1% slower, within +/-3% machine noise), not the expected 8-12%.
 Cause: per-iteration 1248 B skeleton memcpy replaces the old 1248 B memset;
 saved work is only ~30 invariant stamp cells/iter. LU solve + stamp8 dominate.
-TODO: re-benchmark on a quiet machine to confirm the delta before relying on it.
+Quiet-machine summary and final decision are in `cpu-profile-report.md`.
