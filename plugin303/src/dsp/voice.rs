@@ -131,6 +131,45 @@ impl CompDelay {
     }
 }
 
+/// Clipper control values passed from the plugin layer to the voice's
+/// [`WarmClipper`]. Named fields make argument transposition a compile error;
+/// the voice layer owns the `ClipperOversampling` → `ClipperOs` mapping.
+#[derive(Clone, Copy, Debug)]
+pub struct VoiceClipperParams {
+    pub bypass: bool,
+    pub os: ClipperOversampling,
+    pub drive: f32,
+    pub threshold: f32,
+    pub bass: f32,
+    pub tone: f32,
+    pub asym: bool,
+    pub mix: f32,
+    pub in_db: f32,
+    pub out_db: f32,
+    pub tilt_db: f32,
+    pub dynamics: f32,
+}
+
+fn clipper_params_map(p: VoiceClipperParams) -> ClipperParams {
+    ClipperParams {
+        bypass: p.bypass,
+        os: match p.os {
+            ClipperOversampling::X2 => ClipperOs::X2,
+            ClipperOversampling::X4 => ClipperOs::X4,
+        },
+        drive_ohms: p.drive,
+        threshold_ohms: p.threshold,
+        bass_ohms: p.bass,
+        tone_f: p.tone,
+        asym: p.asym,
+        mix: p.mix,
+        in_db: p.in_db,
+        out_db: p.out_db,
+        tilt_db: p.tilt_db,
+        dynamics: p.dynamics,
+    }
+}
+
 /// Monophonic voice structure managing the different fidelity paths, modulation sources, and envelopes.
 pub struct Voice {
     // --- Low Tier ---
@@ -763,28 +802,12 @@ impl Voice {
 
     /// Update global clipper controls at block rate without widening the long
     /// established `update_params` API used by diagnostics and integration tests.
-    pub fn update_clipper_params(
-        &mut self, bypass: bool, os: ClipperOversampling, drive: f32,
-        threshold: f32, bass: f32, tone: f32, asym: bool,
-    ) {
-        self.clipper.set_params(ClipperParams {
-            bypass,
-            os: match os { ClipperOversampling::X2 => ClipperOs::X2, ClipperOversampling::X4 => ClipperOs::X4 },
-            drive_ohms: drive, threshold_ohms: threshold, bass_ohms: bass,
-            tone_f: tone, asym,
-        });
+    pub fn update_clipper_params(&mut self, p: VoiceClipperParams) {
+        self.clipper.set_params(clipper_params_map(p));
     }
 
-    pub fn update_clipper_params_immediate(
-        &mut self, bypass: bool, os: ClipperOversampling, drive: f32,
-        threshold: f32, bass: f32, tone: f32, asym: bool,
-    ) {
-        self.clipper.set_params_immediate(ClipperParams {
-            bypass,
-            os: match os { ClipperOversampling::X2 => ClipperOs::X2, ClipperOversampling::X4 => ClipperOs::X4 },
-            drive_ohms: drive, threshold_ohms: threshold, bass_ohms: bass,
-            tone_f: tone, asym,
-        });
+    pub fn update_clipper_params_immediate(&mut self, p: VoiceClipperParams) {
+        self.clipper.set_params_immediate(clipper_params_map(p));
     }
 
     /// Set the tier with no crossfade — for the initial/persisted selection at

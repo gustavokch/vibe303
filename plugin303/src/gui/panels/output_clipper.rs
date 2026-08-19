@@ -34,5 +34,56 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                 }
                 ui.colored_label(Color32::from_gray(120), "GE / JFET");
             });
+
+            let bypassed = params.clipper_bypass.value();
+            ui.add_enabled_ui(!bypassed, |ui| {
+                ui.horizontal(|ui| {
+                    let in_resp = ui.add(Knob303::new(&params.clipper_in_gain, setter, "IN", 13.0));
+                    let mut link = params.clipper_gain_link.value();
+                    if ui.checkbox(&mut link, "LINK")
+                        .on_hover_text("Link: OUT tracks −IN while dragging (edit-time only)")
+                        .changed()
+                    {
+                        setter.begin_set_parameter(&params.clipper_gain_link);
+                        setter.set_parameter(&params.clipper_gain_link, link);
+                        setter.end_set_parameter(&params.clipper_gain_link);
+                        if link {
+                            // Snap OUT to the inverse of IN when link engages.
+                            setter.begin_set_parameter(&params.clipper_out_gain);
+                            setter.set_parameter(&params.clipper_out_gain, -params.clipper_in_gain.value());
+                            setter.end_set_parameter(&params.clipper_out_gain);
+                        }
+                    }
+                    let out_resp = ui.add(Knob303::new(&params.clipper_out_gain, setter, "OUT", 13.0));
+                    ui.add(Knob303::new(&params.clipper_tilt, setter, "TILT", 13.0));
+                    ui.add(Knob303::new(&params.clipper_dynamics, setter, "DYN", 13.0));
+                    ui.add(Knob303::new(&params.clipper_mix, setter, "MIX", 13.0));
+
+                    // Gain link: mirror only on genuine user gestures (drag,
+                    // double-click reset). Host-driven changes (preset recall,
+                    // automation) produce no widget events, so they never
+                    // trigger counterpart writes.
+                    if params.clipper_gain_link.value() {
+                        if in_resp.drag_started() || in_resp.double_clicked() {
+                            setter.begin_set_parameter(&params.clipper_out_gain);
+                        }
+                        if in_resp.dragged() || in_resp.double_clicked() {
+                            setter.set_parameter(&params.clipper_out_gain, -params.clipper_in_gain.value());
+                        }
+                        if in_resp.drag_stopped() || in_resp.double_clicked() {
+                            setter.end_set_parameter(&params.clipper_out_gain);
+                        }
+                        if out_resp.drag_started() || out_resp.double_clicked() {
+                            setter.begin_set_parameter(&params.clipper_in_gain);
+                        }
+                        if out_resp.dragged() || out_resp.double_clicked() {
+                            setter.set_parameter(&params.clipper_in_gain, -params.clipper_out_gain.value());
+                        }
+                        if out_resp.drag_stopped() || out_resp.double_clicked() {
+                            setter.end_set_parameter(&params.clipper_in_gain);
+                        }
+                    }
+                });
+            });
         });
 }

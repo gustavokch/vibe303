@@ -1,3 +1,5 @@
+#![cfg(feature = "gui")]
+
 use plugin303::gui::widgets::piano_roll_popup::{
     is_semitone_black_key, note_name_for_semitone, pitch_to_row_index, row_index_to_label,
     row_index_to_pitch, TOTAL_PIANO_ROLL_ROWS,

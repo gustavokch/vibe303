@@ -1,3 +1,5 @@
+mod common;
+
 use plugin303::dsp::voice::Voice;
 
 #[test]
@@ -132,6 +134,10 @@ fn test_vca_gate_mode() {
     let sr = 48000.0;
     let mut v = Voice::new(sr);
 
+    // Voice-path test: bypass the stateful output clipper (its one-pole
+    // states decay geometrically, so exact 0.0 asserts would fail on residue).
+    v.update_clipper_params_immediate(common::bypassed_clipper());
+
     // In Gate mode:
     v.set_vca_env_mode(plugin303::params::VcaEnvMode::Gate);
 
@@ -157,8 +163,12 @@ fn test_vca_gate_mode() {
         "Expected non-zero output in Gate mode when gate is active"
     );
 
-    // Gate off -> output should immediately return to 0.0
+    // Gate off -> output should return to 0.0 once the clipper's 48-sample
+    // dry-delay buffer is flushed with silence.
     v.set_gate(false, false, false, false);
+    for _ in 0..plugin303::dsp::warm_clipper::CLIPPER_LATENCY {
+        v.tick();
+    }
     assert_eq!(v.tick(), 0.0);
 }
 
@@ -167,6 +177,13 @@ fn test_accent_decay_fixed_200ms() {
     let sr = 48000.0;
     let mut v_acc = Voice::new(sr);
     let mut v_norm = Voice::new(sr);
+
+    // Voice-path test: bypass the output clipper. Its JFET shunt compresses
+    // the louder accented note more, masking the MEG decay contrast this
+    // test guards.
+    for v in [&mut v_acc, &mut v_norm] {
+        v.update_clipper_params_immediate(common::bypassed_clipper());
+    }
 
     // Accent knob set to maximum (1.0), Decay knob set to maximum (1.0)
     // Cutoff set to min (0.0), env_mod set to max (1.0) to highlight filter decay difference

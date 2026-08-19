@@ -26,5 +26,18 @@ inherits = "profiling"
 lto = "thin"
 codegen-units = 4      # thin-LTO benefits from >1 CGU for better attribution
 
+# Tests render 10k-144k samples of Newton-solver DSP; opt-level 0 makes them
+# 5-15x slower. debug-assertions MUST stay on: assert_no_alloc's warn_debug
+# (tests/no_alloc.rs) is compiled under cfg(debug_assertions).
+[profile.test]
+inherits = "dev"
+opt-level = 1            # dependencies: cheap to compile
+debug-assertions = true
+overflow-checks = false  # verified: no test relies on overflow panics
+
+# plugin303's own DSP is the hot loop; opt-3 only this crate, not egui/nih_plug.
+[profile.test.package.plugin303]
+opt-level = 3
+
 [patch."https://github.com/RustAudio/baseview.git"]
 baseview = { path = "vendor/baseview" }

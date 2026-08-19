@@ -152,3 +152,21 @@ pub fn load_gold_op(name: &str) -> GoldOp {
         sr: sc["sr"].as_f64().unwrap() as f32,
     }
 }
+
+/// Clipper settings for tests that bypass the output clipper entirely.
+pub fn bypassed_clipper() -> plugin303::dsp::voice::VoiceClipperParams {
+    plugin303::dsp::voice::VoiceClipperParams {
+        bypass: true,
+        os: plugin303::params::ClipperOversampling::X2,
+        drive: 47_000.0,
+        threshold: 4_700.0,
+        bass: 8_200.0,
+        tone: 1e-9,
+        asym: false,
+        mix: 1.0,
+        in_db: 0.0,
+        out_db: 0.0,
+        tilt_db: 0.0,
+        dynamics: 0.0,
+    }
+}

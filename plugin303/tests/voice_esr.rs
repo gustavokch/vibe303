@@ -5,6 +5,8 @@
 //! calibrated toward SPICE, so this is a REGRESSION GUARD on the TPT path, not a
 //! fidelity target. The WDF tiers (F3/F4) get their own, far tighter gates.
 
+mod common;
+
 use plugin303::dsp::voice::Voice;
 use std::path::PathBuf;
 
@@ -80,6 +82,9 @@ fn low_voice_esr_within_budget() {
     let sr = sc["sr"].as_f64().unwrap() as f32;
 
     let mut v = Voice::new(sr);
+    // Gold is the raw voice SPICE sim without the output clipper; bypass it
+    // so this stays a regression guard on the TPT voice path only.
+    v.update_clipper_params_immediate(common::bypassed_clipper());
     v.set_cutoff(cutoff);
     v.set_reso(reso);
     v.note_on(note);

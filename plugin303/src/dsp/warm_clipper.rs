@@ -17,6 +17,9 @@ const JFET_FLOOR: f32 = 0.089_125;
 
 const GAIN_MINUS_12DB: f32 = 0.251_188_64;
 
+/// Peak level (normalised audio volts) at which dynamics ducking saturates.
+const DYN_REF: f32 = 0.5;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipperOs {
     X2,
@@ -32,6 +35,11 @@ pub struct ClipperParams {
     pub bass_ohms: f32,
     pub tone_f: f32,
     pub asym: bool,
+    pub mix: f32,      // 0.0 = dry, 1.0 = wet; equal-power law
+    pub in_db: f32,    // pre-clipper input gain
+    pub out_db: f32,   // post-clipper output gain
+    pub tilt_db: f32,  // pre/post shelf pair (Task 2)
+    pub dynamics: f32, // transient drive ducking (Task 3)
 }
 
 impl Default for ClipperParams {
@@ -44,6 +52,11 @@ impl Default for ClipperParams {
             bass_ohms: 8_200.0,
             tone_f: 1e-9,
             asym: false,
+            mix: 1.0, // DSP default stays wet; the plugin param defaults to dry
+            in_db: 0.0,
+            out_db: 0.0,
+            tilt_db: 0.0,
+            dynamics: 0.0,
         }
     }
 }
@@ -104,6 +117,21 @@ struct StagedEngine {
     bass1: f32,
     bass2: f32,
     bass_alpha: f32,
+    // Pre/post tilt shelf state (exact-inverse first-order pair at 2 kHz).
+    tilt_pre_x1: f32,
+    tilt_pre_y1: f32,
+    tilt_post_x1: f32,
+    tilt_post_y1: f32,
+    tilt_a1: f32,
+    tilt_b0: f32,
+    tilt_b1: f32,
+    tilt_post_k: f32, // 1/b0
+    tilt_post_b: f32, // b1/b0
+    tilt_active: bool,
+    // Dynamics: fast peak follower ducking effective drive (1 ms / 50 ms).
+    peak_env: f32,
+    dyn_attack: f32,
+    dyn_release: f32,
     params: ClipperParams,
 }
 
@@ -114,6 +142,8 @@ impl StagedEngine {
         let env_attack = 1.0 - (-1.0 / (0.001 * sr)).exp();
         let env_release = 1.0 - (-1.0 / (0.220 * sr)).exp();
         let bass_alpha = 1.0 - (-2.0 * core::f32::consts::PI * 106.0 / sr).exp();
+        let dyn_attack = 1.0 - (-1.0 / (0.001 * sr)).exp();
+        let dyn_release = 1.0 - (-1.0 / (0.050 * sr)).exp();
 
         let mut engine = Self {
             sr,
@@ -125,9 +155,14 @@ impl StagedEngine {
             env_release,
             env: GB, gate: GB, tone: 0.0, tone_alpha: 0.0, bass1: 0.0, bass2: 0.0,
             bass_alpha,
+            tilt_pre_x1: 0.0, tilt_pre_y1: 0.0, tilt_post_x1: 0.0, tilt_post_y1: 0.0,
+            tilt_a1: 0.0, tilt_b0: 1.0, tilt_b1: 0.0, tilt_post_k: 1.0, tilt_post_b: 0.0,
+            tilt_active: false,
+            peak_env: 0.0, dyn_attack, dyn_release,
             params: ClipperParams::default(),
         };
         engine.update_tone_alpha();
+        engine.update_tilt_coeffs();
         engine
     }
 
@@ -137,12 +172,33 @@ impl StagedEngine {
         self.tone_alpha = 1.0 - (-2.0 * core::f32::consts::PI * tone_hz / self.sr).exp();
     }
 
+    fn update_tilt_coeffs(&mut self) {
+        let tilt = self.params.tilt_db.clamp(-6.0, 6.0);
+        self.tilt_active = tilt != 0.0;
+        let k = (core::f32::consts::PI * 2_000.0 / self.sr).tan();
+        let g = 10f32.powf(tilt / 20.0);
+        self.tilt_a1 = (k - 1.0) / (k + 1.0);
+        self.tilt_b0 = (k + g) / (k + 1.0);
+        self.tilt_b1 = (k - g) / (k + 1.0);
+        self.tilt_post_k = 1.0 / self.tilt_b0;
+        self.tilt_post_b = self.tilt_b1 / self.tilt_b0;
+    }
+
     fn set_params(&mut self, params: ClipperParams) {
         self.params = params;
         self.update_tone_alpha();
+        self.update_tilt_coeffs();
     }
 
-    fn reset(&mut self) { *self = Self::new(self.sr); }
+    fn reset(&mut self) {
+        // Preserve live params across reset: filter state clears, but the
+        // control dimensions (drive, tilt, dynamics, ...) must not revert to
+        // defaults for direct DSP callers that reset() then tick() without a
+        // fresh set_params.
+        let params = self.params;
+        *self = Self::new(self.sr);
+        self.set_params(params);
+    }
 
     #[inline]
     fn one_pole(state: &mut f32, x: f32, alpha: f32) -> f32 {
@@ -157,10 +213,35 @@ impl StagedEngine {
         let x = if input.is_finite() { input.clamp(-16.0, 16.0) } else { 0.0 };
         let p = self.params;
 
+        // Pre-tilt: first-order high shelf boosting highs into the clipper.
+        let x = if self.tilt_active {
+            let y = self.tilt_b0 * x + self.tilt_b1 * self.tilt_pre_x1 - self.tilt_a1 * self.tilt_pre_y1;
+            self.tilt_pre_x1 = x;
+            self.tilt_pre_y1 = y;
+            y
+        } else {
+            x
+        };
+
         // A: U1 buffer + saturating U2. `tanh` is the anti-windup ±12.6 V
         // op-amp clamp expressed in normalised audio volts.
+        // Dynamics: fast peak detector ducks drive on loud passages, letting
+        // transient attacks through before the Ge/JFET stage saturates.
+        let drive_ohms = if p.dynamics > 0.0 {
+            let ax = x.abs();
+            let a = if ax > self.peak_env { self.dyn_attack } else { self.dyn_release };
+            self.peak_env += a * (ax - self.peak_env);
+            if !self.peak_env.is_finite() {
+                self.peak_env = 0.0;
+            }
+            let duck = p.dynamics.clamp(0.0, 1.0) * (self.peak_env / DYN_REF).min(1.0);
+            p.drive_ohms * (1.0 - duck)
+        } else {
+            p.drive_ohms
+        };
+
         let buf = x * 2.0;
-        let gain = 1.0 + p.drive_ohms.clamp(22_000.0, 100_000.0) / 4_700.0;
+        let gain = 1.0 + drive_ohms.clamp(22_000.0, 100_000.0) / 4_700.0;
         let target_drv = 12.0 * (buf * gain / 12.0).tanh();
         self.drive_state = Self::one_pole(&mut self.drive_state, target_drv, self.drive_alpha);
         let drv = self.drive_state;
@@ -203,6 +284,17 @@ impl StagedEngine {
         let bass = Self::one_pole(&mut self.bass2, b1, self.bass_alpha);
         let bass_mix = (8_200.0 / p.bass_ohms.clamp(4_700.0, 22_000.0)).clamp(0.37, 1.75);
         let out = (clp * 1.35 + bass * 0.20 * bass_mix) * GAIN_MINUS_12DB;
+        // Post-tilt: exact inverse of the pre shelf, restoring the overall
+        // frequency balance while keeping the tilted distortion products.
+        let out = if self.tilt_active {
+            let y = self.tilt_post_k * (out + self.tilt_a1 * self.tilt_post_x1)
+                - self.tilt_post_b * self.tilt_post_y1;
+            self.tilt_post_x1 = out;
+            self.tilt_post_y1 = y;
+            y
+        } else {
+            out
+        };
         if out.is_finite() { out } else { 0.0 }
     }
 }
@@ -224,6 +316,12 @@ pub struct WarmClipper {
     fade_from_os: ClipperOs,
     fade: f32,
     fade_step: f32,
+    // Base-rate smoothed scalars for the new control dimensions.
+    smooth_k: f32,
+    in_t: f32, in_s: f32,
+    out_t: f32, out_s: f32,
+    dry_t: f32, dry_s: f32,
+    wet_t: f32, wet_s: f32,
 }
 
 impl WarmClipper {
@@ -233,9 +331,27 @@ impl WarmClipper {
             pad2: Delay16::new(), dry: Delay48::new(), params: ClipperParams::default(),
             active_bypass: false, active_os: ClipperOs::X2, fade_from_bypass: false,
             fade_from_os: ClipperOs::X2, fade: 1.0, fade_step: 1.0 / (sr * XFADE_SECONDS).max(1.0),
+            smooth_k: 1.0 - (-1.0 / (0.010 * sr)).exp(),
+            in_t: 1.0, in_s: 1.0,
+            out_t: 1.0, out_s: 1.0,
+            dry_t: 0.0, dry_s: 0.0,
+            wet_t: 1.0, wet_s: 1.0,
         }
     }
     pub fn latency_samples(&self) -> usize { CLIPPER_LATENCY }
+    fn set_targets(&mut self, p: &ClipperParams) {
+        self.in_t = 10f32.powf(p.in_db.clamp(-18.0, 18.0) / 20.0);
+        self.out_t = 10f32.powf(p.out_db.clamp(-18.0, 18.0) / 20.0);
+        let angle = p.mix.clamp(0.0, 1.0) * core::f32::consts::FRAC_PI_2;
+        self.dry_t = angle.cos();
+        self.wet_t = angle.sin();
+    }
+    fn snap_smoothers(&mut self) {
+        self.in_s = self.in_t;
+        self.out_s = self.out_t;
+        self.dry_s = self.dry_t;
+        self.wet_s = self.wet_t;
+    }
     pub fn set_params(&mut self, params: ClipperParams) {
         self.e2.set_params(params); self.e4.set_params(params);
         if params.bypass != self.active_bypass || params.os != self.active_os {
@@ -245,6 +361,7 @@ impl WarmClipper {
             self.active_os = params.os;
             self.fade = 0.0;
         }
+        self.set_targets(&params);
         self.params = params;
     }
     pub fn set_params_immediate(&mut self, params: ClipperParams) {
@@ -254,6 +371,8 @@ impl WarmClipper {
         self.fade_from_bypass = params.bypass;
         self.fade_from_os = params.os;
         self.fade = 1.0;
+        self.set_targets(&params);
+        self.snap_smoothers();
         self.params = params;
     }
     fn wet2(&mut self, x: f32) -> f32 {
@@ -265,15 +384,33 @@ impl WarmClipper {
         let hi = self.os4.up(x);
         self.os4.down([self.e4.tick(hi[0]), self.e4.tick(hi[1]), self.e4.tick(hi[2]), self.e4.tick(hi[3])])
     }
-    fn render(&mut self, bypass: bool, os: ClipperOs, x: f32) -> f32 {
-        if bypass { self.dry.tick(x) } else { match os { ClipperOs::X2 => self.wet2(x), ClipperOs::X4 => self.wet4(x) } }
+    fn branch(&mut self, bypass: bool, os: ClipperOs, x: f32, d: f32) -> f32 {
+        if bypass {
+            d
+        } else {
+            let xg = x * self.in_s;
+            let wet = match os {
+                ClipperOs::X2 => self.wet2(xg),
+                ClipperOs::X4 => self.wet4(xg),
+            } * self.out_s;
+            self.dry_s * d + self.wet_s * wet
+        }
     }
     pub fn tick(&mut self, x: f32) -> f32 {
+        // Dry delay runs every sample so the mix path always has a warm buffer.
+        // Sanitise: 0.0 * NaN is NaN, so a poisoned dry buffer would leak
+        // through the mix law even at dry_s = 0.
+        let d = self.dry.tick(x);
+        let d = if d.is_finite() { d } else { 0.0 };
+        self.in_s += self.smooth_k * (self.in_t - self.in_s);
+        self.out_s += self.smooth_k * (self.out_t - self.out_s);
+        self.dry_s += self.smooth_k * (self.dry_t - self.dry_s);
+        self.wet_s += self.smooth_k * (self.wet_t - self.wet_s);
         // Both paths are only rendered during a transition. A bypassed steady
         // engine therefore incurs no nonlinear solve.
-        let to = self.render(self.active_bypass, self.active_os, x);
+        let to = self.branch(self.active_bypass, self.active_os, x, d);
         if self.fade >= 1.0 { return to; }
-        let from = self.render(self.fade_from_bypass, self.fade_from_os, x);
+        let from = self.branch(self.fade_from_bypass, self.fade_from_os, x, d);
         let theta = self.fade * core::f32::consts::FRAC_PI_2;
         let y = from * theta.cos() + to * theta.sin();
         self.fade = (self.fade + self.fade_step).min(1.0);
@@ -282,6 +419,7 @@ impl WarmClipper {
     pub fn reset(&mut self) {
         self.os2 = Os2x::new(); self.os4 = Os4x::new(); self.e2.reset(); self.e4.reset();
         self.pad2.reset(); self.dry.reset(); self.fade = 1.0;
+        self.snap_smoothers();
         self.active_bypass = self.params.bypass;
         self.active_os = self.params.os;
         self.fade_from_bypass = self.params.bypass;
@@ -313,5 +451,15 @@ mod tests {
         for &x in &[f32::NAN, f32::INFINITY, -f32::INFINITY, 1000.0] {
             for _ in 0..128 { let y = c.tick(x); assert!(y.is_finite() && y.abs() < 8.0); }
         }
+    }
+    #[test]
+    fn mix_half_equal_power_gains() {
+        let mut c = WarmClipper::new(48_000.0);
+        let mut p = ClipperParams::default();
+        p.mix = 0.5;
+        c.set_params_immediate(p);
+        let expect = (0.5f32 * core::f32::consts::FRAC_PI_2).sin(); // 0.7071
+        assert!((c.dry_s - expect).abs() < 1e-6);
+        assert!((c.wet_s - expect).abs() < 1e-6);
     }
 }
