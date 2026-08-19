@@ -197,7 +197,11 @@ impl Plugin for Plugin303 {
     ) -> bool {
         self.sample_rate = cfg.sample_rate;
         self.voice = Voice::new(self.sample_rate);
-        self.sequencer = Sequencer::new(self.sample_rate as f64);
+        // Reuse the existing sequencer: `current_playing_step` shares its
+        // `current_step` atomic with the GUI. Replacing the sequencer here
+        // would swap in a new atomic and disconnect the playhead LED.
+        self.sequencer.set_sample_rate(self.sample_rate as f64);
+        self.sequencer.reset();
         self.active_midi_note = None;
         if let Ok(guard) = self.params.pattern.read() {
             self.cached_pattern = guard.compile(

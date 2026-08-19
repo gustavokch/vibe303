@@ -52,7 +52,11 @@ plugin303/src/
       mini_keyboard.rs   # 13-key popover chromatic keyboard
     panels/
       mod.rs
-      header_bar.rs      # Top branding, topology switch, master volume
+      header_bar.rs      # Top branding, topology switch, vent slits
+                         # (Accepted deviation: master volume stays on the
+                         # classic panel as the 7th vintage dial, matching the
+                         # real TB-303 layout and section 1; header height is
+                         # too small for a usable rotary control.)
       classic_panel.rs   # Left 7-knob vintage 303 controls & tier selector
       souped_panel.rs    # Right extended drawer with accurate-mode dimming
       sequencer_panel.rs # Bottom 16-step grid & transport controls
@@ -67,6 +71,7 @@ plugin303/src/
   - Outer bezel ring with radial tick marks spanning a 270° sweep (from 135° to 405° / 7 o'clock to 5 o'clock).
   - Cylindrical brushed-aluminum knob disc with top bevel and an engraved pointer line.
   - Parameter label below the dial (bold uppercase) and live formatted engineering unit readout directly underneath.
+  - **Accepted deviation (2026-08-19):** an orange value arc is drawn along the bezel from the minimum position to the current value. Not in the mockup, but kept for consistency with the souped-up drawer styling and at-a-glance value reading.
 - **Gesture Handling & DAW Automation:**
   - Vertical drag gesture with fine-tune modifier (`Shift` key reduces speed 5×).
   - Double-click snaps back to default parameter value.
@@ -76,6 +81,10 @@ plugin303/src/
 - **Slide Switches:**
   - Used for `Waveform` (`Saw`, `Square`, `Sweep`), `Tier` (`Low`, `High`, `Ultra`), `VcfTaps` (`2-Pole`, `3-Pole`, `4-Pole`), `VcaEnvMode` (`Gate`, `Env`), and `Topology` (`Accurate`, `Fun`).
   - Rendered as a recessed dark track with a knurled silver sliding carriage that snaps to distinct position detents.
+  - **Accepted deviations from the mockup (2026-08-19):**
+    - Detent labels (SAW/SQUARE/SWEEP, LOW/HIGH/ULTRA) lay out horizontally beneath the track, not stacked vertically beside the carriage. Keeps the shared `SlideSwitch` widget uniform across the header, classic panel, and drawer.
+    - WAVEFORM and FIDELITY TIER sit right of the 7-knob row inside the classic panel, not below it. The single-row layout keeps the panel inside the fixed 1080x640 frame without a ScrollArea.
+    - The FIDELITY TIER active detent label renders in the carriage's red family instead of the shared orange accent. Deliberate color-coding: the tier carriage is red (distinct from the silver waveform carriage), and the active label matches its carriage.
 - **Vertical Mini-Faders:**
   - Vertical tracks with glowing orange fill bars for `MEG` (Attack, Decay, Sustain, Release) and `VEG` (Attack, Decay, Sustain, Release).
 
@@ -104,6 +113,7 @@ plugin303/src/
 - When `params.topology` is `CircuitTopology::Accurate`:
   - `SoupedUpPanel` is rendered at 30% opacity with input interactions disabled.
   - An overlay banner indicates *"Accurate Mode Active (Souped-up Engine Bypassed)"* with a quick-switch button to enable `Fun` mode.
+  - **Accepted deviation (2026-08-19):** the banner renders as a two-line badge — title `ACCURATE MODE ACTIVE` with subtitle `Souped-up engine is bypassed` — instead of a single line. Content is equivalent; the split layout reads better at the fixed window scale.
 - When `params.topology` is `CircuitTopology::Fun`:
   - `SoupedUpPanel` is rendered with full vibrancy and interactivity.
 

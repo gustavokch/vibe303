@@ -1,8 +1,72 @@
 use nih_plug::prelude::{Param, ParamSetter};
-use nih_plug_egui::egui::{pos2, vec2, FontFamily, FontId, Response, Sense, Stroke, Ui, Widget};
+use nih_plug_egui::egui::epaint::Mesh;
+use nih_plug_egui::egui::{pos2, vec2, Color32, FontFamily, FontId, Pos2, Response, Sense, Stroke, Ui, Widget};
 use std::f32::consts::PI;
+use std::f32::consts::TAU;
 
 use crate::gui::theme;
+
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    Color32::from_rgb(
+        (a.r() as f32 + (b.r() as f32 - a.r() as f32) * t) as u8,
+        (a.g() as f32 + (b.g() as f32 - a.g() as f32) * t) as u8,
+        (a.b() as f32 + (b.b() as f32 - a.b() as f32) * t) as u8,
+    )
+}
+
+/// Filled circle with a vertical linear gradient (light top, dark bottom),
+/// built as a triangle-fan mesh. Reads as brushed aluminum under panel light.
+fn gradient_circle(
+    painter: &nih_plug_egui::egui::Painter,
+    center: Pos2,
+    radius: f32,
+    top: Color32,
+    bottom: Color32,
+) {
+    const SEGMENTS: usize = 48;
+    let mut mesh = Mesh::default();
+    let center_idx = mesh.vertices.len() as u32;
+    mesh.colored_vertex(center, lerp_color(top, bottom, 0.5));
+    for i in 0..=SEGMENTS {
+        let a = i as f32 / SEGMENTS as f32 * TAU;
+        let t = a.sin() * 0.5 + 0.5;
+        mesh.colored_vertex(
+            pos2(center.x + a.cos() * radius, center.y + a.sin() * radius),
+            lerp_color(top, bottom, t),
+        );
+    }
+    for i in 0..SEGMENTS {
+        let base = center_idx + 1;
+        mesh.add_triangle(center_idx, base + i as u32, base + i as u32 + 1);
+    }
+    painter.add(nih_plug_egui::egui::Shape::mesh(mesh));
+}
+
+/// Bevel highlight: bright arc across the top-left rim, shadow arc bottom-right.
+fn bevel_ring(painter: &nih_plug_egui::egui::Painter, center: Pos2, radius: f32) {
+    let r = radius - 0.8;
+    let highlight: Vec<_> = (0..=16)
+        .map(|i| {
+            let a = (160.0 - i as f32 * (140.0 / 16.0)) * PI / 180.0;
+            pos2(center.x + a.cos() * r, center.y - a.sin() * r)
+        })
+        .collect();
+    painter.add(nih_plug_egui::egui::Shape::line(
+        highlight,
+        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 120)),
+    ));
+    let shadow: Vec<_> = (0..=16)
+        .map(|i| {
+            let a = (200.0 + i as f32 * (140.0 / 16.0)) * PI / 180.0;
+            pos2(center.x + a.cos() * r, center.y - a.sin() * r)
+        })
+        .collect();
+    painter.add(nih_plug_egui::egui::Shape::line(
+        shadow,
+        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 110)),
+    ));
+}
 
 pub struct Knob303<'a, P: Param> {
     param: &'a P,
@@ -27,7 +91,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
         let desired_size = vec2(self.radius * 2.0 + 20.0, self.radius * 2.0 + 40.0);
         let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
-        let center = pos2(rect.center().x, rect.top() + self.radius + 9.0);
+        let center = pos2(rect.center().x, rect.top() + self.radius + 11.0);
         let normalized = self.param.unmodulated_normalized_value();
 
         // Interaction
@@ -70,8 +134,8 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 let frac = i as f32 / (num_ticks - 1) as f32;
                 let tick_angle = start_angle + frac * (end_angle - start_angle);
                 let is_major = i == 0 || i == (num_ticks - 1) || i == (num_ticks / 2);
-                let r_inner = self.radius + 4.5;
-                let r_outer = if is_major { self.radius + 8.0 } else { self.radius + 6.5 };
+                let r_inner = self.radius + 6.0;
+                let r_outer = if is_major { self.radius + 9.5 } else { self.radius + 8.0 };
                 let p_in = pos2(center.x + tick_angle.cos() * r_inner, center.y + tick_angle.sin() * r_inner);
                 let p_out = pos2(center.x + tick_angle.cos() * r_outer, center.y + tick_angle.sin() * r_outer);
                 let alpha = if is_major { 180 } else { 130 };
@@ -96,9 +160,22 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 ));
             }
 
-            // Inner brushed aluminum metallic dial body
-            painter.circle_filled(center, self.radius, theme::KNOB_BODY_LIGHT);
-            painter.circle_filled(center, self.radius * 0.85, theme::KNOB_BODY_DARK);
+            // Brushed aluminum dial body: vertical gradient face + inner cap + bevel ring
+            gradient_circle(
+                painter,
+                center,
+                self.radius,
+                theme::KNOB_BODY_LIGHT,
+                theme::KNOB_BODY_DARK,
+            );
+            gradient_circle(
+                painter,
+                center,
+                self.radius * 0.85,
+                lerp_color(theme::KNOB_BODY_DARK, theme::KNOB_BODY_LIGHT, 0.7),
+                lerp_color(theme::KNOB_BODY_DARK, Color32::BLACK, 0.15),
+            );
+            bevel_ring(painter, center, self.radius);
             painter.circle_stroke(
                 center,
                 self.radius,
@@ -115,9 +192,14 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 center.x + current_angle.cos() * (self.radius * 0.15),
                 center.y + current_angle.sin() * (self.radius * 0.15),
             );
+            // Engraved pointer: dark groove with a thin bright catch-light core
             painter.line_segment(
                 [pointer_start, pointer_end],
-                Stroke::new(2.2_f32, nih_plug_egui::egui::Color32::from_rgb(0xe2, 0xe8, 0xf0)),
+                Stroke::new(2.6_f32, nih_plug_egui::egui::Color32::from_rgb(0x20, 0x22, 0x26)),
+            );
+            painter.line_segment(
+                [pointer_start, pointer_end],
+                Stroke::new(1.2_f32, nih_plug_egui::egui::Color32::from_rgb(0xe2, 0xe8, 0xf0)),
             );
 
             // Parameter Title Label below dial
@@ -142,10 +224,22 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     } else {
                         format!("{:.0} Hz", hz)
                     }
+                } else if self.label.contains("VOLUME") {
+                    // Gain param: plain value is dB, not 0..1 — format before the
+                    // percent branch can claim it.
+                    format!("{:+.1} dB", f)
+                } else if raw_str.contains("ohm") {
+                    // Clipper resistances: engineering-unit kΩ readout.
+                    if f >= 10_000.0 {
+                        format!("{:.0}kΩ", f / 1000.0)
+                    } else if f >= 1_000.0 {
+                        format!("{:.1}kΩ", f / 1000.0)
+                    } else {
+                        format!("{:.0}Ω", f)
+                    }
                 } else if self.label.contains("RESONANCE")
                     || self.label.contains("ENV MOD")
                     || self.label.contains("ACCENT")
-                    || self.label.contains("VOLUME")
                     || self.label.contains("MIX")
                     || self.label.contains("DRIVE")
                     || self.label.contains("RESO")
@@ -157,7 +251,8 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     if (0.0..=1.0).contains(&f) {
                         format!("{:.0}%", f * 100.0)
                     } else if f.abs() >= 100.0 {
-                        format!("{:.0}%", f)
+                        // Large plain values (e.g. clipper ohms) are not percents.
+                        format!("{:.0}", f)
                     } else {
                         format!("{:.1}%", f)
                     }

@@ -15,7 +15,7 @@ pub fn render_generator_panel(
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
         .corner_radius(nih_plug_egui::egui::CornerRadius::same(4))
-        .inner_margin(Margin::same(6))
+        .inner_margin(Margin::same(5))
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
@@ -40,7 +40,7 @@ pub fn render_generator_panel(
                     );
                 });
 
-                ui.add_space(4.0);
+                ui.add_space(2.0);
 
                 // Row 1: Pitch & Rhythm Setup
                 ui.horizontal(|ui| {
@@ -120,7 +120,7 @@ pub fn render_generator_panel(
                     );
                     ui.add(DragValue::new(&mut gen_params.rhythm_pulses).range(1..=16));
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     ui.label(
                         nih_plug_egui::egui::RichText::new("STEPS (n):")
@@ -129,7 +129,7 @@ pub fn render_generator_panel(
                     );
                     ui.add(DragValue::new(&mut gen_params.rhythm_length).range(1..=16));
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     ui.label(
                         nih_plug_egui::egui::RichText::new("SHIFT:")
@@ -138,7 +138,7 @@ pub fn render_generator_panel(
                     );
                     ui.add(DragValue::new(&mut gen_params.rhythm_shift).range(0..=15));
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     ui.label(
                         nih_plug_egui::egui::RichText::new("PITCH LEN:")
@@ -148,7 +148,7 @@ pub fn render_generator_panel(
                     ui.add(DragValue::new(&mut gen_params.pitch_length).range(1..=16));
                 });
 
-                ui.add_space(4.0);
+                ui.add_space(2.0);
 
                 // Row 2: Octaves & Pitch Bias
                 ui.horizontal(|ui| {
@@ -173,7 +173,7 @@ pub fn render_generator_panel(
                             .range(0.0..=1.0),
                     );
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     ui.label(
                         nih_plug_egui::egui::RichText::new("OCT DN %:")
@@ -186,7 +186,7 @@ pub fn render_generator_panel(
                             .range(0.0..=1.0),
                     );
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     ui.label(
                         nih_plug_egui::egui::RichText::new("ACC PITCH BIAS %:")
@@ -204,7 +204,7 @@ pub fn render_generator_panel(
                     ui.checkbox(&mut gen_params.slide_chaining, "SLD CHAIN");
                 });
 
-                ui.add_space(4.0);
+                ui.add_space(2.0);
 
                 // Row 3: Probabilities & Action Buttons
                 ui.horizontal(|ui| {
@@ -219,7 +219,7 @@ pub fn render_generator_panel(
                             .range(0.0..=1.0),
                     );
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     ui.label(
                         nih_plug_egui::egui::RichText::new("ACCENT %:")
@@ -232,7 +232,7 @@ pub fn render_generator_panel(
                             .range(0.0..=1.0),
                     );
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     ui.label(
                         nih_plug_egui::egui::RichText::new("SLIDE %:")
@@ -245,7 +245,7 @@ pub fn render_generator_panel(
                             .range(0.0..=1.0),
                     );
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     ui.label(
                         nih_plug_egui::egui::RichText::new("MUTATION %:")
@@ -301,7 +301,7 @@ pub fn render_generator_panel(
                         setter.end_set_parameter(&params.seq_length);
                     }
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     let mutate_btn = nih_plug_egui::egui::Button::new(
                         nih_plug_egui::egui::RichText::new("⚡ MUTATE")
@@ -334,7 +334,7 @@ pub fn render_generator_panel(
                         }
                     }
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     let new_seed_btn = nih_plug_egui::egui::Button::new(
                         nih_plug_egui::egui::RichText::new("NEW SEED")

@@ -104,11 +104,11 @@ while (iteration < max_iterations && currentScore < target_score) {
     },
     {
       name: "souped_drawer",
-      prompt: "Analyze target/gui-qa/latest.png focusing on Souped-Up Drawer, MEG/VEG Faders, and Topology Dimming. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate extended dials, faders, and accurate-mode dimming badge."
+      prompt: "Analyze target/gui-qa/latest.png focusing on Souped-Up Drawer, MEG/VEG Faders, and Topology Dimming. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate extended dials, faders, and accurate-mode dimming badge. Also analyze target/gui-qa/accurate.png if present: it shows Accurate mode, where the drawer must be ghosted to ~30% content visibility (pixel-sample the MEG fader fill) with a legible badge and SWITCH TO FUN button. Note: latest.png may show FUN mode where the drawer is fully vibrant — that is the default topology, not a defect."
     },
     {
       name: "sequencer",
-      prompt: "Analyze target/gui-qa/latest.png focusing on 16-Step Sequencer Strip, LED states, ACC/SLD toggles, and Gate colors. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate step columns, button alignment, pitch readability, and transport bar."
+      prompt: "Analyze target/gui-qa/latest.png focusing on 16-Step Sequencer Strip, LED states, ACC/SLD toggles, and Gate colors. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate step columns, button alignment, pitch readability, and transport bar. Also analyze target/gui-qa/running.png if present: it shows the transport actively running — verify exactly one playhead LED bar glows neon coral (#ff3355) while all other steps stay dim, and note the lit step number. Note: in latest.png the transport may be stopped (RUN button orange with '▶ RUN' label = stopped/armed state, all playhead bars dim = correct); a stopped transport with all LEDs dim is correct behavior, not a defect."
     }
   ];
 

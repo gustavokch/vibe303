@@ -21,7 +21,7 @@ pub fn render_sequencer_and_transport(
     ui.horizontal(|ui| {
         super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
     });
-    ui.add_space(4.0);
+    ui.add_space(2.0);
 
     Frame::new()
         .fill(theme::PANEL_BG)
@@ -30,8 +30,8 @@ pub fn render_sequencer_and_transport(
         .inner_margin(Margin {
             left: 8,
             right: 8,
-            top: 4,
-            bottom: 6,
+            top: 3,
+            bottom: 3,
         })
         .show(ui, |ui| {
             ui.set_min_width(1060.0);
@@ -70,7 +70,7 @@ pub fn render_sequencer_and_transport(
                             .color(theme::TEXT_PRIMARY),
                     );
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     // Row A: Run/Sync Buttons
                     ui.horizontal(|ui| {
@@ -90,7 +90,7 @@ pub fn render_sequencer_and_transport(
                         } else {
                             theme::SOUPED_ORANGE
                         })
-                        .min_size(vec2(100.0, 24.0));
+                        .min_size(vec2(100.0, 20.0));
 
                         if ui.add(run_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_run);
@@ -114,7 +114,7 @@ pub fn render_sequencer_and_transport(
                         } else {
                             Color32::from_rgb(0x28, 0x28, 0x28)
                         })
-                        .min_size(vec2(90.0, 24.0));
+                        .min_size(vec2(90.0, 20.0));
 
                         if ui.add(sync_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_sync);
@@ -123,7 +123,7 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     // Row B: Tempo Adjust
                     ui.horizontal(|ui| {
@@ -136,6 +136,10 @@ pub fn render_sequencer_and_transport(
                         let mut tempo_val = params.seq_tempo.value();
                         let dn_btn = nih_plug_egui::egui::Button::new("-")
                             .fill(Color32::from_rgb(0x28, 0x28, 0x28))
+                            .stroke(nih_plug_egui::egui::Stroke::new(
+                                1.0_f32,
+                                theme::PANEL_BORDER,
+                            ))
                             .min_size(vec2(20.0, 20.0));
                         if ui.add(dn_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_tempo);
@@ -162,6 +166,10 @@ pub fn render_sequencer_and_transport(
 
                         let up_btn = nih_plug_egui::egui::Button::new("+")
                             .fill(Color32::from_rgb(0x28, 0x28, 0x28))
+                            .stroke(nih_plug_egui::egui::Stroke::new(
+                                1.0_f32,
+                                theme::PANEL_BORDER,
+                            ))
                             .min_size(vec2(20.0, 20.0));
                         if ui.add(up_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_tempo);
@@ -173,7 +181,7 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     // Row C: Length & Timebase
                     ui.horizontal(|ui| {
@@ -193,7 +201,7 @@ pub fn render_sequencer_and_transport(
                             setter.end_set_parameter(&params.seq_length);
                         }
 
-                        ui.add_space(4.0);
+                        ui.add_space(2.0);
 
                         ui.label(
                             nih_plug_egui::egui::RichText::new("TIMEBASE:")
@@ -239,7 +247,7 @@ pub fn render_sequencer_and_transport(
                             });
                     });
 
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     // Row D: Mode & Jitter
                     ui.horizontal(|ui| {
@@ -287,7 +295,7 @@ pub fn render_sequencer_and_transport(
                                 }
                             });
 
-                        ui.add_space(4.0);
+                        ui.add_space(2.0);
 
                         let mut jitter_val = params.seq_jitter.value();
                         if ui.checkbox(&mut jitter_val, "JITTER").changed() {

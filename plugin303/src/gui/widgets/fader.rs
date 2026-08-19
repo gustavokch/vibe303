@@ -33,14 +33,14 @@ impl<'a, P: Param> MiniFader<'a, P> {
 
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let width = 28.0;
-        let total_height = self.height + 30.0;
+        let width = 24.0;
+        let total_height = self.height + 33.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
         let normalized = self.param.unmodulated_normalized_value();
         let track_top = rect.top() + 14.0;
-        let track_bottom = rect.bottom() - 14.0;
+        let track_bottom = rect.bottom() - 17.0;
         let track_height = track_bottom - track_top;
 
         // Interaction
@@ -99,12 +99,19 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                     pos2(rect.center().x - 2.0, fill_top),
                     pos2(rect.center().x + 2.0, track_bottom),
                 );
-                // Outer bright orange bloom glow
+                // Layered additive-style bloom: wide faint halo + tight halo
+                let halo_wide = Color32::from_rgba_premultiplied(
+                    self.accent_color.r(),
+                    self.accent_color.g(),
+                    self.accent_color.b(),
+                    0x22,
+                );
+                painter.rect_filled(fill_rect.expand(2.5), 2.0, halo_wide);
                 let glow_color = Color32::from_rgba_premultiplied(
                     self.accent_color.r(),
                     self.accent_color.g(),
                     self.accent_color.b(),
-                    0x50,
+                    0x60,
                 );
                 painter.rect_filled(fill_rect.expand(1.0), 1.0, glow_color);
                 // Vivid solid orange core
@@ -112,12 +119,20 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             }
 
             // Fader handle / thumb
-            let thumb_width = 16.0;
+            let thumb_width = 14.0;
             let thumb_height = 6.0;
             let thumb_rect = Rect::from_center_size(
                 pos2(rect.center().x, track_bottom - normalized * track_height),
                 vec2(thumb_width, thumb_height),
             );
+            // Glow the thumb itself so the carriage reads as backlit
+            let thumb_glow = Color32::from_rgba_premultiplied(
+                self.accent_color.r(),
+                self.accent_color.g(),
+                self.accent_color.b(),
+                0x30,
+            );
+            painter.rect_filled(thumb_rect.expand(1.5), 2.5, thumb_glow);
             painter.rect_filled(thumb_rect, 1.5, theme::KNOB_BODY_LIGHT);
             painter.rect_stroke(
                 thumb_rect,
@@ -142,14 +157,10 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 if self.label == "S" {
                     format!("{:.0}%", f * 100.0)
                 } else if f >= 1000.0 {
-                    format!("{:.1}s", f / 1000.0)
+                    format!("{:.1} s", f / 1000.0)
                 } else {
-                    format!("{:.0}ms", f)
+                    format!("{:.0} ms", f)
                 }
-            } else if val_str.ends_with(" ms") {
-                format!("{}ms", &val_str[..val_str.len() - 3])
-            } else if val_str.ends_with(" s") {
-                format!("{}s", &val_str[..val_str.len() - 2])
             } else {
                 val_str
             };
@@ -158,7 +169,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 nih_plug_egui::egui::Align2::CENTER_BOTTOM,
                 formatted_val,
                 FontId::new(7.5, FontFamily::Monospace),
-                theme::TEXT_MUTED,
+                Color32::from_rgb(0xd0, 0xd8, 0xe0),
             );
         }
 

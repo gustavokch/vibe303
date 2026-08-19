@@ -26,7 +26,7 @@ pub fn render_step_strip(
         ui.set_width(width);
 
         // 1. Playhead LED bar with metallic bezel rims and bloom halo
-        let (led_rect, _) = ui.allocate_exact_size(vec2(width, 10.0), Sense::hover());
+        let (led_rect, _) = ui.allocate_exact_size(vec2(width, 7.0), Sense::hover());
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             // Outer metallic rim
@@ -47,13 +47,13 @@ pub fn render_step_strip(
                     Color32::from_rgba_premultiplied(0xff, 0x33, 0x55, 0xa0),
                 );
                 // Active neon coral lens
-                p.rect_filled(inner_led, 2.0, Color32::from_rgb(0xff, 0x44, 0x66));
+                p.rect_filled(inner_led, 2.0, Color32::from_rgb(0xff, 0x33, 0x55));
             } else {
                 p.rect_filled(inner_led, 2.0, Color32::from_rgb(0x40, 0x10, 0x15));
             }
         }
 
-        ui.add_space(2.0);
+        ui.add_space(1.0);
 
         // Step number label
         ui.horizontal(|ui| {
@@ -61,7 +61,7 @@ pub fn render_step_strip(
             ui.centered_and_justified(|ui| {
                 ui.label(
                     nih_plug_egui::egui::RichText::new(format!("{:02}", step_idx + 1))
-                        .font(FontId::new(9.0, FontFamily::Monospace))
+                        .font(FontId::new(8.0, FontFamily::Monospace))
                         .color(if is_active {
                             theme::TEXT_PRIMARY
                         } else {
@@ -71,15 +71,15 @@ pub fn render_step_strip(
             });
         });
 
-        ui.add_space(2.0);
+        ui.add_space(1.0);
 
         // 2. Modifiers: ACC and SLD with discrete LED dots
         ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+            ui.spacing_mut().item_spacing = vec2(0.0, 1.5);
 
             // ACC Button
             let (acc_rect, acc_resp) =
-                ui.allocate_exact_size(vec2(width, 14.0), Sense::click());
+                ui.allocate_exact_size(vec2(width, 12.0), Sense::click());
             let acc_resp = acc_resp.on_hover_text("Toggle Accent (A)");
             if acc_resp.clicked() {
                 step.accent = !step.accent;
@@ -123,7 +123,7 @@ pub fn render_step_strip(
 
             // SLD Button
             let (sld_rect, sld_resp) =
-                ui.allocate_exact_size(vec2(width, 14.0), Sense::click());
+                ui.allocate_exact_size(vec2(width, 12.0), Sense::click());
             let sld_resp = sld_resp.on_hover_text("Toggle Slide (S)");
             if sld_resp.clicked() {
                 step.slide = !step.slide;
@@ -159,14 +159,15 @@ pub fn render_step_strip(
                 if step.slide {
                     p.circle_filled(led_pos, 3.2, Color32::from_rgba_premultiplied(0x00, 0xe5, 0xff, 0x50));
                     p.circle_filled(led_pos, 1.8, Color32::from_rgb(0x00, 0xe5, 0xff));
-                    p.circle_filled(led_pos, 0.7, Color32::WHITE);
+                    // Hot core stays inside the #00e5ff family (green clamps to 0xe5)
+                    p.circle_filled(led_pos, 0.7, Color32::from_rgb(0x8c, 0xe5, 0xff));
                 } else {
                     p.circle_filled(led_pos, 1.5, Color32::from_rgb(0x10, 0x20, 0x28));
                 }
             }
         });
 
-        ui.add_space(2.0);
+        ui.add_space(1.0);
 
         // 3. Gate Badge: Note / Tie / Rest (High contrast)
         let (gate_str, gate_color, text_color) = match step.gate {
@@ -185,7 +186,7 @@ pub fn render_step_strip(
                 .color(text_color),
         )
         .fill(gate_color)
-        .min_size(vec2(width, 18.0));
+        .min_size(vec2(width, 16.0));
 
         if ui.add(gate_btn).clicked() {
             step.gate = match step.gate {
@@ -196,18 +197,23 @@ pub fn render_step_strip(
             changed = true;
         }
 
-        ui.add_space(2.0);
+        ui.add_space(1.0);
 
-        // 4. Pitch & Octave
+        // 4. Pitch & Octave (de-emphasized on REST steps: no sounding note)
+        let is_rest = step.gate == StepGate::Rest;
         let pitch_str = format_pitch(step.semitone, step.octave);
         let pitch_btn = nih_plug_egui::egui::Button::new(
             nih_plug_egui::egui::RichText::new(pitch_str)
                 .font(FontId::new(9.0, FontFamily::Monospace))
                 .strong()
-                .color(theme::TEXT_PRIMARY),
+                .color(if is_rest {
+                    theme::TEXT_MUTED
+                } else {
+                    theme::TEXT_PRIMARY
+                }),
         )
         .fill(Color32::from_rgb(0x18, 0x1c, 0x24))
-        .min_size(vec2(width, 18.0));
+        .min_size(vec2(width, 16.0));
 
         let pitch_resp = ui
             .add(pitch_btn)
@@ -236,7 +242,7 @@ pub fn render_step_strip(
             ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
 
             // Octave Up Button
-            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(20.0, 16.0), Sense::click());
+            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(20.0, 13.0), Sense::click());
             let up_resp = up_resp.on_hover_text("Octave up (+1)");
             if up_resp.clicked() && step.octave < 2 {
                 step.octave += 1;
@@ -261,10 +267,10 @@ pub fn render_step_strip(
                 );
                 let cx = up_rect.center().x;
                 let cy = up_rect.center().y;
-                let arrow_color = if step.octave < 2 {
-                    theme::TEXT_PRIMARY
-                } else {
+                let arrow_color = if is_rest || step.octave >= 2 {
                     theme::TEXT_MUTED
+                } else {
+                    theme::TEXT_PRIMARY
                 };
                 p.add(nih_plug_egui::egui::Shape::convex_polygon(
                     vec![
@@ -278,7 +284,7 @@ pub fn render_step_strip(
             }
 
             // Octave Down Button
-            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(20.0, 16.0), Sense::click());
+            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(20.0, 13.0), Sense::click());
             let dn_resp = dn_resp.on_hover_text("Octave down (-1)");
             if dn_resp.clicked() && step.octave > -2 {
                 step.octave -= 1;
@@ -303,10 +309,10 @@ pub fn render_step_strip(
                 );
                 let cx = dn_rect.center().x;
                 let cy = dn_rect.center().y;
-                let arrow_color = if step.octave > -2 {
-                    theme::TEXT_PRIMARY
-                } else {
+                let arrow_color = if is_rest || step.octave <= -2 {
                     theme::TEXT_MUTED
+                } else {
+                    theme::TEXT_PRIMARY
                 };
                 p.add(nih_plug_egui::egui::Shape::convex_polygon(
                     vec![
