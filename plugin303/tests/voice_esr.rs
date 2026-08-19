@@ -80,6 +80,9 @@ fn low_voice_esr_within_budget() {
     let sr = sc["sr"].as_f64().unwrap() as f32;
 
     let mut v = Voice::new(sr);
+    // Gold is the raw voice SPICE sim without the output clipper; bypass it
+    // so this stays a regression guard on the TPT voice path only.
+    v.update_clipper_params_immediate(true, plugin303::params::ClipperOversampling::X2, 47000.0, 4700.0, 8200.0, 1e-9, false, 1.0, 0.0, 0.0, 0.0, 0.0);
     v.set_cutoff(cutoff);
     v.set_reso(reso);
     v.note_on(note);
