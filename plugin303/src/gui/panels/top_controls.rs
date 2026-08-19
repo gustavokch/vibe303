@@ -7,7 +7,7 @@ use crate::params::Plugin303Params;
 
 pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     // Exact sizing for panel background
-    let desired_size = vec2(1060.0, 110.0);
+    let desired_size = vec2(1060.0, 96.0);
     let (rect, _) = ui.allocate_exact_size(desired_size, nih_plug_egui::egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {
@@ -32,7 +32,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
     }
 
     ui.allocate_new_ui(
-        nih_plug_egui::egui::UiBuilder::new().max_rect(rect.shrink(10.0)),
+        nih_plug_egui::egui::UiBuilder::new().max_rect(rect.shrink(8.0)),
         |ui| {
             ui.horizontal(|ui| {
                 ui.set_width(1040.0);

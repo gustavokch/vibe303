@@ -35,26 +35,26 @@ pub fn create_editor(
                 .frame(
                     Frame::new()
                         .fill(theme::CHASSIS_BG)
-                        .inner_margin(Margin::same(10)),
+                        .inner_margin(Margin::same(8)),
                 )
                 .show(egui_ctx, |ui| {
                     let mut gen_params = gen_params_state.lock().unwrap();
 
                     // 1. Header Bar
                     panels::header_bar::render_header(ui, &params, setter);
-                    ui.add_space(8.0);
+                    ui.add_space(5.0);
 
                     // 2. Classic 303 Control Panel (Top)
                     panels::top_controls::render_top_controls(ui, &params, setter);
-                    ui.add_space(8.0);
+                    ui.add_space(5.0);
 
                     // 3. Souped-Up Engine Drawer Panel (Middle)
                     panels::souped_panel::render_souped_panel(ui, &params, setter);
-                    ui.add_space(8.0);
+                    ui.add_space(5.0);
 
                     // Always active: this sits after either topology's voice path.
                     panels::output_clipper::render_output_clipper(ui, &params, setter);
-                    ui.add_space(8.0);
+                    ui.add_space(5.0);
 
                     // 3. Bottom Sequencer Grid & Transport Column
                     panels::sequencer_panel::render_sequencer_and_transport(

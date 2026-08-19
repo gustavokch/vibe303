@@ -19,9 +19,9 @@ pub enum CompTolerance {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
 pub enum CircuitTopology {
-    #[default]
     #[name = "Accurate"]
     Accurate,
+    #[default]
     #[name = "Fun"]
     Fun,
 }
@@ -392,7 +392,7 @@ impl Default for Plugin303Params {
     fn default() -> Self {
         Self {
             tier: EnumParam::new("Tier", Tier::Low),
-            topology: EnumParam::new("Circuit Topology", CircuitTopology::Accurate),
+            topology: EnumParam::new("Circuit Topology", CircuitTopology::Fun),
 
             tuning: FloatParam::new(
                 "Tuning",

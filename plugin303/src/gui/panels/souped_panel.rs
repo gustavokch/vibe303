@@ -5,7 +5,7 @@ use nih_plug_egui::egui::{
 
 use crate::gui::theme;
 use crate::gui::widgets::{Knob303, MiniFader, SlideSwitch};
-use crate::params::{CircuitTopology, CompTolerance, Plugin303Params, VcaEnvMode};
+use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
 
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
@@ -20,6 +20,8 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
             ui.vertical(|ui| {
                 // Header Bar
                 ui.horizontal(|ui| {
+                    // The bypass state is carried by the overlay badge; no
+                    // redundant parenthetical here.
                     ui.label(
                         nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE & ANALOG DRAWER")
                             .font(FontId::new(11.0, nih_plug_egui::egui::FontFamily::Proportional))
@@ -30,13 +32,6 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 theme::SOUPED_ORANGE
                             }),
                     );
-                    if is_accurate {
-                        ui.label(
-                            nih_plug_egui::egui::RichText::new("(Bypassed in Accurate Mode)")
-                                .font(FontId::new(10.0, nih_plug_egui::egui::FontFamily::Proportional))
-                                .color(theme::TEXT_MUTED),
-                        );
-                    }
                 });
 
                 ui.add_space(4.0);
@@ -46,7 +41,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.horizontal(|ui| {
                         // Left/Main Area: Engine & Analog Controls
                         ui.vertical(|ui| {
-                            ui.set_width(680.0);
+                            ui.set_width(762.0);
 
                             // Row 1: Selectors & Mode Toggles
                             ui.horizontal(|ui| {
@@ -61,29 +56,12 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                 ui.add_space(6.0);
 
-                                ui.label(
-                                    nih_plug_egui::egui::RichText::new("VCA ENV:")
-                                        .font(FontId::proportional(9.5))
-                                        .color(theme::TEXT_SECONDARY),
-                                );
-                                let vca_mode = params.vca_env_mode.value();
-                                ComboBox::from_id_salt("vca_env_mode_combo")
-                                    .selected_text(match vca_mode {
-                                        VcaEnvMode::Gate => "Gate",
-                                        VcaEnvMode::Envelope => "Envelope",
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        if ui.selectable_label(vca_mode == VcaEnvMode::Gate, "Gate").clicked() {
-                                            setter.begin_set_parameter(&params.vca_env_mode);
-                                            setter.set_parameter(&params.vca_env_mode, VcaEnvMode::Gate);
-                                            setter.end_set_parameter(&params.vca_env_mode);
-                                        }
-                                        if ui.selectable_label(vca_mode == VcaEnvMode::Envelope, "Envelope").clicked() {
-                                            setter.begin_set_parameter(&params.vca_env_mode);
-                                            setter.set_parameter(&params.vca_env_mode, VcaEnvMode::Envelope);
-                                            setter.end_set_parameter(&params.vca_env_mode);
-                                        }
-                                    });
+                                ui.add(SlideSwitch::new(
+                                    &params.vca_env_mode,
+                                    setter,
+                                    "VCA ENV",
+                                    &["GATE", "ENV"],
+                                ));
 
                                 ui.add_space(6.0);
 
@@ -137,41 +115,10 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                             setter.end_set_parameter(&params.tolerance);
                                         }
                                     });
-                            });
 
-                            ui.add_space(4.0);
-                            ui.separator();
-                            ui.add_space(4.0);
+                                ui.add_space(6.0);
 
-                            // Row 2: Engine Rotary Dials (including osc1_pitch & sweep_pos)
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                                ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 11.0));
-                                ui.add(Knob303::new(&params.sub_vol, setter, "SUB", 11.0));
-                                ui.add(Knob303::new(&params.glide, setter, "GLIDE", 11.0));
-                                ui.add(Knob303::new(&params.osc1_pitch, setter, "PITCH1", 11.0));
-                                ui.add(Knob303::new(&params.osc2_pitch, setter, "PITCH2", 11.0));
-                                ui.add(Knob303::new(&params.osc2_vol, setter, "MIX2", 11.0));
-                                ui.add(Knob303::new(&params.osc1_pw, setter, "PW", 11.0));
-                                ui.add(Knob303::new(&params.sweep_pos, setter, "SWEEP", 11.0));
-                                ui.add(Knob303::new(&params.reso_comp, setter, "R-COMP", 11.0));
-                            });
-
-                            ui.add_space(4.0);
-                            ui.separator();
-                            ui.add_space(4.0);
-
-                            // Row 3: Analog Component Group (comp_age, comp_drift, thermal_noise, comp_seed)
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    nih_plug_egui::egui::RichText::new("ANALOG AGE & NOISE:")
-                                        .font(FontId::proportional(9.5))
-                                        .strong()
-                                        .color(theme::TEXT_SECONDARY),
-                                );
-
-                                ui.add_space(4.0);
-
+                                // Analog Component Group (comp_age, thermal_noise, comp_seed)
                                 ui.label(
                                     nih_plug_egui::egui::RichText::new("AGE:")
                                         .font(FontId::proportional(9.5))
@@ -183,10 +130,6 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     setter.set_parameter(&params.comp_age, age_val);
                                     setter.end_set_parameter(&params.comp_age);
                                 }
-
-                                ui.add_space(4.0);
-
-                                ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 10.0));
 
                                 ui.add_space(4.0);
 
@@ -205,7 +148,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 ui.add_space(4.0);
 
                                 ui.label(
-                                    nih_plug_egui::egui::RichText::new("ANALOG SEED:")
+                                    nih_plug_egui::egui::RichText::new("SEED:")
                                         .font(FontId::proportional(9.5))
                                         .color(theme::TEXT_SECONDARY),
                                 );
@@ -216,6 +159,27 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     setter.end_set_parameter(&params.comp_seed);
                                 }
                             });
+
+                            ui.add_space(2.0);
+                            ui.separator();
+                            ui.add_space(2.0);
+
+                            // Row 2: Engine Rotary Dials (including osc1_pitch & sweep_pos)
+                            // Spread evenly across the 762px drawer column.
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = vec2(34.0, 0.0);
+                                ui.add_space(18.0);
+                                ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 11.0));
+                                ui.add(Knob303::new(&params.sub_vol, setter, "SUB", 11.0));
+                                ui.add(Knob303::new(&params.glide, setter, "GLIDE", 11.0));
+                                ui.add(Knob303::new(&params.osc1_pitch, setter, "PITCH1", 11.0));
+                                ui.add(Knob303::new(&params.osc2_pitch, setter, "PITCH2", 11.0));
+                                ui.add(Knob303::new(&params.osc2_vol, setter, "MIX2", 11.0));
+                                ui.add(Knob303::new(&params.osc1_pw, setter, "PW", 11.0));
+                                ui.add(Knob303::new(&params.sweep_pos, setter, "SWEEP", 11.0));
+                                ui.add(Knob303::new(&params.reso_comp, setter, "R-COMP", 11.0));
+                                ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.0));
+                            });
                         });
 
                         ui.add_space(6.0);
@@ -224,43 +188,53 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         // Right Column: MEG & VEG ADSR Vertical Mini-Faders
                         ui.vertical(|ui| {
-                            ui.set_width(340.0);
+                            ui.set_width(286.0);
                             ui.horizontal(|ui| {
+                                let bank_frame = Frame::new()
+                                    .fill(Color32::from_rgb(0x1b, 0x1b, 0x1b))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x2a, 0x2e, 0x33)))
+                                    .corner_radius(CornerRadius::same(3))
+                                    .inner_margin(Margin::symmetric(6, 4));
+
                                 // MEG ADSR Group
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        nih_plug_egui::egui::RichText::new("MEG ADSR")
-                                            .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
-                                            .strong()
-                                            .color(theme::TEXT_SECONDARY),
-                                    );
-                                    ui.add_space(2.0);
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
-                                        ui.add(MiniFader::new(&params.meg_attack, setter, "A", 44.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.meg_decay_adj, setter, "D", 44.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.meg_sustain, setter, "S", 44.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.meg_release, setter, "R", 44.0, theme::SOUPED_ORANGE));
+                                bank_frame.show(ui, |ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            nih_plug_egui::egui::RichText::new("MEG ADSR")
+                                                .font(FontId::new(9.5, nih_plug_egui::egui::FontFamily::Proportional))
+                                                .strong()
+                                                .color(theme::TEXT_PRIMARY),
+                                        );
+                                        ui.add_space(2.0);
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+                                            ui.add(MiniFader::new(&params.meg_attack, setter, "A", 44.0, theme::SOUPED_ORANGE));
+                                            ui.add(MiniFader::new(&params.meg_decay_adj, setter, "D", 44.0, theme::SOUPED_ORANGE));
+                                            ui.add(MiniFader::new(&params.meg_sustain, setter, "S", 44.0, theme::SOUPED_ORANGE));
+                                            ui.add(MiniFader::new(&params.meg_release, setter, "R", 44.0, theme::SOUPED_ORANGE));
+                                        });
                                     });
                                 });
 
-                                ui.add_space(6.0);
+                                ui.add_space(4.0);
 
                                 // VEG ADSR Group
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        nih_plug_egui::egui::RichText::new("VEG ADSR")
-                                            .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
-                                            .strong()
-                                            .color(theme::TEXT_SECONDARY),
-                                    );
-                                    ui.add_space(2.0);
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
-                                        ui.add(MiniFader::new(&params.veg_attack, setter, "A", 44.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.veg_decay_adj, setter, "D", 44.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.veg_sustain, setter, "S", 44.0, theme::SOUPED_ORANGE));
-                                        ui.add(MiniFader::new(&params.veg_release, setter, "R", 44.0, theme::SOUPED_ORANGE));
+                                bank_frame.show(ui, |ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            nih_plug_egui::egui::RichText::new("VEG ADSR")
+                                                .font(FontId::new(9.5, nih_plug_egui::egui::FontFamily::Proportional))
+                                                .strong()
+                                                .color(theme::TEXT_PRIMARY),
+                                        );
+                                        ui.add_space(2.0);
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+                                            ui.add(MiniFader::new(&params.veg_attack, setter, "A", 44.0, theme::SOUPED_ORANGE));
+                                            ui.add(MiniFader::new(&params.veg_decay_adj, setter, "D", 44.0, theme::SOUPED_ORANGE));
+                                            ui.add(MiniFader::new(&params.veg_sustain, setter, "S", 44.0, theme::SOUPED_ORANGE));
+                                            ui.add(MiniFader::new(&params.veg_release, setter, "R", 44.0, theme::SOUPED_ORANGE));
+                                        });
                                     });
                                 });
                             });
@@ -275,11 +249,12 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         let overlay_rect = response.response.rect;
 
         let painter = ui.painter();
-        // 30% opacity dimming ground (0x4d out of 0xff = ~30%)
+        // 70% occlusion scrim — content ghosted to ~30% visibility (spec 4.1).
+        // Neutral chassis tone (#16181b), not blue-tinted.
         painter.rect_filled(
             overlay_rect,
             4.0,
-            Color32::from_rgba_premultiplied(0x0a, 0x10, 0x1d, 0x4d),
+            Color32::from_rgba_premultiplied(0x16, 0x18, 0x1b, 0xb2),
         );
 
         // Centered Badge with Drop Shadow

@@ -4,28 +4,30 @@ use plugin303::params::{CircuitTopology, OscWave, Plugin303Params, VcaEnvMode, V
 #[test]
 fn test_topology_param_defaults_and_blackouts() {
     let params = Plugin303Params::default();
-    assert_eq!(params.topology.value(), CircuitTopology::Accurate);
+    assert_eq!(params.topology.value(), CircuitTopology::Fun);
 
-    // Accurate mode parameter blackouts (should return false)
-    assert!(!params.is_param_active("osc1_pitch"));
-    assert!(!params.is_param_active("osc2_pitch"));
-    assert!(!params.is_param_active("osc2_vol"));
-    assert!(!params.is_param_active("osc1_pw"));
-    assert!(!params.is_param_active("sub_vol"));
-    assert!(!params.is_param_active("sweep_pos"));
-    assert!(!params.is_param_active("vcf_taps"));
-    assert!(!params.is_param_active("vcf_drive"));
-    assert!(!params.is_param_active("advanced_env"));
-    assert!(!params.is_param_active("meg_attack"));
-    assert!(!params.is_param_active("veg_decay_adj"));
-    assert!(!params.is_param_active("vca_env_mode"));
+    // Fun mode: only the classic waveform selector is blacked out
+    assert!(!params.is_param_active("waveform"));
+
+    // Souped-up parameters should be active in Fun mode
+    assert!(params.is_param_active("osc1_pitch"));
+    assert!(params.is_param_active("osc2_pitch"));
+    assert!(params.is_param_active("osc2_vol"));
+    assert!(params.is_param_active("osc1_pw"));
+    assert!(params.is_param_active("sub_vol"));
+    assert!(params.is_param_active("sweep_pos"));
+    assert!(params.is_param_active("vcf_taps"));
+    assert!(params.is_param_active("vcf_drive"));
+    assert!(params.is_param_active("advanced_env"));
+    assert!(params.is_param_active("meg_attack"));
+    assert!(params.is_param_active("veg_decay_adj"));
+    assert!(params.is_param_active("vca_env_mode"));
 
     // Classic parameters should be active
     assert!(params.is_param_active("tuning"));
     assert!(params.is_param_active("cutoff"));
     assert!(params.is_param_active("resonance"));
     assert!(params.is_param_active("reso_comp"));
-    assert!(params.is_param_active("waveform"));
 }
 
 #[test]
