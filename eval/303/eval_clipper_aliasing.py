@@ -69,7 +69,7 @@ def render_clipper(
     os: str = "2x",
     bypass: bool = False,
     drive: float = 47000.0,
-    thresh: float = 47000.0,
+    thresh: float = 4700.0,
     bass: float = 8200.0,
     tone: float = 1e-9,
     asym: bool = False,

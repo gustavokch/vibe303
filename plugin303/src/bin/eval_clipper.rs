@@ -13,7 +13,7 @@ fn print_usage() {
          --os <2x|4x>        Oversampling mode (default: 2x)\n\
          --bypass            Bypass clipper\n\
          --drive <float>     Drive resistance in Ohms (22000.0..100000.0, default: 47000.0)\n\
-         --thresh <float>    Threshold resistance in Ohms (22000.0..220000.0, default: 47000.0)\n\
+         --thresh <float>    Threshold resistance in Ohms (2200.0..22000.0, default: 4700.0)\n\
          --bass <float>      Bass resistance in Ohms (4700.0..22000.0, default: 8200.0)\n\
          --tone <float>      Tone capacitance in Farads (default: 1e-9)\n\
          --asym              Asymmetric clipping mode\n\
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut os_mode = ClipperOs::X2;
     let mut bypass = false;
     let mut drive: f32 = 47000.0;
-    let mut thresh: f32 = 47000.0;
+    let mut thresh: f32 = 4700.0;
     let mut bass: f32 = 8200.0;
     let mut tone: f32 = 1e-9;
     let mut asym = false;
