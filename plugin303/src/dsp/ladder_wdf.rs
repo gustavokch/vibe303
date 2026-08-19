@@ -65,6 +65,8 @@ const CAPS: [(usize, usize, f64); 4] = [
 ];
 
 const MAX_ITERS: usize = 50;
+/// Hard floor for Newton update convergence. Checked before the mixed
+/// absolute/relative tolerance so near-zero node voltages do not over-converge.
 const TOL: f64 = 1e-9;
 /// Absolute tolerance for convergence (document eq. 3.30: ε_abs). Recalibrated
 /// from 1e-11: node voltages are ~±10 V, so 1e-10 is far below audible need and
@@ -363,13 +365,11 @@ impl LadderVcf {
                 }
             }
             v = sol;
-            if dmax < TOL {
-                return Some((v, it as u32 + 1));
-            }
-            // Mixed absolute + relative tolerance (document eq. 3.30)
-            // ε_abs + ε_rel × |v_max| handles both small and large signal swings
+            // Mixed absolute + relative tolerance with a hard floor (document eq. 3.30).
+            // The floor prevents over-convergence when node voltages are near zero.
             let vmax = v.iter().fold(0.0f64, |a, &x| a.abs().max(x.abs()));
-            if dmax < TOL_ABS + TOL_REL * vmax {
+            let threshold = TOL.max(TOL_ABS + TOL_REL * vmax);
+            if dmax < threshold {
                 return Some((v, it as u32 + 1));
             }
         }
