@@ -54,6 +54,16 @@ base rate:  dry_delay | in_gain | [OS up → tilt_pre → dynamics → Ge/JFET c
 `ClipperParams` (DSP struct) gains: `mix`, `in_db`, `out_db`, `tilt_db`,
 `dynamics`. Link is GUI/param-layer only — not passed to DSP.
 
+### Backward compatibility (mix default)
+
+The plugin param `clipper_mix` defaults to 0.0 (dry) while the DSP struct
+defaults to 1.0 (wet). Sessions saved before this parameter existed (tag
+0.4.0 and earlier, clipper engaged) load with the clipper engaged but 100%
+dry — a previously audible stage goes silent. This tradeoff was raised in
+the PR #33 review and is accepted: dry is the safe factory state for new
+instances, and pre-existing sessions predate any released clipper behavior
+worth preserving bit-for-bit. Decision: keep default 0.0.
+
 ### Gain link behavior (GUI-side)
 
 - Link on, user moves IN: setter writes `in = x`, `out = −x`.

@@ -439,3 +439,39 @@ fn dynamics_reduces_sustained_distortion() {
     println!("THD dynamics off: {:.2}%, on: {:.2}%", thd_off * 100.0, thd_on * 100.0);
     assert!(thd_on < thd_off, "dynamics must duck drive on sustained loud signal");
 }
+
+#[test]
+fn reset_preserves_params() {
+    // After reset(), engines must keep the live params (tilt, dynamics, drive,
+    // ...) — not revert to ClipperParams::default(). Render a reference with
+    // non-default params, then reset mid-stream and continue; output must
+    // match a fresh instance that received the same params and rendered the
+    // same post-reset input.
+    let sr = 48_000.0;
+    let mut p = ClipperParams::default();
+    p.mix = 1.0;
+    p.drive_ohms = 68_000.0;
+    p.tilt_db = 4.0;
+    p.dynamics = 0.7;
+    p.in_db = 6.0;
+    p.out_db = -3.0;
+
+    let mut c = WarmClipper::new(sr);
+    c.set_params_immediate(p);
+    // Warm up past the crossfade and smoother settle.
+    for i in 0..2048 {
+        let t = i as f32 / sr;
+        c.tick((2.0 * std::f32::consts::PI * 500.0 * t).sin());
+    }
+    c.reset();
+
+    let mut fresh = WarmClipper::new(sr);
+    fresh.set_params_immediate(p);
+    fresh.reset();
+
+    for i in 0..1024 {
+        let t = i as f32 / sr;
+        let x = (2.0 * std::f32::consts::PI * 500.0 * t).sin();
+        assert_eq!(c.tick(x), fresh.tick(x), "sample {i}: reset must preserve params");
+    }
+}

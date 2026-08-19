@@ -190,7 +190,15 @@ impl StagedEngine {
         self.update_tilt_coeffs();
     }
 
-    fn reset(&mut self) { *self = Self::new(self.sr); }
+    fn reset(&mut self) {
+        // Preserve live params across reset: filter state clears, but the
+        // control dimensions (drive, tilt, dynamics, ...) must not revert to
+        // defaults for direct DSP callers that reset() then tick() without a
+        // fresh set_params.
+        let params = self.params;
+        *self = Self::new(self.sr);
+        self.set_params(params);
+    }
 
     #[inline]
     fn one_pole(state: &mut f32, x: f32, alpha: f32) -> f32 {
