@@ -40,7 +40,10 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                 ui.horizontal(|ui| {
                     let in_resp = ui.add(Knob303::new(&params.clipper_in_gain, setter, "IN", 13.0));
                     let mut link = params.clipper_gain_link.value();
-                    if ui.checkbox(&mut link, "LINK").changed() {
+                    if ui.checkbox(&mut link, "LINK")
+                        .on_hover_text("Link: OUT tracks −IN while dragging (edit-time only)")
+                        .changed()
+                    {
                         setter.begin_set_parameter(&params.clipper_gain_link);
                         setter.set_parameter(&params.clipper_gain_link, link);
                         setter.end_set_parameter(&params.clipper_gain_link);

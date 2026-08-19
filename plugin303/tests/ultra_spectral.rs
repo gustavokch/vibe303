@@ -22,7 +22,7 @@ const ULTRA_BRIGHTNESS: f64 = 0.70; // re-tuned VCF brightness (resonance-active
 
 fn render_ultra(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: f64) -> Vec<f32> {
     let mut v = Voice::new(sr);
-    v.update_clipper_params_immediate(true, plugin303::params::ClipperOversampling::X2, 47000.0, 4700.0, 8200.0, 1e-9, false, 1.0, 0.0, 0.0, 0.0, 0.0);
+    v.update_clipper_params_immediate(common::bypassed_clipper());
     v.set_tier_immediate(Tier::Ultra);
     v.set_advanced_env(true);
     v.set_ultra_brightness(cal);

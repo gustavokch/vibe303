@@ -397,19 +397,31 @@ fn tilt_pre_emphasis_changes_distortion() {
 }
 
 #[test]
-fn dynamics_zero_is_transparent() {
+fn dynamics_zero_vs_epsilon_differs() {
+    // dynamics = 0.0 skips the duck branch entirely (`p.dynamics > 0.0`);
+    // the smallest representable nonzero value enters it and, at max drive,
+    // perturbs the effective resistance enough to change the render.
     let sr = 48_000.0;
-    let mut a = WarmClipper::new(sr);
-    a.set_params_immediate(ClipperParams::default());
-    let mut b = WarmClipper::new(sr);
-    let mut p = ClipperParams::default();
-    p.dynamics = 0.0;
-    b.set_params_immediate(p);
-    for i in 0..1024 {
-        let t = i as f32 / sr;
-        let x = 0.8 * (2.0 * std::f32::consts::PI * 700.0 * t).sin();
-        assert_eq!(a.tick(x), b.tick(x), "dynamics=0 must not alter the signal");
-    }
+    let run = |dynamics: f32| -> Vec<f32> {
+        let mut c = WarmClipper::new(sr);
+        let mut p = ClipperParams::default();
+        p.mix = 1.0;
+        p.drive_ohms = 100_000.0;
+        p.dynamics = dynamics;
+        c.set_params_immediate(p);
+        (0..2048)
+            .map(|i| {
+                let t = i as f32 / sr;
+                c.tick((2.0 * std::f32::consts::PI * 800.0 * t).sin())
+            })
+            .collect()
+    };
+    let off = run(0.0);
+    let eps = run(f32::EPSILON);
+    assert_ne!(
+        off, eps,
+        "dynamics = 0 must skip the duck branch; any nonzero value must enter it"
+    );
 }
 
 #[test]

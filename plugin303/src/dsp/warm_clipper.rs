@@ -235,7 +235,7 @@ impl StagedEngine {
                 self.peak_env = 0.0;
             }
             let duck = p.dynamics.clamp(0.0, 1.0) * (self.peak_env / DYN_REF).min(1.0);
-            (p.drive_ohms * (1.0 - duck)).max(22_000.0)
+            p.drive_ohms * (1.0 - duck)
         } else {
             p.drive_ohms
         };

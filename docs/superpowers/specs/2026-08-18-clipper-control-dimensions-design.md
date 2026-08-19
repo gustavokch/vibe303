@@ -142,3 +142,15 @@ Row 2: IN [LINK] OUT  TILT  DYNAMICS  MIX
 - `plugin303/tests/warm_clipper.rs` — new + updated tests
 - `plugin303/src/bin/eval_clipper.rs`, `eval/303/eval_clipper_aliasing.py` —
   eval sweeps
+
+## Known limitations
+
+- Tilt (and tone, pre-existing) coefficients update at block rate without
+  smoothing; fast tilt automation can zipper. Accepted: same pattern as tone,
+  small step size, per-sample coefficient smoothing not worth the per-tick
+  cost. If tone is ever smoothed, smooth tilt the same way.
+- Gain link is enforced only on GUI drag/double-click gestures. Host
+  automation or preset recall can leave IN ≠ −OUT with LINK engaged until
+  the user next touches either knob. Accepted: audio-thread parameter writes
+  are not permitted, and value-diff polling creates host-visible edits with
+  no user gesture.

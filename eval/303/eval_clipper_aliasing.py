@@ -62,7 +62,6 @@ plt.rcParams.update({
 
 
 # --- Audio Processing Subprocess --------------------------------------------
-fn_render_clipper = None
 
 def render_clipper(
     sr: float = 48000.0,
@@ -157,11 +156,12 @@ def compute_aliasing_metrics(
     harm_power = np.sum(power[harmonic_mask & ~dc_mask])
     alias_power = np.sum(power[(~harmonic_mask) & (~dc_mask)])
 
-    fund_idx = np.argmin(np.abs(freqs - f0))
-    fund_power = power[fund_idx]
+    fund_band = np.abs(freqs - f0) <= tolerance_hz
+    fund_power = np.sum(power[fund_band])
+    harm_minus_fund = np.sum(power[harmonic_mask & ~dc_mask & ~fund_band])
 
     asr_db = 10.0 * np.log10(max(alias_power, 1e-300) / max(harm_power, 1e-300))
-    thd_db = 10.0 * np.log10(max(harm_power - fund_power, 1e-300) / max(fund_power, 1e-300))
+    thd_db = 10.0 * np.log10(max(harm_minus_fund, 1e-300) / max(fund_power, 1e-300))
 
     return {
         "freqs": freqs,

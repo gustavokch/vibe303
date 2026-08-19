@@ -1,6 +1,8 @@
 //! Tests for VCF resonance gain compensation.
 
 use plugin303::dsp::filter::Tier;
+mod common;
+
 use plugin303::dsp::voice::Voice;
 use plugin303::params::{CircuitTopology, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
 
@@ -21,7 +23,7 @@ fn render_voice_rms(voice: &mut Voice, samples: usize) -> f32 {
 fn test_reso_gain_comp_scaling() {
     let sr = 48000.0;
     let mut voice = Voice::new(sr);
-    voice.update_clipper_params_immediate(true, plugin303::params::ClipperOversampling::X2, 47000.0, 4700.0, 8200.0, 1e-9, false, 1.0, 0.0, 0.0, 0.0, 0.0);
+    voice.update_clipper_params_immediate(common::bypassed_clipper());
     voice.set_tier(Tier::Low);
     voice.set_topology(CircuitTopology::Fun);
 

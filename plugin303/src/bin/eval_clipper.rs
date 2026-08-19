@@ -31,6 +31,17 @@ fn print_usage() {
     );
 }
 
+fn take_value<'a>(
+    args: &'a [String],
+    i: &mut usize,
+    flag: &str,
+) -> Result<&'a str, Box<dyn std::error::Error>> {
+    *i += 1;
+    args.get(*i)
+        .map(|s| s.as_str())
+        .ok_or_else(|| format!("Missing value for {}", flag).into())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() <= 1 {
@@ -62,12 +73,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while i < args.len() {
         match args[i].as_str() {
             "--sr" => {
-                i += 1;
-                sr = args[i].parse()?;
+                sr = take_value(&args, &mut i, "--sr")?.parse()?;
             }
             "--os" => {
-                i += 1;
-                match args[i].as_str() {
+                match take_value(&args, &mut i, "--os")? {
                     "2x" | "x2" | "2" => os_mode = ClipperOs::X2,
                     "4x" | "x4" | "4" => os_mode = ClipperOs::X4,
                     other => return Err(format!("Unknown --os mode: {}", other).into()),
@@ -75,65 +84,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--bypass" => bypass = true,
             "--drive" => {
-                i += 1;
-                drive = args[i].parse()?;
+                drive = take_value(&args, &mut i, "--drive")?.parse()?;
             }
             "--thresh" => {
-                i += 1;
-                thresh = args[i].parse()?;
+                thresh = take_value(&args, &mut i, "--thresh")?.parse()?;
             }
             "--bass" => {
-                i += 1;
-                bass = args[i].parse()?;
+                bass = take_value(&args, &mut i, "--bass")?.parse()?;
             }
             "--tone" => {
-                i += 1;
-                tone = args[i].parse()?;
+                tone = take_value(&args, &mut i, "--tone")?.parse()?;
             }
             "--asym" => asym = true,
             "--mix" => {
-                i += 1;
-                mix = args[i].parse()?;
+                mix = take_value(&args, &mut i, "--mix")?.parse()?;
             }
             "--in-gain" => {
-                i += 1;
-                in_gain = args[i].parse()?;
+                in_gain = take_value(&args, &mut i, "--in-gain")?.parse()?;
             }
             "--out-gain" => {
-                i += 1;
-                out_gain = args[i].parse()?;
+                out_gain = take_value(&args, &mut i, "--out-gain")?.parse()?;
             }
             "--tilt" => {
-                i += 1;
-                tilt = args[i].parse()?;
+                tilt = take_value(&args, &mut i, "--tilt")?.parse()?;
             }
             "--dynamics" => {
-                i += 1;
-                dynamics = args[i].parse()?;
+                dynamics = take_value(&args, &mut i, "--dynamics")?.parse()?;
             }
             "--signal" => {
-                i += 1;
-                signal_type = args[i].to_lowercase();
+                signal_type = take_value(&args, &mut i, "--signal")?.to_lowercase();
             }
             "--freq" => {
-                i += 1;
-                freq = args[i].parse()?;
+                freq = take_value(&args, &mut i, "--freq")?.parse()?;
             }
             "--amp" => {
-                i += 1;
-                amp = args[i].parse()?;
+                amp = take_value(&args, &mut i, "--amp")?.parse()?;
             }
             "--secs" => {
-                i += 1;
-                secs = args[i].parse()?;
+                secs = take_value(&args, &mut i, "--secs")?.parse()?;
             }
             "--in" => {
-                i += 1;
-                input_path = Some(args[i].clone());
+                input_path = Some(take_value(&args, &mut i, "--in")?.to_string());
             }
             "--out" => {
-                i += 1;
-                output_path = Some(args[i].clone());
+                output_path = Some(take_value(&args, &mut i, "--out")?.to_string());
             }
             "--help" | "-h" => {
                 print_usage();
