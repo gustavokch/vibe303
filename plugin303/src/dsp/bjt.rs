@@ -9,7 +9,7 @@
 //!
 //! Params from `eval/303/_vco303_netlist_gen.TRANSISTOR_MODELS` (2N3904 / 2N3906).
 
-use super::expmath::fast_exp;
+use super::expmath::{fast_exp, fast_exp_branchless};
 
 /// Thermal voltage at 300 K was previously a constant. Now dynamically calculated in BjtParams.
 /// Static Gummel-Poon parameters (the subset the BA283 transport model uses).
@@ -148,7 +148,93 @@ impl Bjt {
         let p = &self.p;
         let (itf, gtf) = transport(vbe, p.is, p.vcrit, p.vt);
         let (itr, gtr) = transport(vbc, p.is, p.vcrit, p.vt);
+        Self::finish_npn(p, vbe, vbc, itf, gtf, itr, gtr)
+    }
 
+    /// Batched solve over the VCO's 6 BJTs (12 junctions), branchless on the
+    /// data-dependent `v < vcrit` transport branch (stamp8 pattern): both
+    /// branches are computed per lane and blended with a `select`, so the exp
+    /// loop carries no data-dependent control flow. Bit-identical to calling
+    /// [`solve`](Self::solve) per device — same op order, `fast_exp_branchless`
+    /// matches `fast_exp` bit-for-bit on the junction domain.
+    pub fn solve_batch6(devs: &[Bjt; 6], vbe: &[f64; 6], vbc: &[f64; 6]) -> [BjtOut; 6] {
+        // Gather the 12 signed junction voltages (pnp: s = -1.0) and per-lane
+        // params (each device spans 2 lanes: vbe then vbc).
+        let mut vs = [0.0f64; 12];
+        let mut is = [0.0f64; 12];
+        let mut vt = [0.0f64; 12];
+        let mut vcrit = [0.0f64; 12];
+        let mut icrit = [0.0f64; 12];
+        let mut gcrit = [0.0f64; 12];
+        for j in 0..6 {
+            let s = if devs[j].pnp { -1.0 } else { 1.0 };
+            vs[2 * j] = s * vbe[j];
+            vs[2 * j + 1] = s * vbc[j];
+            let p = &devs[j].p;
+            // vcrit-frozen branch constants (loop-invariant per device; the
+            // scalar else-branch recomputes them per call — values identical).
+            let ec = fast_exp_branchless(p.vcrit / p.vt);
+            let ic = p.is * (ec - 1.0);
+            let gc = (p.is / p.vt) * ec;
+            for l in 0..2 {
+                is[2 * j + l] = p.is;
+                vt[2 * j + l] = p.vt;
+                vcrit[2 * j + l] = p.vcrit;
+                icrit[2 * j + l] = ic;
+                gcrit[2 * j + l] = gc;
+            }
+        }
+        // One branchless batch over 12 lanes. Mirror the scalar `transport`
+        // arithmetic op-for-op (division, not reciprocal-multiply).
+        let mut it = [0.0f64; 12];
+        let mut gt = [0.0f64; 12];
+        for i in 0..12 {
+            let v = vs[i];
+            let e = fast_exp_branchless(v / vt[i]);
+            let i_lo = is[i] * (e - 1.0);
+            let g_lo = (is[i] / vt[i]) * e;
+            let i_hi = icrit[i] + gcrit[i] * (v - vcrit[i]);
+            let below = v < vcrit[i];
+            it[i] = if below { i_lo } else { i_hi };
+            gt[i] = if below { g_lo } else { gcrit[i] };
+        }
+        let mut out = [BjtOut::default(); 6];
+        for j in 0..6 {
+            let mut o = Self::finish_npn(
+                &devs[j].p,
+                vs[2 * j],
+                vs[2 * j + 1],
+                it[2 * j],
+                gt[2 * j],
+                it[2 * j + 1],
+                gt[2 * j + 1],
+            );
+            // PNP output negation, same 5 fields as `solve`.
+            if devs[j].pnp {
+                o.ib = -o.ib;
+                o.ic = -o.ic;
+                o.ie = -o.ie;
+                o.itf = -o.itf;
+                o.itr = -o.itr;
+            }
+            out[j] = o;
+        }
+        out
+    }
+
+    /// Gummel-Poon algebra after the two junction transports: base-charge factor
+    /// `qb` (Early + high-injection), terminal currents, node-form Jacobian.
+    /// Shared by the scalar and batched paths — both feed it identical
+    /// `(itf, gtf, itr, gtr)` values.
+    fn finish_npn(
+        p: &BjtParams,
+        vbe: f64,
+        vbc: f64,
+        itf: f64,
+        gtf: f64,
+        itr: f64,
+        gtr: f64,
+    ) -> BjtOut {
         // Base-charge factor qb = (q1/2)(1+sqrt(1+4 q2)).
         let inv_af = if p.vaf > 0.0 { 1.0 / p.vaf } else { 0.0 };
         let inv_ar = if p.var > 0.0 { 1.0 / p.var } else { 0.0 };
@@ -219,6 +305,49 @@ impl Bjt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn solve_batch6_matches_scalar_solve_bitwise() {
+        // The batched kernel must be value-identical to 6 scalar solves (stamp8
+        // pattern: both transport branches computed per lane, blended by select),
+        // or the VCO Newton trajectory — and the spectral gates — would drift.
+        let npn = Bjt::npn(BjtParams::n2n3904());
+        let pnp = Bjt::pnp(BjtParams::p2n3906());
+        let devs = [pnp, npn, pnp, npn, npn, pnp]; // Q6,Q7,Q4,Q5,Q3,Q2 order
+        // Biases straddling vcrit on both junctions, incl. vbc = 0.0 (Q5 case),
+        // deep saturation (inv1 < 0.1 clamp), and forward-active.
+        let cases: &[([f64; 6], [f64; 6])] = &[
+            // forward-active, all below vcrit
+            ([0.60, 0.65, 0.55, 0.70, 0.62, 0.58], [-1.0, 0.5, -2.0, 0.0, -0.3, 1.2]),
+            // saturated: vbc > 0 (forward-active BC junction), hits inv1 clamp
+            ([0.75, 0.80, 0.72, 0.78, 0.76, 0.74], [0.60, 0.55, 0.65, 0.0, 0.50, 0.62]),
+            // beyond vcrit (linearized branch): vcrit ~ 0.4-0.6 for these presets
+            ([1.20, 1.10, 1.30, 0.95, 1.05, 1.15], [1.00, 0.90, 1.10, 0.0, 0.85, 0.95]),
+        ];
+        for (vbe, vbc) in cases {
+            let batch = Bjt::solve_batch6(&devs, vbe, vbc);
+            for j in 0..6 {
+                let s = devs[j].solve(vbe[j], vbc[j]);
+                let b = &batch[j];
+                assert_eq!(b.ib.to_bits(), s.ib.to_bits(), "ib dev {j}");
+                assert_eq!(b.ic.to_bits(), s.ic.to_bits(), "ic dev {j}");
+                assert_eq!(b.ie.to_bits(), s.ie.to_bits(), "ie dev {j}");
+                assert_eq!(b.itf.to_bits(), s.itf.to_bits(), "itf dev {j}");
+                assert_eq!(b.gtf.to_bits(), s.gtf.to_bits(), "gtf dev {j}");
+                assert_eq!(b.itr.to_bits(), s.itr.to_bits(), "itr dev {j}");
+                assert_eq!(b.gtr.to_bits(), s.gtr.to_bits(), "gtr dev {j}");
+                assert_eq!(b.dib_b.to_bits(), s.dib_b.to_bits(), "dib_b dev {j}");
+                assert_eq!(b.dib_e.to_bits(), s.dib_e.to_bits(), "dib_e dev {j}");
+                assert_eq!(b.dib_c.to_bits(), s.dib_c.to_bits(), "dib_c dev {j}");
+                assert_eq!(b.dic_b.to_bits(), s.dic_b.to_bits(), "dic_b dev {j}");
+                assert_eq!(b.dic_e.to_bits(), s.dic_e.to_bits(), "dic_e dev {j}");
+                assert_eq!(b.dic_c.to_bits(), s.dic_c.to_bits(), "dic_c dev {j}");
+                assert_eq!(b.die_b.to_bits(), s.die_b.to_bits(), "die_b dev {j}");
+                assert_eq!(b.die_e.to_bits(), s.die_e.to_bits(), "die_e dev {j}");
+                assert_eq!(b.die_c.to_bits(), s.die_c.to_bits(), "die_c dev {j}");
+            }
+        }
+    }
 
     #[test]
     fn forward_active_beta_near_bf() {

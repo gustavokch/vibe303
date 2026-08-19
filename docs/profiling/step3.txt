@@ -1,0 +1,11 @@
+  Elapsed:        1.840 s
+  Checksum:       -8853.544644
+  Elapsed:        2.075 s
+  Checksum:       -8853.544644
+  Elapsed:        1.913 s
+  Checksum:       -8853.544644
+
+NOTE (2026-08-19): runs taken under heavy external load (load avg ~7) -- absolute
+times not comparable to the ~0.75 s clean baseline. Checksum matches the Task-2
+build exactly (-8853.544644): solve_batch6 is bit-identical end-to-end.
+TODO: re-benchmark on a quiet machine.

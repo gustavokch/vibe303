@@ -844,11 +844,25 @@ impl Vco303 {
             (Bjt::npn(self.npn), Unk(N5), Unk(N12), Unk(CP)),    // Q3
             (Bjt::pnp(self.pnp), Unk(SH_IN), Unk(PL), Unk(PSI)), // Q2
         ];
-        for (dev, nb, nc, ne) in bjts {
+        // All 12 junction exponentials in one branchless batch (bit-identical
+        // to per-device `solve`; see `solve_batch6_matches_scalar_solve_bitwise`).
+        let mut devs = [bjts[0].0; 6];
+        let mut vbe = [0.0f64; 6];
+        let mut vbc = [0.0f64; 6];
+        for (j, &(_, nb, nc, ne)) in bjts.iter().enumerate() {
+            devs[j] = bjts[j].0;
             let vb = vof(nb, v);
             let vc = vof(nc, v);
             let ve = vof(ne, v);
-            let o = dev.solve(vb - ve, vb - vc);
+            vbe[j] = vb - ve;
+            vbc[j] = vb - vc;
+        }
+        let outs = Bjt::solve_batch6(&devs, &vbe, &vbc);
+        for (j, &(_, nb, nc, ne)) in bjts.iter().enumerate() {
+            let vb = vof(nb, v);
+            let vc = vof(nc, v);
+            let ve = vof(ne, v);
+            let o = &outs[j];
             // Each terminal current (into device) leaving its node, linearized in
             // the node voltages; constant = I0 - Σ g·V0.
             let i_eq_b = o.ib - (o.dib_b * vb + o.dib_c * vc + o.dib_e * ve);
