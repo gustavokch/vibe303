@@ -576,9 +576,32 @@ impl Vco303 {
         self.cv_lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
     }
 
-    pub fn recalculate_luts_async(&self, age: i32, tolerance: f64) {
+    pub fn get_cv_lut(&self) -> [f64; LUT_K] {
+        self.cv_lut
+    }
+
+    pub fn solve_cv_lut_with_recal(&mut self, recal_scale: f32) -> [f64; LUT_K] {
+        let nominal_lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
+        let mut lut = [0.0f64; LUT_K];
+        for i in 0..LUT_K {
+            let f_nom = midi_hz(lut_midi(i));
+            let cv_nom = nominal_lut[i];
+            let f_raw = self.measure_freq(cv_nom);
+            if f_raw <= 0.0 || recal_scale >= 1.0 {
+                lut[i] = self.secant_cv(f_nom);
+            } else {
+                let delta_p_uncal = 1200.0 * (f_raw / f_nom).log2();
+                let delta_p_eff = (delta_p_uncal * (1.0 - recal_scale as f64)).clamp(-30.0, 30.0);
+                let f_target = f_nom * 2.0f64.powf(delta_p_eff / 1200.0);
+                lut[i] = self.secant_cv(f_target);
+            }
+        }
+        lut
+    }
+
+    pub fn recalculate_luts_async(&self, age: i32, tolerance: f64, seed: u32, recal_scale: f32) {
         let is_fun = self.is_fun;
-        if age == 0 && tolerance == 0.0 {
+        if age == 0 && tolerance == 0.0 && recal_scale == 1.0 {
             // Fast path: check if ALL 22 thermal steps are already cached.
             // If so, load them synchronously (~2 µs, RT-safe — no solver work).
             // If any step is a cache miss, fall through to the background thread.
@@ -643,6 +666,8 @@ impl Vco303 {
             is_fun,
             age,
             tolerance,
+            recal_scale,
+            seed,
             sequence: seq,
             sequence_checker: seq_checker,
             on_complete: Arc::new(move |luts| {
@@ -653,29 +678,36 @@ impl Vco303 {
         submit_lut_job(job);
     }
 
-    pub fn recalculate_luts_sync(&self, age: i32, tolerance: f64) {
+    pub fn recalculate_luts_sync_with_recal(
+        &mut self,
+        age: i32,
+        tolerance: f64,
+        seed: u32,
+        recal_scale: f32,
+    ) {
         let is_fun = self.is_fun;
-        if age == 0 && tolerance == 0.0 {
+        if age == 0 && tolerance == 0.0 && recal_scale == 1.0 {
             let lut = Self::cv_lut_for(self.sr as f32, 0, is_fun);
             self.lut_buffer.store([lut; 22]);
+            self.cv_lut = lut;
             return;
         }
 
-        let mut temp_vco = Vco303::raw(self.sr as f32);
-        temp_vco.dense_solver = false;
-        temp_vco.set_instance_id(self.instance_id);
-        temp_vco.set_fun(is_fun);
-        temp_vco.set_analog_wear(tolerance, age, 1337);
+        self.set_analog_wear(tolerance, age, seed);
 
         let mut local_luts = [[0.0f64; LUT_K]; 22];
         for noise_step in 0..22 {
-            temp_vco.set_thermal_internal(noise_step);
-            for i in 0..LUT_K {
-                local_luts[noise_step as usize][i] = temp_vco.secant_cv(midi_hz(lut_midi(i)));
-            }
+            self.set_thermal_internal(noise_step);
+            local_luts[noise_step as usize] = self.solve_cv_lut_with_recal(recal_scale);
         }
 
         self.lut_buffer.store(local_luts);
+        let noise_idx = self.thermal_noise.clamp(0, 21) as usize;
+        self.cv_lut = local_luts[noise_idx];
+    }
+
+    pub fn recalculate_luts_sync(&mut self, age: i32, tolerance: f64) {
+        self.recalculate_luts_sync_with_recal(age, tolerance, 1337, 1.0);
     }
 
     pub fn set_fun(&mut self, is_fun: bool) {

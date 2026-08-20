@@ -605,8 +605,8 @@ impl Voice {
                 || self.pending_tier == Some(Tier::Ultra)
                 || self.xfade_from.is_some()
             {
-                self.vco.recalculate_luts_async(comp_age, tol_f64);
-                self.vco2.recalculate_luts_async(comp_age, tol_f64);
+                self.vco.recalculate_luts_async(comp_age, tol_f64, comp_seed as u32, 1.0);
+                self.vco2.recalculate_luts_async(comp_age, tol_f64, comp_seed as u32, 1.0);
                 self.vco_dirty = false;
             } else {
                 self.vco_dirty = true;
@@ -821,8 +821,8 @@ impl Voice {
 
         if tier == Tier::Ultra && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
-            self.vco.recalculate_luts_async(self.age, tol_f64);
-            self.vco2.recalculate_luts_async(self.age, tol_f64);
+            self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, 1.0);
+            self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, 1.0);
             self.vco_dirty = false;
         }
     }
@@ -911,8 +911,8 @@ impl Voice {
     pub fn set_tier(&mut self, tier: Tier) {
         if tier == Tier::Ultra && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
-            self.vco.recalculate_luts_async(self.age, tol_f64);
-            self.vco2.recalculate_luts_async(self.age, tol_f64);
+            self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, 1.0);
+            self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, 1.0);
             self.vco_dirty = false;
         }
 
@@ -1496,8 +1496,8 @@ impl Voice {
                 CompTolerance::Five => 0.005,
                 CompTolerance::Ten => 0.01,
             };
-            self.vco.recalculate_luts_async(self.age, tol_f64);
-            self.vco2.recalculate_luts_async(self.age, tol_f64);
+            self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, 1.0);
+            self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, 1.0);
             self.vco.set_thermal(self.thermal_noise_state);
             self.vco2.set_thermal(self.thermal_noise_state);
         }

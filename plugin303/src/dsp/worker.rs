@@ -11,6 +11,8 @@ pub struct LutJob {
     pub is_fun: bool,
     pub age: i32,
     pub tolerance: f64,
+    pub recal_scale: f32,
+    pub seed: u32,
     pub sequence: u64,
     pub sequence_checker: Arc<AtomicU64>,
     pub on_complete: Arc<dyn Fn([[f64; LUT_K]; 22]) + Send + Sync>,
@@ -32,7 +34,7 @@ pub fn get_worker_sender() -> &'static SyncSender<LutJob> {
 
                     let mut local_luts = [[0.0f64; LUT_K]; 22];
 
-                    if job.age == 0 && job.tolerance == 0.0 {
+                    if job.age == 0 && job.tolerance == 0.0 && job.recal_scale == 1.0 {
                         let lut = Vco303::cv_lut_for(job.sr, 0, job.is_fun);
                         local_luts = [lut; 22];
                     } else {
@@ -40,7 +42,7 @@ pub fn get_worker_sender() -> &'static SyncSender<LutJob> {
                         temp_vco.dense_solver = false;
                         temp_vco.set_instance_id(job.instance_id);
                         temp_vco.set_fun(job.is_fun);
-                        temp_vco.set_analog_wear(job.tolerance, job.age, 1337);
+                        temp_vco.set_analog_wear(job.tolerance, job.age, job.seed);
 
                         let mut aborted = false;
                         for noise_step in 0..22 {
@@ -49,10 +51,8 @@ pub fn get_worker_sender() -> &'static SyncSender<LutJob> {
                                 break;
                             }
                             temp_vco.set_thermal_internal(noise_step);
-                            for i in 0..LUT_K {
-                                local_luts[noise_step as usize][i] =
-                                    temp_vco.secant_cv(midi_hz(lut_midi(i)));
-                            }
+                            local_luts[noise_step as usize] =
+                                temp_vco.solve_cv_lut_with_recal(job.recal_scale);
                         }
                         if aborted {
                             continue;
