@@ -25,21 +25,21 @@ fn voice_realized_hz(tier: Tier, topology: CircuitTopology, note: u8) -> f32 {
     v.set_topology(topology);
     v.set_tier_immediate(tier);
     v.set_vca_env_mode(plugin303::params::VcaEnvMode::Gate);
-    v.set_cutoff(4000.0);
+    v.set_cutoff(20000.0);
     v.set_reso(0.0);
     v.note_on(note);
     v.set_gate(true, true, false, false);
 
     // DC blocker to center the waveform and remove any VCF bias DC offset
-    let mut dc_x = 0.0f32;
-    let mut dc_y = 0.0f32;
-    let dc_r = 0.999f32;
+    let mut dc_x = 0.0f64;
+    let mut dc_y = 0.0f64;
+    let dc_r = 0.999f64;
 
     let warmup_samples = 48_000;
 
     // Warm up/settle (note-dependent to avoid high-frequency solver sticking)
     for _ in 0..warmup_samples {
-        let raw = v.tick();
+        let raw = v.tick() as f64;
         let y = raw - dc_x + dc_r * dc_y;
         dc_x = raw;
         dc_y = y;
@@ -49,13 +49,13 @@ fn voice_realized_hz(tier: Tier, topology: CircuitTopology, note: u8) -> f32 {
     let mut prev = dc_y;
     let (mut first_t, mut last_t, mut count) = (-1.0f64, 0.0f64, 0i64);
     for i in 0..n {
-        let raw = v.tick();
+        let raw = v.tick() as f64;
         let y = raw - dc_x + dc_r * dc_y;
         dc_x = raw;
         dc_y = y;
 
         if prev < 0.0 && y >= 0.0 {
-            let frac = (-prev as f64) / ((y - prev) as f64);
+            let frac = (-prev) / (y - prev);
             let t = i as f64 + frac;
             if first_t < 0.0 {
                 first_t = t;

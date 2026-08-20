@@ -209,8 +209,69 @@ fn test_age_100_maintains_positive_cutoff_and_resonance() {
     );
     v.note_on(60);
     v.set_gate(true, true, false, false);
-    for _ in 0..100 {
+    for _ in 0..720_000 {
         let s = v.tick();
         assert!(s.is_finite());
     }
+}
+
+#[test]
+fn test_thermal_model_ramp_and_persistence() {
+    let sr = 48000.0;
+    let mut v = Voice::new(sr);
+    v.update_params(
+        0.0, 0.0, 0.0, 0.0, plugin303::params::OscWave::Saw,
+        0.5, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0,
+        plugin303::params::VcfTaps::FourPole, 0.0, false,
+        3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
+        plugin303::params::VcaEnvMode::Envelope,
+        10, 0.5, plugin303::params::CompTolerance::Ten, 50,
+        CircuitTopology::Accurate, 0.0, 1337, 0.5, 0.0, 1.0,
+    );
+
+    let initial_temp = v.temperature();
+    v.note_on(60);
+    v.set_gate(true, true, false, false);
+
+    for _ in 0..720_000 {
+        v.tick();
+    }
+    let warmed_temp = v.temperature();
+    assert!(
+        warmed_temp > initial_temp + 1.0,
+        "Temperature should ramp up when gate is active: initial={}, warmed={}",
+        initial_temp, warmed_temp
+    );
+
+    v.reset();
+    assert_eq!(
+        v.temperature(), warmed_temp,
+        "Temperature must persist across Voice::reset()"
+    );
+}
+
+#[test]
+fn test_drift_reso_and_osc2_pitch() {
+    let sr = 48000.0;
+    let mut v = Voice::new(sr);
+    v.update_params(
+        0.0, 0.0, 7.0, 0.8, plugin303::params::OscWave::Saw,
+        0.5, 0.0, 0.5, 0.8, 0.5, 0.5, 0.5, 0.0,
+        plugin303::params::VcfTaps::FourPole, 0.0, false,
+        3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
+        plugin303::params::VcaEnvMode::Envelope,
+        10, 0.8, plugin303::params::CompTolerance::Ten, 20,
+        CircuitTopology::Accurate, 0.0, 1337, 0.5, 0.0, 1.0,
+    );
+    v.note_on(60);
+    v.set_gate(true, true, false, false);
+
+    let mut samples = Vec::new();
+    for _ in 0..48000 {
+        samples.push(v.tick());
+    }
+
+    let non_zero = samples.iter().any(|&s| s.abs() > 1e-4);
+    let all_finite = samples.iter().all(|s| s.is_finite());
+    assert!(all_finite && non_zero, "Osc2 and drift render valid fluctuating audio");
 }
