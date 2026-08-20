@@ -596,7 +596,8 @@ impl Default for Plugin303Params {
                     min: (0),
                     max: (100),
                 },
-            ),
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.1} yrs", v as f32 * 0.45))),
 
             comp_drift: FloatParam::new(
                 "Comp Drift",

@@ -42,6 +42,7 @@ fn component_drift_produces_fluctuations() {
         0,   // comp_seed
         0.5, // glide_knob
         0.0, // reso_comp
+        1.0, // recalibration_scale
     );
 
     v.note_on(60);
@@ -102,6 +103,7 @@ fn component_age_affects_tuning_and_cutoff() {
         0,   // comp_seed
         0.5, // glide_knob
         0.0, // reso_comp
+        1.0, // recalibration_scale
     );
 
     // Aged (age = 1.0)
@@ -140,6 +142,7 @@ fn component_age_affects_tuning_and_cutoff() {
         0,   // comp_seed
         0.5, // glide_knob
         0.0, // reso_comp
+        1.0, // recalibration_scale
     );
 
     v_new.note_on(60);
@@ -186,4 +189,28 @@ fn test_comp_seed_produces_different_components() {
     vco_b.set_analog_wear(0.05, 10, 7331);
     assert_ne!(vco_a.get_c_mults(), vco_b.get_c_mults());
     assert_ne!(vco_a.get_r_mults(), vco_b.get_r_mults());
+}
+
+#[test]
+fn test_age_100_maintains_positive_cutoff_and_resonance() {
+    let mut v = Voice::new(48000.0);
+    v.update_params(
+        0.0, 0.0, 0.0, 0.0, plugin303::params::OscWave::Saw,
+        0.5, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0,
+        plugin303::params::VcfTaps::FourPole, 0.0, false,
+        3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
+        plugin303::params::VcaEnvMode::Envelope,
+        100, // max age
+        0.5, // comp_drift
+        plugin303::params::CompTolerance::Ten,
+        100, // max thermal noise
+        CircuitTopology::Accurate,
+        0.0, 1337, 0.5, 0.0, 1.0, // recalibration_scale = 1.0
+    );
+    v.note_on(60);
+    v.set_gate(true, true, false, false);
+    for _ in 0..100 {
+        let s = v.tick();
+        assert!(s.is_finite());
+    }
 }

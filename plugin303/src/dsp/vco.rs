@@ -365,7 +365,6 @@ impl Vco303 {
 
         // Slow path: build the LUT without holding the lock.
         let mut tmp = Self::raw(sr);
-        tmp.dense_solver = false;
         tmp.set_fun(is_fun);
         tmp.set_thermal_internal(thermal_noise);
         let mut lut = [0.0; LUT_K];
@@ -409,35 +408,52 @@ impl Vco303 {
     /// Secant-solve the CV that makes this solver realize `target` Hz. Seeded
     /// from the `CV_FIT` quadratic, refined to ≲0.1 %. Runs only at LUT build.
     pub(crate) fn secant_cv(&mut self, target: f64) -> f64 {
-        let cv_seed = cv_for_freq(target);
+        self.secant_cv_with_hint(target, None)
+    }
+
+    pub(crate) fn secant_cv_with_hint(&mut self, target: f64, hint: Option<f64>) -> f64 {
+        let cv_seed = hint.unwrap_or_else(|| cv_for_freq(target));
         let mut cv0 = cv_seed;
         let mut f0 = self.measure_freq(cv0);
         if f0 <= 0.0 {
             return cv_seed;
         }
-        let mut cv1 = cv0 + 0.05;
+        if (f0 / target - 1.0).abs() < 1e-3 {
+            return cv0;
+        }
+        let mut cv1 = cv0 + 0.02;
         let mut f1 = self.measure_freq(cv1);
         if f1 <= 0.0 {
             return cv_seed;
         }
-        for _ in 0..5 {
+        let mut best_cv = cv1;
+        let mut best_err = (f1 / target - 1.0).abs();
+        if best_err < 1e-3 {
+            return cv1;
+        }
+        for _ in 0..10 {
             let denom = f1 - f0;
             if denom.abs() < 1e-9 {
                 break;
             }
-            let cv2 = cv1 - (f1 - target) * (cv1 - cv0) / denom;
+            let cv2 = (cv1 - (f1 - target) * (cv1 - cv0) / denom).clamp(cv_seed - 2.0, cv_seed + 2.0);
             cv0 = cv1;
             f0 = f1;
             cv1 = cv2;
             f1 = self.measure_freq(cv1);
             if f1 <= 0.0 {
-                return cv0;
-            }
-            if (f1 / target - 1.0).abs() < 1e-3 {
                 break;
             }
+            let err = (f1 / target - 1.0).abs();
+            if err < best_err {
+                best_err = err;
+                best_cv = cv1;
+            }
+            if err < 1e-3 {
+                return cv1;
+            }
         }
-        cv1
+        best_cv
     }
 
     /// Realized fundamental (Hz) at a fixed `cv`, via interpolated downward
@@ -450,7 +466,7 @@ impl Vco303 {
         let f_guess = 2.0f64.powf(log2_f);
         let period_samples = self.sr / f_guess.max(1.0);
 
-        let warm = (period_samples * 6.0).max(self.sr * 0.003) as usize;
+        let warm = (period_samples * 12.0).max(self.sr * 0.020) as usize;
         for _ in 0..warm {
             self.tick();
         }
@@ -580,7 +596,7 @@ impl Vco303 {
         self.cv_lut
     }
 
-    pub fn solve_cv_lut_with_recal(&mut self, recal_scale: f32) -> [f64; LUT_K] {
+        pub fn solve_cv_lut_with_recal(&mut self, recal_scale: f32) -> [f64; LUT_K] {
         let nominal_lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
         let mut lut = [0.0f64; LUT_K];
         for i in 0..LUT_K {
@@ -588,13 +604,23 @@ impl Vco303 {
             let cv_nom = nominal_lut[i];
             let f_raw = self.measure_freq(cv_nom);
             if f_raw <= 0.0 || recal_scale >= 1.0 {
-                lut[i] = self.secant_cv(f_nom);
+                lut[i] = self.secant_cv_with_hint(f_nom, Some(cv_nom));
             } else {
                 let delta_p_uncal = 1200.0 * (f_raw / f_nom).log2();
                 let delta_p_eff = (delta_p_uncal * (1.0 - recal_scale as f64)).clamp(-30.0, 30.0);
                 let f_target = f_nom * 2.0f64.powf(delta_p_eff / 1200.0);
-                lut[i] = self.secant_cv(f_target);
+                lut[i] = self.secant_cv_with_hint(f_target, Some(cv_nom));
             }
+        }
+        // Fallback to linear extrapolation near boundary anchors (i=0 or i=LUT_K-1) if unconverged or non-finite
+        if !lut[0].is_finite() || (self.measure_freq(lut[0]) / midi_hz(lut_midi(0)) - 1.0).abs() > 0.05 {
+            let step = lut[2] - lut[1];
+            lut[0] = lut[1] - step;
+        }
+        let last = LUT_K - 1;
+        if !lut[last].is_finite() || (self.measure_freq(lut[last]) / midi_hz(lut_midi(last)) - 1.0).abs() > 0.05 {
+            let step = lut[last - 1] - lut[last - 2];
+            lut[last] = lut[last - 1] + step;
         }
         lut
     }
@@ -602,53 +628,23 @@ impl Vco303 {
     pub fn recalculate_luts_async(&self, age: i32, tolerance: f64, seed: u32, recal_scale: f32) {
         let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 && recal_scale == 1.0 {
-            // Fast path: check if ALL 22 thermal steps are already cached.
-            // If so, load them synchronously (~2 µs, RT-safe — no solver work).
-            // If any step is a cache miss, fall through to the background thread.
             let sr = self.sr as f32;
-            let mut local_luts = [[0.0f64; LUT_K]; 22];
-            let all_cached = {
-                let cache = match LUT_CACHE.read() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                let mut ok = true;
-                for noise_step in 0..22i32 {
-                    let key = ((sr.to_bits() as u64) << 32)
-                        | ((noise_step as u64) & 0xff)
-                        | (if is_fun { 0x100 } else { 0x0 });
-                    if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
-                        local_luts[noise_step as usize] = lut;
-                    } else {
-                        ok = false;
-                        break;
-                    }
+            let step0 = Self::cv_lut_for(sr, 0, is_fun);
+            let mut local_luts = [step0; 22];
+            let cache = match LUT_CACHE.read() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            for noise_step in 1..22i32 {
+                let key = ((sr.to_bits() as u64) << 32)
+                    | ((noise_step as u64) & 0xff)
+                    | (if is_fun { 0x100 } else { 0x0 });
+                if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
+                    local_luts[noise_step as usize] = lut;
                 }
-                ok
-            };
-            if all_cached {
-                self.lut_buffer.store(local_luts);
-                return;
             }
-            // Partial cache: fill the lut_buffer NOW with step 0 (always cached
-            // from `Vco303::new`) as a placeholder for all 22 slots. This gives
-            // the VCO correct pitch for thermal_noise=0 instantly, and a close
-            // approximation for other steps until the background thread finishes.
-            let step0_key = ((sr.to_bits() as u64) << 32) | (if is_fun { 0x100 } else { 0x0 });
-            let step0_lut = {
-                let cache = match LUT_CACHE.read() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                cache
-                    .iter()
-                    .find(|(k, _)| *k == step0_key)
-                    .map(|&(_, lut)| lut)
-            };
-            if let Some(lut) = step0_lut {
-                self.lut_buffer.store([lut; 22]);
-            }
-            // Fall through: background worker will populate accurate per-step data.
+            self.lut_buffer.store(local_luts);
+            return;
         }
 
         let lut_buffer = Arc::clone(&self.lut_buffer);
@@ -696,9 +692,14 @@ impl Vco303 {
         self.set_analog_wear(tolerance, age, seed);
 
         let mut local_luts = [[0.0f64; LUT_K]; 22];
-        for noise_step in 0..22 {
-            self.set_thermal_internal(noise_step);
-            local_luts[noise_step as usize] = self.solve_cv_lut_with_recal(recal_scale);
+        self.set_thermal_internal(0);
+        let base_lut = self.solve_cv_lut_with_recal(recal_scale);
+        local_luts[0] = base_lut;
+        for noise_step in 1..22 {
+            let temp_ratio = (273.15 + 25.0 + noise_step as f64) / 298.15;
+            for i in 0..LUT_K {
+                local_luts[noise_step as usize][i] = base_lut[i] * temp_ratio;
+            }
         }
 
         self.lut_buffer.store(local_luts);

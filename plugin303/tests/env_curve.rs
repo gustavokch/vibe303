@@ -130,6 +130,7 @@ fn test_accent_decays_faster() {
         0,
         0.5,
         0.0,
+        1.0,
     );
 
     // Trigger normal note (accent = false)
@@ -176,6 +177,7 @@ fn test_accent_decays_faster() {
         0,
         0.5,
         0.0,
+        1.0,
     );
     voice.set_gate(true, true, true, false);
 
@@ -248,6 +250,7 @@ fn test_accent_boosts_vca() {
         0,
         0.5,
         0.0,
+        1.0,
     );
     voice_normal.set_gate(true, true, false, false);
 
@@ -293,6 +296,7 @@ fn test_accent_boosts_vca() {
         0,
         0.5,
         0.0,
+        1.0,
     );
     voice_accent.set_gate(true, true, true, false);
 
@@ -348,6 +352,7 @@ fn test_glide_slew_behavior() {
         0,
         0.5,
         0.0,
+        1.0,
     );
 
     // 1. Non-slide note_on: pitch should jump instantly
@@ -438,6 +443,7 @@ fn test_accent_mid_note_switch_without_trigger() {
         0,
         0.5,
         0.0,
+        1.0,
     );
 
     // Start unaccented note
@@ -495,6 +501,7 @@ fn test_env_mod_octave_scaling() {
         0,
         0.5,
         0.0,
+        1.0,
     );
     voice.set_gate(true, true, false, false);
     voice.tick();

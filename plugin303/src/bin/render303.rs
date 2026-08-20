@@ -96,6 +96,7 @@ fn main() {
         0,   // comp_seed
         0.5, // glide_knob
         0.0, // reso_comp
+        1.0, // recalibration_scale
     );
 
     if gate_vca {

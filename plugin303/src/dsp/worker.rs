@@ -3,7 +3,7 @@ use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::{Arc, OnceLock};
 use std::thread;
 
-use super::vco::{lut_midi, midi_hz, Vco303, LUT_K};
+use super::vco::{Vco303, LUT_K};
 
 pub struct LutJob {
     pub sr: f32,
@@ -44,18 +44,14 @@ pub fn get_worker_sender() -> &'static SyncSender<LutJob> {
                         temp_vco.set_fun(job.is_fun);
                         temp_vco.set_analog_wear(job.tolerance, job.age, job.seed);
 
-                        let mut aborted = false;
-                        for noise_step in 0..22 {
-                            if job.sequence_checker.load(Ordering::Acquire) != job.sequence {
-                                aborted = true;
-                                break;
+                        temp_vco.set_thermal_internal(0);
+                        let base_lut = temp_vco.solve_cv_lut_with_recal(job.recal_scale);
+                        local_luts[0] = base_lut;
+                        for noise_step in 1..22 {
+                            let temp_ratio = (273.15 + 25.0 + noise_step as f64) / 298.15;
+                            for i in 0..LUT_K {
+                                local_luts[noise_step as usize][i] = base_lut[i] * temp_ratio;
                             }
-                            temp_vco.set_thermal_internal(noise_step);
-                            local_luts[noise_step as usize] =
-                                temp_vco.solve_cv_lut_with_recal(job.recal_scale);
-                        }
-                        if aborted {
-                            continue;
                         }
                     }
 

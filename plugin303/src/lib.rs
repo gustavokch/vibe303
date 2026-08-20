@@ -278,6 +278,7 @@ impl Plugin for Plugin303 {
             self.params.comp_seed.value(),
             self.params.glide.value(),
             self.params.reso_comp.value(),
+            self.params.recalibration_scale.value(),
         );
         self.voice.update_clipper_params(VoiceClipperParams {
             bypass: self.params.clipper_bypass.value(),

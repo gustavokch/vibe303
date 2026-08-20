@@ -55,8 +55,11 @@ In `plugin303/src/params.rs`:
     #[id = "recalibration_scale"]
     pub recalibration_scale: FloatParam,
 ```
-2. In `Plugin303Params::default()`, initialize `recalibration_scale` and update `comp_drift`:
+2. In `Plugin303Params::default()`, initialize `recalibration_scale` and update `comp_drift` and `comp_age` formatter (`v as f32 * 0.45` formula):
 ```rust
+            comp_age: IntParam::new("Comp Age", 0, IntRange::linear(0, 100))
+                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.1} yrs", v as f32 * 0.45))),
+
             recalibration_scale: FloatParam::new(
                 "Recalibration Scale",
                 1.0,
@@ -260,7 +263,7 @@ Expected: FAIL with "no method named `recalculate_luts_sync_with_recal`"
      - Calculate uncalibrated pitch deviation: $\Delta p_{\text{uncal}} = 1200.0 \cdot \log_2(f_{\text{raw}} / f_{\text{nom}})$.
      - Blend target: $\Delta p_{\text{eff}} = (\Delta p_{\text{uncal}} \cdot (1.0 - \text{recal\_scale} \text{ as f64})).clamp(-30.0, 30.0)$.
      - Target frequency: $f_{\text{target}} = f_{\text{nom}} \cdot 2.0^{\Delta p_{\text{eff}} / 1200.0}$.
-     - Run secant solver for $f_{\text{target}}$.
+     - Run secant solver for $f_{\text{target}}$ (maximum 10 iterations; if secant solver fails to converge near anchor bounds $k=36, 60$, fall back to linear interpolation between adjacent converged anchors).
    - Update `recalculate_luts_async(age, tolerance, seed, recal_scale)`.
 
 - [ ] **Step 4: Run test to verify it passes**

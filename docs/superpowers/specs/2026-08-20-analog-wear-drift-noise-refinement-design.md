@@ -22,7 +22,7 @@ This design refines and physically grounds the four analog character dimensions 
 
 | Parameter | Type | Range | Default | Unit / Formatter | Description |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`comp_age`** | `IntParam` | `0..100` | `0` | `" yrs"` (0..45 yrs) | Vintage component wear |
+| **`comp_age`** | `IntParam` | `0..100` | `0` | `" yrs"` (`v as f32 * 0.45` -> 0.0..45.0 yrs) | Vintage component wear |
 | **`tolerance`** | `EnumParam<CompTolerance>` | `[Zero, PointFive, Two, Five, Ten]` | `Zero` | `0%`, `0.5%`, `2%`, `5%`, `10%` | Component manufacturing grade |
 | **`recalibration_scale`** | `FloatParam` | `0.0..1.0` | `1.0` | `"%"` (0..100%) | Trimmer recalibration accuracy (1.0 = perfect A440/1V-Oct, 0.0 = unserviced) |
 | **`comp_drift`** | `FloatParam` | `0.0..1.0` | `0.1` | `"%"` (0..100%) | Low-frequency pink noise wandering depth |
@@ -33,12 +33,13 @@ This design refines and physically grounds the four analog character dimensions 
 In `voice.rs`:
 ```rust
 let tol_f64 = match tolerance {
-    CompTolerance::Zero => 0.0,
-    CompTolerance::PointFive => 0.005, // 0.5%
-    CompTolerance::Two => 0.02,        // 2.0%
-    CompTolerance::Five => 0.05,       // 5.0%
-    CompTolerance::Ten => 0.10,        // 10.0%
+    CompTolerance::Zero => 0.0f64,
+    CompTolerance::PointFive => 0.005f64, // 0.5%
+    CompTolerance::Two => 0.02f64,        // 2.0%
+    CompTolerance::Five => 0.05f64,       // 5.0%
+    CompTolerance::Ten => 0.10f64,        // 10.0%
 };
+let tol_f32 = tol_f64 as f32;
 ```
 
 ---
@@ -88,7 +89,7 @@ Apply the trimmer adjustment scaling:
 $$\Delta p_{\text{eff}}(k) = \text{clamp}\Big(\Delta p_{\text{uncal}}(k) \cdot (1.0 - \text{recalibration\_scale}),\, -30.0\text{ cents},\, +30.0\text{ cents}\Big)$$
 $$f_{\text{target, eff}}(k) = f_{\text{nominal}}(k) \cdot 2^{\frac{\Delta p_{\text{eff}}(k)}{1200.0}}$$
 
-The secant solver searches for $CV(k)$ such that $f(CV(k)) = f_{\text{target, eff}}(k)$.
+The secant solver searches for $CV(k)$ such that $f(CV(k)) = f_{\text{target, eff}}(k)$ in at most 10 iterations. If the secant solver fails to converge within 10 iterations near anchor bounds $k=36, 60$ (or error $\ge 1\%$), it falls back to linear extrapolation/interpolation between adjacent converged anchors (e.g. $k=37, 38$ or $k=58, 59$).
 
 ### 4.3 Background Worker & Double-Buffered Swapping
 * `LutJob` in `worker.rs` and `vco.rs` is extended:
@@ -124,7 +125,7 @@ Remove unused/dead generators (`drift_pitch_thermal`, `drift_pitch_age`, `drift_
 
 ### 5.2 Operating Temperature & Thermal Noise Harmonization
 * Ambient temperature: $T_{\text{ambient}} = 20.0 + 20.0 \cdot \left(\frac{\text{thermal\_noise}}{100.0}\right)^\circ\text{C}$.
-* Dynamic note self-heating: $\Delta T_{\text{dynamic}} \le +3.0^\circ\text{C}$ ($\tau_{\text{warmup}} = 15\text{ s}$, $\tau_{\text{cooldown}} = 30\text{ s}$).
+* Dynamic note self-heating: $\Delta T_{\text{dynamic}} \le +3.0^\circ\text{C}$ ($\tau_{\text{warmup}} = 15\text{ s}$, $\tau_{\text{cooldown}} = 30\text{ s}$). $\Delta T_{\text{dynamic}}$ and overall `temperature` persist globally per synth engine instance (`Voice`) across note triggers, voice re-allocations, and note steals (initialized once on synth instantiation to $20.0^\circ\text{C}$, updated per-sample, and never reset on note-on).
 * Unified operating temperature: $T_{\text{op}} = T_{\text{ambient}} + \Delta T_{\text{dynamic}} \in [20.0^\circ\text{C}, 45.0^\circ\text{C}]$.
 * Pass $T_{\text{op}}$ to `Vco303::set_thermal` and `LadderVcf::set_thermal` (eliminating the $\times 10.0$ factor bug in ladder).
 * `voice.rs` smoothly interpolates between adjacent bins in the 22-step LUT buffer.

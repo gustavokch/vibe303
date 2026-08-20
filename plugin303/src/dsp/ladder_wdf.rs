@@ -239,7 +239,7 @@ impl LadderVcf {
 
     pub fn set_thermal(&mut self, thermal_noise: i32) {
         self.thermal_noise = thermal_noise;
-        let temp_c = 25.0 + thermal_noise as f64 * 10.0;
+        let temp_c = 20.0 + 25.0 * (thermal_noise as f64 / 100.0);
         self.diode.set_temp(temp_c);
         self.set_cal(self.cal); // Recalculate i0
     }

@@ -13,5 +13,7 @@ fn test_recalibration_scale_alters_lut() {
     vco_recal.recalculate_luts_sync_with_recal(40, 0.10, 1337, 1.0);
     vco_uncal.recalculate_luts_sync_with_recal(40, 0.10, 1337, 0.0);
 
+    println!("RECAL LUT: {:?}", vco_recal.get_cv_lut());
+    println!("UNCAL LUT: {:?}", vco_uncal.get_cv_lut());
     assert_ne!(vco_recal.get_cv_lut(), vco_uncal.get_cv_lut());
 }
