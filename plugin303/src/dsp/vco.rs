@@ -509,11 +509,11 @@ impl Vco303 {
         self.cv = cv;
     }
 
-    pub fn set_analog_wear(&mut self, tolerance: f64, age: i32) {
-        let mut seed = 12345u32.wrapping_add(self.instance_id * 1000);
+    pub fn set_analog_wear(&mut self, tolerance: f64, age: i32, seed: u32) {
+        let mut rng_state = seed.wrapping_add(self.instance_id.wrapping_mul(0x9E3779B9));
         let mut next_f64 = || {
-            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
-            (seed as f64) / (std::u32::MAX as f64)
+            rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
+            (rng_state as f64) / (std::u32::MAX as f64)
         };
         let mut next_gauss = || {
             let mut u1 = next_f64();
@@ -524,22 +524,23 @@ impl Vco303 {
             (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
         };
 
-        let systematic_r = (age as f64 * 0.01).min(0.10);
-        let systematic_c = -(age as f64 * 0.01).min(0.10);
+        let systematic_r = 0.05 * (age as f64 / 100.0);
+        let systematic_c = -0.05 * (age as f64 / 100.0);
 
-        let bjt_age_factor = 1.0 - (age as f64 * 0.01).min(0.10);
+        let bjt_age_factor = 1.0 - 0.15 * (age as f64 / 100.0);
         self.npn.bf = BjtParams::n2n3904().bf * bjt_age_factor;
         self.npn.br = BjtParams::n2n3904().br * bjt_age_factor;
         self.pnp.bf = BjtParams::p2n3906().bf * bjt_age_factor;
         self.pnp.br = BjtParams::p2n3906().br * bjt_age_factor;
 
+        let sigma = tolerance / 3.0;
         for m in self.r_mults.iter_mut() {
-            let r_dev = next_gauss() * (tolerance / 3.0 + age as f64 * 0.002);
-            *m = (1.0 + systematic_r + r_dev).clamp(0.90, 1.10);
+            let r_dev = next_gauss() * sigma;
+            *m = (1.0 + systematic_r + r_dev).clamp(0.75, 1.25);
         }
         for m in self.c_mults.iter_mut() {
-            let c_dev = next_gauss() * (tolerance / 3.0 + age as f64 * 0.002);
-            *m = (1.0 + systematic_c + c_dev).clamp(0.90, 1.10);
+            let c_dev = next_gauss() * sigma;
+            *m = (1.0 + systematic_c + c_dev).clamp(0.75, 1.25);
         }
         self.update_g_mults();
     }
@@ -664,7 +665,7 @@ impl Vco303 {
         temp_vco.dense_solver = false;
         temp_vco.set_instance_id(self.instance_id);
         temp_vco.set_fun(is_fun);
-        temp_vco.set_analog_wear(tolerance, age);
+        temp_vco.set_analog_wear(tolerance, age, 1337);
 
         let mut local_luts = [[0.0f64; LUT_K]; 22];
         for noise_step in 0..22 {
@@ -1163,7 +1164,7 @@ mod tests {
     fn test_g_mults_updated() {
         let mut vco = Vco303::new(48000.0);
         let initial_g = vco.g_mults[0];
-        vco.set_analog_wear(0.05, 5);
+        vco.set_analog_wear(0.05, 5, 1337);
         assert_ne!(vco.g_mults[0], initial_g);
     }
 

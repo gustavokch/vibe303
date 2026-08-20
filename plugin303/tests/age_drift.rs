@@ -169,10 +169,21 @@ fn test_instance_specific_tolerance_seeds() {
     let mut vco2 = Vco303::new(48000.0);
     vco1.set_instance_id(1);
     vco2.set_instance_id(2);
-    vco1.set_analog_wear(0.05, 0); // 5% tolerance
-    vco2.set_analog_wear(0.05, 0); // 5% tolerance
+    vco1.set_analog_wear(0.05, 0, 1337); // 5% tolerance
+    vco2.set_analog_wear(0.05, 0, 1337); // 5% tolerance
 
-    // Verify that capacitor multipliers differ due to separate seeds
+    // Verify that capacitor multipliers differ due to separate instance IDs
     assert_ne!(vco1.get_c_mults(), vco2.get_c_mults());
     assert_ne!(vco1.get_r_mults(), vco2.get_r_mults());
+}
+
+#[test]
+fn test_comp_seed_produces_different_components() {
+    use plugin303::dsp::vco::Vco303;
+    let mut vco_a = Vco303::new(48000.0);
+    let mut vco_b = Vco303::new(48000.0);
+    vco_a.set_analog_wear(0.05, 10, 1337);
+    vco_b.set_analog_wear(0.05, 10, 7331);
+    assert_ne!(vco_a.get_c_mults(), vco_b.get_c_mults());
+    assert_ne!(vco_a.get_r_mults(), vco_b.get_r_mults());
 }

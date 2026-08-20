@@ -40,7 +40,7 @@ pub fn get_worker_sender() -> &'static SyncSender<LutJob> {
                         temp_vco.dense_solver = false;
                         temp_vco.set_instance_id(job.instance_id);
                         temp_vco.set_fun(job.is_fun);
-                        temp_vco.set_analog_wear(job.tolerance, job.age);
+                        temp_vco.set_analog_wear(job.tolerance, job.age, 1337);
 
                         let mut aborted = false;
                         for noise_step in 0..22 {
