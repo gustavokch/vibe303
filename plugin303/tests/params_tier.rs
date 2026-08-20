@@ -20,7 +20,8 @@ fn tier_enum_has_three_variants() {
 fn test_analog_character_parameter_ranges() {
     let params = Plugin303Params::default();
     assert_eq!(params.comp_age.value(), 0);
-    assert_eq!(params.comp_drift.value(), 0.0);
+    assert_eq!(params.comp_drift.value(), 0.1);
+    assert_eq!(params.recalibration_scale.value(), 1.0);
     assert_eq!(
         params.tolerance.value(),
         plugin303::params::CompTolerance::Zero

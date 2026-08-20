@@ -330,6 +330,8 @@ pub struct Plugin303Params {
     pub comp_age: IntParam,
     #[id = "comp_drift"]
     pub comp_drift: FloatParam,
+    #[id = "recalibration_scale"]
+    pub recalibration_scale: FloatParam,
     #[id = "tolerance"]
     pub tolerance: EnumParam<CompTolerance>,
     #[id = "thermal_noise"]
@@ -598,14 +600,21 @@ impl Default for Plugin303Params {
 
             comp_drift: FloatParam::new(
                 "Comp Drift",
-                0.0,
-                FloatRange::SymmetricalSkewed {
-                    min: (0.0),
-                    max: (0.5),
-                    factor: (0.8),
-                    center: (0.25),
+                0.1,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 1.0,
+                    factor: FloatRange::skew_factor(-1.2),
                 },
-            ),
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+
+            recalibration_scale: FloatParam::new(
+                "Recalibration Scale",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
 
             tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),
 
