@@ -48,7 +48,7 @@ scratch/
 !.claude/workflows
 .jc303-ref/
 worktree-*/
-test_*
+/test_*
 *.csv
 sweep_output*
 
