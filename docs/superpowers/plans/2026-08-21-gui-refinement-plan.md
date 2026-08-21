@@ -2,90 +2,86 @@
 
 **Date:** 2026-08-21  
 **Status:** Approved  
-**Target File:** `docs/superpowers/plans/2026-08-21-gui-refinement-plan.md`  
-**Reference Specification:** `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
+**Target File:** `/Users/gus/Git/vibe303/docs/superpowers/plans/2026-08-21-gui-refinement-plan.md`  
+**Reference Specification:** `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
 
 ---
 
 ## 1. Executive Summary & Quality Scoring
 
-A visual QA evaluation was conducted across the three primary GUI sections of `plugin303`. The evaluation compared the implemented UI against the baseline design specification in `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`.
+A visual QA evaluation was conducted across the five primary GUI sections of `plugin303`. The evaluation compared the implemented UI against the design specification in `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`.
 
 ### Weighted Visual Quality Score Calculation
 
-- **Classic Panel:** Alignment Score = 98.0, Weight = 0.35, Weighted Contribution = 34.30
-- **Souped-Up Drawer:** Alignment Score = 98.0, Weight = 0.30, Weighted Contribution = 29.40
-- **16-Step Sequencer:** Alignment Score = 100.0, Weight = 0.35, Weighted Contribution = 35.00
-- **Overall Weighted Score:** 34.30 + 29.40 + 35.00 = **98.70 / 100**
+- **Header Bar:** Alignment Score = 96.0, Weight = 0.15, Weighted Contribution = 14.40
+- **Classic Panel:** Alignment Score = 95.0, Weight = 0.25, Weighted Contribution = 23.75
+- **Souped-Up Drawer:** Alignment Score = 98.0, Weight = 0.20, Weighted Contribution = 19.60
+- **Clipper & Tweaks:** Alignment Score = 90.0, Weight = 0.15, Weighted Contribution = 13.50
+- **16-Step Sequencer:** Alignment Score = 100.0, Weight = 0.25, Weighted Contribution = 25.00
+- **Overall Weighted Score:** 14.40 + 23.75 + 19.60 + 13.50 + 25.00 = **96.25 / 100**
 
-| Panel Section | Section Weight | Alignment Score | Weighted Contribution | Spec Compliance |
+| Section | Weight | Alignment Score | Weighted Contribution | Spec Compliance |
 | :--- | :---: | :---: | :---: | :---: |
-| **Classic Panel** | 0.35 | 98.0 | 34.30 | Pass |
-| **Souped-Up Drawer** | 0.30 | 98.0 | 29.40 | Pass |
-| **16-Step Sequencer** | 0.35 | 100.0 | 35.00 | Pass |
-| **Total Overall Score** | **1.00** | — | **98.70** | **Pass** |
+| **Header Bar** | 0.15 | 96.0 | 14.40 | Pass |
+| **Classic Panel** | 0.25 | 95.0 | 23.75 | Pass |
+| **Souped-Up Drawer** | 0.20 | 98.0 | 19.60 | Pass |
+| **Clipper & Tweaks** | 0.15 | 90.0 | 13.50 | Pass |
+| **16-Step Sequencer** | 0.25 | 100.0 | 25.00 | Pass |
+| **Total Overall Score** | **1.00** | — | **96.25** | **Pass** |
 
-**Overall Result:** **98.7 / 100** — Spec Compliance: **TRUE** (All sections pass visual quality gate).
+**Overall Result:** **96.25 / 100** — Spec Compliance: **TRUE** (All sections pass visual quality gate).
 
 ---
 
 ## 2. Section Findings Synthesis
 
-### 2.1 Classic Panel (Score: 98 / 100)
-The Classic Panel fulfills all procedural vector rendering and single-row layout requirements. Minor observations comply with accepted design specifications:
+### 2.1 Header Bar (Score: 96 / 100)
+- **Logotype Branding:** The TECHNEO logotype renders with metallic gradient fill and orange TB-303 PLUGIN sub-label. Conforms to vector specification.
+- **Circuit Topology Switch:** Centered switch with knurled carriage and orange active FUN label.
+- **Vent Slits & Quality Selector:** Dual 12-slit vent banks and QUALITY switch render with correct alignment.
 
-1. **Knob303 Rotary Dials (`geometry`):**
-   - *Expected:* Seven vintage brushed aluminum knobs with 270-degree radial tick marks, engraved pointer line, parameter title, and formatted engineering units.
-   - *Observed:* All 7 classic knobs (TUNING, CUTOFF, RESONANCE, ENV MOD, DECAY, ACCENT, VOLUME) render with 11 radial ticks, orange value arcs, and unit readouts.
-   - *Fix / Status:* No change needed. Knobs strictly follow the design specification.
+### 2.2 Classic Panel (Score: 95 / 100)
+- **Top Controls Panel Horizontal Fill:** Controls occupy left 65 percent of panel width. Empty space exists on the right side.
+- **Waveform Switch:** Vertical detents (SAW, SQR, SWP) align with orange active highlight.
+- **Classic 7-Knob Dials:** Tuning, Cutoff, Resonance, Env Mod, Decay, Accent, Volume display 270-degree radial tick marks, value arcs, and engineering unit readouts.
+- **MEG/VEG ADSR Mini-Faders:** Compact vertical faders render with orange thumbs, millisecond readouts, and percentage readouts.
 
-2. **Header Bar Controls & Branding (`alignment`):**
-   - *Expected:* Two-tone metallic TECHNEO logotype, center vent slit banks, CIRCUIT TOPOLOGY switch, QUALITY switch, and TB-303 PLUGIN label.
-   - *Observed:* Header bar renders with horizontal gradient, metallic logotype, vent slits, and aligned slide switches.
-   - *Fix / Status:* No change needed. Layout complies with the specification and accepted deviations.
+### 2.3 Souped-Up Drawer (Score: 98 / 100)
+- **Topology Dimming:** Accurate mode dims drawer controls to 30 percent opacity with centered dimming badge. Fun mode renders interactive controls.
+- **ADSR Placement:** ADSR faders are placed in the Classic Panel per accepted 2026-08-21 design specification deviation.
 
-3. **Waveform & ADSR Mini-Faders (`color`):**
-   - *Expected:* Vertical waveform switch on the left panel margin and dual ADSR mini-fader banks with orange fader heads.
-   - *Observed:* WAVEFORM vertical switch and MEG/VEG ADSR banks render with correct styling, bevel borders, and mounting screw accents.
-   - *Fix / Status:* No change needed. All elements comply with the UI specification.
+### 2.4 Clipper & Tweaks Panel (Score: 90 / 100)
+- **Clipper Parameterization:** Continuous parameter model uses WarmClipper controls (BYPASS, ASYM, OS, DRIVE, THRESH, TONE).
+- **Tweaks Subpanel:** Exposes analog tolerance, age, noise, seed, drift, and recalibration parameters.
+- **GE / JFET Label Contrast:** Label uses hardcoded gray RGB value (120) with lower contrast.
 
-### 2.2 Souped-Up Engine Drawer (Score: 98 / 100)
-The Souped-Up Engine Drawer complies with the UI specification and topology dimming requirements:
-
-1. **Souped-Up Engine Drawer & Dimming Badge (`alignment`):**
-   - *Expected:* Accurate mode displays ~30% ghosted drawer controls with a centered two-line dimming badge and interactive SWITCH TO FUN button. Fun mode displays vibrant interactive controls.
-   - *Observed:* In `accurate.png`, the drawer is dimmed to ~30% opacity with a clear, legible badge displaying 'ACCURATE MODE ACTIVE', 'Souped-up engine is bypassed', and an active 'SWITCH TO FUN' button. In `latest.png`, Fun mode renders all extended rotary dials, VCF/VCA switches, and subpanels in full vibrancy.
-   - *Fix / Status:* Maintain current rendering implementation in `plugin303/src/gui/panels/souped_panel.rs`.
-
-2. **MEG/VEG ADSR Mini-Faders (`geometry`):**
-   - *Expected:* MEG and VEG ADSR vertical mini-faders located in the Classic Panel top section with glowing orange fill bars and millisecond/percentage readouts, remaining undimmed across topology modes per the 2026-08-21 spec update.
-   - *Observed:* Mini-faders are correctly placed in the upper-right section of the classic panel, displaying crisp vertical tracks, glowing orange fill bars, and active readouts across both `latest.png` (Fun) and `accurate.png` (Accurate).
-   - *Fix / Status:* No change required. Placement and rendering strictly comply with specification deviations.
-
-### 2.3 16-Step Sequencer Console (Score: 100 / 100)
-- *Expected:* 16-step columns with playhead indicators, accent/slide toggles, note/tie/rest gate cycling, pitch readouts/nudge, and popover chromatic mini-keyboard.
-- *Observed:* 100% compliant with design specification. Zero defects found.
+### 2.5 16-Step Sequencer Console (Score: 100 / 100)
+- **16-Step Matrix:** Step buttons, gate cycling (Note, Tie, Rest), accent toggles, slide toggles, pitch nudges, and mini keyboard popover conform fully to specification. Zero defects found.
 
 ---
 
-## 3. Actionable Refinement & Maintenance Plan
+## 3. Actionable Refinement Plan
 
-The visual quality gate is passed (`spec_compliance: true`). The following actionable items ensure continuous compliance across future iterations:
+The following tasks improve layout balance and visual token compliance:
 
-### Task 1: Preserve Procedural Layout & Approved Deviations
-- **Action:** Retain current implementations of `Knob303` value arcs, vertical waveform slide switch, and MEG/VEG ADSR fader positioning in the classic panel.
-- **Target File:** `/Users/gus/Git/vibe303/plugin303/src/gui/panels/classic_panel.rs` and `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs`.
-- **Verification:** Continuous review against `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`.
+### Task 1: Rebalance Classic Panel Horizontal Fill
+- **Problem:** Rotary dials and ADSR mini-fader banks occupy left 65 percent of top panel width.
+- **Action:** Adjust horizontal spacing between knob groups and ADSR banks in `/Users/gus/Git/vibe303/plugin303/src/gui/panels/classic_panel.rs`. Distribute control groups evenly across the total panel width.
+- **Verification:** Inspect rendered snapshot at 1080x720 window resolution. Ensure horizontal margin balance.
 
-### Task 2: Maintain Multi-State Visual QA Snapshots
-- **Action:** Continue running visual QA multi-state capture workflows for both Accurate and Fun topology states.
-- **Target Component:** `gui-visual-qa-loop` automated capture script and snapshot comparison.
-- **Verification:** Ensure zero visual regressions across HiDPI scaling factors.
+### Task 2: Standardize GE / JFET Label Token Contrast
+- **Problem:** GE / JFET label uses hardcoded gray color `Color32::from_gray(120)` in `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs`.
+- **Action:** Replace hardcoded gray color with theme token `crate::gui::theme::TEXT_SECONDARY` or `crate::gui::theme::TEXT_MUTED`.
+- **Verification:** Inspect contrast in dark background rendering.
+
+### Task 3: Maintain Visual QA Regression Gate
+- **Action:** Run visual QA snapshots for both Accurate and Fun topology states.
+- **Verification:** Execute visual QA script. Verify overall score stays above 95.0.
 
 ---
 
 ## 4. Verification Summary
 
-- **Overall Weighted Score:** 98.7 / 100  
+- **Overall Weighted Score:** 96.25 / 100  
 - **Spec Compliance:** PASS (`true`)  
-- **Required Action:** All visual checks meet or exceed requirements. Proceed with development.
+- **Result:** Visual QA findings synthesized. Refinement plan saved.

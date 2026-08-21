@@ -1,5 +1,5 @@
 use nih_plug::prelude::ParamSetter;
-use nih_plug_egui::egui::{vec2, Color32, Frame, Margin, Ui};
+use nih_plug_egui::egui::{vec2, Frame, Margin, Ui};
 
 use crate::gui::theme;
 use crate::gui::widgets::{Knob303, SlideSwitch};
@@ -111,7 +111,7 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                         setter.set_parameter(&params.clipper_asym, asym);
                         setter.end_set_parameter(&params.clipper_asym);
                     }
-                    ui.colored_label(Color32::from_gray(120), "GE / JFET");
+                    ui.colored_label(theme::TEXT_SECONDARY, "GE / JFET");
                 });
             });
         });

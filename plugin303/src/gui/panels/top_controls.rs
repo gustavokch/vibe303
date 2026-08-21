@@ -94,8 +94,10 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         nih_plug_egui::egui::UiBuilder::new().max_rect(rect.shrink(8.0)),
         |ui| {
             ui.horizontal(|ui| {
+                ui.add_space(8.0);
+
                 // Classic 303 Parameter Gauges (7 Knobs)
-                ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                ui.spacing_mut().item_spacing = vec2(26.0, 0.0);
                 ui.add(Knob303::new(&params.tuning, setter, "TUNING", 18.0));
                 ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 18.0));
                 ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 18.0));
@@ -104,9 +106,9 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add(Knob303::new(&params.accent, setter, "ACCENT", 18.0));
                 ui.add(Knob303::new(&params.volume, setter, "VOLUME", 18.0));
 
-                ui.add_space(12.0);
+                ui.add_space(20.0);
                 ui.separator();
-                ui.add_space(8.0);
+                ui.add_space(18.0);
 
                 // ADV ENV checkbox
                 ui.vertical(|ui| {
@@ -127,7 +129,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     }
                 });
 
-                ui.add_space(4.0);
+                ui.add_space(16.0);
 
                 // MEG ADSR & VEG ADSR Mini-Fader Banks
                 render_adsr_bank(
@@ -140,7 +142,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     setter,
                 );
 
-                ui.add_space(4.0);
+                ui.add_space(16.0);
 
                 render_adsr_bank(
                     ui,
