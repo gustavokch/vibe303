@@ -42,12 +42,13 @@ pub fn render_sequencer_and_transport(
                     if let Ok(mut pattern_guard) = params.pattern.write() {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                            let is_running = params.seq_run.value();
 
                             for step_idx in 0..16 {
                                 let is_current = active_step as usize == step_idx;
                                 let step = &mut pattern_guard.steps[step_idx];
 
-                                render_step_strip(ui, step_idx, step, is_current);
+                                render_step_strip(ui, step_idx, step, is_current, is_running);
                             }
                         });
 
