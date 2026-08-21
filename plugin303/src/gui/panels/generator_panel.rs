@@ -28,13 +28,14 @@ pub fn render_generator_panel(
                     ui.with_layout(
                         nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
                         |ui| {
+                            ui.add_space(8.0);
                             ui.label(
                                 nih_plug_egui::egui::RichText::new(format!(
-                                    "SEED: {:016X}",
+                                    "PATTERN SEED: {:016X}",
                                     gen_params.seed
                                 ))
                                 .font(FontId::monospace(9.0))
-                                .color(theme::TEXT_MUTED),
+                                .color(theme::TEXT_SECONDARY),
                             );
                         },
                     );

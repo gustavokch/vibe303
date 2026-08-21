@@ -16,7 +16,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .corner_radius(CornerRadius::same(4))
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
-            ui.set_min_width(1060.0);
+            ui.set_max_width(1048.0);
             ui.vertical(|ui| {
                 // Header Bar
                 ui.horizontal(|ui| {

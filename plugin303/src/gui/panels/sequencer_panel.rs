@@ -30,11 +30,11 @@ pub fn render_sequencer_and_transport(
         .inner_margin(Margin {
             left: 8,
             right: 8,
-            top: 3,
-            bottom: 3,
+            top: 4,
+            bottom: 6,
         })
         .show(ui, |ui| {
-            ui.set_min_width(1060.0);
+            ui.set_max_width(1048.0);
 
             ui.horizontal(|ui| {
                 // 1. LEFT / MAIN: 16-Step Pitch Key Columns
