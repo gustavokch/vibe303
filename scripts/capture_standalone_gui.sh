@@ -4,54 +4,44 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="$REPO_ROOT/target/gui-qa"
-OUTPUT_FILE="$OUTPUT_DIR/latest.png"
 LOG_FILE="$OUTPUT_DIR/standalone.log"
 
 mkdir -p "$OUTPUT_DIR"
 
-echo "Cleaning previous release build artifacts..."
-cargo clean --manifest-path "$REPO_ROOT/Cargo.toml" -p plugin303 --release
-
 echo "Building standalone binary (release)..."
 cargo build --release --manifest-path "$REPO_ROOT/Cargo.toml" -p plugin303 --bin standalone
 
-echo "Launching standalone GUI..."
-"$REPO_ROOT/target/release/standalone" -b dummy > "$LOG_FILE" 2>&1 &
-APP_PID=$!
+capture_single_state() {
+    local state_name="$1"
+    local output_file="$2"
 
-cleanup() {
-    if kill -0 "$APP_PID" 2>/dev/null; then
-        echo "Terminating standalone process (PID: $APP_PID)..."
-        kill -TERM "$APP_PID" 2>/dev/null || true
-        sleep 0.5
-        kill -KILL "$APP_PID" 2>/dev/null || true
-    fi
-}
-trap cleanup EXIT
+    echo "Capturing state '$state_name' to '$output_file'..."
 
-echo "Waiting for standalone window..."
-WIN_ID=""
-for i in {1..30}; do
-    WIN_ID=$(osascript -e '
-        tell application "System Events"
-            set proc to first process whose unix id is '"$APP_PID"'
-            if exists proc then
-                set winList to windows of proc
-                if (count of winList) > 0 then
-                    return id of first window of proc
+    VIBE303_QA_STATE="$state_name" "$REPO_ROOT/target/release/standalone" -b dummy > "$LOG_FILE" 2>&1 &
+    local app_pid=$!
+
+    local win_id=""
+    for i in {1..30}; do
+        win_id=$(osascript -e '
+            tell application "System Events"
+                set proc to first process whose unix id is '"$app_pid"'
+                if exists proc then
+                    set winList to windows of proc
+                    if (count of winList) > 0 then
+                        return id of first window of proc
+                    end if
                 end if
-            end if
-        end tell
-    ' 2>/dev/null || true)
+            end tell
+        ' 2>/dev/null || true)
 
-    if [[ -n "$WIN_ID" && "$WIN_ID" != "missing value" ]]; then
-        break
-    fi
-    sleep 0.3
-done
+        if [[ -n "$win_id" && "$win_id" != "missing value" ]]; then
+            break
+        fi
+        sleep 0.3
+    done
 
-if [[ -z "$WIN_ID" || "$WIN_ID" == "missing value" ]]; then
-    WIN_ID=$(PROCESS_PID=$APP_PID swift - << 'EOF' 2>/dev/null || true
+    if [[ -z "$win_id" || "$win_id" == "missing value" ]]; then
+        win_id=$(PROCESS_PID=$app_pid swift - << 'EOF' 2>/dev/null || true
 import Cocoa
 import CoreGraphics
 import Foundation
@@ -70,31 +60,42 @@ if let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as
     }
 }
 EOF
-)
-fi
+        )
+    fi
 
-if [[ -n "$WIN_ID" && "$WIN_ID" != "missing value" ]]; then
-    echo "Activating standalone window (PID: $APP_PID, WIN_ID: $WIN_ID)..."
-    osascript -e '
-        tell application "System Events"
-            set proc to first process whose unix id is '"$APP_PID"'
-            if exists proc then
-                set frontmost of proc to true
-            end if
-        end tell
-    ' 2>/dev/null || true
-    sleep 0.5
-    echo "Capturing window ID: $WIN_ID to $OUTPUT_FILE..."
-    screencapture -l "$WIN_ID" -o "$OUTPUT_FILE"
-else
-    echo "Window ID not directly queryable; capturing screen to $OUTPUT_FILE..."
-    sleep 0.5
-    screencapture -x "$OUTPUT_FILE"
-fi
+    if [[ -n "$win_id" && "$win_id" != "missing value" ]]; then
+        osascript -e '
+            tell application "System Events"
+                set proc to first process whose unix id is '"$app_pid"'
+                if exists proc then
+                    set frontmost of proc to true
+                end if
+            end tell
+        ' 2>/dev/null || true
+        sleep 0.5
+        screencapture -l "$win_id" -o "$output_file"
+    else
+        echo "Window ID not directly queryable; capturing screen to $output_file..."
+        sleep 0.5
+        screencapture -x "$output_file"
+    fi
 
-if [[ ! -s "$OUTPUT_FILE" ]]; then
-    echo "ERROR: Screenshot output file is empty or missing." >&2
-    exit 1
-fi
+    if kill -0 "$app_pid" 2>/dev/null; then
+        kill -TERM "$app_pid" 2>/dev/null || true
+        sleep 0.3
+        kill -KILL "$app_pid" 2>/dev/null || true
+    fi
 
-echo "Screenshot captured successfully: $OUTPUT_FILE"
+    if [[ ! -s "$output_file" ]]; then
+        echo "ERROR: Screenshot output file '$output_file' is empty or missing." >&2
+        exit 1
+    fi
+}
+
+# Capture all required GUI states
+capture_single_state "default" "$OUTPUT_DIR/latest.png"
+capture_single_state "accurate" "$OUTPUT_DIR/accurate.png"
+capture_single_state "running" "$OUTPUT_DIR/running.png"
+
+echo "All GUI snapshots captured successfully in $OUTPUT_DIR:"
+ls -la "$OUTPUT_DIR"/*.png

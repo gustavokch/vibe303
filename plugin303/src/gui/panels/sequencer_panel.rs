@@ -101,9 +101,9 @@ pub fn render_sequencer_and_transport(
                             .color(theme::TEXT_PRIMARY),
                         )
                         .fill(if sync_val {
-                            Color32::from_rgb(0x38, 0x38, 0x38)
+                            theme::BTN_ACTIVE_BG
                         } else {
-                            Color32::from_rgb(0x28, 0x28, 0x28)
+                            theme::BTN_INACTIVE_BG
                         })
                         .min_size(vec2(50.0, 18.0));
 
@@ -124,6 +124,23 @@ pub fn render_sequencer_and_transport(
                                 .color(theme::TEXT_SECONDARY),
                         );
                         let mut tempo_val = params.seq_tempo.value();
+
+                        let dn_btn = nih_plug_egui::egui::Button::new("-")
+                            .fill(theme::BTN_INACTIVE_BG)
+                            .stroke(nih_plug_egui::egui::Stroke::new(
+                                1.0_f32,
+                                theme::PANEL_BORDER,
+                            ))
+                            .min_size(vec2(12.0, 16.0));
+                        if ui.add(dn_btn).clicked() {
+                            setter.begin_set_parameter(&params.seq_tempo);
+                            setter.set_parameter(
+                                &params.seq_tempo,
+                                (tempo_val - 1.0).clamp(40.0, 300.0),
+                            );
+                            setter.end_set_parameter(&params.seq_tempo);
+                        }
+
                         if ui
                             .add(
                                 DragValue::new(&mut tempo_val)
@@ -135,6 +152,22 @@ pub fn render_sequencer_and_transport(
                         {
                             setter.begin_set_parameter(&params.seq_tempo);
                             setter.set_parameter(&params.seq_tempo, tempo_val);
+                            setter.end_set_parameter(&params.seq_tempo);
+                        }
+
+                        let up_btn = nih_plug_egui::egui::Button::new("+")
+                            .fill(theme::BTN_INACTIVE_BG)
+                            .stroke(nih_plug_egui::egui::Stroke::new(
+                                1.0_f32,
+                                theme::PANEL_BORDER,
+                            ))
+                            .min_size(vec2(12.0, 16.0));
+                        if ui.add(up_btn).clicked() {
+                            setter.begin_set_parameter(&params.seq_tempo);
+                            setter.set_parameter(
+                                &params.seq_tempo,
+                                (tempo_val + 1.0).clamp(40.0, 300.0),
+                            );
                             setter.end_set_parameter(&params.seq_tempo);
                         }
 

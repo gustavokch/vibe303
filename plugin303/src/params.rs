@@ -404,9 +404,21 @@ impl Plugin303Params {
 
 impl Default for Plugin303Params {
     fn default() -> Self {
+        let default_topology = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
+            if s == "accurate" { CircuitTopology::Accurate } else { CircuitTopology::Fun }
+        } else {
+            CircuitTopology::Fun
+        };
+
+        let default_seq_run = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
+            s == "running"
+        } else {
+            false
+        };
+
         Self {
             tier: EnumParam::new("Tier", Tier::Low),
-            topology: EnumParam::new("Circuit Topology", CircuitTopology::Fun),
+            topology: EnumParam::new("Circuit Topology", default_topology),
 
             tuning: FloatParam::new(
                 "Tuning",
@@ -441,7 +453,7 @@ impl Default for Plugin303Params {
             )
             .with_unit(" dB"),
 
-            seq_run: BoolParam::new("Seq Run", false),
+            seq_run: BoolParam::new("Seq Run", default_seq_run),
             seq_sync: BoolParam::new("Seq Sync", true),
 
             seq_tempo: FloatParam::new(

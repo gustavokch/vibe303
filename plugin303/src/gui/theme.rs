@@ -6,6 +6,11 @@ pub const PANEL_BG_SOUPED: Color32 = Color32::from_rgb(0x20, 0x20, 0x20);
 pub const PANEL_BORDER: Color32 = Color32::from_rgb(0x38, 0x38, 0x38);
 pub const PANEL_BORDER_HIGHLIGHT: Color32 = Color32::from_rgb(0x4a, 0x4a, 0x4a);
 
+pub const BTN_ACTIVE_BG: Color32 = Color32::from_rgb(0x38, 0x38, 0x38);
+pub const BTN_INACTIVE_BG: Color32 = Color32::from_rgb(0x28, 0x28, 0x28);
+pub const BANK_FRAME_BG: Color32 = Color32::from_rgb(0x1b, 0x1b, 0x1b);
+pub const BANK_FRAME_BORDER: Color32 = Color32::from_rgb(0x2a, 0x2e, 0x33);
+
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xf8, 0xfa, 0xfc);
 pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0x94, 0xa3, 0xb8);
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x64, 0x74, 0x8b);

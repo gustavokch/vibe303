@@ -2,11 +2,20 @@ export const meta = {
   name: "gui-visual-qa-loop",
   description: "Closed iteration loop for nih_plug_egui GUI visual QA and refinement",
   phases: [
-    { title: "Capture", detail: "Compile standalone and capture GUI screenshot" },
-    { title: "Visual QA", detail: "Parallel multi-lens visual inspection" },
+    { title: "Capture", detail: "Compile standalone and capture GUI screenshot", model: "haiku" },
+    { title: "Visual QA", detail: "Parallel multi-lens visual inspection", model: "sonnet" },
     { title: "Synthesize", detail: "Aggregate findings and generate refinement plan" },
     { title: "Iterative Fix", detail: "Apply code edits and verify build (optional)" }
   ]
+};
+
+const CAPTURE_SCHEMA = {
+  type: "object",
+  properties: {
+    success: { type: "boolean" },
+    date_str: { type: "string", description: "Current date in YYYY-MM-DD format" }
+  },
+  required: ["success", "date_str"]
 };
 
 const VISION_FINDINGS_SCHEMA = {
@@ -78,7 +87,7 @@ const SYNTHESIS_SCHEMA = {
   required: ["overall_score", "spec_compliance", "plan_path", "top_defects"]
 };
 
-const { auto_apply = false, max_iterations = 1, target_score = 90 } = args || {};
+const { auto_apply = false, max_iterations = 1, target_score = 95 } = args || {};
 
 let iteration = 0;
 let currentScore = 0;
@@ -88,14 +97,16 @@ while (iteration < max_iterations && currentScore < target_score) {
   iteration++;
   log(`Starting Visual QA iteration ${iteration}/${max_iterations}...`);
 
-  // Phase 1: Capture
+  // Phase 1: Capture (Haiku model)
   phase("Capture");
   const captureResult = await agent(
-    "Run bash scripts/capture_standalone_gui.sh and verify that target/gui-qa/latest.png is created and non-empty.",
-    { label: "capture:standalone-gui", phase: "Capture" }
+    "Run bash scripts/capture_standalone_gui.sh and verify that target/gui-qa/latest.png, target/gui-qa/accurate.png, and target/gui-qa/running.png are created. Run `date +%Y-%m-%d` to get current date_str.",
+    { label: "capture:standalone-gui", phase: "Capture", model: "haiku", schema: CAPTURE_SCHEMA }
   );
 
-  // Phase 2: Parallel Visual QA
+  const dateStr = args?.date_str || (captureResult && captureResult.date_str ? captureResult.date_str : "2026-08-21");
+
+  // Phase 2: Parallel Visual QA (Sonnet model)
   phase("Visual QA");
   const lenses = [
     {
@@ -104,11 +115,11 @@ while (iteration < max_iterations && currentScore < target_score) {
     },
     {
       name: "souped_drawer",
-      prompt: "Analyze target/gui-qa/latest.png focusing on Souped-Up Drawer, MEG/VEG Faders, and Topology Dimming. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate extended dials, faders, and accurate-mode dimming badge. Also analyze target/gui-qa/accurate.png if present: it shows Accurate mode, where the drawer must be ghosted to ~30% content visibility (pixel-sample the MEG fader fill) with a legible badge and SWITCH TO FUN button. Note: latest.png may show FUN mode where the drawer is fully vibrant — that is the default topology, not a defect."
+      prompt: "Analyze target/gui-qa/latest.png focusing on Souped-Up Drawer, MEG/VEG Faders, and Topology Dimming. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate extended dials, faders, and accurate-mode dimming badge. Also analyze target/gui-qa/accurate.png: verify Accurate mode ghosting (~30% content visibility for MEG fader fill), legible dimming badge, and active SWITCH TO FUN button. Note: latest.png shows default FUN mode where drawer is vibrant."
     },
     {
       name: "sequencer",
-      prompt: "Analyze target/gui-qa/latest.png focusing on 16-Step Sequencer Strip, LED states, ACC/SLD toggles, and Gate colors. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate step columns, button alignment, pitch readability, and transport bar. Also analyze target/gui-qa/running.png if present: it shows the transport actively running — verify exactly one playhead LED bar glows neon coral (#ff3355) while all other steps stay dim, and note the lit step number. Note: in latest.png the transport may be stopped (RUN button orange with '▶ RUN' label = stopped/armed state, all playhead bars dim = correct); a stopped transport with all LEDs dim is correct behavior, not a defect."
+      prompt: "Analyze target/gui-qa/latest.png focusing on 16-Step Sequencer Strip, LED states, ACC/SLD toggles, and Gate colors. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Verify gate colors (NOTE = #00e5ff, TIE = #ffd700, REST = #333a42 / theme::GATE_REST_COLOR). Also analyze target/gui-qa/running.png: verify running transport playhead LED bar glows neon coral (#ff3355) on step 4 while all other step LEDs remain dim. Note: in latest.png transport is stopped with all playhead bars dim."
     }
   ];
 
@@ -117,15 +128,17 @@ while (iteration < max_iterations && currentScore < target_score) {
       agent(lens.prompt, {
         label: `qa:${lens.name}`,
         phase: "Visual QA",
+        model: "sonnet",
         schema: VISION_FINDINGS_SCHEMA
       })
     )
   );
 
-  // Phase 3: Synthesize & Plan
+  // Phase 3: Synthesize & Plan (Default model)
   phase("Synthesize");
+  const planFilePath = `docs/superpowers/plans/${dateStr}-gui-refinement-plan.md`;
   const synthesis = await agent(
-    `Synthesize visual QA findings: ${JSON.stringify(lensResults)}. Compare against design spec docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Calculate overall weighted score (0.35 classic + 0.30 souped + 0.35 sequencer) and write a complete, actionable refinement plan to docs/superpowers/plans/2026-08-14-gui-refinement-plan.md.`,
+    `Synthesize visual QA findings: ${JSON.stringify(lensResults)}. Compare against design spec docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Calculate overall weighted score (0.35 classic + 0.30 souped + 0.35 sequencer) and write a complete, actionable refinement plan to ${planFilePath}.`,
     {
       label: "synthesize:plan-generator",
       phase: "Synthesize",
@@ -134,14 +147,14 @@ while (iteration < max_iterations && currentScore < target_score) {
   );
 
   currentScore = synthesis ? synthesis.overall_score : 0;
-  finalPlanPath = synthesis ? synthesis.plan_path : "";
-  log(`Iteration ${iteration} Visual QA Score: ${currentScore}%`);
+  finalPlanPath = synthesis ? synthesis.plan_path : planFilePath;
+  log(`Iteration ${iteration} Visual QA Score: ${currentScore}% (Target: ${target_score}%)`);
 
   if (!auto_apply || currentScore >= target_score) {
     break;
   }
 
-  // Phase 4: Iterative Fix (if auto_apply is enabled)
+  // Phase 4: Iterative Fix (Default model)
   phase("Iterative Fix");
   await agent(
     `Apply fixes from ${finalPlanPath} to plugin303/src/gui/ codebase. Run cargo test and cargo check to verify clean compilation.`,
