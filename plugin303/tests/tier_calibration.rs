@@ -30,31 +30,31 @@ fn voice_realized_hz(tier: Tier, topology: CircuitTopology, note: u8) -> f32 {
     v.note_on(note);
     v.set_gate(true, true, false, false);
 
-    // DC blocker to center the waveform and remove any VCF bias DC offset
-    let mut dc_x = 0.0f64;
-    let mut dc_y = 0.0f64;
-    let dc_r = 0.999f64;
-
     let warmup_samples = 48_000;
-
-    // Warm up/settle (note-dependent to avoid high-frequency solver sticking)
     for _ in 0..warmup_samples {
-        let raw = v.tick() as f64;
-        let y = raw - dc_x + dc_r * dc_y;
-        dc_x = raw;
-        dc_y = y;
+        v.tick();
     }
 
+    // Collect measurement samples, then subtract mean to remove any DC offset
+    // from the ladder VCF bias or Os4x pipeline before zero-crossing detection.
     let n = 12_000;
-    let mut prev = dc_y;
-    let (mut first_t, mut last_t, mut count) = (-1.0f64, 0.0f64, 0i64);
-    for i in 0..n {
-        let raw = v.tick() as f64;
-        let y = raw - dc_x + dc_r * dc_y;
-        dc_x = raw;
-        dc_y = y;
+    let mut buf = Vec::with_capacity(n);
+    for _ in 0..n {
+        buf.push(v.tick() as f64);
+    }
+    let mean = buf.iter().sum::<f64>() / n as f64;
 
-        if prev < 0.0 && y >= 0.0 {
+    // Refractory period: 1/3 of expected period. Rejects spurious zero crossings
+    // from Gibbs ringing when the Os4x Kaiser FIR downsamples the VCO saw reset.
+    let expected_hz = 440.0f64 * 2.0f64.powf((note as f64 - 69.0) / 12.0);
+    let min_gap = ((SR as f64 / expected_hz) / 3.0).max(3.0) as usize;
+
+    let mut prev = buf[0] - mean;
+    let (mut first_t, mut last_t, mut count) = (-1.0f64, 0.0f64, 0i64);
+    let mut last_crossing_i: i64 = -(min_gap as i64 + 1);
+    for i in 1..n {
+        let y = buf[i] - mean;
+        if prev < 0.0 && y >= 0.0 && (i as i64 - last_crossing_i) >= min_gap as i64 {
             let frac = (-prev) / (y - prev);
             let t = i as f64 + frac;
             if first_t < 0.0 {
@@ -63,6 +63,7 @@ fn voice_realized_hz(tier: Tier, topology: CircuitTopology, note: u8) -> f32 {
                 last_t = t;
                 count += 1;
             }
+            last_crossing_i = i as i64;
         }
         prev = y;
     }
@@ -70,7 +71,7 @@ fn voice_realized_hz(tier: Tier, topology: CircuitTopology, note: u8) -> f32 {
         return 0.0;
     }
     let realized = (count as f64 * SR as f64 / (last_t - first_t)) as f32;
-    println!("  [voice_realized_hz] tier={:?}, note={}, count={}, first_t={:.3}, last_t={:.3}, diff={:.3}, freq={:.3}", tier, note, count, first_t, last_t, last_t - first_t, realized);
+    println!("  [voice_realized_hz] tier={:?}, note={}, count={}, first_t={:.3}, last_t={:.3}, diff={:.3}, freq={:.3}, dc={:.6}", tier, note, count, first_t, last_t, last_t - first_t, realized, mean);
     realized
 }
 

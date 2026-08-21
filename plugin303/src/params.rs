@@ -17,6 +17,18 @@ pub enum CompTolerance {
     Ten,
 }
 
+impl CompTolerance {
+    pub fn as_f64(&self) -> f64 {
+        match self {
+            CompTolerance::Zero => 0.0,
+            CompTolerance::PointFive => 0.005,
+            CompTolerance::Two => 0.02,
+            CompTolerance::Five => 0.05,
+            CompTolerance::Ten => 0.10,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
 pub enum CircuitTopology {
     #[name = "Accurate"]
@@ -624,7 +636,7 @@ impl Default for Plugin303Params {
                     if v == 0 {
                         "Off".to_string()
                     } else {
-                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.001)
+                        format!("{:.1}°C", 20.0 + v as f32 * 0.25)
                     }
                 })),
 

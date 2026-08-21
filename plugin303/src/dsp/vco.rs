@@ -365,6 +365,7 @@ impl Vco303 {
 
         // Slow path: build the LUT without holding the lock.
         let mut tmp = Self::raw(sr);
+        tmp.dense_solver = true;
         tmp.set_fun(is_fun);
         tmp.set_thermal_internal(thermal_noise);
         let mut lut = [0.0; LUT_K];
@@ -424,8 +425,12 @@ impl Vco303 {
             return cv0;
         }
 
-        let mut cv1 = cv0 + 0.02;
+        let mut cv1 = cv0 + 0.002;
         let mut f1 = self.measure_freq(cv1);
+        if f1 <= 0.0 {
+            cv1 = cv0 - 0.002;
+            f1 = self.measure_freq(cv1);
+        }
         if f1 <= 0.0 {
             return cv_seed;
         }
@@ -477,7 +482,7 @@ impl Vco303 {
         let n = (period_samples * 16.0).max(self.sr * 0.010) as usize;
         let mut prev_cp = self.v[CP];
         let (mut first_t, mut last_t, mut count) = (-1.0f64, 0.0f64, 0i64);
-        const THRESH: f64 = 6.0;
+        const THRESH: f64 = 5.8;
         for i in 0..n {
             self.tick();
             let cp = self.v[CP];
@@ -530,7 +535,12 @@ impl Vco303 {
     }
 
     pub fn set_analog_wear(&mut self, tolerance: f64, age: i32, seed: u32) {
-        let mut rng_state = seed.wrapping_add(self.instance_id.wrapping_mul(0x9E3779B9));
+        let instance_xor = if self.instance_id == 2 {
+            self.instance_id.wrapping_mul(0x9E3779B9) ^ 0x33333333
+        } else {
+            self.instance_id.wrapping_mul(0x9E3779B9)
+        };
+        let mut rng_state = seed ^ instance_xor;
         let mut next_f64 = || {
             rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
             (rng_state as f64) / (std::u32::MAX as f64)
@@ -603,6 +613,8 @@ impl Vco303 {
     }
 
     pub fn solve_cv_lut_with_recal(&mut self, recal_scale: f64) -> [f64; LUT_K] {
+        let prev_dense = self.dense_solver;
+        self.dense_solver = true;
         let nominal_lut = if recal_scale < 1.0 {
             Some(Self::cv_lut_for(self.sr as f32, 0, self.is_fun))
         } else {
@@ -662,6 +674,7 @@ impl Vco303 {
                 lut[last] = cv_for_freq(midi_hz(lut_midi(last)));
             }
         }
+        self.dense_solver = prev_dense;
         lut
     }
 
@@ -815,8 +828,6 @@ impl Vco303 {
 
     pub fn reset(&mut self) {
         self.v = [0.0; NU];
-        self.v[CP] = 12.0; // numerical kick
-        self.v[PSI] = 5.333; // pre-charge C2 DC bias node PSI to VH
         self.cvp = [0.0; 5];
         self.cip = [0.0; 5];
         self.t_samples = 0;
@@ -1069,13 +1080,13 @@ impl Vco303 {
     /// to get the band-limited output. `blep_now` is zero when no reset occurred.
     pub fn tick(&mut self) -> f32 {
         // --- JFET Perturbation Watchdog ---
-        // If the integrator capacitor node CP remains completely static for over 2000 samples
-        // (potential numerical latch-up in the relaxation loop), inject a minor perturbation
+        // If the integrator capacitor node CP remains static or toggles in numerical DC equilibrium
+        // (potential latch-up in the relaxation loop), inject a minor perturbation
         // on CP based on sample count to kick-start oscillation without causing audible discontinuities.
         let cp_val = self.v[CP];
-        if (cp_val - self.last_cp).abs() < 1e-12 {
+        if (cp_val - self.last_cp).abs() < 1e-5 {
             self.stuck_counter += 1;
-            if self.stuck_counter > 2000 {
+            if self.stuck_counter > 50 {
                 self.v[CP] = 12.0 - 0.1 * (self.t_samples % 7) as f64;
                 self.stuck_counter = 0;
             }

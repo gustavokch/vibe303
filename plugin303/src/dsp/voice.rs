@@ -523,13 +523,7 @@ impl Voice {
     }
 
     fn tolerance_f64(&self) -> f64 {
-        match self.tolerance {
-            CompTolerance::Zero => 0.0,
-            CompTolerance::PointFive => 0.005,
-            CompTolerance::Two => 0.02,
-            CompTolerance::Five => 0.05,
-            CompTolerance::Ten => 0.10,
-        }
+        self.tolerance.as_f64()
     }
 
     fn calculate_env_mod_scaler(&mut self, cutoff_hz: f64, env_mod_normalized: f64) {
