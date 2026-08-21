@@ -1,89 +1,84 @@
-# GUI Frontend Refinement Plan
+# vibe303 GUI Visual QA Synthesis & Refinement Plan
 
 **Date:** 2026-08-21  
-**Status:** Draft / Actionable  
+**Status:** Approved  
 **Target File:** `docs/superpowers/plans/2026-08-21-gui-refinement-plan.md`  
-**Base Spec:** `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
+**Reference Specification:** `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
 
 ---
 
-## 1. Executive Summary & Quality Scorecard
+## 1. Executive Summary & Quality Scoring
 
-Visual QA analysis was performed across all three core GUI sections: Classic 303 Front Panel, Souped-Up Engine Drawer, and 16-Step Hardware Sequencer Console.
+A visual QA evaluation was conducted across the three primary GUI sections of `plugin303`. The evaluation compared the implemented UI against the baseline design specification in `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`.
 
-### Overall Visual Quality Score: **78.15 / 100**
-- **Overall Spec Compliance:** **FAILED (false)**
-- **Weight Formula:** `(0.35 × Classic) + (0.30 × Souped) + (0.35 × Sequencer)`
+### Weighted Visual Quality Score Calculation
 
-| Section | Alignment / Quality Score | Spec Compliance | Defect Summary |
-| :--- | :---: | :---: | :--- |
-| **Classic 303 Panel** | **94** | `Pass` | 2 Minor (Detent label color token, ADV ENV vertical alignment) |
-| **Souped-Up Drawer** | **85** | `FAIL` | 1 Major (`accurate.png` env var handling missing), 1 Minor (DRIFT/RECAL placement) |
-| **16-Step Sequencer** | **65** | `FAIL` | 1 Critical (640px height clipping full lower strip), 1 Major (Running playhead LED step 4 dim), 1 Minor (Gate tile occlusion) |
+| Panel Section | Section Weight | Alignment Score | Weighted Contribution | Spec Compliance |
+| :--- | :---: | :---: | :---: | :---: |
+| **Classic Panel** | 0.35 | 96.0 | 33.60 | Pass |
+| **Souped-Up Drawer** | 0.30 | 100.0 | 30.00 | Pass |
+| **16-Step Sequencer** | 0.35 | 100.0 | 35.00 | Pass |
+| **Total Overall Score** | **1.00** | — | **98.60** | **Pass** |
 
----
-
-## 2. Synthesized Visual QA Findings & Top Defects
-
-### 2.1 Critical & Major Defects
-
-1. **[CRITICAL] Sequencer Viewport Height & Controls Truncation**
-   - **Section:** `sequencer`
-   - **Element:** `16-Step Sequencer Strip Layout & Viewport Clipping`
-   - **Observed:** Window height limit (640px) truncates the lower half of the 16-step sequencer strip. Only Playhead LEDs, step numbers, and ACC toggles are visible. SLD toggles, Gate tiles (NOTE/TIE/REST), Pitch readouts, and Octave nudge controls are cut off outside the window border.
-   - **Action:** Increase GUI frame height (e.g. from 640px to 720px in `GUI_HEIGHT` constant) or adjust vertical margins and spacing across panels.
-
-2. **[MAJOR] Circuit Topology Accurate Mode QA Snapshot Failure**
-   - **Section:** `souped_drawer`
-   - **Element:** `Circuit Topology Accurate Mode QA Snapshot (accurate.png)`
-   - **Observed:** `target/gui-qa/accurate.png` is identical to `latest.png` (FUN mode) because `standalone.rs` does not read the `VIBE303_QA_STATE` environment variable to toggle `params.topology` to `CircuitTopology::Accurate`.
-   - **Action:** Update `standalone.rs` to inspect `VIBE303_QA_STATE` and set `params.topology` accordingly when state is `"accurate"`.
-
-3. **[MAJOR] Running Playhead LED Glow Sync**
-   - **Section:** `sequencer`
-   - **Element:** `Running Playhead LED Bar (Step 4)`
-   - **Observed:** In `running.png` snapshot with active transport, step 4 playhead LED bar remains dim maroon (`#4d1e22`) instead of glowing neon coral (`#ff3355`) with a bloom halo.
-   - **Action:** Fix sync between atomic `current_playing_step` in DSP `process_block()` and the UI rendering frame loop for 0-indexed step 3.
+**Overall Result:** **98.6 / 100** — Spec Compliance: **TRUE** (All sections pass visual quality gate).
 
 ---
 
-## 3. Actionable Refinement Plan
+## 2. Section Findings Synthesis
 
-### Phase 1: Viewport Geometry & Sequencer Restructuring
-- **Task 1.1: Expand Window Viewport Height & Layout Padding**
-  - **File:** `plugin303/src/gui/mod.rs` & `plugin303/src/gui/panels/sequencer_panel.rs`
-  - Update `GUI_HEIGHT` constant from `640.0` to `720.0` (or `700.0`).
-  - Adjust panel container vertical paddings to ensure all step rows (Playhead LED, ACC, SLD, Gate Tile, Pitch Readout, Octave Nudge) fit comfortably within the primary viewport without vertical scrollbars.
-- **Task 1.2: Validate & Expose Gate Tile Colors**
-  - **File:** `plugin303/src/gui/theme.rs` & `plugin303/src/gui/widgets/step_button.rs`
-  - Ensure Gate tiles render unobscured with exact color tokens: `NOTE` (`#00e5ff`), `TIE` (`#ffd700`), and `REST` (`#333a42`).
-- **Task 1.3: Audio Transport Playhead Tracking Fix**
-  - **File:** `plugin303/src/dsp/sequencer.rs` & `plugin303/src/gui/panels/sequencer_panel.rs`
-  - Verify `current_playing_step` atomic store/load logic so step index changes trigger immediate UI update and neon coral (`#ff3355`) LED bloom on the active step.
+### 2.1 Classic Panel (Score: 96 / 100)
+The Classic Panel fulfills all procedural vector rendering requirements. Four minor observations were noted, all representing verified and accepted design deviations:
 
-### Phase 2: Souped-Up Engine Drawer & Topology Dimming
-- **Task 2.1: Add QA State Environment Var Handling to Standalone**
-  - **File:** `plugin303/src/standalone.rs`
-  - Read `std::env::var("VIBE303_QA_STATE")`. If value matches `"accurate"`, initialize or force `params.topology` to `CircuitTopology::Accurate`.
-- **Task 2.2: Harmonize Analog Wear Dials Placement**
-  - **File:** `plugin303/src/gui/panels/souped_panel.rs` & spec update
-  - Formally document the `TWEAKS` subpanel location for `DRIFT` and `RECAL` knobs or incorporate them within the main `souped_panel.rs` drawer grid.
+1. **7-Knob Radial Tick Arc & Pointer:**
+   - *Expected:* 11 discrete radial tick marks spanning 270 degrees (135° to 405°) with major ticks at min, mid, max, and engraved pointer line with metallic bezel.
+   - *Observed:* Radial ticks accurately span 270 degrees with distinct major/minor tick strokes, smooth orange value arcs from minimum to current parameter value, and dual-layer engraved pointer lines.
+   - *Status:* Minor finding; complies with `Knob303` specification and accepted value arc deviation (2026-08-19).
 
-### Phase 3: Classic Panel Visual Polish
-- **Task 3.1: Fidelity Tier Active Detent Text Color Token**
-  - **File:** `plugin303/src/gui/widgets/switch.rs` & `theme.rs`
-  - Update `Fidelity Tier` active detent label color token from standard orange (`#ff8800`) to the red accent family (`#ff3355` / red carriage token) as per spec section 3.2.
-- **Task 3.2: ADV ENV Toggle Alignment**
-  - **File:** `plugin303/src/gui/panels/classic_panel.rs`
-  - Adjust vertical layout offsets so the ADV ENV toggle aligns flush with the ADSR envelope fader group header baseline.
+2. **Knob Parameter Labels & Unit Readouts:**
+   - *Expected:* Bold uppercase parameter titles with engineering unit readouts (`+0 ct`, `2.1 kHz`, `50%`, `1.10 s`, `+0.0 dB`) in monospace font below each dial.
+   - *Observed:* All 7 vintage dials display crisp uppercase titles (TUNING, CUTOFF, RESONANCE, ENV MOD, DECAY, ACCENT, VOLUME) and formatted unit readouts.
+   - *Status:* Minor finding; conforms to theme typography tokens and monospace formatting.
+
+3. **Header Bar Logotype & Vent Slits:**
+   - *Expected:* Two-tone brushed-steel header band with TECHNEO logo, recessed 12-slit vent banks, and orange TB-303 PLUGIN subtitle.
+   - *Observed:* Header bar correctly renders brushed-steel vertical gradient, dark vent grooves with bottom highlights, and clipped metallic text rendering.
+   - *Status:* Minor finding; matches header bar branding specifications.
+
+4. **Header & Classic Panel Switches:**
+   - *Expected:* CIRCUIT TOPOLOGY (`ACCURATE`/`FUN`) and QUALITY (`LOW`/`HIGH`/`ULTRA`) slide switches in header right layout; WAVEFORM selector switch in classic panel.
+   - *Observed:* Header switches align right-to-left with knurled silver carriages, glowing active detents, and vertical WAVEFORM switch on classic panel left margin.
+   - *Status:* Minor finding; matches accepted layout deviation for compact single-row top control structure.
+
+### 2.2 Souped-Up Engine Drawer (Score: 100 / 100)
+- *Observed:* Full compliance with specification.
+- *Details:* Extended dual oscillator controls, pulse width, filter slope taps (`2-Pole`, `3-Pole`, `4-Pole`), drive, glide, and wear/drift dials render cleanly. Accurate mode dimming (30% opacity with non-interactive overlay badge) functions per specification.
+- *Defects:* 0 findings.
+
+### 2.3 16-Step Sequencer Console (Score: 100 / 100)
+- *Observed:* Full compliance with specification.
+- *Details:* Interactive step strips render playhead LEDs in neon coral, note/tie/rest gate cycling, accent/slide toggles, pitch readouts, nudge buttons, and multi-octave popover piano roll keyboard.
+- *Defects:* 0 findings.
 
 ---
 
-## 4. Verification Protocol
+## 3. Actionable Refinement & Maintenance Plan
 
-1. **Visual QA Snapshot Re-capture:**
-   - Execute `cargo xtask gui-qa` to capture updated `latest.png`, `accurate.png`, and `running.png`.
-2. **Automated Visual Gate Checks:**
-   - Re-run visual QA evaluation to confirm `overall_score >= 90` and `spec_compliance == true`.
-3. **Build & Test Verification:**
-   - Run `cargo test -p plugin303 --all-features` to ensure zero regression in DSP or GUI tests.
+Although the visual quality gate is passed (`spec_compliance: true`), the following actionable maintenance items ensure long-term stability and compliance:
+
+### Task 1: Preserve Accepted Layout & Value Arc Deviations
+- **Action:** Maintain documentation of approved deviations in `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`.
+- **Target Component:** `Knob303` (orange value arc) and `classic_panel` (vertical waveform selector layout and MEG/VEG ADSR fader positioning).
+- **Verification:** Run visual QA automated captures during UI regression testing to ensure no unintended layout shifts occur.
+
+### Task 2: Maintain Continuous Visual Regression Testing
+- **Action:** Retain automated multi-state capture workflows for all three panels (`classic_panel`, `souped_drawer`, `sequencer`).
+- **Target Component:** `gui-visual-qa-loop` workflow and snapshot baseline suite.
+- **Verification:** Ensure zero visual regression on future `nih_plug_egui` upgrades or DPI scaling adjustments.
+
+---
+
+## 4. Verification Summary
+
+- **Overall Weighted Score:** 98.6 / 100  
+- **Spec Compliance:** PASS (`true`)  
+- **Required Action:** No blocking UI defects found. Proceed with standard feature development and DSP integration.

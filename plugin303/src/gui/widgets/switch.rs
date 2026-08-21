@@ -15,8 +15,8 @@ struct ThumbColors {
 }
 
 impl ThumbColors {
-    fn from_thumb_color(thumb_color: Option<Color32>) -> Self {
-        match thumb_color {
+    fn new(thumb_color: Option<Color32>, active_text_color: Option<Color32>) -> Self {
+        let mut tc = match thumb_color {
             Some(base) => {
                 let r = base.r() as f32;
                 let g = base.g() as f32;
@@ -61,7 +61,11 @@ impl ThumbColors {
                 rib: Color32::from_rgb(0x70, 0x75, 0x82),
                 active_text: theme::ACCENT_AMBER,
             },
+        };
+        if let Some(atc) = active_text_color {
+            tc.active_text = atc;
         }
+        tc
     }
 }
 
@@ -125,6 +129,7 @@ pub struct SlideSwitch<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> {
     label: &'a str,
     options: &'a [&'a str],
     thumb_color: Option<Color32>,
+    active_text_color: Option<Color32>,
     is_vertical: bool,
 }
 
@@ -141,12 +146,18 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> SlideSwitch<'a, T> {
             label,
             options,
             thumb_color: None,
+            active_text_color: None,
             is_vertical: false,
         }
     }
 
     pub fn with_thumb_color(mut self, color: Color32) -> Self {
         self.thumb_color = Some(color);
+        self
+    }
+
+    pub fn with_active_text_color(mut self, color: Color32) -> Self {
+        self.active_text_color = Some(color);
         self
     }
 
@@ -160,7 +171,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
     fn ui(self, ui: &mut Ui) -> Response {
         let num_opts = self.options.len().max(1);
         let opt_font = FontId::new(8.5, FontFamily::Proportional);
-        let colors = ThumbColors::from_thumb_color(self.thumb_color);
+        let colors = ThumbColors::new(self.thumb_color, self.active_text_color);
 
         if self.is_vertical {
             let max_text_width = self
