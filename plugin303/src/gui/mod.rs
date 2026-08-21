@@ -77,12 +77,6 @@ pub fn create_editor(
                     });
                     ui.add_space(5.0);
 
-                    if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
-                        if state == "running" {
-                            current_playing_step.store(3, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
-
                     // 5. Bottom Sequencer Grid & Transport Column
                     panels::sequencer_panel::render_sequencer_and_transport(
                         ui,

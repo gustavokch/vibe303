@@ -96,11 +96,6 @@ impl Sequencer {
         } else if !running && self.running {
             self.current_step.store(255, Ordering::Relaxed);
         }
-        if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
-            if state == "running" {
-                self.current_step.store(3, Ordering::Relaxed);
-            }
-        }
         self.running = running;
     }
 

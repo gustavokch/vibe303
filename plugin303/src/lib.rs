@@ -322,11 +322,6 @@ impl Plugin for Plugin303 {
         let transport = context.transport();
         let is_running = seq_run && (transport.playing || !seq_sync);
         self.sequencer.set_running(is_running);
-        if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
-            if state == "running" {
-                self.current_playing_step.store(3, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
 
         if seq_run {
             if let Ok(guard) = self.params.pattern.try_read() {
@@ -381,11 +376,6 @@ impl Plugin for Plugin303 {
                 timebase,
                 jitter,
             );
-            if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
-                if state == "running" {
-                    self.current_playing_step.store(3, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
         }
 
         let mut next_event = context.next_event();
