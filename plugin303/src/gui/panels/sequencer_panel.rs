@@ -57,22 +57,13 @@ pub fn render_sequencer_and_transport(
 
                 ui.add_space(6.0);
                 ui.separator();
-                ui.add_space(6.0);
+                ui.add_space(4.0);
 
-                // 2. RIGHT COLUMN: Transport & Master Controls
+                // 2. RIGHT COLUMN: Compact Transport & Master
                 ui.vertical(|ui| {
-                    ui.set_width(240.0);
+                    ui.set_width(190.0);
 
-                    ui.label(
-                        nih_plug_egui::egui::RichText::new("TRANSPORT & MASTER")
-                            .font(FontId::proportional(10.5))
-                            .strong()
-                            .color(theme::TEXT_PRIMARY),
-                    );
-
-                    ui.add_space(2.0);
-
-                    // Row A: Run/Sync Buttons
+                    // Row A: Run/Sync
                     ui.horizontal(|ui| {
                         let run_val = params.seq_run.value();
                         let run_btn = nih_plug_egui::egui::Button::new(
@@ -81,7 +72,7 @@ pub fn render_sequencer_and_transport(
                             } else {
                                 "▶ RUN"
                             })
-                            .font(FontId::proportional(11.0))
+                            .font(FontId::proportional(10.0))
                             .strong()
                             .color(Color32::BLACK),
                         )
@@ -90,7 +81,7 @@ pub fn render_sequencer_and_transport(
                         } else {
                             theme::SOUPED_ORANGE
                         })
-                        .min_size(vec2(100.0, 20.0));
+                        .min_size(vec2(80.0, 18.0));
 
                         if ui.add(run_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_run);
@@ -101,11 +92,11 @@ pub fn render_sequencer_and_transport(
                         let sync_val = params.seq_sync.value();
                         let sync_btn = nih_plug_egui::egui::Button::new(
                             nih_plug_egui::egui::RichText::new(if sync_val {
-                                "SYNC: HOST"
+                                "HOST"
                             } else {
-                                "SYNC: INT"
+                                "INT"
                             })
-                            .font(FontId::proportional(10.0))
+                            .font(FontId::proportional(9.0))
                             .strong()
                             .color(theme::TEXT_PRIMARY),
                         )
@@ -114,7 +105,7 @@ pub fn render_sequencer_and_transport(
                         } else {
                             Color32::from_rgb(0x28, 0x28, 0x28)
                         })
-                        .min_size(vec2(90.0, 20.0));
+                        .min_size(vec2(50.0, 18.0));
 
                         if ui.add(sync_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_sync);
@@ -123,33 +114,16 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
-                    ui.add_space(2.0);
+                    ui.add_space(1.0);
 
-                    // Row B: Tempo Adjust
+                    // Row B: BPM + Length
                     ui.horizontal(|ui| {
                         ui.label(
                             nih_plug_egui::egui::RichText::new("BPM:")
-                                .font(FontId::proportional(9.5))
+                                .font(FontId::proportional(9.0))
                                 .color(theme::TEXT_SECONDARY),
                         );
-
                         let mut tempo_val = params.seq_tempo.value();
-                        let dn_btn = nih_plug_egui::egui::Button::new("-")
-                            .fill(Color32::from_rgb(0x28, 0x28, 0x28))
-                            .stroke(nih_plug_egui::egui::Stroke::new(
-                                1.0_f32,
-                                theme::PANEL_BORDER,
-                            ))
-                            .min_size(vec2(20.0, 20.0));
-                        if ui.add(dn_btn).clicked() {
-                            setter.begin_set_parameter(&params.seq_tempo);
-                            setter.set_parameter(
-                                &params.seq_tempo,
-                                (tempo_val - 1.0).clamp(40.0, 300.0),
-                            );
-                            setter.end_set_parameter(&params.seq_tempo);
-                        }
-
                         if ui
                             .add(
                                 DragValue::new(&mut tempo_val)
@@ -164,33 +138,13 @@ pub fn render_sequencer_and_transport(
                             setter.end_set_parameter(&params.seq_tempo);
                         }
 
-                        let up_btn = nih_plug_egui::egui::Button::new("+")
-                            .fill(Color32::from_rgb(0x28, 0x28, 0x28))
-                            .stroke(nih_plug_egui::egui::Stroke::new(
-                                1.0_f32,
-                                theme::PANEL_BORDER,
-                            ))
-                            .min_size(vec2(20.0, 20.0));
-                        if ui.add(up_btn).clicked() {
-                            setter.begin_set_parameter(&params.seq_tempo);
-                            setter.set_parameter(
-                                &params.seq_tempo,
-                                (tempo_val + 1.0).clamp(40.0, 300.0),
-                            );
-                            setter.end_set_parameter(&params.seq_tempo);
-                        }
-                    });
+                        ui.add_space(2.0);
 
-                    ui.add_space(2.0);
-
-                    // Row C: Length & Timebase
-                    ui.horizontal(|ui| {
                         ui.label(
-                            nih_plug_egui::egui::RichText::new("LENGTH:")
-                                .font(FontId::proportional(9.5))
+                            nih_plug_egui::egui::RichText::new("LEN:")
+                                .font(FontId::proportional(9.0))
                                 .color(theme::TEXT_SECONDARY),
                         );
-
                         let mut len_val = params.seq_length.value();
                         if ui
                             .add(DragValue::new(&mut len_val).range(1..=16))
@@ -200,21 +154,19 @@ pub fn render_sequencer_and_transport(
                             setter.set_parameter(&params.seq_length, len_val);
                             setter.end_set_parameter(&params.seq_length);
                         }
+                    });
 
-                        ui.add_space(2.0);
+                    ui.add_space(1.0);
 
-                        ui.label(
-                            nih_plug_egui::egui::RichText::new("TIMEBASE:")
-                                .font(FontId::proportional(9.5))
-                                .color(theme::TEXT_SECONDARY),
-                        );
-
+                    // Row C: Timebase + Mode
+                    ui.horizontal(|ui| {
                         let tb_val = params.seq_timebase.value();
                         ComboBox::from_id_salt("seq_tb_combo")
                             .selected_text(match tb_val {
                                 crate::params::Timebase::Straight => "16th",
                                 crate::params::Timebase::Triplet => "12th",
                             })
+                            .width(42.0)
                             .show_ui(ui, |ui| {
                                 if ui
                                     .selectable_label(
@@ -245,17 +197,8 @@ pub fn render_sequencer_and_transport(
                                     setter.end_set_parameter(&params.seq_timebase);
                                 }
                             });
-                    });
 
-                    ui.add_space(2.0);
-
-                    // Row D: Mode & Jitter
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            nih_plug_egui::egui::RichText::new("MODE:")
-                                .font(FontId::proportional(9.5))
-                                .color(theme::TEXT_SECONDARY),
-                        );
+                        ui.add_space(2.0);
 
                         let mode_val = params.seq_mode.value();
                         ComboBox::from_id_salt("seq_mode_combo")
@@ -263,6 +206,7 @@ pub fn render_sequencer_and_transport(
                                 crate::params::SequencerMode::DirectGrid => "Direct",
                                 crate::params::SequencerMode::DecoupledHardware => "Decoupled",
                             })
+                            .width(62.0)
                             .show_ui(ui, |ui| {
                                 if ui
                                     .selectable_label(
@@ -298,7 +242,7 @@ pub fn render_sequencer_and_transport(
                         ui.add_space(2.0);
 
                         let mut jitter_val = params.seq_jitter.value();
-                        if ui.checkbox(&mut jitter_val, "JITTER").changed() {
+                        if ui.checkbox(&mut jitter_val, "JIT").changed() {
                             setter.begin_set_parameter(&params.seq_jitter);
                             setter.set_parameter(&params.seq_jitter, jitter_val);
                             setter.end_set_parameter(&params.seq_jitter);

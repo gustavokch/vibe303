@@ -44,19 +44,40 @@ pub fn create_editor(
                     panels::header_bar::render_header(ui, &params, setter);
                     ui.add_space(5.0);
 
-                    // 2. Classic 303 Control Panel (Top)
-                    panels::top_controls::render_top_controls(ui, &params, setter);
+                    // 2. Vertical Waveform Selector + Classic 303 Control Panel
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing =
+                            nih_plug_egui::egui::vec2(6.0, 0.0);
+
+                        // Vertical waveform switch
+                        ui.add(
+                            widgets::SlideSwitch::new(
+                                &params.waveform,
+                                setter,
+                                "WAVEFORM",
+                                &["SAW", "SQR", "SWP"],
+                            )
+                            .vertical(),
+                        );
+
+                        // Classic controls panel (knobs + ADSR banks)
+                        panels::top_controls::render_top_controls(ui, &params, setter);
+                    });
                     ui.add_space(5.0);
 
-                    // 3. Souped-Up Engine Drawer Panel (Middle)
+                    // 3. Souped-Up Engine Drawer Panel
                     panels::souped_panel::render_souped_panel(ui, &params, setter);
                     ui.add_space(5.0);
 
-                    // Always active: this sits after either topology's voice path.
-                    panels::output_clipper::render_output_clipper(ui, &params, setter);
+                    // 4. Output Clipper + Tweaks Panel
+                    ui.horizontal(|ui| {
+                        panels::output_clipper::render_output_clipper(ui, &params, setter);
+                        ui.add_space(4.0);
+                        panels::tweaks_panel::render_tweaks_panel(ui, &params, setter);
+                    });
                     ui.add_space(5.0);
 
-                    // 3. Bottom Sequencer Grid & Transport Column
+                    // 5. Bottom Sequencer Grid & Transport Column
                     panels::sequencer_panel::render_sequencer_and_transport(
                         ui,
                         &params,

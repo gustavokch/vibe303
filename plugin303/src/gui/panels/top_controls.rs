@@ -1,22 +1,19 @@
 use nih_plug::prelude::ParamSetter;
-use nih_plug_egui::egui::{pos2, vec2, Color32, Stroke, Ui};
+use nih_plug_egui::egui::{pos2, vec2, Color32, CornerRadius, FontId, Frame, Margin, Stroke, Ui};
 
 use crate::gui::theme;
-use crate::gui::widgets::{Knob303, SlideSwitch};
+use crate::gui::widgets::{Knob303, MiniFader};
 use crate::params::Plugin303Params;
 
 pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
-    // Exact sizing for panel background
-    let desired_size = vec2(1060.0, 96.0);
+    let desired_size = vec2(ui.available_width(), 100.0);
     let (rect, _) = ui.allocate_exact_size(desired_size, nih_plug_egui::egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
 
-        // Flat dark grey background panel (#242424)
         painter.rect_filled(rect, 4.0, theme::PANEL_BG);
 
-        // Bevel stroke lines
         painter.rect_stroke(
             rect,
             4.0,
@@ -35,7 +32,6 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         nih_plug_egui::egui::UiBuilder::new().max_rect(rect.shrink(8.0)),
         |ui| {
             ui.horizontal(|ui| {
-                ui.set_width(1040.0);
                 // Classic 303 Parameter Gauges (7 Knobs)
                 ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
                 ui.add(Knob303::new(&params.tuning, setter, "TUNING", 18.0));
@@ -48,33 +44,136 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                 ui.add_space(12.0);
                 ui.separator();
-                ui.add_space(12.0);
+                ui.add_space(8.0);
 
-                // Waveform & Fidelity Tier Slide Switches
-                ui.spacing_mut().item_spacing = vec2(16.0, 0.0);
-                ui.add(
-                    SlideSwitch::new(
-                        &params.waveform,
-                        setter,
-                        "WAVEFORM",
-                        &["SAW", "SQUARE", "SWEEP"],
-                    ),
-                );
-
-                ui.add(
-                    SlideSwitch::new(
-                        &params.tier,
-                        setter,
-                        "FIDELITY TIER",
-                        &["LOW", "HIGH", "ULTRA"],
+                // ADV ENV checkbox
+                let mut adv_env = params.advanced_env.value();
+                if ui
+                    .checkbox(
+                        &mut adv_env,
+                        nih_plug_egui::egui::RichText::new("ADV\nENV")
+                            .font(FontId::proportional(8.5))
+                            .color(theme::TEXT_SECONDARY),
                     )
-                    .with_thumb_color(Color32::from_rgb(0x8b, 0x00, 0x00)),
-                );
+                    .changed()
+                {
+                    setter.begin_set_parameter(&params.advanced_env);
+                    setter.set_parameter(&params.advanced_env, adv_env);
+                    setter.end_set_parameter(&params.advanced_env);
+                }
+
+                ui.add_space(4.0);
+
+                // MEG ADSR & VEG ADSR Mini-Fader Banks
+                let bank_frame = Frame::new()
+                    .fill(Color32::from_rgb(0x1b, 0x1b, 0x1b))
+                    .stroke(Stroke::new(
+                        1.0_f32,
+                        Color32::from_rgb(0x2a, 0x2e, 0x33),
+                    ))
+                    .corner_radius(CornerRadius::same(3))
+                    .inner_margin(Margin::symmetric(4, 3));
+
+                // MEG ADSR Group
+                bank_frame.show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            nih_plug_egui::egui::RichText::new("MEG ADSR")
+                                .font(FontId::new(
+                                    8.5,
+                                    nih_plug_egui::egui::FontFamily::Proportional,
+                                ))
+                                .strong()
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.add_space(1.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                            ui.add(MiniFader::new(
+                                &params.meg_attack,
+                                setter,
+                                "A",
+                                30.0,
+                                theme::SOUPED_ORANGE,
+                            ));
+                            ui.add(MiniFader::new(
+                                &params.meg_decay_adj,
+                                setter,
+                                "D",
+                                30.0,
+                                theme::SOUPED_ORANGE,
+                            ));
+                            ui.add(MiniFader::new(
+                                &params.meg_sustain,
+                                setter,
+                                "S",
+                                30.0,
+                                theme::SOUPED_ORANGE,
+                            ));
+                            ui.add(MiniFader::new(
+                                &params.meg_release,
+                                setter,
+                                "R",
+                                30.0,
+                                theme::SOUPED_ORANGE,
+                            ));
+                        });
+                    });
+                });
+
+                ui.add_space(4.0);
+
+                // VEG ADSR Group
+                bank_frame.show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            nih_plug_egui::egui::RichText::new("VEG ADSR")
+                                .font(FontId::new(
+                                    8.5,
+                                    nih_plug_egui::egui::FontFamily::Proportional,
+                                ))
+                                .strong()
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.add_space(1.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                            ui.add(MiniFader::new(
+                                &params.veg_attack,
+                                setter,
+                                "A",
+                                30.0,
+                                theme::SOUPED_ORANGE,
+                            ));
+                            ui.add(MiniFader::new(
+                                &params.veg_decay_adj,
+                                setter,
+                                "D",
+                                30.0,
+                                theme::SOUPED_ORANGE,
+                            ));
+                            ui.add(MiniFader::new(
+                                &params.veg_sustain,
+                                setter,
+                                "S",
+                                30.0,
+                                theme::SOUPED_ORANGE,
+                            ));
+                            ui.add(MiniFader::new(
+                                &params.veg_release,
+                                setter,
+                                "R",
+                                30.0,
+                                theme::SOUPED_ORANGE,
+                            ));
+                        });
+                    });
+                });
             });
         },
     );
 
-    // Procedural corner mounting screws with realistic cross-head slots
+    // Procedural corner mounting screws
     let painter = ui.painter();
     let screw_positions = [
         pos2(rect.left() + 7.0, rect.top() + 7.0),
@@ -89,7 +188,13 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         let dx = angle.cos() * 1.4;
         let dy = angle.sin() * 1.4;
         let slot_stroke = Stroke::new(0.9_f32, Color32::from_rgb(0x18, 0x18, 0x18));
-        painter.line_segment([pos2(pos.x - dx, pos.y - dy), pos2(pos.x + dx, pos.y + dy)], slot_stroke);
-        painter.line_segment([pos2(pos.x + dy, pos.y - dx), pos2(pos.x - dy, pos.y + dx)], slot_stroke);
+        painter.line_segment(
+            [pos2(pos.x - dx, pos.y - dy), pos2(pos.x + dx, pos.y + dy)],
+            slot_stroke,
+        );
+        painter.line_segment(
+            [pos2(pos.x + dy, pos.y - dx), pos2(pos.x - dy, pos.y + dx)],
+            slot_stroke,
+        );
     }
 }

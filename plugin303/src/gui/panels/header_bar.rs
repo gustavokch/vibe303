@@ -155,6 +155,13 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                         .color(theme::SOUPED_ORANGE),
                 );
                 ui.add_space(12.0);
+                ui.add(SlideSwitch::new(
+                    &params.tier,
+                    setter,
+                    "QUALITY",
+                    &["LOW", "HIGH", "ULTRA"],
+                ));
+                ui.add_space(8.0);
                 let prev_topology = params.topology.value();
                 let switch_resp = ui.add(SlideSwitch::new(
                     &params.topology,
