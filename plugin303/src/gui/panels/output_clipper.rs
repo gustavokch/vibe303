@@ -106,12 +106,15 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                         }
                     }
                     let mut asym = params.clipper_asym.value();
-                    if ui.checkbox(&mut asym, "ASYM").changed() {
+                    if ui
+                        .checkbox(&mut asym, "ASYM (GE)")
+                        .on_hover_text("Toggle asymmetric Germanium diode clipping")
+                        .changed()
+                    {
                         setter.begin_set_parameter(&params.clipper_asym);
                         setter.set_parameter(&params.clipper_asym, asym);
                         setter.end_set_parameter(&params.clipper_asym);
                     }
-                    ui.colored_label(theme::TEXT_SECONDARY, "GE / JFET");
                 });
             });
         });

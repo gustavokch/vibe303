@@ -445,10 +445,11 @@ impl Default for Plugin303Params {
             volume: FloatParam::new(
                 "Volume",
                 0.0,
-                FloatRange::Skewed {
+                FloatRange::SymmetricalSkewed {
                     min: -90.0,
                     max: 6.0,
                     factor: FloatRange::skew_factor(-2.0),
+                    center: 0.0,
                 },
             )
             .with_unit(" dB"),
