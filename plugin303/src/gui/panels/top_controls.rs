@@ -94,8 +94,10 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         nih_plug_egui::egui::UiBuilder::new().max_rect(rect.shrink(8.0)),
         |ui| {
             ui.horizontal(|ui| {
+                ui.add_space(6.0);
+
                 // Classic 303 Parameter Gauges (7 Knobs)
-                ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                ui.spacing_mut().item_spacing = vec2(16.0, 0.0);
                 ui.add(Knob303::new(&params.tuning, setter, "TUNING", 18.0));
                 ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 18.0));
                 ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 18.0));
@@ -104,53 +106,71 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add(Knob303::new(&params.accent, setter, "ACCENT", 18.0));
                 ui.add(Knob303::new(&params.volume, setter, "VOLUME", 18.0));
 
-                ui.add_space(12.0);
+                ui.add_space(14.0);
                 ui.separator();
-                ui.add_space(8.0);
+                ui.add_space(14.0);
 
-                // ADV ENV checkbox
-                ui.vertical(|ui| {
-                    ui.add_space(34.0);
-                    let mut adv_env = params.advanced_env.value();
-                    if ui
-                        .checkbox(
-                            &mut adv_env,
-                            nih_plug_egui::egui::RichText::new("ADV ENV")
-                                .font(FontId::proportional(8.5))
-                                .color(theme::TEXT_SECONDARY),
-                        )
-                        .changed()
-                    {
-                        setter.begin_set_parameter(&params.advanced_env);
-                        setter.set_parameter(&params.advanced_env, adv_env);
-                        setter.end_set_parameter(&params.advanced_env);
-                    }
+                // Envelopes Module Frame: contains ADV ENV toggle in header + MEG ADSR + VEG ADSR
+                let env_frame = Frame::new()
+                    .fill(theme::BANK_FRAME_BG)
+                    .stroke(Stroke::new(1.0_f32, theme::BANK_FRAME_BORDER))
+                    .corner_radius(CornerRadius::same(4))
+                    .inner_margin(Margin::symmetric(6, 4));
+
+                env_frame.show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        // Header with Title and ADV ENV checkbox anchored together
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                nih_plug_egui::egui::RichText::new("ENVELOPES")
+                                    .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
+                                    .strong()
+                                    .color(theme::TEXT_PRIMARY),
+                            );
+                            ui.add_space(8.0);
+                            let mut adv_env = params.advanced_env.value();
+                            if ui
+                                .checkbox(
+                                    &mut adv_env,
+                                    nih_plug_egui::egui::RichText::new("ADV ENV")
+                                        .font(FontId::proportional(8.5))
+                                        .color(theme::TEXT_SECONDARY),
+                                )
+                                .changed()
+                            {
+                                setter.begin_set_parameter(&params.advanced_env);
+                                setter.set_parameter(&params.advanced_env, adv_env);
+                                setter.end_set_parameter(&params.advanced_env);
+                            }
+                        });
+
+                        ui.add_space(2.0);
+
+                        // ADSR banks row
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                            render_adsr_bank(
+                                ui,
+                                "MEG ADSR",
+                                &params.meg_attack,
+                                &params.meg_decay_adj,
+                                &params.meg_sustain,
+                                &params.meg_release,
+                                setter,
+                            );
+
+                            render_adsr_bank(
+                                ui,
+                                "VEG ADSR",
+                                &params.veg_attack,
+                                &params.veg_decay_adj,
+                                &params.veg_sustain,
+                                &params.veg_release,
+                                setter,
+                            );
+                        });
+                    });
                 });
-
-                ui.add_space(4.0);
-
-                // MEG ADSR & VEG ADSR Mini-Fader Banks
-                render_adsr_bank(
-                    ui,
-                    "MEG ADSR",
-                    &params.meg_attack,
-                    &params.meg_decay_adj,
-                    &params.meg_sustain,
-                    &params.meg_release,
-                    setter,
-                );
-
-                ui.add_space(4.0);
-
-                render_adsr_bank(
-                    ui,
-                    "VEG ADSR",
-                    &params.veg_attack,
-                    &params.veg_decay_adj,
-                    &params.veg_sustain,
-                    &params.veg_release,
-                    setter,
-                );
             });
         },
     );

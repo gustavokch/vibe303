@@ -227,11 +227,22 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 } else if self.label.contains("VOLUME") {
                     // Gain param: plain value is dB, not 0..1 — format before the
                     // percent branch can claim it.
-                    format!("{:+.1} dB", f)
+                    if f.abs() < 0.05 {
+                        "+0.0 dB".to_string()
+                    } else {
+                        format!("{:+.1} dB", f)
+                    }
                 } else if raw_str.contains("ohm") {
-                    // Clipper resistances: engineering-unit kΩ readout.
-                    if f >= 10_000.0 {
-                        format!("{:.0}kΩ", f / 1000.0)
+                    // Clipper resistances: format as perceptual percentage across pot range.
+                    if self.label.contains("DRIVE") {
+                        let pct = ((f - 22_000.0) / (100_000.0 - 22_000.0) * 100.0).clamp(0.0, 100.0);
+                        format!("{:.0}%", pct)
+                    } else if self.label.contains("THRESH") {
+                        let pct = ((f - 2_200.0) / (22_000.0 - 2_200.0) * 100.0).clamp(0.0, 100.0);
+                        format!("{:.0}%", pct)
+                    } else if self.label.contains("BASS") {
+                        let pct = ((f - 4_700.0) / (22_000.0 - 4_700.0) * 100.0).clamp(0.0, 100.0);
+                        format!("{:.0}%", pct)
                     } else if f >= 1_000.0 {
                         format!("{:.1}kΩ", f / 1000.0)
                     } else {
@@ -244,14 +255,16 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     || self.label.contains("DRIVE")
                     || self.label.contains("RESO")
                     || self.label.contains("PW")
+                    || self.label.contains("SUB")
+                    || self.label.contains("SWEEP")
                     || self.label.contains("VOL")
                     || self.label.contains("DRIFT")
                     || self.label.contains("AGE")
+                    || self.label.contains("DYN")
                 {
                     if (0.0..=1.0).contains(&f) {
                         format!("{:.0}%", f * 100.0)
                     } else if f.abs() >= 100.0 {
-                        // Large plain values (e.g. clipper ohms) are not percents.
                         format!("{:.0}", f)
                     } else {
                         format!("{:.1}%", f)
@@ -272,8 +285,20 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     } else {
                         format!("{:+.0} ct", f)
                     }
-                } else if self.label.contains("DET") {
-                    format!("{:+.1} st", f)
+                } else if self.label.contains("PITCH") || self.label.contains("DET") {
+                    if f.abs() < 0.01 {
+                        "+0.0 st".to_string()
+                    } else {
+                        format!("{:+.1} st", f)
+                    }
+                } else if self.label.contains("IN") || self.label.contains("OUT") || self.label.contains("TILT") {
+                    if f.abs() < 0.05 {
+                        "+0.0 dB".to_string()
+                    } else {
+                        format!("{:+.1} dB", f)
+                    }
+                } else if self.label.contains("TONE") {
+                    format!("{:.2}", f)
                 } else if self.label.contains("TEMPO") {
                     format!("{:.0} BPM", f)
                 } else if f.abs() >= 100.0 {

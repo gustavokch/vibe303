@@ -52,8 +52,10 @@ if let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as
         let pid = w[kCGWindowOwnerPID as String] as? pid_t ?? 0
         let id = w[kCGWindowNumber as String] as? CGWindowID ?? 0
         let bounds = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+        let owner = w[kCGWindowOwnerName as String] as? String ?? ""
+        let width = bounds["Width"] as? Int ?? 0
         let height = bounds["Height"] as? Int ?? 0
-        if pid == envPid && height > 300 {
+        if (pid == envPid || owner == "standalone") && width >= 1000 && height >= 700 {
             print(id)
             break
         }
@@ -97,8 +99,29 @@ capture_single_state "default" "$OUTPUT_DIR/latest.png"
 capture_single_state "accurate" "$OUTPUT_DIR/accurate.png"
 capture_single_state "running" "$OUTPUT_DIR/running.png"
 
-echo "Extracting multi-crop sections and broad zones..."
+echo "Extracting dynamic section crops, margins, and diff composites..."
 python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
+
+REQUIRED_CROPS=(
+    "latest.png"
+    "accurate.png"
+    "running.png"
+    "crop_header.png"
+    "crop_classic.png"
+    "crop_souped.png"
+    "crop_clipper_tweaks.png"
+    "crop_sequencer.png"
+    "crop_right_margin.png"
+    "crop_bottom_margin.png"
+    "crop_state_diff.png"
+)
+
+for crop_file in "${REQUIRED_CROPS[@]}"; do
+    if [[ ! -s "$OUTPUT_DIR/$crop_file" ]]; then
+        echo "ERROR: Required crop '$crop_file' missing or empty in $OUTPUT_DIR" >&2
+        exit 1
+    fi
+done
 
 echo "All GUI snapshots and crops captured successfully in $OUTPUT_DIR:"
 ls -la "$OUTPUT_DIR"/*.png

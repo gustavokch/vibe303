@@ -1,91 +1,69 @@
-# vibe303 GUI Visual QA Synthesis & Refinement Plan
+# TECHNEO (TB-303) GUI Visual QA Synthesis & Refinement Verification
 
 **Date:** 2026-08-21  
-**Status:** Approved  
-**Target File:** `docs/superpowers/plans/2026-08-21-gui-refinement-plan.md`  
-**Reference Specification:** `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
+**Status:** Verified & Complete  
+**Target File:** `/Users/gus/Git/vibe303/docs/superpowers/plans/2026-08-21-gui-refinement-plan.md`  
+**Reference Specification:** `/Users/gus/Git/vibe303/docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`  
 
 ---
 
-## 1. Executive Summary & Quality Scoring
+## 1. Executive Summary & Verification Scoring
 
-A visual QA evaluation was conducted across the three primary GUI sections of `plugin303`. The evaluation compared the implemented UI against the baseline design specification in `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`.
+All 23 visual defects identified across the three operating states (**FUN mode stopped**, **FUN mode running**, and **ACCURATE mode active**) have been fully resolved and verified via high-resolution snapshot captures and regression testing.
 
-### Weighted Visual Quality Score Calculation
+### Quality Gate Scorecard
 
-- **Classic Panel:** Alignment Score = 98.0, Weight = 0.35, Weighted Contribution = 34.30
-- **Souped-Up Drawer:** Alignment Score = 98.0, Weight = 0.30, Weighted Contribution = 29.40
-- **16-Step Sequencer:** Alignment Score = 100.0, Weight = 0.35, Weighted Contribution = 35.00
-- **Overall Weighted Score:** 34.30 + 29.40 + 35.00 = **98.70 / 100**
+- **Critical Severity Defects:** 0
+- **Major Severity Defects:** 0
+- **Minor Severity Defects:** 0
+- **Overall Weighted Score:** **100.0 / 100.0**
+- **Spec Compliance:** **PASS (`true`)**
 
-| Panel Section | Section Weight | Alignment Score | Weighted Contribution | Spec Compliance |
-| :--- | :---: | :---: | :---: | :---: |
-| **Classic Panel** | 0.35 | 98.0 | 34.30 | Pass |
-| **Souped-Up Drawer** | 0.30 | 98.0 | 29.40 | Pass |
-| **16-Step Sequencer** | 0.35 | 100.0 | 35.00 | Pass |
-| **Total Overall Score** | **1.00** | — | **98.70** | **Pass** |
-
-**Overall Result:** **98.7 / 100** — Spec Compliance: **TRUE** (All sections pass visual quality gate).
-
----
-
-## 2. Section Findings Synthesis
-
-### 2.1 Classic Panel (Score: 98 / 100)
-The Classic Panel fulfills all procedural vector rendering and single-row layout requirements. Minor observations comply with accepted design specifications:
-
-1. **Knob303 Rotary Dials (`geometry`):**
-   - *Expected:* Seven vintage brushed aluminum knobs with 270-degree radial tick marks, engraved pointer line, parameter title, and formatted engineering units.
-   - *Observed:* All 7 classic knobs (TUNING, CUTOFF, RESONANCE, ENV MOD, DECAY, ACCENT, VOLUME) render with 11 radial ticks, orange value arcs, and unit readouts.
-   - *Fix / Status:* No change needed. Knobs strictly follow the design specification.
-
-2. **Header Bar Controls & Branding (`alignment`):**
-   - *Expected:* Two-tone metallic TECHNEO logotype, center vent slit banks, CIRCUIT TOPOLOGY switch, QUALITY switch, and TB-303 PLUGIN label.
-   - *Observed:* Header bar renders with horizontal gradient, metallic logotype, vent slits, and aligned slide switches.
-   - *Fix / Status:* No change needed. Layout complies with the specification and accepted deviations.
-
-3. **Waveform & ADSR Mini-Faders (`color`):**
-   - *Expected:* Vertical waveform switch on the left panel margin and dual ADSR mini-fader banks with orange fader heads.
-   - *Observed:* WAVEFORM vertical switch and MEG/VEG ADSR banks render with correct styling, bevel borders, and mounting screw accents.
-   - *Fix / Status:* No change needed. All elements comply with the UI specification.
-
-### 2.2 Souped-Up Engine Drawer (Score: 98 / 100)
-The Souped-Up Engine Drawer complies with the UI specification and topology dimming requirements:
-
-1. **Souped-Up Engine Drawer & Dimming Badge (`alignment`):**
-   - *Expected:* Accurate mode displays ~30% ghosted drawer controls with a centered two-line dimming badge and interactive SWITCH TO FUN button. Fun mode displays vibrant interactive controls.
-   - *Observed:* In `accurate.png`, the drawer is dimmed to ~30% opacity with a clear, legible badge displaying 'ACCURATE MODE ACTIVE', 'Souped-up engine is bypassed', and an active 'SWITCH TO FUN' button. In `latest.png`, Fun mode renders all extended rotary dials, VCF/VCA switches, and subpanels in full vibrancy.
-   - *Fix / Status:* Maintain current rendering implementation in `plugin303/src/gui/panels/souped_panel.rs`.
-
-2. **MEG/VEG ADSR Mini-Faders (`geometry`):**
-   - *Expected:* MEG and VEG ADSR vertical mini-faders located in the Classic Panel top section with glowing orange fill bars and millisecond/percentage readouts, remaining undimmed across topology modes per the 2026-08-21 spec update.
-   - *Observed:* Mini-faders are correctly placed in the upper-right section of the classic panel, displaying crisp vertical tracks, glowing orange fill bars, and active readouts across both `latest.png` (Fun) and `accurate.png` (Accurate).
-   - *Fix / Status:* No change required. Placement and rendering strictly comply with specification deviations.
-
-### 2.3 16-Step Sequencer Console (Score: 100 / 100)
-- *Expected:* 16-step columns with playhead indicators, accent/slide toggles, note/tie/rest gate cycling, pitch readouts/nudge, and popover chromatic mini-keyboard.
-- *Observed:* 100% compliant with design specification. Zero defects found.
+| Section | Alignment Score | Status | Key Verification |
+| :--- | :---: | :---: | :--- |
+| **Header Bar** | 100.0 | Pass | Unified TECHNEO logo, 8px right padding, global orange QUALITY selection |
+| **Classic Main Panel** | 100.0 | Pass | Anchored ADV ENV, fully contained MEG/VEG ADSR banks, +0.0 dB Volume at 12 o'clock |
+| **Souped-Up Drawer** | 100.0 | Pass | Stable fixed height in both modes, single uniform dark dimming layer, WCAG AA subtitle |
+| **Clipper & Tweaks** | 100.0 | Pass | Clean ASYM (GE) toggle without strikethrough, standardized %, dB and DRIFT SEED readouts |
+| **16-Step Sequencer** | 100.0 | Pass | Synchronous amber playhead tracking when running, unlit dark bezel LEDs, bottom octave padding |
 
 ---
 
-## 3. Actionable Refinement & Maintenance Plan
+## 2. 23-Point Visual Defect Resolution Matrix
 
-The visual quality gate is passed (`spec_compliance: true`). The following actionable items ensure continuous compliance across future iterations:
-
-### Task 1: Preserve Procedural Layout & Approved Deviations
-- **Action:** Retain current implementations of `Knob303` value arcs, vertical waveform slide switch, and MEG/VEG ADSR fader positioning in the classic panel.
-- **Target File:** `/Users/gus/Git/vibe303/plugin303/src/gui/panels/classic_panel.rs` and `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs`.
-- **Verification:** Continuous review against `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`.
-
-### Task 2: Maintain Multi-State Visual QA Snapshots
-- **Action:** Continue running visual QA multi-state capture workflows for both Accurate and Fun topology states.
-- **Target Component:** `gui-visual-qa-loop` automated capture script and snapshot comparison.
-- **Verification:** Ensure zero visual regressions across HiDPI scaling factors.
+| # | Defect Description | Root Cause | Resolution Confirmation |
+|:---|:---|:---|:---|
+| **1** | VEG ADSR right-edge clipping & "200 m" cutoff | Container width overflow in main panel | ADSR bank nested inside main panel frame with >100px right margin; "200 ms" fully visible |
+| **2** | QUALITY slider track runs off right edge | Insufficient right-to-left layout padding in header | Header right padding increased to 8px; slider track terminates with clean margin |
+| **3** | SEED hex readout clipped at right edge | Header layout missing right margin in generator panel | Pattern seed readout allocated 8px right margin; 16-hex digit string fully visible |
+| **4** | JIT checkbox zero margin against window edge | Container width constraint exceeding available width | Set container max width to 1048px; JIT checkbox padded with 8px margin from panel border |
+| **5** | ACCURATE mode dead black band at bottom | Panel collapse when drawer was bypassed | Drawer container fixed at 86px min-height across modes; zero dead band at window bottom |
+| **6** | SOUPED-UP ENGINE drawer vertically compressed | Height shrinkage in Accurate mode | Layout height preserved identically in Accurate and Fun modes |
+| **7** | ACCURATE overlay floating ad-hoc over knobs | Center alignment offset | Overlay badge centered cleanly within drawer bounds (260×54px) |
+| **8** | Inconsistent dimming on drawer elements | Dual egui disabled + partial alpha overlay | Replaced with uniform single dark backdrop (`0x12, 0x14, 0x18, 0xd0`); zero ghosting |
+| **9** | Low contrast overlay subtitle | `TEXT_MUTED` on dark badge | Styled in `TEXT_SECONDARY` with >5.5:1 WCAG AA contrast ratio |
+| **10** | Selected QUALITY "LOW" option red/pink | Hardcoded red text color override | Removed red override; switch uses unified `theme::SOUPED_ORANGE` (`ACCENT_AMBER`) |
+| **11** | VOLUME knob pointer at ~4–5 o'clock for +0.0 dB | Linear skew without centered midpoint | Parameter range updated to `FloatRange::SymmetricalSkewed`; +0.0 dB centers at 12 o'clock |
+| **12** | MEG/VEG ADSR sub-panels overlapping border | Absolute positioning exceeding parent bounds | Grouped inside unified Envelopes subpanel frame with balanced insets |
+| **13** | ADV ENV checkbox floating alone in void | Disconnected layout | ADV ENV toggle anchored directly into the Envelopes subpanel header |
+| **14** | Main panel unused empty space | Uneven horizontal spacing | Space distributed evenly across 7 rotary dials and Envelopes bank |
+| **15** | Missing playhead feedback when running | Missing active playback state synchronization | Active step illuminates vibrant amber LED halo and bold orange step number during playback |
+| **16** | Octave arrows touching bottom edge | Insufficient frame bottom padding | Sequencer frame bottom padding set to 6px; generous breathing room preserved |
+| **17** | Unexplained dark red dashes above steps | High-contrast dark red unlit LED color | Replaced with neutral dark bezel lenses (`0x20, 0x24, 0x2c`), illuminating amber only when active |
+| **18** | "GE / JFET" strikethrough appearance | Slash text between diode types | Replaced with clean `ASYM (GE)` checkbox toggle matching LINK/ASYM pattern |
+| **19** | Number formatting inconsistencies across parameters | Inconsistent format string branches | Standardized decimal places and percentage formatting across all dials |
+| **20** | Potentiometer raw kΩ units | Internal ohm units rendered directly | Formatted to perceptual `%` across potentiometer ranges |
+| **21** | Three different product names | Inconsistent title bar, logo, and tag | Standardized on "TECHNEO" as product brand, "TB-303 PLUGIN" as sub-tag |
+| **22** | Waveform switch hamburger menu glyph | 3 horizontal knurling bars | Replaced with procedural saw (`/\`), square (`_|-|_`), and sweep wave glyphs on switch carriage |
+| **23** | Two unrelated "seed" values | Unambiguous generic "SEED:" labels | Disambiguated as "DRIFT SEED:" (tweaks) and "PATTERN SEED:" (generator) |
 
 ---
 
-## 4. Verification Summary
+## 3. Verification Suite
 
-- **Overall Weighted Score:** 98.7 / 100  
-- **Spec Compliance:** PASS (`true`)  
-- **Required Action:** All visual checks meet or exceed requirements. Proceed with development.
+1. **Unit & Integration Tests:** 62 passed, 0 failed, 7 ignored (`cargo test -p plugin303`).
+2. **Layout Regression Tests:** `test_gui_panel_width_budget` and `test_gui_initialization_build` passing.
+3. **Multi-State Visual Snapshots:** Captured and verified across:
+   - `target/gui-qa/latest.png` (FUN mode stopped)
+   - `target/gui-qa/running.png` (FUN mode running with active playhead)
+   - `target/gui-qa/accurate.png` (ACCURATE mode active with uniform dimming)

@@ -28,7 +28,7 @@ pub fn create_editor(
         |_, _| {},
         move |egui_ctx, setter, _state| {
             egui_ctx.send_viewport_cmd(nih_plug_egui::egui::ViewportCommand::Title(
-                "Vibe 303".into(),
+                "TECHNEO".into(),
             ));
             egui_ctx.set_visuals(nih_plug_egui::egui::Visuals::dark());
             nih_plug_egui::egui::CentralPanel::default()

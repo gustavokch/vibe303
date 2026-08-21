@@ -17,15 +17,17 @@ pub fn render_step_strip(
     ui: &mut Ui,
     step_idx: usize,
     step: &mut SequencerStep,
-    is_active: bool,
+    is_current: bool,
+    is_running: bool,
 ) -> bool {
     let mut changed = false;
     let width = 42.0;
+    let is_active = is_current && is_running;
 
     ui.vertical(|ui| {
         ui.set_width(width);
 
-        // 1. Playhead LED bar with metallic bezel rims and bloom halo
+        // 1. Playhead LED bar with metallic bezel rims and amber bloom halo
         let (led_rect, _) = ui.allocate_exact_size(vec2(width, 7.0), Sense::hover());
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
@@ -40,16 +42,17 @@ pub fn render_step_strip(
 
             let inner_led = led_rect.shrink(1.5);
             if is_active {
-                // Neon coral bloom halo
+                // Active amber/orange bloom halo
                 p.rect_filled(
-                    led_rect.expand(4.0),
+                    led_rect.expand(3.5),
                     4.0,
-                    Color32::from_rgba_premultiplied(0xff, 0x33, 0x55, 0xa0),
+                    Color32::from_rgba_premultiplied(0xff, 0x77, 0x00, 0x70),
                 );
-                // Active neon coral lens
-                p.rect_filled(inner_led, 2.0, Color32::from_rgb(0xff, 0x33, 0x55));
+                // Active amber lens
+                p.rect_filled(inner_led, 2.0, theme::SOUPED_ORANGE);
             } else {
-                p.rect_filled(inner_led, 2.0, Color32::from_rgb(0x40, 0x10, 0x15));
+                // Clean unlit dark bezel lens
+                p.rect_filled(inner_led, 2.0, Color32::from_rgb(0x20, 0x24, 0x2c));
             }
         }
 
@@ -63,7 +66,7 @@ pub fn render_step_strip(
                     nih_plug_egui::egui::RichText::new(format!("{:02}", step_idx + 1))
                         .font(FontId::new(8.0, FontFamily::Monospace))
                         .color(if is_active {
-                            theme::TEXT_PRIMARY
+                            theme::SOUPED_ORANGE
                         } else {
                             theme::TEXT_MUTED
                         }),

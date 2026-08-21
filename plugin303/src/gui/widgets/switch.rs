@@ -74,6 +74,7 @@ fn draw_thumb_carriage(
     thumb_rect: Rect,
     colors: &ThumbColors,
     is_vertical: bool,
+    glyph_idx: Option<usize>,
 ) {
     painter.rect_filled(thumb_rect, 2.0, colors.body);
     if let Some(highlight_color) = colors.top_highlight {
@@ -93,22 +94,48 @@ fn draw_thumb_carriage(
         StrokeKind::Inside,
     );
 
-    let num_ribs = 3;
     if is_vertical {
-        // Horizontal knurling ribs on vertical thumb
-        for r in 0..num_ribs {
-            let rib_offset = (r as f32 - (num_ribs - 1) as f32 / 2.0) * 2.5;
-            let ry = thumb_rect.center().y + rib_offset;
-            painter.line_segment(
-                [
-                    pos2(thumb_rect.left() + 2.0, ry),
-                    pos2(thumb_rect.right() - 2.0, ry),
-                ],
-                Stroke::new(1.0_f32, colors.rib),
-            );
+        let stroke = Stroke::new(1.2_f32, colors.rib);
+        let cx = thumb_rect.center().x;
+        let cy = thumb_rect.center().y;
+        match glyph_idx {
+            Some(0) => {
+                // Sawtooth wave glyph
+                let p1 = pos2(cx - 5.0, cy + 3.0);
+                let p2 = pos2(cx + 4.0, cy - 3.0);
+                let p3 = pos2(cx + 4.0, cy + 3.0);
+                painter.line_segment([p1, p2], stroke);
+                painter.line_segment([p2, p3], stroke);
+            }
+            Some(1) => {
+                // Square wave glyph
+                let p1 = pos2(cx - 5.0, cy + 3.0);
+                let p2 = pos2(cx - 5.0, cy - 3.0);
+                let p3 = pos2(cx, cy - 3.0);
+                let p4 = pos2(cx, cy + 3.0);
+                let p5 = pos2(cx + 5.0, cy + 3.0);
+                painter.line_segment([p1, p2], stroke);
+                painter.line_segment([p2, p3], stroke);
+                painter.line_segment([p3, p4], stroke);
+                painter.line_segment([p4, p5], stroke);
+            }
+            Some(2) => {
+                // Sweep wave glyph
+                let p1 = pos2(cx - 5.0, cy + 3.0);
+                let p2 = pos2(cx - 2.0, cy - 3.0);
+                let p3 = pos2(cx + 2.0, cy + 3.0);
+                let p4 = pos2(cx + 5.0, cy - 3.0);
+                painter.line_segment([p1, p2], stroke);
+                painter.line_segment([p2, p3], stroke);
+                painter.line_segment([p3, p4], stroke);
+            }
+            _ => {
+                painter.circle_filled(pos2(cx, cy), 1.5, colors.rib);
+            }
         }
     } else {
         // Vertical knurling ribs on horizontal thumb
+        let num_ribs = 3;
         for r in 0..num_ribs {
             let rib_offset = (r as f32 - (num_ribs - 1) as f32 / 2.0) * 3.0;
             let rx = thumb_rect.center().x + rib_offset;
@@ -254,7 +281,12 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     vec2(16.0, 12.0),
                 );
 
-                draw_thumb_carriage(painter, thumb_rect, &colors, true);
+                let glyph_idx = if self.label.contains("WAVE") {
+                    Some(current_idx)
+                } else {
+                    None
+                };
+                draw_thumb_carriage(painter, thumb_rect, &colors, true, glyph_idx);
 
                 // Option labels stacked vertically to the right of each detent
                 for (i, opt) in self.options.iter().enumerate() {
@@ -372,7 +404,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 vec2(thumb_w, 16.0),
             );
 
-            draw_thumb_carriage(painter, thumb_rect, &colors, false);
+            draw_thumb_carriage(painter, thumb_rect, &colors, false, None);
 
             // Option labels positioned below the track at each detent
             for (i, opt) in self.options.iter().enumerate() {

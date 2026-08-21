@@ -33,7 +33,7 @@ impl<'a, P: Param> MiniFader<'a, P> {
 
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let width = 24.0;
+        let width = 25.0;
         let total_height = self.height + 33.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());

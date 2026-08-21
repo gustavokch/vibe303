@@ -147,25 +147,22 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
         ui.with_layout(
             nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
             |ui| {
-                ui.add_space(4.0);
+                ui.add_space(8.0);
                 ui.label(
                     nih_plug_egui::egui::RichText::new("TB-303 PLUGIN")
-                        .font(FontId::new(11.0, FontFamily::Proportional))
+                        .font(FontId::new(10.5, FontFamily::Proportional))
                         .strong()
                         .color(theme::SOUPED_ORANGE),
                 );
-                ui.add_space(12.0);
+                ui.add_space(10.0);
                 let is_accurate = params.topology.value() == crate::params::CircuitTopology::Accurate;
                 ui.add_enabled_ui(!is_accurate, |ui| {
-                    ui.add(
-                        SlideSwitch::new(
-                            &params.tier,
-                            setter,
-                            "QUALITY",
-                            &["LOW", "HIGH", "ULTRA"],
-                        )
-                        .with_active_text_color(Color32::from_rgb(0xff, 0x33, 0x55)),
-                    );
+                    ui.add(SlideSwitch::new(
+                        &params.tier,
+                        setter,
+                        "QUALITY",
+                        &["LOW", "HIGH", "ULTRA"],
+                    ));
                 });
                 ui.add_space(8.0);
                 let prev_topology = params.topology.value();
