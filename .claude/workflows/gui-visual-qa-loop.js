@@ -23,7 +23,7 @@ const VISION_FINDINGS_SCHEMA = {
   properties: {
     section: {
       type: "string",
-      enum: ["classic_panel", "souped_drawer", "sequencer"]
+      enum: ["header_bar", "classic_panel", "souped_drawer", "clipper_tweaks", "sequencer"]
     },
     alignment_score: {
       type: "number",
@@ -100,7 +100,7 @@ while (iteration < max_iterations && currentScore < target_score) {
   // Phase 1: Capture (Haiku model)
   phase("Capture");
   const captureResult = await agent(
-    "Run bash scripts/capture_standalone_gui.sh and verify that target/gui-qa/latest.png, target/gui-qa/accurate.png, and target/gui-qa/running.png are created. Run `date +%Y-%m-%d` to get current date_str.",
+    "Run bash scripts/capture_standalone_gui.sh and verify that target/gui-qa/ snapshots and crops are generated (including latest_crop_header.png, latest_crop_classic.png, latest_crop_souped.png, latest_crop_clipper_tweaks.png, latest_crop_sequencer.png, accurate_crop_souped.png, running_crop_sequencer.png, and broad zones). Run `date +%Y-%m-%d` to get current date_str.",
     { label: "capture:standalone-gui", phase: "Capture", model: "haiku", schema: CAPTURE_SCHEMA }
   );
 
@@ -110,16 +110,24 @@ while (iteration < max_iterations && currentScore < target_score) {
   phase("Visual QA");
   const lenses = [
     {
+      name: "header_bar",
+      prompt: "Analyze discrete crop target/gui-qa/latest_crop_header.png and broad zone target/gui-qa/latest_zone_top.png focusing on Header Bar. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate VIBE-303 title typography/branding, FUN / ACCURATE mode selector switch, Polyphony / Voice count, Master Tuning, Drift / Age readouts, and Output Level knob."
+    },
+    {
       name: "classic_panel",
-      prompt: "Analyze target/gui-qa/latest.png focusing on Header Bar and Classic 7-Knob Panel. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md and docs/plans/2026-07-02-ui-mockup.jpg. Evaluate knob tick marks, labels, switches, and header branding."
+      prompt: "Analyze discrete crop target/gui-qa/latest_crop_classic.png and broad zone target/gui-qa/latest_zone_top.png focusing on Vertical Waveform Switch and Classic 7-Knob + ADSR Panel. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md and docs/plans/2026-07-02-ui-mockup.jpg. Evaluate vertical slide switch (SAW/SQR/SWP), 7 classic dials (Tuning, Cutoff, Reso, Env Mod, Decay, Accent, Distortion) tick marks, labels, and ADSR fader controls."
     },
     {
       name: "souped_drawer",
-      prompt: "Analyze target/gui-qa/latest.png focusing on Souped-Up Drawer, MEG/VEG Faders, and Topology Dimming. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate extended dials, faders, and accurate-mode dimming badge. Also analyze target/gui-qa/accurate.png: verify Accurate mode ghosting (~30% content visibility for MEG fader fill), legible dimming badge, and active SWITCH TO FUN button. Note: latest.png shows default FUN mode where drawer is vibrant."
+      prompt: "Analyze discrete crops target/gui-qa/latest_crop_souped.png and target/gui-qa/accurate_crop_souped.png, alongside broad zone target/gui-qa/latest_zone_mid.png focusing on Souped-Up Engine Drawer. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. In latest_crop_souped.png (FUN mode), evaluate extended dials (VCF Exp, Cutoff Offset, Reso Bias, Drive/Saturate) and MEG/VEG Attack/Decay/Sustain/Release faders. In accurate_crop_souped.png (Accurate mode), verify ~30% ghosting/dimming on MEG fader fill, legible accurate dimming badge, and active 'SWITCH TO FUN' button."
+    },
+    {
+      name: "clipper_tweaks",
+      prompt: "Analyze discrete crop target/gui-qa/latest_crop_clipper_tweaks.png and broad zone target/gui-qa/latest_zone_mid.png focusing on Output Clipper and Tweaks Subpanel. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Evaluate Clipper model selector (Off, Germanium, Warm JFET, Diode Clip, Hard), Drive/Ceiling controls, and Tweaks panel parameters (Accent behavior, High-pass mod, Slide time, Mod/Age options)."
     },
     {
       name: "sequencer",
-      prompt: "Analyze target/gui-qa/latest.png focusing on 16-Step Sequencer Strip, LED states, ACC/SLD toggles, and Gate colors. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Verify gate colors (NOTE = #00e5ff, TIE = #ffd700, REST = #333a42 / theme::GATE_REST_COLOR). Also analyze target/gui-qa/running.png: verify running transport playhead LED bar glows neon coral (#ff3355) on step 4 while all other step LEDs remain dim. Note: in latest.png transport is stopped with all playhead bars dim."
+      prompt: "Analyze discrete crops target/gui-qa/latest_crop_sequencer.png and target/gui-qa/running_crop_sequencer.png, alongside broad zone target/gui-qa/latest_zone_bottom.png focusing on 16-Step Sequencer Grid and Transport Column. Compare against docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. In latest_crop_sequencer.png, verify 16-step button layouts, pitch labels, ACC/SLD toggles, and Gate colors (NOTE = #00e5ff, TIE = #ffd700, REST = #333a42 / theme::GATE_REST_COLOR). In running_crop_sequencer.png, verify running transport playhead LED bar glows neon coral (#ff3355) on active step 4 while other step LEDs remain dim."
     }
   ];
 
@@ -138,7 +146,7 @@ while (iteration < max_iterations && currentScore < target_score) {
   phase("Synthesize");
   const planFilePath = `docs/superpowers/plans/${dateStr}-gui-refinement-plan.md`;
   const synthesis = await agent(
-    `Synthesize visual QA findings: ${JSON.stringify(lensResults)}. Compare against design spec docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Calculate overall weighted score (0.35 classic + 0.30 souped + 0.35 sequencer) and write a complete, actionable refinement plan to ${planFilePath}.`,
+    `Synthesize visual QA findings: ${JSON.stringify(lensResults)}. Compare against design spec docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md. Calculate overall weighted score (0.15 header_bar + 0.25 classic_panel + 0.20 souped_drawer + 0.15 clipper_tweaks + 0.25 sequencer) and write a complete, actionable refinement plan to ${planFilePath}.`,
     {
       label: "synthesize:plan-generator",
       phase: "Synthesize",

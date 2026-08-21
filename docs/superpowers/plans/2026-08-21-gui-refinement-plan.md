@@ -32,37 +32,39 @@ A visual QA evaluation was conducted across the three primary GUI sections of `p
 ## 2. Section Findings Synthesis
 
 ### 2.1 Classic Panel (Score: 98 / 100)
-The Classic Panel fulfills all procedural vector rendering and single-row layout requirements. Four minor observations were evaluated and confirmed as non-defect accepted design deviations:
+The Classic Panel fulfills all procedural vector rendering and single-row layout requirements. Minor observations comply with accepted design specifications:
 
-1. **Knob303 Radial Tick Marks and Pointer:**
-   - *Expected:* Outer bezel ring with 11 radial tick marks across 270 degrees (135° to 405°) with major ticks at min, mid, max, and dual-layer engraved pointer line.
-   - *Observed:* All 7 classic knobs render 11 radial tick marks across 270 degrees with distinct major/minor tick strokes, engraved dual-layer pointer lines, and orange active value arcs.
-   - *Status:* Minor observation; implementation satisfies the specification and accepted value arc deviation.
+1. **Knob303 Rotary Dials (`geometry`):**
+   - *Expected:* Seven vintage brushed aluminum knobs with 270-degree radial tick marks, engraved pointer line, parameter title, and formatted engineering units.
+   - *Observed:* All 7 classic knobs (TUNING, CUTOFF, RESONANCE, ENV MOD, DECAY, ACCENT, VOLUME) render with 11 radial ticks, orange value arcs, and unit readouts.
+   - *Fix / Status:* No change needed. Knobs strictly follow the design specification.
 
-2. **Classic Knob Labels and Unit Readouts:**
-   - *Expected:* Bold uppercase parameter titles with monospace physical unit readouts positioned underneath each dial.
-   - *Observed:* All 7 dials display centered uppercase titles (TUNING, CUTOFF, RESONANCE, ENV MOD, DECAY, ACCENT, VOLUME) with formatted monospace engineering readouts (+0 ct, 2.1 kHz, 50%, 1.10 s, +0.0 dB).
-   - *Status:* Minor observation; readouts match theme typography specifications.
+2. **Header Bar Controls & Branding (`alignment`):**
+   - *Expected:* Two-tone metallic TECHNEO logotype, center vent slit banks, CIRCUIT TOPOLOGY switch, QUALITY switch, and TB-303 PLUGIN label.
+   - *Observed:* Header bar renders with horizontal gradient, metallic logotype, vent slits, and aligned slide switches.
+   - *Fix / Status:* No change needed. Layout complies with the specification and accepted deviations.
 
-3. **Slide Switches and Fader Banks:**
-   - *Expected:* Multi-position slide switches with recessed dark tracks and knurled silver carriages; vertical WAVEFORM switch on classic panel left margin; MEG/VEG ADSR mini-fader banks.
-   - *Observed:* Vertical WAVEFORM switch (SAW, SQR, SWP) renders on left margin; CIRCUIT TOPOLOGY and QUALITY switches render in header; MEG/VEG ADSR banks with ADV ENV toggle render on right side.
-   - *Status:* Minor observation; alignment complies with single-row layout specification.
-
-4. **Header Bar Branding and Logotype:**
-   - *Expected:* Brushed-steel header band with two-tone metallic TECHNEO logotype, dual 12-slit vent banks, and orange TB-303 PLUGIN subtitle.
-   - *Observed:* Two-tone silver and orange TECHNEO logotype renders with vertical gradient pass, dual recessed 12-slit vent banks flank center, and orange TB-303 PLUGIN label aligns to right.
-   - *Status:* Minor observation; visual styling matches branding specifications.
+3. **Waveform & ADSR Mini-Faders (`color`):**
+   - *Expected:* Vertical waveform switch on the left panel margin and dual ADSR mini-fader banks with orange fader heads.
+   - *Observed:* WAVEFORM vertical switch and MEG/VEG ADSR banks render with correct styling, bevel borders, and mounting screw accents.
+   - *Fix / Status:* No change needed. All elements comply with the UI specification.
 
 ### 2.2 Souped-Up Engine Drawer (Score: 98 / 100)
-- *Observed:* Full compliance with specification.
-- *Details:* Extended dual oscillator controls, pulse width, filter slope selector (2-Pole, 3-Pole, 4-Pole), drive, glide, and analog wear/drift dials render cleanly. Accurate mode dimming (30% opacity with non-interactive overlay badge) functions per specification.
-- *Defects:* 0 findings.
+The Souped-Up Engine Drawer complies with the UI specification and topology dimming requirements:
+
+1. **Souped-Up Engine Drawer & Dimming Badge (`alignment`):**
+   - *Expected:* Accurate mode displays ~30% ghosted drawer controls with a centered two-line dimming badge and interactive SWITCH TO FUN button. Fun mode displays vibrant interactive controls.
+   - *Observed:* In `accurate.png`, the drawer is dimmed to ~30% opacity with a clear, legible badge displaying 'ACCURATE MODE ACTIVE', 'Souped-up engine is bypassed', and an active 'SWITCH TO FUN' button. In `latest.png`, Fun mode renders all extended rotary dials, VCF/VCA switches, and subpanels in full vibrancy.
+   - *Fix / Status:* Maintain current rendering implementation in `plugin303/src/gui/panels/souped_panel.rs`.
+
+2. **MEG/VEG ADSR Mini-Faders (`geometry`):**
+   - *Expected:* MEG and VEG ADSR vertical mini-faders located in the Classic Panel top section with glowing orange fill bars and millisecond/percentage readouts, remaining undimmed across topology modes per the 2026-08-21 spec update.
+   - *Observed:* Mini-faders are correctly placed in the upper-right section of the classic panel, displaying crisp vertical tracks, glowing orange fill bars, and active readouts across both `latest.png` (Fun) and `accurate.png` (Accurate).
+   - *Fix / Status:* No change required. Placement and rendering strictly comply with specification deviations.
 
 ### 2.3 16-Step Sequencer Console (Score: 100 / 100)
-- *Observed:* Full compliance with specification.
-- *Details:* Interactive step strips render playhead LEDs in neon coral, note/tie/rest gate cycling, accent/slide toggles, pitch readouts, nudge buttons, and multi-octave popover piano roll keyboard.
-- *Defects:* 0 findings.
+- *Expected:* 16-step columns with playhead indicators, accent/slide toggles, note/tie/rest gate cycling, pitch readouts/nudge, and popover chromatic mini-keyboard.
+- *Observed:* 100% compliant with design specification. Zero defects found.
 
 ---
 
@@ -70,15 +72,15 @@ The Classic Panel fulfills all procedural vector rendering and single-row layout
 
 The visual quality gate is passed (`spec_compliance: true`). The following actionable items ensure continuous compliance across future iterations:
 
-### Task 1: Lock Procedural Layout & Value Arc Deviations
-- **Action:** Maintain documentation of approved deviations in `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`.
-- **Target Component:** `Knob303` (orange value arc), `classic_panel` (vertical waveform selector layout), and `fader_banks` (MEG/VEG ADSR fader positioning).
-- **Verification:** Run visual QA automated captures during UI regression testing to ensure no unintended layout shifts occur.
+### Task 1: Preserve Procedural Layout & Approved Deviations
+- **Action:** Retain current implementations of `Knob303` value arcs, vertical waveform slide switch, and MEG/VEG ADSR fader positioning in the classic panel.
+- **Target File:** `/Users/gus/Git/vibe303/plugin303/src/gui/panels/classic_panel.rs` and `/Users/gus/Git/vibe303/plugin303/src/gui/panels/souped_panel.rs`.
+- **Verification:** Continuous review against `docs/superpowers/specs/2026-08-13-gui-frontend-egui-design.md`.
 
-### Task 2: Multi-State Automated Visual Regression Suite
-- **Action:** Execute automated multi-state capture workflows for all three panels (`classic_panel`, `souped_drawer`, `sequencer`).
-- **Target Component:** `gui-visual-qa-loop` workflow and snapshot baseline suite.
-- **Verification:** Confirm zero visual regressions on DPI scaling adjustments and platform rendering backends.
+### Task 2: Maintain Multi-State Visual QA Snapshots
+- **Action:** Continue running visual QA multi-state capture workflows for both Accurate and Fun topology states.
+- **Target Component:** `gui-visual-qa-loop` automated capture script and snapshot comparison.
+- **Verification:** Ensure zero visual regressions across HiDPI scaling factors.
 
 ---
 
@@ -86,4 +88,4 @@ The visual quality gate is passed (`spec_compliance: true`). The following actio
 
 - **Overall Weighted Score:** 98.7 / 100  
 - **Spec Compliance:** PASS (`true`)  
-- **Required Action:** No blocking visual defects found. Proceed with standard feature development and DSP integration.
+- **Required Action:** All visual checks meet or exceed requirements. Proceed with development.
