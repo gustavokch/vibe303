@@ -109,20 +109,23 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add_space(8.0);
 
                 // ADV ENV checkbox
-                let mut adv_env = params.advanced_env.value();
-                if ui
-                    .checkbox(
-                        &mut adv_env,
-                        nih_plug_egui::egui::RichText::new("ADV ENV")
-                            .font(FontId::proportional(8.5))
-                            .color(theme::TEXT_SECONDARY),
-                    )
-                    .changed()
-                {
-                    setter.begin_set_parameter(&params.advanced_env);
-                    setter.set_parameter(&params.advanced_env, adv_env);
-                    setter.end_set_parameter(&params.advanced_env);
-                }
+                ui.vertical(|ui| {
+                    ui.add_space(34.0);
+                    let mut adv_env = params.advanced_env.value();
+                    if ui
+                        .checkbox(
+                            &mut adv_env,
+                            nih_plug_egui::egui::RichText::new("ADV ENV")
+                                .font(FontId::proportional(8.5))
+                                .color(theme::TEXT_SECONDARY),
+                        )
+                        .changed()
+                    {
+                        setter.begin_set_parameter(&params.advanced_env);
+                        setter.set_parameter(&params.advanced_env, adv_env);
+                        setter.end_set_parameter(&params.advanced_env);
+                    }
+                });
 
                 ui.add_space(4.0);
 

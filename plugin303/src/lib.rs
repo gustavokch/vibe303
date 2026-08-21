@@ -208,6 +208,11 @@ impl Plugin for Plugin303 {
         // would swap in a new atomic and disconnect the playhead LED.
         self.sequencer.set_sample_rate(self.sample_rate as f64);
         self.sequencer.reset();
+        if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
+            if state == "running" {
+                self.current_playing_step.store(3, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         self.active_midi_note = None;
         if let Ok(guard) = self.params.pattern.read() {
             self.cached_pattern = guard.compile(

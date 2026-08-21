@@ -157,12 +157,15 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                 ui.add_space(12.0);
                 let is_accurate = params.topology.value() == crate::params::CircuitTopology::Accurate;
                 ui.add_enabled_ui(!is_accurate, |ui| {
-                    ui.add(SlideSwitch::new(
-                        &params.tier,
-                        setter,
-                        "QUALITY",
-                        &["LOW", "HIGH", "ULTRA"],
-                    ));
+                    ui.add(
+                        SlideSwitch::new(
+                            &params.tier,
+                            setter,
+                            "QUALITY",
+                            &["LOW", "HIGH", "ULTRA"],
+                        )
+                        .with_active_text_color(Color32::from_rgb(0xff, 0x33, 0x55)),
+                    );
                 });
                 ui.add_space(8.0);
                 let prev_topology = params.topology.value();
