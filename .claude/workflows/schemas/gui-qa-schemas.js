@@ -3,7 +3,7 @@ export const VISION_FINDINGS_SCHEMA = {
   properties: {
     section: {
       type: "string",
-      enum: ["classic_panel", "souped_drawer", "sequencer"]
+      enum: ["header_bar", "classic_panel", "souped_drawer", "clipper_tweaks", "sequencer"]
     },
     alignment_score: {
       type: "number",

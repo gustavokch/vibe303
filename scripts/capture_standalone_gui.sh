@@ -97,5 +97,8 @@ capture_single_state "default" "$OUTPUT_DIR/latest.png"
 capture_single_state "accurate" "$OUTPUT_DIR/accurate.png"
 capture_single_state "running" "$OUTPUT_DIR/running.png"
 
-echo "All GUI snapshots captured successfully in $OUTPUT_DIR:"
+echo "Extracting multi-crop sections and broad zones..."
+python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
+
+echo "All GUI snapshots and crops captured successfully in $OUTPUT_DIR:"
 ls -la "$OUTPUT_DIR"/*.png
