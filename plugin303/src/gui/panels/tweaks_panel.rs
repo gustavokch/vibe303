@@ -88,7 +88,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         }
 
                         ui.label(
-                            nih_plug_egui::egui::RichText::new("SEED:")
+                            nih_plug_egui::egui::RichText::new("DRIFT SEED:")
                                 .font(FontId::proportional(9.0))
                                 .color(theme::TEXT_SECONDARY),
                         );
