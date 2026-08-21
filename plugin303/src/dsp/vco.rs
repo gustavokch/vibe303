@@ -165,9 +165,17 @@ struct CapDef {
     c: f64,
 }
 
+#[derive(Clone, Copy)]
+pub struct LutPayload {
+    pub luts: [[f64; LUT_K]; 22],
+    pub age: i32,
+    pub tolerance: f64,
+    pub seed: u32,
+}
+
 /// Triple-buffered background LUT store using lock-free, zero-allocation primitive.
 pub struct VcoLutBuffer {
-    buffer: TripleBuffer<[[f64; LUT_K]; 22]>,
+    buffer: TripleBuffer<LutPayload>,
     pub sequence: Arc<std::sync::atomic::AtomicU64>,
     pub completed_sequence: std::sync::atomic::AtomicU64,
 }
@@ -175,7 +183,12 @@ pub struct VcoLutBuffer {
 impl VcoLutBuffer {
     pub fn new(nominal_lut: [f64; LUT_K]) -> Self {
         Self {
-            buffer: TripleBuffer::new([nominal_lut; 22]),
+            buffer: TripleBuffer::new(LutPayload {
+                luts: [nominal_lut; 22],
+                age: 0,
+                tolerance: 0.0,
+                seed: 1337,
+            }),
             sequence: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             completed_sequence: std::sync::atomic::AtomicU64::new(0),
         }
@@ -184,13 +197,18 @@ impl VcoLutBuffer {
     /// Read the currently active LUT set. Wait-free, zero-allocation, lock-free,
     /// safe to call on the real-time audio thread.
     #[inline]
-    pub fn load(&self) -> &[[f64; LUT_K]; 22] {
+    pub fn load(&self) -> &LutPayload {
         self.buffer.read()
     }
 
     /// Publish a freshly computed LUT set as the new active set.
-    pub fn store(&self, luts: [[f64; LUT_K]; 22]) {
-        self.buffer.write(luts);
+    pub fn store(&self, luts: [[f64; LUT_K]; 22], age: i32, tolerance: f64, seed: u32) {
+        self.buffer.write(LutPayload {
+            luts,
+            age,
+            tolerance,
+            seed,
+        });
         self.completed_sequence
             .fetch_add(1, std::sync::atomic::Ordering::Release);
     }
@@ -341,6 +359,7 @@ impl Vco303 {
             loaded_sequence: 0,
         };
         o.update_g_mults();
+        o.set_thermal_internal(0);
         o
     }
 
@@ -576,7 +595,7 @@ impl Vco303 {
     }
 
     pub fn set_thermal_internal(&mut self, thermal_noise: i32) {
-        let temp_c = 25.0 + thermal_noise as f64;
+        let temp_c = 20.0 + (thermal_noise as f64) * (25.0 / 21.0);
         self.npn.set_temp(temp_c);
         self.pnp.set_temp(temp_c);
         self.diode.set_temp(temp_c);
@@ -586,7 +605,7 @@ impl Vco303 {
         self.thermal_noise = thermal_noise;
         self.set_thermal_internal(thermal_noise);
         let noise_idx = thermal_noise.clamp(0, 21) as usize;
-        self.cv_lut = self.lut_buffer.load()[noise_idx];
+        self.cv_lut = self.lut_buffer.load().luts[noise_idx];
     }
 
     pub fn poll_lut_update(&mut self) {
@@ -596,15 +615,20 @@ impl Vco303 {
             .load(std::sync::atomic::Ordering::Acquire);
         if comp_seq != self.loaded_sequence {
             self.loaded_sequence = comp_seq;
+            let (tol, age, seed, luts) = {
+                let payload = self.lut_buffer.load();
+                (payload.tolerance, payload.age, payload.seed, payload.luts)
+            };
+            self.set_analog_wear(tol, age, seed);
             let noise_idx = self.thermal_noise.clamp(0, 21) as usize;
-            self.cv_lut = self.lut_buffer.load()[noise_idx];
+            self.cv_lut = luts[noise_idx];
         }
     }
 
     // Public for integration tests only
     pub fn build_step0_sync(&mut self) {
         let lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
-        self.lut_buffer.store([lut; 22]);
+        self.lut_buffer.store([lut; 22], 0, 0.0, 1337);
         self.cv_lut = lut;
     }
 
@@ -697,7 +721,7 @@ impl Vco303 {
                 }
             }
             self.lut_buffer.sequence.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.lut_buffer.store(local_luts);
+            self.lut_buffer.store(local_luts, 0, 0.0, seed);
             return true;
         }
 
@@ -720,8 +744,8 @@ impl Vco303 {
             seed,
             sequence: seq,
             sequence_checker: seq_checker,
-            on_complete: Arc::new(move |luts| {
-                buffer_for_complete.store(luts);
+            on_complete: Arc::new(move |luts, age, tol, seed| {
+                buffer_for_complete.store(luts, age, tol, seed);
             }),
         };
 
@@ -741,7 +765,8 @@ impl Vco303 {
         let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 && recal_scale == 1.0 {
             let lut = Self::cv_lut_for(self.sr as f32, 0, is_fun);
-            self.lut_buffer.store([lut; 22]);
+            self.set_analog_wear(0.0, 0, seed);
+            self.lut_buffer.store([lut; 22], 0, 0.0, seed);
             self.loaded_sequence = self
                 .lut_buffer
                 .completed_sequence
@@ -768,7 +793,7 @@ impl Vco303 {
             }
         }
 
-        self.lut_buffer.store(local_luts);
+        self.lut_buffer.store(local_luts, age, tolerance, seed);
         self.loaded_sequence = self
             .lut_buffer
             .completed_sequence

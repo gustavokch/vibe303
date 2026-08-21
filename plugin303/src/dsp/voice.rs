@@ -623,8 +623,6 @@ impl Voice {
             self.vco2.set_fun(is_fun_mode);
             self.ladder.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
             self.ladder_hi.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
-            self.vco.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
-            self.vco2.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
 
             if self.tier == Tier::Ultra
                 || self.pending_tier == Some(Tier::Ultra)
@@ -636,6 +634,8 @@ impl Voice {
                     self.vco_dirty = false;
                 }
             } else {
+                self.vco.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
+                self.vco2.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
                 self.vco_dirty = true;
             }
         }
@@ -1272,8 +1272,7 @@ impl Voice {
                 (self.current_pitch_st - 69.0
                     + self.osc1_pitch_st
                     + tuning_st
-                    + pitch_drift_st
-                    + pitch_thermal_st)
+                    + pitch_drift_st)
                     / 12.0,
             );
         let osc1_f = 440.0
@@ -1299,8 +1298,7 @@ impl Voice {
                     (self.current_pitch_st - 69.0
                         + self.osc2_pitch_st
                         + tuning_st
-                        + osc2_drift_st
-                        + pitch_thermal_st)
+                        + osc2_drift_st)
                         / 12.0,
                 );
             let osc2_f = 440.0

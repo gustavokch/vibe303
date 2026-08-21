@@ -15,7 +15,7 @@ pub struct LutJob {
     pub seed: u32,
     pub sequence: u64,
     pub sequence_checker: Arc<AtomicU64>,
-    pub on_complete: Arc<dyn Fn([[f64; LUT_K]; 22]) + Send + Sync>,
+    pub on_complete: Arc<dyn Fn([[f64; LUT_K]; 22], i32, f64, u32) + Send + Sync>,
 }
 
 static WORKER_CHANNEL: OnceLock<SyncSender<LutJob>> = OnceLock::new();
@@ -65,7 +65,7 @@ pub fn get_worker_sender() -> &'static SyncSender<LutJob> {
                     }
 
                     if job.sequence_checker.load(Ordering::Acquire) == job.sequence {
-                        (job.on_complete)(local_luts);
+                        (job.on_complete)(local_luts, job.age, job.tolerance, job.seed);
                     }
                 }
             })
