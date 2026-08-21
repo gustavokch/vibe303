@@ -97,8 +97,29 @@ capture_single_state "default" "$OUTPUT_DIR/latest.png"
 capture_single_state "accurate" "$OUTPUT_DIR/accurate.png"
 capture_single_state "running" "$OUTPUT_DIR/running.png"
 
-echo "Extracting multi-crop sections and broad zones..."
+echo "Extracting dynamic section crops, margins, and diff composites..."
 python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
+
+REQUIRED_CROPS=(
+    "latest.png"
+    "accurate.png"
+    "running.png"
+    "crop_header.png"
+    "crop_classic.png"
+    "crop_souped.png"
+    "crop_clipper_tweaks.png"
+    "crop_sequencer.png"
+    "crop_right_margin.png"
+    "crop_bottom_margin.png"
+    "crop_state_diff.png"
+)
+
+for crop_file in "${REQUIRED_CROPS[@]}"; do
+    if [[ ! -s "$OUTPUT_DIR/$crop_file" ]]; then
+        echo "ERROR: Required crop '$crop_file' missing or empty in $OUTPUT_DIR" >&2
+        exit 1
+    fi
+done
 
 echo "All GUI snapshots and crops captured successfully in $OUTPUT_DIR:"
 ls -la "$OUTPUT_DIR"/*.png
