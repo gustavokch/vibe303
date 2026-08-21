@@ -63,6 +63,7 @@ fn test_reso_gain_comp_scaling() {
         0,
         0.5,
         0.0, // reso_comp = 0.0
+        1.0,
     );
     voice.note_on(36);
 
@@ -137,6 +138,7 @@ fn test_reso_gain_comp_zero_at_zero_reso() {
         0,
         0.5,
         0.0,
+        1.0,
     );
     voice.note_on(36);
     let rms_zero_comp = render_voice_rms(&mut voice, 4000);

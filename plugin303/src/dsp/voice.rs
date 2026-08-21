@@ -38,7 +38,7 @@ const HIGH_LEVEL_TRIM: f32 = 1.55; // +3.8 dB
 const XFADE_SECS: f32 = 0.010;
 const COMP_BUF: usize = 64;
 
-const LOW_FC_POLY: [f32; 10] = [
+const LOW_FC_POLY: [f64; 10] = [
     6.258712813859e+00,
     5.371432501979e-02,
     7.099525631492e+00,
@@ -50,7 +50,7 @@ const LOW_FC_POLY: [f32; 10] = [
     1.384351930811e+00,
     1.349661559579e+00,
 ];
-const LOW_RESO_POLY: [f32; 10] = [
+const LOW_RESO_POLY: [f64; 10] = [
     -3.330341001287e+00,
     1.087510934708e+00,
     -2.294497319892e+00,
@@ -62,7 +62,7 @@ const LOW_RESO_POLY: [f32; 10] = [
     -4.566202037747e-01,
     3.235244687604e+00,
 ];
-const HIGH_FC_POLY: [f32; 10] = [
+const HIGH_FC_POLY: [f64; 10] = [
     2.669789218504e+00,
     1.892645368552e-01,
     -9.246591442637e-01,
@@ -74,7 +74,7 @@ const HIGH_FC_POLY: [f32; 10] = [
     -9.870758207804e-02,
     -1.088898286084e-01,
 ];
-const HIGH_RESO_POLY: [f32; 10] = [
+const HIGH_RESO_POLY: [f64; 10] = [
     -1.532576040675e+00,
     4.707246703637e-01,
     1.409196637283e+00,
@@ -88,7 +88,7 @@ const HIGH_RESO_POLY: [f32; 10] = [
 ];
 
 #[inline]
-fn eval_poly3(x: f32, y: f32, c: &[f32; 10]) -> f32 {
+fn eval_poly3(x: f64, y: f64, c: &[f64; 10]) -> f64 {
     c[0] + c[1] * x
         + c[2] * y
         + c[3] * x * x
@@ -213,14 +213,10 @@ pub struct Voice {
     drift_pitch: DriftGenerator,
     /// VCF cutoff random walk drift generator.
     drift_cutoff: DriftGenerator,
-    /// Thermal noise-induced pitch drift generator.
-    drift_pitch_thermal: DriftGenerator,
-    /// Age-induced pitch drift generator.
-    drift_pitch_age: DriftGenerator,
-    /// Thermal noise-induced cutoff drift generator.
-    drift_cutoff_thermal: DriftGenerator,
-    /// Age-induced cutoff drift generator.
-    drift_cutoff_age: DriftGenerator,
+    /// Resonance Q random walk drift generator.
+    drift_reso: DriftGenerator,
+    /// Pitch random walk drift generator for Osc2.
+    drift_pitch_osc2: DriftGenerator,
     /// Accent decay integrator accumulator.
     accent_acc: f32,
 
@@ -308,12 +304,21 @@ pub struct Voice {
     comp_seed: i32,
     /// Voice drift amount in [0.0, 1.0].
     drift: f32,
+    /// Trimmer recalibration scale in [0.0, 1.0].
+    recalibration_scale: f64,
+    low_cutoff_mult: f64,
+    low_reso_mult: f64,
     /// Thermal noise level in [0, 50].
     thermal_noise: i32,
     /// Dynamic operating temperature in degrees Celsius (20.0 to 45.0)
     temperature: f32,
-    /// Cached thermal state to avoid rebuilding LUTs.
+    /// Last VCO thermal step applied by `tick` (0..=21 step scale; -1 = unset).
     thermal_noise_state: i32,
+    /// Last raw `thermal_noise` parameter applied to the ladder filters
+    /// (parameter scale; -1 = unset). Kept separate from `thermal_noise_state`
+    /// because the ladders track the raw parameter while the VCOs track the
+    /// temperature-derived step.
+    ladder_thermal_state: i32,
     /// Fixed tuning offset.
     tuning_offset: f32,
     /// VCA envelope trigger mode.
@@ -391,10 +396,8 @@ impl Voice {
             veg: AdsrEnv::new(sr),
             drift_pitch: DriftGenerator::new(1337),
             drift_cutoff: DriftGenerator::new(7331),
-            drift_pitch_thermal: DriftGenerator::new(42),
-            drift_pitch_age: DriftGenerator::new(99),
-            drift_cutoff_thermal: DriftGenerator::new(17),
-            drift_cutoff_age: DriftGenerator::new(77),
+            drift_reso: DriftGenerator::new(2468),
+            drift_pitch_osc2: DriftGenerator::new(3579),
             accent_acc: 0.0,
 
             meg_decay: DecayEnv::new(sr as f64),
@@ -458,9 +461,13 @@ impl Voice {
             tolerance: CompTolerance::Zero,
             comp_seed: 0,
             drift: 0.0,
+            recalibration_scale: 1.0,
+            low_cutoff_mult: 1.0,
+            low_reso_mult: 1.0,
             thermal_noise: 0,
             temperature: 20.0,
             thermal_noise_state: -1,
+            ladder_thermal_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
             advanced_env: false,
             gate: false,
@@ -488,6 +495,21 @@ impl Voice {
         self.accent_acc
     }
 
+    pub fn temperature(&self) -> f32 {
+        self.temperature
+    }
+
+    pub fn get_vco_cv_lut(&self) -> [f64; 37] {
+        self.vco.get_cv_lut()
+    }
+
+    pub fn recalculate_luts_sync(&mut self) {
+        let tol_f64 = self.tolerance_f64();
+        self.vco.recalculate_luts_sync_with_recal(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+        self.vco2.recalculate_luts_sync_with_recal(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+        self.vco_dirty = false;
+    }
+
     pub fn get_current_pitch(&self) -> f32 {
         self.current_pitch_st
     }
@@ -501,13 +523,7 @@ impl Voice {
     }
 
     fn tolerance_f64(&self) -> f64 {
-        match self.tolerance {
-            CompTolerance::Zero => 0.0,
-            CompTolerance::PointFive => 0.005,
-            CompTolerance::Two => 0.02,
-            CompTolerance::Five => 0.05,
-            CompTolerance::Ten => 0.10,
-        }
+        self.tolerance.as_f64()
     }
 
     fn calculate_env_mod_scaler(&mut self, cutoff_hz: f64, env_mod_normalized: f64) {
@@ -565,10 +581,20 @@ impl Voice {
         comp_seed: i32,
         glide_knob: f32,
         reso_comp: f32,
+        recalibration_scale: f64,
     ) {
         let age_changed = self.age != comp_age;
         let tolerance_changed = self.tolerance != tolerance || self.comp_seed != comp_seed;
+        let recal_changed = self.recalibration_scale != recalibration_scale;
         let topology_changed = self.topology != topology;
+
+        if self.comp_seed != comp_seed {
+            let seed = comp_seed as u32;
+            self.drift_pitch = DriftGenerator::new(seed.wrapping_add(1337));
+            self.drift_cutoff = DriftGenerator::new(seed.wrapping_add(7331));
+            self.drift_reso = DriftGenerator::new(seed.wrapping_add(2468));
+            self.drift_pitch_osc2 = DriftGenerator::new(seed.wrapping_add(3579));
+        }
 
         self.tuning_offset = tuning_cents;
         self.age = comp_age;
@@ -576,53 +602,59 @@ impl Voice {
         self.tolerance = tolerance;
         self.comp_seed = comp_seed;
         self.thermal_noise = thermal_noise;
+        self.recalibration_scale = recalibration_scale;
 
-        let tol_f64 = match tolerance {
-            CompTolerance::Zero => 0.0,
-            CompTolerance::PointFive => 0.0005,
-            CompTolerance::Two => 0.002,
-            CompTolerance::Five => 0.005,
-            CompTolerance::Ten => 0.01,
-        };
+        let mean_c_mult = 1.0 - 0.05 * (comp_age as f64 / 100.0);
+        self.low_cutoff_mult = 1.0 / mean_c_mult;
+        self.low_reso_mult = 1.0 - 0.10 * (comp_age as f64 / 100.0);
+
+        let tol_f64 = self.tolerance_f64();
 
         self.set_topology(topology);
 
         // Topology-change recalcs are owned by `set_topology` (called above,
         // after `self.age`/`self.tolerance` are updated, so it sees fresh
-        // values). This branch owns age/tolerance changes only — including
-        // `topology_changed` here would fire a second recalc that always
-        // supersedes the one `set_topology` just started.
-        if age_changed || tolerance_changed {
+        // values). This branch owns age/tolerance/recal changes only —
+        // including `topology_changed` here would fire a second recalc that
+        // always supersedes the one `set_topology` just started.
+        if age_changed || tolerance_changed || recal_changed {
             let is_fun_mode = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun_mode);
             self.vco2.set_fun(is_fun_mode);
-            self.ladder.set_analog_wear(tol_f64, comp_age);
-            self.ladder_hi.set_analog_wear(tol_f64, comp_age);
-            self.vco.set_analog_wear(tol_f64, comp_age);
-            self.vco2.set_analog_wear(tol_f64, comp_age);
+            self.ladder.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
+            self.ladder_hi.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
 
             if self.tier == Tier::Ultra
                 || self.pending_tier == Some(Tier::Ultra)
                 || self.xfade_from.is_some()
             {
-                self.vco.recalculate_luts_async(comp_age, tol_f64);
-                self.vco2.recalculate_luts_async(comp_age, tol_f64);
-                self.vco_dirty = false;
+                let ok1 = self.vco.recalculate_luts_async(comp_age, tol_f64, comp_seed as u32, recalibration_scale);
+                let ok2 = self.vco2.recalculate_luts_async(comp_age, tol_f64, comp_seed as u32, recalibration_scale);
+                if ok1 && ok2 {
+                    self.vco_dirty = false;
+                }
             } else {
+                self.vco.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
+                self.vco2.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
                 self.vco_dirty = true;
             }
         }
 
-        if self.thermal_noise != self.thermal_noise_state
+        // Ladders track the raw thermal_noise parameter. The VCOs are deliberately
+        // NOT set here: their thermal state uses the 0..=21 step scale derived from
+        // `self.temperature` and is owned by `tick` (which runs every sample and
+        // re-asserts it via `thermal_noise_state`). Passing the raw 0..100 parameter
+        // to `Vco303::set_thermal` would be read as a step — up to 125 °C device
+        // temperature and a clamped-hot cv_lut index — and would mix scales in
+        // `thermal_noise_state`.
+        if self.thermal_noise != self.ladder_thermal_state
             || age_changed
             || tolerance_changed
             || topology_changed
         {
             self.ladder.set_thermal(thermal_noise);
             self.ladder_hi.set_thermal(thermal_noise);
-            self.vco.set_thermal(thermal_noise);
-            self.vco2.set_thermal(thermal_noise);
-            self.thermal_noise_state = thermal_noise;
+            self.ladder_thermal_state = thermal_noise;
         }
 
         let (
@@ -821,9 +853,11 @@ impl Voice {
 
         if tier == Tier::Ultra && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
-            self.vco.recalculate_luts_async(self.age, tol_f64);
-            self.vco2.recalculate_luts_async(self.age, tol_f64);
-            self.vco_dirty = false;
+            let ok1 = self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+            let ok2 = self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+            if ok1 && ok2 {
+                self.vco_dirty = false;
+            }
         }
     }
 
@@ -876,12 +910,9 @@ impl Voice {
         self.env_offset = 0.0;
         self.drift_pitch = DriftGenerator::new(1337);
         self.drift_cutoff = DriftGenerator::new(7331);
-        self.drift_pitch_thermal = DriftGenerator::new(42);
-        self.drift_pitch_age = DriftGenerator::new(99);
-        self.drift_cutoff_thermal = DriftGenerator::new(17);
-        self.drift_cutoff_age = DriftGenerator::new(77);
+        self.drift_reso = DriftGenerator::new(2468);
+        self.drift_pitch_osc2 = DriftGenerator::new(3579);
         self.accent_acc = 0.0;
-        self.temperature = 20.0;
         self.tier = Tier::Low;
         self.topology = CircuitTopology::Accurate;
         self.advanced_env = false;
@@ -898,6 +929,7 @@ impl Voice {
         self.comp_high.reset();
         self.comp_ultra.reset();
         self.clipper.reset();
+        self.comp_seed = -1;
     }
 
     /// Select the fidelity tier. Low routes to the TPT path; High routes to the
@@ -911,9 +943,11 @@ impl Voice {
     pub fn set_tier(&mut self, tier: Tier) {
         if tier == Tier::Ultra && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
-            self.vco.recalculate_luts_async(self.age, tol_f64);
-            self.vco2.recalculate_luts_async(self.age, tol_f64);
-            self.vco_dirty = false;
+            let ok1 = self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+            let ok2 = self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+            if ok1 && ok2 {
+                self.vco_dirty = false;
+            }
         }
 
         if self.xfade_from.is_some() {
@@ -1181,15 +1215,22 @@ impl Voice {
     /// Advances the voice by one sample, computing modulations, rendering the active
     /// tier (or crossfading), and applying the VCA envelope and master volume.
     pub fn tick(&mut self) -> f32 {
+        self.vco.poll_lut_update();
+        self.vco2.poll_lut_update();
+
         // Update operating temperature
-        let target_temp = if self.gate {
-            20.0 + 25.0 * self.drift
-        } else {
-            20.0
-        };
-        let tau = if self.gate { 10.0 } else { 30.0 };
+        let ambient_temp = 20.0 + 20.0 * (self.thermal_noise as f32 / 100.0);
+        let target_temp = if self.gate { ambient_temp + 3.0 } else { ambient_temp };
+        let tau = if self.gate { 15.0 } else { 30.0 };
         let alpha = 1.0 - (-1.0 / (tau * self.sr)).exp();
         self.temperature += alpha * (target_temp - self.temperature);
+
+        let noise_step = (((self.temperature - 20.0) / 25.0 * 21.0).round() as i32).clamp(0, 21);
+        if noise_step != self.thermal_noise_state {
+            self.thermal_noise_state = noise_step;
+            self.vco.set_thermal(noise_step);
+            self.vco2.set_thermal(noise_step);
+        }
 
         // Tick meg_decay if classic mode
         let meg_out = if self.advanced_env {
@@ -1215,16 +1256,15 @@ impl Voice {
         }
 
         // Pitch drift (LFO pink noise walk + systematic temperature drift)
-        let drift_pitch_val = self.drift_pitch.tick(0.2, self.sr); // slow 0.2 Hz walk
-        let pitch_drift_st = drift_pitch_val * 0.05 * self.drift;
-        let pitch_thermal_st = -0.1 * (self.temperature - 20.0) / 25.0; // -10 cents thermal warm-up
+        let drift_pitch_val = self.drift_pitch.tick(0.15, self.sr);
+        let pitch_drift_st = drift_pitch_val * 0.12 * self.drift;
+        let pitch_thermal_st = -0.10 * (self.temperature - 20.0) / 25.0;
+
+        let osc2_drift_val = self.drift_pitch_osc2.tick(0.15, self.sr);
+        let osc2_drift_st = osc2_drift_val * 0.12 * self.drift;
 
         // Tuning offset
         let tuning_st = self.tuning_offset / 100.0; // cents to semitones
-
-        // Age-related pitch tracking stretch
-        let _stretch_st =
-            (self.age as f32 / 100.0) * 0.2 * (self.current_note as f32 - 60.0) / 12.0;
         let dp = 0.0f32;
 
         let vco1_f = 440.0
@@ -1232,8 +1272,7 @@ impl Voice {
                 (self.current_pitch_st - 69.0
                     + self.osc1_pitch_st
                     + tuning_st
-                    + pitch_drift_st
-                    + pitch_thermal_st)
+                    + pitch_drift_st)
                     / 12.0,
             );
         let osc1_f = 440.0
@@ -1259,8 +1298,7 @@ impl Voice {
                     (self.current_pitch_st - 69.0
                         + self.osc2_pitch_st
                         + tuning_st
-                        + pitch_drift_st
-                        + pitch_thermal_st)
+                        + osc2_drift_st)
                         / 12.0,
                 );
             let osc2_f = 440.0
@@ -1268,7 +1306,7 @@ impl Voice {
                     (self.current_pitch_st + dp - 69.0
                         + self.osc2_pitch_st
                         + tuning_st
-                        + pitch_drift_st
+                        + osc2_drift_st
                         + pitch_thermal_st)
                         / 12.0,
                 );
@@ -1278,18 +1316,12 @@ impl Voice {
         }
 
         // --- 2. Filter Cutoff Modulation ---
-        // Cutoff drift (LFO pink noise walk + systematic temperature drift)
-        let drift_cut_val = self.drift_cutoff.tick(0.1, self.sr);
-        let thermal_cut_val = self.drift_cutoff_thermal.tick(0.1, self.sr);
+        let drift_cut_val = self.drift_cutoff.tick(0.08, self.sr);
+        let cutoff_drift_factor = 1.0 + drift_cut_val * 0.08 * self.drift;
+        let cutoff_thermal_factor = 1.0 - 0.05 * (self.temperature - 20.0) / 25.0;
 
-        let thermal_cut_factor = thermal_cut_val * 0.25 * (self.thermal_noise as f32 / 50.0);
-        let cutoff_drift_factor = 1.0 + drift_cut_val * 0.05 * self.drift + thermal_cut_factor;
-        let cutoff_thermal_factor = 1.0 - 0.05 * (self.temperature - 20.0) / 25.0; // -5% cutoff warm-up
-
-        // Age-related cutoff and resonance scaling (0 to 10 scale)
-        let age_f32 = self.age as f32 / 10.0;
-        let age_cutoff_factor = 1.0 - age_f32 * 0.15;
-        let age_reso_factor = 1.0 - age_f32 * 0.20;
+        let reso_drift_val = self.drift_reso.tick(0.05, self.sr);
+        let reso_drift_factor = 1.0 + reso_drift_val * 0.03 * self.drift;
 
         let acc_decay_coeff = (-1.0 / (0.2 * self.sr)).exp();
         self.accent_acc *= acc_decay_coeff;
@@ -1311,7 +1343,7 @@ impl Voice {
                 + meg_val * self.env_mod * 4000.0
                 + self.accent_knob_val * self.accent_acc * 3000.0;
 
-            (mod_cutoff_hz * cutoff_drift_factor * cutoff_thermal_factor * age_cutoff_factor)
+            (mod_cutoff_hz * cutoff_drift_factor * cutoff_thermal_factor)
                 .clamp(20.0, self.sr * 0.45)
         } else {
             // Classic mode: dual RC smoothers
@@ -1336,32 +1368,32 @@ impl Voice {
 
             let cutoff_hz = mod_cutoff_hz as f32
                 * cutoff_drift_factor
-                * cutoff_thermal_factor
-                * age_cutoff_factor;
+                * cutoff_thermal_factor;
             cutoff_hz.clamp(20.0, self.sr * 0.45)
         };
 
         // VCF Resonance
-        let final_reso = self.reso_knob * age_reso_factor;
+        let final_reso = (self.reso_knob * reso_drift_factor).clamp(0.0, 1.0);
 
         // Apply to filters
-        let x = (final_cutoff_hz as f64).log2() as f32;
-        let y = final_reso;
+        let x = (final_cutoff_hz as f64).log2();
+        let y = final_reso as f64;
 
-        let low_fc = 2.0f32
+        let low_fc = (2.0f64
             .powf(eval_poly3(x, y, &LOW_FC_POLY))
-            .clamp(20.0, self.sr * 0.45);
-        let low_reso = eval_poly3(x, y, &LOW_RESO_POLY).clamp(0.0, 1.0);
+            * self.low_cutoff_mult)
+            .clamp(20.0, (self.sr * 0.45) as f64);
+        let low_reso = (eval_poly3(x, y, &LOW_RESO_POLY) * self.low_reso_mult).clamp(0.0, 1.0);
 
-        let high_fc = 2.0f32
+        let high_fc = 2.0f64
             .powf(eval_poly3(x, y, &HIGH_FC_POLY))
-            .clamp(20.0, self.sr * 0.45);
+            .clamp(20.0, (self.sr * 0.45) as f64);
         let high_reso = eval_poly3(x, y, &HIGH_RESO_POLY).clamp(0.0, 1.0);
 
-        self.filter.set_cutoff(low_fc);
-        self.filter.set_reso(low_reso);
+        self.filter.set_cutoff(low_fc as f32);
+        self.filter.set_reso(low_reso as f32);
         self.ladder_hi.set_cutoff(high_fc as f32);
-        self.ladder_hi.set_reso(high_reso);
+        self.ladder_hi.set_reso(high_reso as f32);
 
         self.ladder.set_cutoff(final_cutoff_hz as f32);
         self.ladder.set_reso(final_reso);
@@ -1485,19 +1517,9 @@ impl Voice {
             let is_fun = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun);
             self.vco2.set_fun(is_fun);
-            // Single owner of the topology-change LUT recalc. Uses the same
-            // tolerance mapping as `update_params` — in the plugin path
-            // `update_params` previously fired a second recalc with these values
-            // that always superseded this one, so they are the effective behavior.
-            let tol_f64 = match self.tolerance {
-                CompTolerance::Zero => 0.0,
-                CompTolerance::PointFive => 0.0005,
-                CompTolerance::Two => 0.002,
-                CompTolerance::Five => 0.005,
-                CompTolerance::Ten => 0.01,
-            };
-            self.vco.recalculate_luts_async(self.age, tol_f64);
-            self.vco2.recalculate_luts_async(self.age, tol_f64);
+            let tol_f64 = self.tolerance_f64();
+            self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+            self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
             self.vco.set_thermal(self.thermal_noise_state);
             self.vco2.set_thermal(self.thermal_noise_state);
         }

@@ -3,7 +3,7 @@ use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::{Arc, OnceLock};
 use std::thread;
 
-use super::vco::{lut_midi, midi_hz, Vco303, LUT_K};
+use super::vco::{Vco303, LUT_K};
 
 pub struct LutJob {
     pub sr: f32,
@@ -11,9 +11,11 @@ pub struct LutJob {
     pub is_fun: bool,
     pub age: i32,
     pub tolerance: f64,
+    pub recal_scale: f64,
+    pub seed: u32,
     pub sequence: u64,
     pub sequence_checker: Arc<AtomicU64>,
-    pub on_complete: Arc<dyn Fn([[f64; LUT_K]; 22]) + Send + Sync>,
+    pub on_complete: Arc<dyn Fn([[f64; LUT_K]; 22], i32, f64, u32) + Send + Sync>,
 }
 
 static WORKER_CHANNEL: OnceLock<SyncSender<LutJob>> = OnceLock::new();
@@ -32,7 +34,7 @@ pub fn get_worker_sender() -> &'static SyncSender<LutJob> {
 
                     let mut local_luts = [[0.0f64; LUT_K]; 22];
 
-                    if job.age == 0 && job.tolerance == 0.0 {
+                    if job.age == 0 && job.tolerance == 0.0 && job.recal_scale == 1.0 {
                         let lut = Vco303::cv_lut_for(job.sr, 0, job.is_fun);
                         local_luts = [lut; 22];
                     } else {
@@ -40,27 +42,30 @@ pub fn get_worker_sender() -> &'static SyncSender<LutJob> {
                         temp_vco.dense_solver = false;
                         temp_vco.set_instance_id(job.instance_id);
                         temp_vco.set_fun(job.is_fun);
-                        temp_vco.set_analog_wear(job.tolerance, job.age);
+                        temp_vco.set_analog_wear(job.tolerance, job.age, job.seed);
 
-                        let mut aborted = false;
-                        for noise_step in 0..22 {
-                            if job.sequence_checker.load(Ordering::Acquire) != job.sequence {
-                                aborted = true;
-                                break;
-                            }
-                            temp_vco.set_thermal_internal(noise_step);
-                            for i in 0..LUT_K {
-                                local_luts[noise_step as usize][i] =
-                                    temp_vco.secant_cv(midi_hz(lut_midi(i)));
-                            }
-                        }
-                        if aborted {
+                        temp_vco.set_thermal_internal(0);
+                        let lut_lo = temp_vco.solve_cv_lut_with_recal(job.recal_scale);
+                        local_luts[0] = lut_lo;
+
+                        if job.sequence_checker.load(Ordering::Acquire) != job.sequence {
                             continue;
+                        }
+
+                        temp_vco.set_thermal_internal(21);
+                        let lut_hi = temp_vco.solve_cv_lut_with_recal(job.recal_scale);
+                        local_luts[21] = lut_hi;
+
+                        for step in 1..21 {
+                            let t = step as f64 / 21.0;
+                            for i in 0..LUT_K {
+                                local_luts[step][i] = lut_lo[i] + t * (lut_hi[i] - lut_lo[i]);
+                            }
                         }
                     }
 
                     if job.sequence_checker.load(Ordering::Acquire) == job.sequence {
-                        (job.on_complete)(local_luts);
+                        (job.on_complete)(local_luts, job.age, job.tolerance, job.seed);
                     }
                 }
             })

@@ -41,6 +41,7 @@ fn test_accent_stacking() {
         0,
         0.5,
         0.0,
+        1.0,
     );
     // Trigger consecutive accents
     v.set_gate(true, true, true, false);
@@ -223,6 +224,7 @@ fn test_accent_decay_fixed_200ms() {
             0,
             0.4,
             0.0,
+            1.0,
         );
     };
 

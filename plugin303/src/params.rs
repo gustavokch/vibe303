@@ -17,6 +17,18 @@ pub enum CompTolerance {
     Ten,
 }
 
+impl CompTolerance {
+    pub fn as_f64(&self) -> f64 {
+        match self {
+            CompTolerance::Zero => 0.0,
+            CompTolerance::PointFive => 0.005,
+            CompTolerance::Two => 0.02,
+            CompTolerance::Five => 0.05,
+            CompTolerance::Ten => 0.10,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
 pub enum CircuitTopology {
     #[name = "Accurate"]
@@ -330,6 +342,8 @@ pub struct Plugin303Params {
     pub comp_age: IntParam,
     #[id = "comp_drift"]
     pub comp_drift: FloatParam,
+    #[id = "recalibration_scale"]
+    pub recalibration_scale: FloatParam,
     #[id = "tolerance"]
     pub tolerance: EnumParam<CompTolerance>,
     #[id = "thermal_noise"]
@@ -594,18 +608,26 @@ impl Default for Plugin303Params {
                     min: (0),
                     max: (100),
                 },
-            ),
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.1} yrs", v as f32 * 0.45))),
 
             comp_drift: FloatParam::new(
                 "Comp Drift",
-                0.0,
-                FloatRange::SymmetricalSkewed {
-                    min: (0.0),
-                    max: (0.5),
-                    factor: (0.8),
-                    center: (0.25),
+                0.1,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 1.0,
+                    factor: FloatRange::skew_factor(-1.2),
                 },
-            ),
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+
+            recalibration_scale: FloatParam::new(
+                "Recalibration Scale",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
 
             tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),
 
@@ -614,7 +636,7 @@ impl Default for Plugin303Params {
                     if v == 0 {
                         "Off".to_string()
                     } else {
-                        format!("{:.1}", 1.0 + (v - 1) as f32 * 0.001)
+                        format!("{:.1}°C", 20.0 + v as f32 * 0.25)
                     }
                 })),
 

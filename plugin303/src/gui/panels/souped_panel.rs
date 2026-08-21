@@ -179,6 +179,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 ui.add(Knob303::new(&params.sweep_pos, setter, "SWEEP", 11.0));
                                 ui.add(Knob303::new(&params.reso_comp, setter, "R-COMP", 11.0));
                                 ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.0));
+                                ui.add(Knob303::new(&params.recalibration_scale, setter, "RECAL", 11.0));
                             });
                         });
 

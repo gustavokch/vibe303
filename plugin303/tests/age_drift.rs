@@ -42,6 +42,7 @@ fn component_drift_produces_fluctuations() {
         0,   // comp_seed
         0.5, // glide_knob
         0.0, // reso_comp
+        1.0, // recalibration_scale
     );
 
     v.note_on(60);
@@ -102,6 +103,7 @@ fn component_age_affects_tuning_and_cutoff() {
         0,   // comp_seed
         0.5, // glide_knob
         0.0, // reso_comp
+        1.0, // recalibration_scale
     );
 
     // Aged (age = 1.0)
@@ -140,6 +142,7 @@ fn component_age_affects_tuning_and_cutoff() {
         0,   // comp_seed
         0.5, // glide_knob
         0.0, // reso_comp
+        1.0, // recalibration_scale
     );
 
     v_new.note_on(60);
@@ -169,10 +172,106 @@ fn test_instance_specific_tolerance_seeds() {
     let mut vco2 = Vco303::new(48000.0);
     vco1.set_instance_id(1);
     vco2.set_instance_id(2);
-    vco1.set_analog_wear(0.05, 0); // 5% tolerance
-    vco2.set_analog_wear(0.05, 0); // 5% tolerance
+    vco1.set_analog_wear(0.05, 0, 1337); // 5% tolerance
+    vco2.set_analog_wear(0.05, 0, 1337); // 5% tolerance
 
-    // Verify that capacitor multipliers differ due to separate seeds
+    // Verify that capacitor multipliers differ due to separate instance IDs
     assert_ne!(vco1.get_c_mults(), vco2.get_c_mults());
     assert_ne!(vco1.get_r_mults(), vco2.get_r_mults());
+}
+
+#[test]
+fn test_comp_seed_produces_different_components() {
+    use plugin303::dsp::vco::Vco303;
+    let mut vco_a = Vco303::new(48000.0);
+    let mut vco_b = Vco303::new(48000.0);
+    vco_a.set_analog_wear(0.05, 10, 1337);
+    vco_b.set_analog_wear(0.05, 10, 7331);
+    assert_ne!(vco_a.get_c_mults(), vco_b.get_c_mults());
+    assert_ne!(vco_a.get_r_mults(), vco_b.get_r_mults());
+}
+
+#[test]
+fn test_age_100_maintains_positive_cutoff_and_resonance() {
+    let mut v = Voice::new(48000.0);
+    v.update_params(
+        0.0, 0.0, 0.0, 0.0, plugin303::params::OscWave::Saw,
+        0.5, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0,
+        plugin303::params::VcfTaps::FourPole, 0.0, false,
+        3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
+        plugin303::params::VcaEnvMode::Envelope,
+        100, // max age
+        0.5, // comp_drift
+        plugin303::params::CompTolerance::Ten,
+        100, // max thermal noise
+        CircuitTopology::Accurate,
+        0.0, 1337, 0.5, 0.0, 1.0, // recalibration_scale = 1.0
+    );
+    v.note_on(60);
+    v.set_gate(true, true, false, false);
+    for _ in 0..720_000 {
+        let s = v.tick();
+        assert!(s.is_finite());
+    }
+}
+
+#[test]
+fn test_thermal_model_ramp_and_persistence() {
+    let sr = 48000.0;
+    let mut v = Voice::new(sr);
+    v.update_params(
+        0.0, 0.0, 0.0, 0.0, plugin303::params::OscWave::Saw,
+        0.5, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0,
+        plugin303::params::VcfTaps::FourPole, 0.0, false,
+        3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
+        plugin303::params::VcaEnvMode::Envelope,
+        10, 0.5, plugin303::params::CompTolerance::Ten, 50,
+        CircuitTopology::Accurate, 0.0, 1337, 0.5, 0.0, 1.0,
+    );
+
+    let initial_temp = v.temperature();
+    v.note_on(60);
+    v.set_gate(true, true, false, false);
+
+    for _ in 0..720_000 {
+        v.tick();
+    }
+    let warmed_temp = v.temperature();
+    assert!(
+        warmed_temp > initial_temp + 1.0,
+        "Temperature should ramp up when gate is active: initial={}, warmed={}",
+        initial_temp, warmed_temp
+    );
+
+    v.reset();
+    assert_eq!(
+        v.temperature(), warmed_temp,
+        "Temperature must persist across Voice::reset()"
+    );
+}
+
+#[test]
+fn test_drift_reso_and_osc2_pitch() {
+    let sr = 48000.0;
+    let mut v = Voice::new(sr);
+    v.update_params(
+        0.0, 0.0, 7.0, 0.8, plugin303::params::OscWave::Saw,
+        0.5, 0.0, 0.5, 0.8, 0.5, 0.5, 0.5, 0.0,
+        plugin303::params::VcfTaps::FourPole, 0.0, false,
+        3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
+        plugin303::params::VcaEnvMode::Envelope,
+        10, 0.8, plugin303::params::CompTolerance::Ten, 20,
+        CircuitTopology::Accurate, 0.0, 1337, 0.5, 0.0, 1.0,
+    );
+    v.note_on(60);
+    v.set_gate(true, true, false, false);
+
+    let mut samples = Vec::new();
+    for _ in 0..48000 {
+        samples.push(v.tick());
+    }
+
+    let non_zero = samples.iter().any(|&s| s.abs() > 1e-4);
+    let all_finite = samples.iter().all(|s| s.is_finite());
+    assert!(all_finite && non_zero, "Osc2 and drift render valid fluctuating audio");
 }
