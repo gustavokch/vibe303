@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::params::Plugin303Params;
 
 pub const GUI_WIDTH: u32 = 1080;
-pub const GUI_HEIGHT: u32 = 640;
+pub const GUI_HEIGHT: u32 = 720;
 
 pub fn create_editor(
     params: Arc<Plugin303Params>,

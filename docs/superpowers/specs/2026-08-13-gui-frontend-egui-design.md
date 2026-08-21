@@ -12,8 +12,8 @@
 The `vibe303` plugin requires a rich, hardware-inspired graphical user interface that exposes all synthesis and sequencing controls across a unified, responsive console. The GUI is built using `nih_plug_egui` with custom procedural vector rendering (knobs, sliders, backlit buttons, LEDs, and metallic panels) to ensure zero external image asset dependencies, crisp HiDPI rendering, and responsive DAW automation bindings.
 
 ### Key Objectives
-1. **Classic 303 Front Panel:** 7 vintage brushed-aluminum rotary dials (Tuning, Cutoff, Resonance, Env Mod, Decay, Accent, Volume), Waveform slide switch (Saw, Square, Sweep), and Fidelity Tier selector (Low, High, Ultra).
-2. **Souped-Up Engine Drawer:** Extended dual oscillator controls, pulse width, filter slope taps (2-Pole, 3-Pole, 4-Pole), drive, glide, analog wear/drift dials, and MEG/VEG ADSR faders.
+1. **Classic 303 Front Panel:** 7 vintage brushed-aluminum rotary dials (Tuning, Cutoff, Resonance, Env Mod, Decay, Accent, Volume), Waveform slide switch (Saw, Square, Sweep), Fidelity Tier selector (Low, High, Ultra), and MEG/VEG ADSR vertical mini-faders.
+2. **Souped-Up Engine Drawer:** Extended dual oscillator controls, pulse width, filter slope taps (2-Pole, 3-Pole, 4-Pole), drive, glide, and analog wear/drift dials.
 3. **Accurate vs. Fun Topology Interactivity:** Visually dimmed/ghosted (~30% opacity with non-interactive overlay badge) when in `Accurate` mode; fully vibrant and interactive in `Fun` mode.
 4. **16-Step Hardware Sequencer Console:** Interactive step strips supporting note/tie/rest cycling, pitch transposing, mini keyboard popover, octave shifts, dedicated accent/slide toggles, and live playhead tracking.
 5. **Zero-Lock & Zero-Allocation Safety:** GUI runs entirely on the UI thread without blocking locks or audio thread allocations.
@@ -57,7 +57,7 @@ plugin303/src/
                          # classic panel as the 7th vintage dial, matching the
                          # real TB-303 layout and section 1; header height is
                          # too small for a usable rotary control.)
-      classic_panel.rs   # Left 7-knob vintage 303 controls & tier selector
+      classic_panel.rs   # Left 7-knob vintage 303 controls, tier selector & ADSR mini-faders
       souped_panel.rs    # Right extended drawer with accurate-mode dimming
       sequencer_panel.rs # Bottom 16-step grid & transport controls
 ```
@@ -87,6 +87,7 @@ plugin303/src/
     - The FIDELITY TIER active detent label renders in the carriage's red family instead of the shared orange accent. Deliberate color-coding: the tier carriage is red (distinct from the silver waveform carriage), and the active label matches its carriage.
 - **Vertical Mini-Faders:**
   - Vertical tracks with glowing orange fill bars for `MEG` (Attack, Decay, Sustain, Release) and `VEG` (Attack, Decay, Sustain, Release).
+  - **Accepted deviation (2026-08-21):** Relocated from the Souped-Up Engine Drawer into the Classic Panel (top controls) by intentional design choice. They remain vibrant and do not dim in Accurate mode.
 
 ### 3.3 `StepButton` & 16-Step Sequencer Strip
 - Each of the 16 step columns contains:
