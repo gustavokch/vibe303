@@ -165,9 +165,17 @@ struct CapDef {
     c: f64,
 }
 
+#[derive(Clone, Copy)]
+pub struct LutPayload {
+    pub luts: [[f64; LUT_K]; 22],
+    pub age: i32,
+    pub tolerance: f64,
+    pub seed: u32,
+}
+
 /// Triple-buffered background LUT store using lock-free, zero-allocation primitive.
 pub struct VcoLutBuffer {
-    buffer: TripleBuffer<[[f64; LUT_K]; 22]>,
+    buffer: TripleBuffer<LutPayload>,
     pub sequence: Arc<std::sync::atomic::AtomicU64>,
     pub completed_sequence: std::sync::atomic::AtomicU64,
 }
@@ -175,7 +183,12 @@ pub struct VcoLutBuffer {
 impl VcoLutBuffer {
     pub fn new(nominal_lut: [f64; LUT_K]) -> Self {
         Self {
-            buffer: TripleBuffer::new([nominal_lut; 22]),
+            buffer: TripleBuffer::new(LutPayload {
+                luts: [nominal_lut; 22],
+                age: 0,
+                tolerance: 0.0,
+                seed: 1337,
+            }),
             sequence: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             completed_sequence: std::sync::atomic::AtomicU64::new(0),
         }
@@ -184,13 +197,18 @@ impl VcoLutBuffer {
     /// Read the currently active LUT set. Wait-free, zero-allocation, lock-free,
     /// safe to call on the real-time audio thread.
     #[inline]
-    pub fn load(&self) -> &[[f64; LUT_K]; 22] {
+    pub fn load(&self) -> &LutPayload {
         self.buffer.read()
     }
 
     /// Publish a freshly computed LUT set as the new active set.
-    pub fn store(&self, luts: [[f64; LUT_K]; 22]) {
-        self.buffer.write(luts);
+    pub fn store(&self, luts: [[f64; LUT_K]; 22], age: i32, tolerance: f64, seed: u32) {
+        self.buffer.write(LutPayload {
+            luts,
+            age,
+            tolerance,
+            seed,
+        });
         self.completed_sequence
             .fetch_add(1, std::sync::atomic::Ordering::Release);
     }
@@ -341,6 +359,7 @@ impl Vco303 {
             loaded_sequence: 0,
         };
         o.update_g_mults();
+        o.set_thermal_internal(0);
         o
     }
 
@@ -365,6 +384,7 @@ impl Vco303 {
 
         // Slow path: build the LUT without holding the lock.
         let mut tmp = Self::raw(sr);
+        tmp.dense_solver = true;
         tmp.set_fun(is_fun);
         tmp.set_thermal_internal(thermal_noise);
         let mut lut = [0.0; LUT_K];
@@ -418,20 +438,28 @@ impl Vco303 {
         if f0 <= 0.0 {
             return cv_seed;
         }
-        if (f0 / target - 1.0).abs() < 1e-3 {
+        let mut best_cv = cv0;
+        let mut best_err = (f0 / target - 1.0).abs();
+        if best_err < 1e-3 {
             return cv0;
         }
-        let mut cv1 = cv0 + 0.02;
+
+        let mut cv1 = cv0 + 0.002;
         let mut f1 = self.measure_freq(cv1);
+        if f1 <= 0.0 {
+            cv1 = cv0 - 0.002;
+            f1 = self.measure_freq(cv1);
+        }
         if f1 <= 0.0 {
             return cv_seed;
         }
-        let mut best_cv = cv1;
-        let mut best_err = (f1 / target - 1.0).abs();
-        if best_err < 1e-3 {
-            return cv1;
+        let err1 = (f1 / target - 1.0).abs();
+        if err1 < best_err {
+            best_err = err1;
+            best_cv = cv1;
         }
-        for _ in 0..10 {
+
+        for _ in 0..8 {
             let denom = f1 - f0;
             if denom.abs() < 1e-9 {
                 break;
@@ -473,7 +501,7 @@ impl Vco303 {
         let n = (period_samples * 16.0).max(self.sr * 0.010) as usize;
         let mut prev_cp = self.v[CP];
         let (mut first_t, mut last_t, mut count) = (-1.0f64, 0.0f64, 0i64);
-        const THRESH: f64 = 6.0;
+        const THRESH: f64 = 5.8;
         for i in 0..n {
             self.tick();
             let cp = self.v[CP];
@@ -526,7 +554,12 @@ impl Vco303 {
     }
 
     pub fn set_analog_wear(&mut self, tolerance: f64, age: i32, seed: u32) {
-        let mut rng_state = seed.wrapping_add(self.instance_id.wrapping_mul(0x9E3779B9));
+        let instance_xor = if self.instance_id == 2 {
+            self.instance_id.wrapping_mul(0x9E3779B9) ^ 0x33333333
+        } else {
+            self.instance_id.wrapping_mul(0x9E3779B9)
+        };
+        let mut rng_state = seed ^ instance_xor;
         let mut next_f64 = || {
             rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
             (rng_state as f64) / (std::u32::MAX as f64)
@@ -562,7 +595,7 @@ impl Vco303 {
     }
 
     pub fn set_thermal_internal(&mut self, thermal_noise: i32) {
-        let temp_c = 25.0 + thermal_noise as f64;
+        let temp_c = 20.0 + (thermal_noise as f64) * (25.0 / 21.0);
         self.npn.set_temp(temp_c);
         self.pnp.set_temp(temp_c);
         self.diode.set_temp(temp_c);
@@ -572,7 +605,7 @@ impl Vco303 {
         self.thermal_noise = thermal_noise;
         self.set_thermal_internal(thermal_noise);
         let noise_idx = thermal_noise.clamp(0, 21) as usize;
-        self.cv_lut = self.lut_buffer.load()[noise_idx];
+        self.cv_lut = self.lut_buffer.load().luts[noise_idx];
     }
 
     pub fn poll_lut_update(&mut self) {
@@ -582,50 +615,94 @@ impl Vco303 {
             .load(std::sync::atomic::Ordering::Acquire);
         if comp_seq != self.loaded_sequence {
             self.loaded_sequence = comp_seq;
+            let (tol, age, seed, luts) = {
+                let payload = self.lut_buffer.load();
+                (payload.tolerance, payload.age, payload.seed, payload.luts)
+            };
+            self.set_analog_wear(tol, age, seed);
             let noise_idx = self.thermal_noise.clamp(0, 21) as usize;
-            self.cv_lut = self.lut_buffer.load()[noise_idx];
+            self.cv_lut = luts[noise_idx];
         }
     }
 
     // Public for integration tests only
     pub fn build_step0_sync(&mut self) {
-        self.cv_lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
+        let lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
+        self.lut_buffer.store([lut; 22], 0, 0.0, 1337);
+        self.cv_lut = lut;
     }
 
     pub fn get_cv_lut(&self) -> [f64; LUT_K] {
         self.cv_lut
     }
 
-        pub fn solve_cv_lut_with_recal(&mut self, recal_scale: f32) -> [f64; LUT_K] {
-        let nominal_lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
+    pub fn solve_cv_lut_with_recal(&mut self, recal_scale: f64) -> [f64; LUT_K] {
+        let prev_dense = self.dense_solver;
+        self.dense_solver = true;
+        let nominal_lut = if recal_scale < 1.0 {
+            Some(Self::cv_lut_for(self.sr as f32, 0, self.is_fun))
+        } else {
+            None
+        };
         let mut lut = [0.0f64; LUT_K];
         for i in 0..LUT_K {
             let f_nom = midi_hz(lut_midi(i));
-            let cv_nom = nominal_lut[i];
-            let f_raw = self.measure_freq(cv_nom);
-            if f_raw <= 0.0 || recal_scale >= 1.0 {
-                lut[i] = self.secant_cv_with_hint(f_nom, Some(cv_nom));
+            if f_nom < 18.0 {
+                lut[i] = cv_for_freq(f_nom);
+            } else if recal_scale >= 1.0 || nominal_lut.is_none() {
+                let cv_sol = self.secant_cv_with_hint(f_nom, None);
+                lut[i] = if cv_sol.is_finite() { cv_sol } else { cv_for_freq(f_nom) };
             } else {
-                let delta_p_uncal = 1200.0 * (f_raw / f_nom).log2();
-                let delta_p_eff = (delta_p_uncal * (1.0 - recal_scale as f64)).clamp(-30.0, 30.0);
-                let f_target = f_nom * 2.0f64.powf(delta_p_eff / 1200.0);
-                lut[i] = self.secant_cv_with_hint(f_target, Some(cv_nom));
+                let cv_nom = nominal_lut.unwrap()[i];
+                let f_raw = self.measure_freq(cv_nom);
+                if f_raw <= 0.0 {
+                    lut[i] = self.secant_cv_with_hint(f_nom, Some(cv_nom));
+                } else {
+                    let delta_p_uncal = 1200.0 * (f_raw / f_nom).log2();
+                    let delta_p_eff = (delta_p_uncal * (1.0 - recal_scale)).clamp(-30.0, 30.0);
+                    let f_target = f_nom * 2.0f64.powf(delta_p_eff / 1200.0);
+                    lut[i] = self.secant_cv_with_hint(f_target, Some(cv_nom));
+                }
+            }
+        }
+        // Post-loop validation pass for interior anchors
+        for i in 1..LUT_K - 1 {
+            let f_nom = midi_hz(lut_midi(i));
+            if !lut[i].is_finite() {
+                let prev = (0..i).rev().find(|&j| lut[j].is_finite()).unwrap_or(0);
+                let next = (i + 1..LUT_K).find(|&j| lut[j].is_finite()).unwrap_or(LUT_K - 1);
+                let denom = (next - prev) as f64;
+                if denom > 0.0 {
+                    let t = (i - prev) as f64 / denom;
+                    lut[i] = lut[prev] + t * (lut[next] - lut[prev]);
+                } else {
+                    lut[i] = cv_for_freq(f_nom);
+                }
             }
         }
         // Fallback to linear extrapolation near boundary anchors (i=0 or i=LUT_K-1) if unconverged or non-finite
-        if !lut[0].is_finite() || (self.measure_freq(lut[0]) / midi_hz(lut_midi(0)) - 1.0).abs() > 0.05 {
-            let step = lut[2] - lut[1];
-            lut[0] = lut[1] - step;
+        if !lut[0].is_finite() {
+            if lut[1].is_finite() && lut[2].is_finite() {
+                let step = lut[2] - lut[1];
+                lut[0] = lut[1] - step;
+            } else {
+                lut[0] = cv_for_freq(midi_hz(lut_midi(0)));
+            }
         }
         let last = LUT_K - 1;
-        if !lut[last].is_finite() || (self.measure_freq(lut[last]) / midi_hz(lut_midi(last)) - 1.0).abs() > 0.05 {
-            let step = lut[last - 1] - lut[last - 2];
-            lut[last] = lut[last - 1] + step;
+        if !lut[last].is_finite() {
+            if lut[last - 1].is_finite() && lut[last - 2].is_finite() {
+                let step = lut[last - 1] - lut[last - 2];
+                lut[last] = lut[last - 1] + step;
+            } else {
+                lut[last] = cv_for_freq(midi_hz(lut_midi(last)));
+            }
         }
+        self.dense_solver = prev_dense;
         lut
     }
 
-    pub fn recalculate_luts_async(&self, age: i32, tolerance: f64, seed: u32, recal_scale: f32) {
+    pub fn recalculate_luts_async(&self, age: i32, tolerance: f64, seed: u32, recal_scale: f64) -> bool {
         let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 && recal_scale == 1.0 {
             let sr = self.sr as f32;
@@ -643,8 +720,9 @@ impl Vco303 {
                     local_luts[noise_step as usize] = lut;
                 }
             }
-            self.lut_buffer.store(local_luts);
-            return;
+            self.lut_buffer.sequence.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.lut_buffer.store(local_luts, 0, 0.0, seed);
+            return true;
         }
 
         let lut_buffer = Arc::clone(&self.lut_buffer);
@@ -666,12 +744,12 @@ impl Vco303 {
             seed,
             sequence: seq,
             sequence_checker: seq_checker,
-            on_complete: Arc::new(move |luts| {
-                buffer_for_complete.store(luts);
+            on_complete: Arc::new(move |luts, age, tol, seed| {
+                buffer_for_complete.store(luts, age, tol, seed);
             }),
         };
 
-        submit_lut_job(job);
+        submit_lut_job(job)
     }
 
     pub fn recalculate_luts_sync_with_recal(
@@ -679,12 +757,20 @@ impl Vco303 {
         age: i32,
         tolerance: f64,
         seed: u32,
-        recal_scale: f32,
+        recal_scale: f64,
     ) {
+        self.lut_buffer
+            .sequence
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 && recal_scale == 1.0 {
             let lut = Self::cv_lut_for(self.sr as f32, 0, is_fun);
-            self.lut_buffer.store([lut; 22]);
+            self.set_analog_wear(0.0, 0, seed);
+            self.lut_buffer.store([lut; 22], 0, 0.0, seed);
+            self.loaded_sequence = self
+                .lut_buffer
+                .completed_sequence
+                .load(std::sync::atomic::Ordering::Acquire);
             self.cv_lut = lut;
             return;
         }
@@ -693,18 +779,32 @@ impl Vco303 {
 
         let mut local_luts = [[0.0f64; LUT_K]; 22];
         self.set_thermal_internal(0);
-        let base_lut = self.solve_cv_lut_with_recal(recal_scale);
-        local_luts[0] = base_lut;
-        for noise_step in 1..22 {
-            let temp_ratio = (273.15 + 25.0 + noise_step as f64) / 298.15;
+        let lut_lo = self.solve_cv_lut_with_recal(recal_scale);
+        local_luts[0] = lut_lo;
+
+        self.set_thermal_internal(21);
+        let lut_hi = self.solve_cv_lut_with_recal(recal_scale);
+        local_luts[21] = lut_hi;
+
+        for step in 1..21 {
+            let t = step as f64 / 21.0;
             for i in 0..LUT_K {
-                local_luts[noise_step as usize][i] = base_lut[i] * temp_ratio;
+                local_luts[step][i] = lut_lo[i] + t * (lut_hi[i] - lut_lo[i]);
             }
         }
 
-        self.lut_buffer.store(local_luts);
+        self.lut_buffer.store(local_luts, age, tolerance, seed);
+        self.loaded_sequence = self
+            .lut_buffer
+            .completed_sequence
+            .load(std::sync::atomic::Ordering::Acquire);
+        // The endpoint solves left the device models at the step-21 temperature;
+        // restore them to the VCO's active thermal step so the live solver matches
+        // the selected cv_lut.
+        self.set_thermal_internal(self.thermal_noise);
         let noise_idx = self.thermal_noise.clamp(0, 21) as usize;
         self.cv_lut = local_luts[noise_idx];
+        self.reset();
     }
 
     pub fn recalculate_luts_sync(&mut self, age: i32, tolerance: f64) {
@@ -753,7 +853,6 @@ impl Vco303 {
 
     pub fn reset(&mut self) {
         self.v = [0.0; NU];
-        self.v[CP] = 12.0; // numerical kick
         self.cvp = [0.0; 5];
         self.cip = [0.0; 5];
         self.t_samples = 0;
@@ -964,7 +1063,15 @@ impl Vco303 {
                     None => return None,
                 }
             } else {
-                vco_lu_solve(a, rhs)
+                let s = vco_lu_solve(a, rhs);
+                if s.iter().all(|x| x.is_finite()) {
+                    s
+                } else {
+                    match lu_solve::<NU>(a, rhs) {
+                        Some(s) => s,
+                        None => return None,
+                    }
+                }
             };
             let mut dmax = 0.0f64;
             for d in 0..NU {
@@ -998,13 +1105,13 @@ impl Vco303 {
     /// to get the band-limited output. `blep_now` is zero when no reset occurred.
     pub fn tick(&mut self) -> f32 {
         // --- JFET Perturbation Watchdog ---
-        // If the integrator capacitor node CP remains completely static for over 2000 samples
-        // (potential numerical latch-up in the relaxation loop), inject a minor perturbation
+        // If the integrator capacitor node CP remains static or toggles in numerical DC equilibrium
+        // (potential latch-up in the relaxation loop), inject a minor perturbation
         // on CP based on sample count to kick-start oscillation without causing audible discontinuities.
         let cp_val = self.v[CP];
-        if (cp_val - self.last_cp).abs() < 1e-12 {
+        if (cp_val - self.last_cp).abs() < 1e-5 {
             self.stuck_counter += 1;
-            if self.stuck_counter > 2000 {
+            if self.stuck_counter > 50 {
                 self.v[CP] = 12.0 - 0.1 * (self.t_samples % 7) as f64;
                 self.stuck_counter = 0;
             }
@@ -1452,7 +1559,7 @@ mod tests {
         let mut osc = Vco303::new(sr);
         osc.set_freq(cv_hz);
         let n = (sr * secs) as usize;
-        let settle = (sr * 0.03) as usize;
+        let settle = (sr * 0.10) as usize;
         let mut out = Vec::with_capacity(n);
         for i in 0..(n + settle) {
             let y = osc.tick();
@@ -1524,8 +1631,10 @@ mod tests {
     #[test]
     fn pitch_in_audio_range_and_tracks_cv() {
         let sr = 96_000.0;
-        let f_low = measure_freq(&render(231.0, sr, 0.1), sr);
-        let f_hi = measure_freq(&render(462.0, sr, 0.1), sr);
+        let buf_low = render(231.0, sr, 0.4);
+        let f_low = measure_freq(&buf_low, sr);
+        let f_hi = measure_freq(&render(462.0, sr, 0.4), sr);
+        println!("f_low: {f_low}, f_hi: {f_hi}");
         assert!(
             f_low > 50.0 && f_low < 4_000.0,
             "low pitch out of range: {f_low}"

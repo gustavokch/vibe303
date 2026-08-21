@@ -11,11 +11,11 @@ pub struct LutJob {
     pub is_fun: bool,
     pub age: i32,
     pub tolerance: f64,
-    pub recal_scale: f32,
+    pub recal_scale: f64,
     pub seed: u32,
     pub sequence: u64,
     pub sequence_checker: Arc<AtomicU64>,
-    pub on_complete: Arc<dyn Fn([[f64; LUT_K]; 22]) + Send + Sync>,
+    pub on_complete: Arc<dyn Fn([[f64; LUT_K]; 22], i32, f64, u32) + Send + Sync>,
 }
 
 static WORKER_CHANNEL: OnceLock<SyncSender<LutJob>> = OnceLock::new();
@@ -45,18 +45,27 @@ pub fn get_worker_sender() -> &'static SyncSender<LutJob> {
                         temp_vco.set_analog_wear(job.tolerance, job.age, job.seed);
 
                         temp_vco.set_thermal_internal(0);
-                        let base_lut = temp_vco.solve_cv_lut_with_recal(job.recal_scale);
-                        local_luts[0] = base_lut;
-                        for noise_step in 1..22 {
-                            let temp_ratio = (273.15 + 25.0 + noise_step as f64) / 298.15;
+                        let lut_lo = temp_vco.solve_cv_lut_with_recal(job.recal_scale);
+                        local_luts[0] = lut_lo;
+
+                        if job.sequence_checker.load(Ordering::Acquire) != job.sequence {
+                            continue;
+                        }
+
+                        temp_vco.set_thermal_internal(21);
+                        let lut_hi = temp_vco.solve_cv_lut_with_recal(job.recal_scale);
+                        local_luts[21] = lut_hi;
+
+                        for step in 1..21 {
+                            let t = step as f64 / 21.0;
                             for i in 0..LUT_K {
-                                local_luts[noise_step as usize][i] = base_lut[i] * temp_ratio;
+                                local_luts[step][i] = lut_lo[i] + t * (lut_hi[i] - lut_lo[i]);
                             }
                         }
                     }
 
                     if job.sequence_checker.load(Ordering::Acquire) == job.sequence {
-                        (job.on_complete)(local_luts);
+                        (job.on_complete)(local_luts, job.age, job.tolerance, job.seed);
                     }
                 }
             })
