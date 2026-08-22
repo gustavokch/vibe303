@@ -181,6 +181,8 @@ pub fn render_step_strip(
         let (pitch_rect, pitch_resp) = ui.allocate_exact_size(vec2(width, 15.0), Sense::click_and_drag());
         let pitch_resp = pitch_resp.on_hover_text("Click: piano roll | Drag/R-Click: nudge pitch");
 
+        let drag_id = ui.make_persistent_id(format!("step_drag_{}", step_idx));
+
         if pitch_resp.clicked() {
             crate::gui::widgets::piano_roll_popup::toggle_open_state(
                 ui.ctx(),
@@ -192,11 +194,23 @@ pub fn render_step_strip(
             changed = true;
         } else if pitch_resp.dragged() {
             let dy = -pitch_resp.drag_delta().y;
-            if dy.abs() >= 4.0 {
-                let steps = (dy / 4.0).round() as i8;
-                step.semitone = (step.semitone + steps).clamp(0, 12);
-                changed = true;
+            let mut accum: f32 = ui.ctx().data(|d| d.get_temp(drag_id)).unwrap_or(0.0);
+            accum += dy;
+
+            const PIXELS_PER_SEMITONE: f32 = 6.0;
+            if accum.abs() >= PIXELS_PER_SEMITONE {
+                let steps = (accum / PIXELS_PER_SEMITONE).trunc() as i8;
+                if steps != 0 {
+                    step.semitone = (step.semitone + steps).clamp(0, 12);
+                    accum -= steps as f32 * PIXELS_PER_SEMITONE;
+                    changed = true;
+                }
             }
+            ui.ctx().data_mut(|d| d.insert_temp(drag_id, accum));
+        }
+
+        if pitch_resp.drag_stopped() {
+            ui.ctx().data_mut(|d| d.remove_temp::<f32>(drag_id));
         }
 
         if ui.is_rect_visible(pitch_rect) {
