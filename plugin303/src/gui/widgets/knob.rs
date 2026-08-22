@@ -1,78 +1,17 @@
 use nih_plug::prelude::{Param, ParamSetter};
-use nih_plug_egui::egui::epaint::Mesh;
-use nih_plug_egui::egui::{pos2, vec2, Color32, FontFamily, FontId, Pos2, Response, Sense, Stroke, Ui, Widget};
+use nih_plug_egui::egui::{
+    pos2, vec2, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke, Ui, Widget,
+};
 use std::f32::consts::PI;
-use std::f32::consts::TAU;
 
 use crate::gui::theme;
-
-fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    Color32::from_rgb(
-        (a.r() as f32 + (b.r() as f32 - a.r() as f32) * t) as u8,
-        (a.g() as f32 + (b.g() as f32 - a.g() as f32) * t) as u8,
-        (a.b() as f32 + (b.b() as f32 - a.b() as f32) * t) as u8,
-    )
-}
-
-/// Filled circle with a vertical linear gradient (light top, dark bottom),
-/// built as a triangle-fan mesh. Reads as brushed aluminum under panel light.
-fn gradient_circle(
-    painter: &nih_plug_egui::egui::Painter,
-    center: Pos2,
-    radius: f32,
-    top: Color32,
-    bottom: Color32,
-) {
-    const SEGMENTS: usize = 48;
-    let mut mesh = Mesh::default();
-    let center_idx = mesh.vertices.len() as u32;
-    mesh.colored_vertex(center, lerp_color(top, bottom, 0.5));
-    for i in 0..=SEGMENTS {
-        let a = i as f32 / SEGMENTS as f32 * TAU;
-        let t = a.sin() * 0.5 + 0.5;
-        mesh.colored_vertex(
-            pos2(center.x + a.cos() * radius, center.y + a.sin() * radius),
-            lerp_color(top, bottom, t),
-        );
-    }
-    for i in 0..SEGMENTS {
-        let base = center_idx + 1;
-        mesh.add_triangle(center_idx, base + i as u32, base + i as u32 + 1);
-    }
-    painter.add(nih_plug_egui::egui::Shape::mesh(mesh));
-}
-
-/// Bevel highlight: bright arc across the top-left rim, shadow arc bottom-right.
-fn bevel_ring(painter: &nih_plug_egui::egui::Painter, center: Pos2, radius: f32) {
-    let r = radius - 0.8;
-    let highlight: Vec<_> = (0..=16)
-        .map(|i| {
-            let a = (160.0 - i as f32 * (140.0 / 16.0)) * PI / 180.0;
-            pos2(center.x + a.cos() * r, center.y - a.sin() * r)
-        })
-        .collect();
-    painter.add(nih_plug_egui::egui::Shape::line(
-        highlight,
-        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 120)),
-    ));
-    let shadow: Vec<_> = (0..=16)
-        .map(|i| {
-            let a = (200.0 + i as f32 * (140.0 / 16.0)) * PI / 180.0;
-            pos2(center.x + a.cos() * r, center.y - a.sin() * r)
-        })
-        .collect();
-    painter.add(nih_plug_egui::egui::Shape::line(
-        shadow,
-        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 110)),
-    ));
-}
 
 pub struct Knob303<'a, P: Param> {
     param: &'a P,
     setter: &'a ParamSetter<'a>,
     label: &'a str,
     radius: f32,
+    accent_color: Option<nih_plug_egui::egui::Color32>,
 }
 
 impl<'a, P: Param> Knob303<'a, P> {
@@ -82,16 +21,22 @@ impl<'a, P: Param> Knob303<'a, P> {
             setter,
             label,
             radius,
+            accent_color: None,
         }
+    }
+
+    pub fn with_accent(mut self, color: nih_plug_egui::egui::Color32) -> Self {
+        self.accent_color = Some(color);
+        self
     }
 }
 
 impl<'a, P: Param> Widget for Knob303<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let desired_size = vec2(self.radius * 2.0 + 20.0, self.radius * 2.0 + 40.0);
+        let desired_size = vec2(self.radius * 2.0 + 16.0, self.radius * 2.0 + 38.0);
         let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
-        let center = pos2(rect.center().x, rect.top() + self.radius + 11.0);
+        let center = pos2(rect.center().x, rect.top() + self.radius + 6.0);
         let normalized = self.param.unmodulated_normalized_value();
 
         // Interaction
@@ -122,32 +67,45 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
 
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
+            let is_hovered = response.hovered();
 
-            // Tick arc (270 degrees: 135 deg to 405 deg)
+            // 1. Background disc (flat well)
+            painter.circle_filled(center, self.radius, theme::WELL_BG);
+            painter.circle_stroke(
+                center,
+                self.radius,
+                Stroke::new(
+                    1.0_f32,
+                    if is_hovered {
+                        theme::BORDER_FOCUS
+                    } else {
+                        theme::BORDER_DEFAULT
+                    },
+                ),
+            );
+
+            // 2. 270° Perimeter Track (135° to 405°)
             let start_angle = 135.0 * PI / 180.0;
             let end_angle = 405.0 * PI / 180.0;
-            let current_angle = start_angle + normalized * (end_angle - start_angle);
+            let arc_r = self.radius - 2.5;
 
-            // Discrete radial tick marks around bezel
-            let num_ticks = 11;
-            for i in 0..num_ticks {
-                let frac = i as f32 / (num_ticks - 1) as f32;
-                let tick_angle = start_angle + frac * (end_angle - start_angle);
-                let is_major = i == 0 || i == (num_ticks - 1) || i == (num_ticks / 2);
-                let r_inner = self.radius + 6.0;
-                let r_outer = if is_major { self.radius + 9.5 } else { self.radius + 8.0 };
-                let p_in = pos2(center.x + tick_angle.cos() * r_inner, center.y + tick_angle.sin() * r_inner);
-                let p_out = pos2(center.x + tick_angle.cos() * r_outer, center.y + tick_angle.sin() * r_outer);
-                let alpha = if is_major { 180 } else { 130 };
-                let tick_color = nih_plug_egui::egui::Color32::from_rgba_unmultiplied(0xe2, 0xe8, 0xf0, alpha);
-                let tick_stroke_width = 1.0_f32;
-                painter.line_segment([p_in, p_out], Stroke::new(tick_stroke_width, tick_color));
-            }
+            // Background inactive arc
+            let bg_arc_points: Vec<_> = (0..=24)
+                .map(|i| {
+                    let t = i as f32 / 24.0;
+                    let a = start_angle + t * (end_angle - start_angle);
+                    pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r)
+                })
+                .collect();
+            painter.add(nih_plug_egui::egui::Shape::line(
+                bg_arc_points,
+                Stroke::new(2.0_f32, theme::SURFACE_ELEVATED),
+            ));
 
-            // Active metallic amber arc around bezel
-            let arc_r = self.radius + 2.5;
+            // Active value arc
+            let accent = self.accent_color.unwrap_or(theme::ACCENT_ORANGE);
             if normalized > 0.001 {
-                let arc_points: Vec<_> = (0..=24)
+                let active_arc_points: Vec<_> = (0..=24)
                     .map(|i| {
                         let t = i as f32 / 24.0;
                         let a = start_angle + t * normalized * (end_angle - start_angle);
@@ -155,65 +113,35 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     })
                     .collect();
                 painter.add(nih_plug_egui::egui::Shape::line(
-                    arc_points,
-                    Stroke::new(1.8_f32, theme::SOUPED_ORANGE),
+                    active_arc_points,
+                    Stroke::new(2.5_f32, accent),
                 ));
             }
 
-            // Brushed aluminum dial body: vertical gradient face + inner cap + bevel ring
-            gradient_circle(
-                painter,
-                center,
-                self.radius,
-                theme::KNOB_BODY_LIGHT,
-                theme::KNOB_BODY_DARK,
+            // 3. Pointer Needle
+            let current_angle = start_angle + normalized * (end_angle - start_angle);
+            let needle_inner = pos2(
+                center.x + current_angle.cos() * (self.radius * 0.2),
+                center.y + current_angle.sin() * (self.radius * 0.2),
             );
-            gradient_circle(
-                painter,
-                center,
-                self.radius * 0.85,
-                lerp_color(theme::KNOB_BODY_DARK, theme::KNOB_BODY_LIGHT, 0.7),
-                lerp_color(theme::KNOB_BODY_DARK, Color32::BLACK, 0.15),
+            let needle_outer = pos2(
+                center.x + current_angle.cos() * (self.radius * 0.75),
+                center.y + current_angle.sin() * (self.radius * 0.75),
             );
-            bevel_ring(painter, center, self.radius);
-            painter.circle_stroke(
-                center,
-                self.radius,
-                Stroke::new(1.2_f32, theme::PANEL_BORDER_HIGHLIGHT),
-            );
+            painter.line_segment([needle_inner, needle_outer], Stroke::new(1.5_f32, theme::TEXT_PRIMARY));
 
-            // Engraved metallic silver/white pointer line
-            let pointer_len = self.radius * 0.85;
-            let pointer_end = pos2(
-                center.x + current_angle.cos() * pointer_len,
-                center.y + current_angle.sin() * pointer_len,
-            );
-            let pointer_start = pos2(
-                center.x + current_angle.cos() * (self.radius * 0.15),
-                center.y + current_angle.sin() * (self.radius * 0.15),
-            );
-            // Engraved pointer: dark groove with a thin bright catch-light core
-            painter.line_segment(
-                [pointer_start, pointer_end],
-                Stroke::new(2.6_f32, nih_plug_egui::egui::Color32::from_rgb(0x20, 0x22, 0x26)),
-            );
-            painter.line_segment(
-                [pointer_start, pointer_end],
-                Stroke::new(1.2_f32, nih_plug_egui::egui::Color32::from_rgb(0xe2, 0xe8, 0xf0)),
-            );
-
-            // Parameter Title Label below dial
-            let label_y = center.y + self.radius + 10.0;
-            let label_pos = pos2(rect.center().x, label_y);
+            // 4. Parameter Label
+            let label_y = center.y + self.radius + 6.0;
             painter.text(
-                label_pos,
+                pos2(rect.center().x, label_y),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 self.label.to_uppercase(),
-                FontId::new(9.0, FontFamily::Proportional),
-                theme::TEXT_PRIMARY,
+                FontId::new(8.5, FontFamily::Proportional),
+                theme::TEXT_SECONDARY,
             );
 
-            // Human-readable formatted value readout below title (with physical units)
+            // 5. Monospace Value Badge
+            let value_y = label_y + 12.0;
             let raw_str = self.param.to_string();
             let clean_str = raw_str.split_whitespace().next().unwrap_or(&raw_str);
             let value_str = if let Ok(f) = clean_str.parse::<f32>() {
@@ -225,15 +153,12 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                         format!("{:.0} Hz", hz)
                     }
                 } else if self.label.contains("VOLUME") {
-                    // Gain param: plain value is dB, not 0..1 — format before the
-                    // percent branch can claim it.
                     if f.abs() < 0.05 {
                         "+0.0 dB".to_string()
                     } else {
                         format!("{:+.1} dB", f)
                     }
                 } else if raw_str.contains("ohm") {
-                    // Clipper resistances: format as perceptual percentage across pot range.
                     if self.label.contains("DRIVE") {
                         let pct = ((f - 22_000.0) / (100_000.0 - 22_000.0) * 100.0).clamp(0.0, 100.0);
                         format!("{:.0}%", pct)
@@ -311,12 +236,16 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             } else {
                 raw_str
             };
+
+            let pill_rect = Rect::from_center_size(pos2(rect.center().x, value_y), vec2(desired_size.x - 4.0, 12.0));
+            painter.rect_filled(pill_rect, CornerRadius::same(2), theme::WELL_BG);
+            painter.rect_stroke(pill_rect, CornerRadius::same(2), Stroke::new(1.0_f32, theme::BORDER_SUBTLE), nih_plug_egui::egui::StrokeKind::Inside);
             painter.text(
-                pos2(rect.center().x, rect.bottom() - 4.0),
+                pos2(rect.center().x, value_y),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 value_str,
                 FontId::new(8.0, FontFamily::Monospace),
-                nih_plug_egui::egui::Color32::from_rgb(0xd0, 0xd8, 0xe0),
+                theme::TEXT_PRIMARY,
             );
         }
 
