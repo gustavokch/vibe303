@@ -2,7 +2,7 @@ use nih_plug::prelude::{FloatParam, ParamSetter};
 use nih_plug_egui::egui::{vec2, CornerRadius, FontId, Frame, Margin, Stroke, Ui};
 
 use crate::gui::theme;
-use crate::gui::widgets::{Knob303, MiniFader};
+use crate::gui::widgets::{Knob303, MiniFader, SlideSwitch};
 use crate::params::Plugin303Params;
 
 fn render_adsr_bank(
@@ -86,10 +86,23 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         nih_plug_egui::egui::UiBuilder::new().max_rect(rect.shrink(6.0)),
         |ui| {
             ui.horizontal(|ui| {
-                ui.add_space(8.0);
+                // Waveform Selector integrated inside main panel
+                ui.add_space(4.0);
+                ui.add(
+                    SlideSwitch::new(
+                        &params.waveform,
+                        setter,
+                        "WAVE",
+                        &["SAW", "SQR", "SWP"],
+                    )
+                    .vertical(),
+                );
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
 
                 // Classic 303 Parameter Gauges (7 Knobs)
-                ui.spacing_mut().item_spacing = vec2(28.0, 0.0);
+                ui.spacing_mut().item_spacing = vec2(24.0, 0.0);
                 ui.add(Knob303::new(&params.tuning, setter, "TUNING", 20.0));
                 ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
                 ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 20.0));
@@ -98,9 +111,9 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add(Knob303::new(&params.accent, setter, "ACCENT", 20.0));
                 ui.add(Knob303::new(&params.volume, setter, "VOLUME", 20.0));
 
-                ui.add_space(20.0);
+                ui.add_space(16.0);
                 ui.separator();
-                ui.add_space(20.0);
+                ui.add_space(16.0);
 
                 // Envelopes Module Frame: contains ADV ENV toggle in header + MEG ADSR + VEG ADSR
                 let env_frame = Frame::new()

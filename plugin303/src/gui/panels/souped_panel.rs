@@ -1,6 +1,6 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Align2, Button, Color32, CornerRadius, FontId, Frame, Margin, Rect, Stroke, Ui,
+    vec2, Button, CornerRadius, FontId, Frame, Margin, Stroke, Ui,
 };
 
 use crate::gui::theme;
@@ -10,7 +10,7 @@ use crate::params::{CircuitTopology, Plugin303Params};
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
 
-    let response = Frame::new()
+    Frame::new()
         .fill(theme::PANEL_BG_SOUPED)
         .stroke(theme::border_stroke())
         .corner_radius(CornerRadius::same(3))
@@ -18,7 +18,62 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.set_min_height(86.0);
-            ui.add_enabled_ui(!is_accurate, |ui| {
+
+            if is_accurate {
+                // Centered overlay card when bypassed with zero ghost rendering
+                let total_w = ui.available_width();
+                let card_w = 320.0_f32.min(total_w - 20.0);
+                let card_h = 70.0_f32;
+
+                ui.vertical_centered(|ui| {
+                    ui.add_space(8.0);
+                    Frame::new()
+                        .fill(theme::SURFACE_ELEVATED)
+                        .stroke(Stroke::new(1.0_f32, theme::BORDER_FOCUS))
+                        .corner_radius(CornerRadius::same(3))
+                        .inner_margin(Margin::symmetric(16, 8))
+                        .show(ui, |ui| {
+                            ui.set_width(card_w);
+                            ui.set_min_height(card_h);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    nih_plug_egui::egui::RichText::new("ACCURATE MODE ACTIVE")
+                                        .font(FontId::new(10.5, nih_plug_egui::egui::FontFamily::Proportional))
+                                        .strong()
+                                        .color(theme::TEXT_PRIMARY),
+                                );
+                                ui.add_space(2.0);
+                                ui.label(
+                                    nih_plug_egui::egui::RichText::new("Souped-up engine is bypassed")
+                                        .font(FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional))
+                                        .color(theme::TEXT_SECONDARY),
+                                );
+                                ui.add_space(6.0);
+
+                                let btn = Button::new(
+                                    nih_plug_egui::egui::RichText::new("ENABLE FUN MODE")
+                                        .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
+                                        .strong()
+                                        .color(theme::TEXT_ON_ACCENT),
+                                )
+                                .fill(theme::ACCENT_ORANGE)
+                                .min_size(vec2(130.0, 20.0))
+                                .corner_radius(CornerRadius::same(2));
+
+                                if ui.add(btn).clicked() {
+                                    setter.begin_set_parameter(&params.topology);
+                                    setter.set_parameter(&params.topology, CircuitTopology::Fun);
+                                    setter.end_set_parameter(&params.topology);
+
+                                    setter.begin_set_parameter(&params.reso_comp);
+                                    setter.set_parameter_normalized(&params.reso_comp, 0.5);
+                                    setter.end_set_parameter(&params.reso_comp);
+                                }
+                            });
+                        });
+                    ui.add_space(8.0);
+                });
+            } else {
                 ui.vertical(|ui| {
                     // Header Bar
                     ui.horizontal(|ui| {
@@ -26,11 +81,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE & ANALOG DRAWER")
                                 .font(FontId::new(10.0, nih_plug_egui::egui::FontFamily::Proportional))
                                 .strong()
-                                .color(if is_accurate {
-                                    theme::TEXT_MUTED
-                                } else {
-                                    theme::ACCENT_ORANGE
-                                }),
+                                .color(theme::ACCENT_ORANGE),
                         );
                     });
 
@@ -88,71 +139,6 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         render_knob(Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));
                     });
                 });
-            });
+            }
         });
-
-    // Accurate Mode Overlay Badge
-    if is_accurate {
-        let overlay_rect = response.response.rect;
-
-        let painter = ui.painter();
-        painter.rect_filled(
-            overlay_rect,
-            CornerRadius::same(3),
-            Color32::from_rgba_premultiplied(0x13, 0x13, 0x15, 0xe8),
-        );
-
-        let center = overlay_rect.center();
-        let badge_width = 280.0;
-        let badge_height = 56.0;
-        let badge_rect = Rect::from_center_size(center, vec2(badge_width, badge_height));
-
-        painter.rect_filled(badge_rect, CornerRadius::same(3), theme::SURFACE_ELEVATED);
-        painter.rect_stroke(
-            badge_rect,
-            CornerRadius::same(3),
-            Stroke::new(1.0_f32, theme::BORDER_FOCUS),
-            nih_plug_egui::egui::StrokeKind::Inside,
-        );
-
-        painter.text(
-            pos2(center.x, center.y - 14.0),
-            Align2::CENTER_CENTER,
-            "ACCURATE MODE ACTIVE",
-            FontId::new(10.5, nih_plug_egui::egui::FontFamily::Proportional),
-            theme::TEXT_PRIMARY,
-        );
-
-        painter.text(
-            pos2(center.x, center.y - 1.0),
-            Align2::CENTER_CENTER,
-            "Souped-up engine is bypassed",
-            FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional),
-            theme::TEXT_SECONDARY,
-        );
-
-        let btn_rect = Rect::from_center_size(pos2(center.x, center.y + 15.0), vec2(120.0, 18.0));
-        let btn_resp = ui.put(
-            btn_rect,
-            Button::new(
-                nih_plug_egui::egui::RichText::new("ENABLE FUN MODE")
-                    .font(FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional))
-                    .strong()
-                    .color(theme::ACCENT_ORANGE),
-            )
-            .fill(theme::WELL_BG)
-            .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-            .corner_radius(CornerRadius::same(2)),
-        );
-
-        if btn_resp.clicked() {
-            setter.begin_set_parameter(&params.topology);
-            setter.set_parameter(&params.topology, CircuitTopology::Fun);
-            setter.end_set_parameter(&params.topology);
-
-            setter.begin_set_parameter(&params.reso_comp);
-            setter.set_parameter_normalized(&params.reso_comp, 0.5);
-            setter.end_set_parameter(&params.reso_comp);
-        }
-    }
 }

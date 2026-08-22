@@ -35,7 +35,7 @@ pub fn create_editor(
                 .frame(
                     Frame::new()
                         .fill(theme::CHASSIS_BG)
-                        .inner_margin(Margin::symmetric(10, 6)),
+                        .inner_margin(Margin::same(10)),
                 )
                 .show(egui_ctx, |ui| {
                     let mut gen_params = gen_params_state.lock().unwrap();
@@ -44,25 +44,8 @@ pub fn create_editor(
                     panels::header_bar::render_header(ui, &params, setter);
                     ui.add_space(2.0);
 
-                    // 2. Vertical Waveform Selector + Classic 303 Control Panel
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing =
-                            nih_plug_egui::egui::vec2(6.0, 0.0);
-
-                        // Vertical waveform switch
-                        ui.add(
-                            widgets::SlideSwitch::new(
-                                &params.waveform,
-                                setter,
-                                "WAVE",
-                                &["SAW", "SQR", "SWP"],
-                            )
-                            .vertical(),
-                        );
-
-                        // Classic controls panel (knobs + ADSR banks)
-                        panels::top_controls::render_top_controls(ui, &params, setter);
-                    });
+                    // 2. Classic 303 Control Panel (includes integrated WAVE selector)
+                    panels::top_controls::render_top_controls(ui, &params, setter);
                     ui.add_space(2.0);
 
                     // 3. Souped-Up Engine Drawer Panel

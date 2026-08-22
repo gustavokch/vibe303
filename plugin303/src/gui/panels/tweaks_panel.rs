@@ -7,6 +7,11 @@ use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
 
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
+    let label_color = if is_accurate {
+        theme::TEXT_MUTED
+    } else {
+        theme::TEXT_SECONDARY
+    };
 
     Frame::new()
         .fill(theme::PANEL_BG)
@@ -36,7 +41,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         ui.label(
                             nih_plug_egui::egui::RichText::new("TOL:")
                                 .font(FontId::proportional(8.5))
-                                .color(theme::TEXT_SECONDARY),
+                                .color(label_color),
                         );
                         let tol = params.tolerance.value();
                         ComboBox::from_id_salt("tweaks_tolerance_combo")
@@ -67,7 +72,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         ui.label(
                             nih_plug_egui::egui::RichText::new("AGE:")
                                 .font(FontId::proportional(8.5))
-                                .color(theme::TEXT_SECONDARY),
+                                .color(label_color),
                         );
                         let mut age_val = params.comp_age.value();
                         if ui
@@ -86,7 +91,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         ui.label(
                             nih_plug_egui::egui::RichText::new("NOISE:")
                                 .font(FontId::proportional(8.5))
-                                .color(theme::TEXT_SECONDARY),
+                                .color(label_color),
                         );
                         let mut noise_val = params.thermal_noise.value();
                         if ui
@@ -103,9 +108,9 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         }
 
                         ui.label(
-                            nih_plug_egui::egui::RichText::new("COMP SEED:")
+                            nih_plug_egui::egui::RichText::new("DRIFT SEED:")
                                 .font(FontId::proportional(8.5))
-                                .color(theme::TEXT_SECONDARY),
+                                .color(label_color),
                         );
                         let mut seed_val = params.comp_seed.value();
                         if ui

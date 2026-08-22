@@ -34,7 +34,7 @@ pub fn render_step_strip(
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             let led_color = if is_active {
-                theme::ACCENT_ORANGE
+                theme::ACCENT_GOLD
             } else {
                 theme::SURFACE_ELEVATED
             };
@@ -42,7 +42,7 @@ pub fn render_step_strip(
             p.rect_stroke(
                 led_rect,
                 CornerRadius::same(1),
-                Stroke::new(1.0_f32, if is_active { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }),
+                Stroke::new(1.0_f32, if is_active { theme::ACCENT_GOLD } else { theme::BORDER_DEFAULT }),
                 StrokeKind::Inside,
             );
         }
@@ -52,7 +52,7 @@ pub fn render_step_strip(
         if ui.is_rect_visible(step_num_rect) {
             let p = ui.painter();
             let (bg_color, text_color, stroke_color) = if is_active {
-                (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT, theme::ACCENT_ORANGE)
+                (theme::ACCENT_GOLD, theme::TEXT_ON_ACCENT, theme::ACCENT_GOLD)
             } else {
                 (theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT)
             };
@@ -210,7 +210,7 @@ pub fn render_step_strip(
             p.rect_stroke(
                 pitch_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, if is_active { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }),
+                Stroke::new(1.0_f32, if is_active && !is_rest { theme::ACCENT_GOLD } else { theme::BORDER_DEFAULT }),
                 StrokeKind::Inside,
             );
             p.text(

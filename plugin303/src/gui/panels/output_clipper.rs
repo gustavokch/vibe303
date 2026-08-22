@@ -136,10 +136,10 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                                     nih_plug_egui::egui::RichText::new(label)
                                         .font(FontId::proportional(8.0))
                                         .strong()
-                                        .color(if is_selected { theme::ACCENT_RUBY } else { theme::TEXT_MUTED }),
+                                        .color(if is_selected { theme::ACCENT_ORANGE } else { theme::TEXT_MUTED }),
                                 )
                                 .fill(if is_selected { theme::SURFACE_ELEVATED } else { theme::WELL_BG })
-                                .stroke(nih_plug_egui::egui::Stroke::new(1.0_f32, if is_selected { theme::ACCENT_RUBY } else { theme::BORDER_SUBTLE }))
+                                .stroke(nih_plug_egui::egui::Stroke::new(1.0_f32, if is_selected { theme::ACCENT_ORANGE } else { theme::BORDER_SUBTLE }))
                                 .min_size(vec2(18.0, 14.0))
                                 .corner_radius(CornerRadius::same(2));
 

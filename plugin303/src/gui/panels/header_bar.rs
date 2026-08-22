@@ -113,14 +113,17 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
 
                         // 2. Quality selector (disabled in Accurate mode)
                         let is_accurate = params.topology.value() == crate::params::CircuitTopology::Accurate;
-                        ui.add_enabled_ui(!is_accurate, |ui| {
+                        let quality_resp = ui.add_enabled_ui(!is_accurate, |ui| {
                             ui.add(SlideSwitch::new(
                                 &params.tier,
                                 setter,
                                 "QUALITY",
                                 &["LOW", "HIGH", "ULTRA"],
-                            ));
+                            ))
                         });
+                        if is_accurate {
+                            quality_resp.response.on_hover_text("Quality tier applies to FUN mode (ACCURATE uses fixed physical modeling)");
+                        }
 
                         // 3. Circuit Topology switch
                         let prev_topology = params.topology.value();

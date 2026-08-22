@@ -183,6 +183,8 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 } else if self.label.contains("DRIFT") || self.label.contains("RECAL") {
                     let pct = if f <= 1.0 { f * 100.0 } else { f };
                     format!("{:.0}%", pct)
+                } else if self.label.contains("TONE") {
+                    format!("{:.0}%", normalized * 100.0)
                 } else if self.label.contains("RESONANCE")
                     || self.label.contains("ENV MOD")
                     || self.label.contains("ACCENT")
@@ -196,7 +198,6 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     || self.label.contains("AGE")
                     || self.label.contains("DYN")
                     || self.label.contains("R-COMP")
-                    || self.label.contains("TONE")
                 {
                     if (0.0..=1.0).contains(&f) {
                         format!("{:.0}%", f * 100.0)
@@ -233,8 +234,6 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     } else {
                         format!("{:+.1} dB", f)
                     }
-                } else if self.label.contains("TONE") {
-                    format!("{:.0}%", f * 100.0)
                 } else if self.label.contains("TEMPO") {
                     format!("{:.0} BPM", f)
                 } else if f.abs() >= 100.0 {

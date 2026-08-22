@@ -328,9 +328,10 @@ pub fn render_sequencer_and_transport(
                         let clear_btn = Button::new(
                             nih_plug_egui::egui::RichText::new("CLEAR")
                                 .font(FontId::proportional(8.0))
-                                .color(theme::TEXT_MUTED),
+                                .strong()
+                                .color(theme::TEXT_PRIMARY),
                         )
-                        .fill(theme::WELL_BG)
+                        .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
                         .min_size(vec2(36.0, 14.0))
                         .corner_radius(CornerRadius::same(2));

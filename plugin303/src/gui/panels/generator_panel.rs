@@ -53,8 +53,8 @@ pub fn render_generator_panel(
                             // Seed Display Badge
                             ui.label(
                                 nih_plug_egui::egui::RichText::new(format!(
-                                    "GEN SEED: {:016X}",
-                                    gen_params.seed
+                                    "GEN SEED: {:04}",
+                                    gen_params.seed % 10000
                                 ))
                                 .font(FontId::monospace(8.5))
                                 .color(theme::TEXT_MUTED),
