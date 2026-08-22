@@ -14,69 +14,71 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .fill(theme::PANEL_BG_SOUPED)
         .stroke(theme::border_stroke())
         .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::same(8))
+        .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.set_min_height(86.0);
-            ui.vertical(|ui| {
-                // Header Bar
-                ui.horizontal(|ui| {
-                    ui.label(
-                        nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE & ANALOG DRAWER")
-                            .font(FontId::new(10.0, nih_plug_egui::egui::FontFamily::Proportional))
-                            .strong()
-                            .color(if is_accurate {
-                                theme::TEXT_MUTED
-                            } else {
-                                theme::ACCENT_ORANGE
-                            }),
-                    );
-                });
+            ui.add_enabled_ui(!is_accurate, |ui| {
+                ui.vertical(|ui| {
+                    // Header Bar
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE & ANALOG DRAWER")
+                                .font(FontId::new(10.0, nih_plug_egui::egui::FontFamily::Proportional))
+                                .strong()
+                                .color(if is_accurate {
+                                    theme::TEXT_MUTED
+                                } else {
+                                    theme::ACCENT_ORANGE
+                                }),
+                        );
+                    });
 
-                ui.add_space(3.0);
+                    ui.add_space(3.0);
 
-                // Row 1: Selectors & Mode Toggles
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = vec2(10.0, 0.0);
+                    // Row 1: Selectors & Mode Toggles
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(10.0, 0.0);
 
-                    ui.add(SlideSwitch::new(
-                        &params.vcf_taps,
-                        setter,
-                        "VCF TAPS",
-                        &["2-POLE", "3-POLE", "4-POLE"],
-                    ));
+                        ui.add(SlideSwitch::new(
+                            &params.vcf_taps,
+                            setter,
+                            "VCF TAPS",
+                            &["2-POLE", "3-POLE", "4-POLE"],
+                        ));
 
-                    ui.add_space(8.0);
+                        ui.add_space(8.0);
 
-                    ui.add(SlideSwitch::new(
-                        &params.vca_env_mode,
-                        setter,
-                        "VCA ENV",
-                        &["GATE", "ENV"],
-                    ));
-                });
+                        ui.add(SlideSwitch::new(
+                            &params.vca_env_mode,
+                            setter,
+                            "VCA ENV",
+                            &["GATE", "ENV"],
+                        ));
+                    });
 
-                ui.add_space(2.0);
-                ui.separator();
-                ui.add_space(2.0);
+                    ui.add_space(2.0);
+                    ui.separator();
+                    ui.add_space(2.0);
 
-                // Row 2: Engine Rotary Dials (spaced evenly across full width)
-                ui.horizontal(|ui| {
-                    let num_knobs = 9;
-                    let avail_w = ui.available_width();
-                    let spacing = ((avail_w - (num_knobs as f32 * 42.0)) / (num_knobs as f32 + 1.0)).max(12.0);
-                    ui.spacing_mut().item_spacing = vec2(spacing, 0.0);
-                    ui.add_space(spacing * 0.5);
+                    // Row 2: Engine Rotary Dials (spaced evenly across full width)
+                    ui.horizontal(|ui| {
+                        let num_knobs = 9;
+                        let avail_w = ui.available_width();
+                        let spacing = ((avail_w - (num_knobs as f32 * 42.0)) / (num_knobs as f32 + 1.0)).max(12.0);
+                        ui.spacing_mut().item_spacing = vec2(spacing, 0.0);
+                        ui.add_space(spacing * 0.5);
 
-                    ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 12.0));
-                    ui.add(Knob303::new(&params.sub_vol, setter, "SUB", 12.0));
-                    ui.add(Knob303::new(&params.glide, setter, "GLIDE", 12.0));
-                    ui.add(Knob303::new(&params.osc1_pitch, setter, "PITCH1", 12.0));
-                    ui.add(Knob303::new(&params.osc2_pitch, setter, "PITCH2", 12.0));
-                    ui.add(Knob303::new(&params.osc2_vol, setter, "MIX2", 12.0));
-                    ui.add(Knob303::new(&params.osc1_pw, setter, "PW", 12.0));
-                    ui.add(Knob303::new(&params.sweep_pos, setter, "SWEEP", 12.0));
-                    ui.add(Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));
+                        ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 12.0));
+                        ui.add(Knob303::new(&params.sub_vol, setter, "SUB", 12.0));
+                        ui.add(Knob303::new(&params.glide, setter, "GLIDE", 12.0));
+                        ui.add(Knob303::new(&params.osc1_pitch, setter, "PITCH1", 12.0));
+                        ui.add(Knob303::new(&params.osc2_pitch, setter, "PITCH2", 12.0));
+                        ui.add(Knob303::new(&params.osc2_vol, setter, "MIX2", 12.0));
+                        ui.add(Knob303::new(&params.osc1_pw, setter, "PW", 12.0));
+                        ui.add(Knob303::new(&params.sweep_pos, setter, "SWEEP", 12.0));
+                        ui.add(Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));
+                    });
                 });
             });
         });
@@ -89,7 +91,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         painter.rect_filled(
             overlay_rect,
             CornerRadius::same(3),
-            Color32::from_rgba_premultiplied(0x13, 0x13, 0x15, 0xd8),
+            Color32::from_rgba_premultiplied(0x13, 0x13, 0x15, 0xe8),
         );
 
         let center = overlay_rect.center();
@@ -118,7 +120,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
             Align2::CENTER_CENTER,
             "Souped-up engine is bypassed",
             FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional),
-            theme::TEXT_MUTED,
+            theme::TEXT_SECONDARY,
         );
 
         let btn_rect = Rect::from_center_size(pos2(center.x, center.y + 15.0), vec2(120.0, 18.0));

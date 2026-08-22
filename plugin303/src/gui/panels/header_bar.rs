@@ -1,130 +1,152 @@
 use nih_plug::prelude::ParamSetter;
-use nih_plug_egui::egui::{pos2, vec2, Align2, ComboBox, CornerRadius, FontFamily, FontId, Rect, Stroke, StrokeKind, Ui};
+use nih_plug_egui::egui::{
+    pos2, vec2, Align2, ComboBox, CornerRadius, FontFamily, FontId, Frame, Margin, Rect, Stroke, StrokeKind, Ui,
+};
 
 use crate::gui::theme;
 use crate::gui::widgets::SlideSwitch;
 use crate::params::Plugin303Params;
 
 pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
-    let content_rect = ui.max_rect();
-    let strip_top = ui.cursor().min.y;
+    let header_frame = Frame::new()
+        .fill(theme::PANEL_BG)
+        .corner_radius(CornerRadius::same(3))
+        .stroke(theme::border_stroke())
+        .inner_margin(Margin::symmetric(10, 4));
 
-    // Flat header container
-    let header_rect = Rect::from_min_max(
-        pos2(content_rect.left(), strip_top),
-        pos2(content_rect.right(), strip_top + 28.0),
-    );
+    header_frame.show(ui, |ui| {
+        let bar_rect = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 34.0));
 
-    {
-        let painter = ui.painter();
-        painter.rect_filled(header_rect, CornerRadius::same(3), theme::PANEL_BG);
-        painter.rect_stroke(
-            header_rect,
-            CornerRadius::same(3),
-            Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
-            StrokeKind::Inside,
-        );
-
-        // Left: Clean Flat Brand Logotype
-        painter.text(
-            pos2(header_rect.left() + 10.0, header_rect.center().y),
-            Align2::LEFT_CENTER,
-            "TECHNEO 303",
-            FontId::new(14.0, FontFamily::Proportional),
-            theme::TEXT_PRIMARY,
-        );
-
-        let badge_rect = Rect::from_min_size(
-            pos2(header_rect.left() + 115.0, header_rect.center().y - 7.0),
-            vec2(76.0, 14.0),
-        );
-        painter.rect_filled(badge_rect, CornerRadius::same(2), theme::WELL_BG);
-        painter.rect_stroke(
-            badge_rect,
-            CornerRadius::same(2),
-            Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
-            StrokeKind::Inside,
-        );
-        painter.text(
-            badge_rect.center(),
-            Align2::CENTER_CENTER,
-            "BASS SYNTH",
-            FontId::new(8.0, FontFamily::Monospace),
-            theme::ACCENT_ORANGE,
-        );
-    }
-
-    ui.horizontal(|ui| {
-        ui.set_height(28.0);
-        ui.add_space(200.0);
-
-        // Right-aligned controls
-        ui.with_layout(
-            nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
+        // 1. Left side: Brand Logotype and Badges in dedicated container
+        let left_rect = Rect::from_min_size(bar_rect.min, vec2(280.0, 34.0));
+        ui.allocate_new_ui(
+            nih_plug_egui::egui::UiBuilder::new().max_rect(left_rect),
             |ui| {
-                ui.add_space(8.0);
+                ui.horizontal_centered(|ui| {
+                    ui.label(
+                        nih_plug_egui::egui::RichText::new("TECHNEO 303")
+                            .font(FontId::new(13.0, FontFamily::Proportional))
+                            .color(theme::TEXT_PRIMARY),
+                    );
+                    ui.add_space(8.0);
 
-                // Zoom factor dropdown
-                let current_zoom = ui.ctx().zoom_factor();
-                let current_pct = (current_zoom * 100.0).round() as i32;
-                let zoom_label = format!("{}%", current_pct);
+                    // BASS SYNTH badge
+                    let (badge_rect, _) = ui.allocate_exact_size(vec2(72.0, 16.0), nih_plug_egui::egui::Sense::hover());
+                    let painter = ui.painter();
+                    painter.rect_filled(badge_rect, CornerRadius::same(2), theme::WELL_BG);
+                    painter.rect_stroke(
+                        badge_rect,
+                        CornerRadius::same(2),
+                        Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
+                        StrokeKind::Inside,
+                    );
+                    painter.text(
+                        badge_rect.center(),
+                        Align2::CENTER_CENTER,
+                        "BASS SYNTH",
+                        FontId::new(8.0, FontFamily::Monospace),
+                        theme::ACCENT_ORANGE,
+                    );
 
-                ComboBox::from_id_salt("header_zoom_selector")
-                    .selected_text(zoom_label)
-                    .width(64.0)
-                    .show_ui(ui, |ui| {
-                        let zoom_presets = [0.75_f32, 1.0, 1.25, 1.5, 2.0];
-                        for preset in zoom_presets {
-                            let pct = (preset * 100.0).round() as i32;
-                            let is_selected = (current_zoom - preset).abs() < 0.01;
-                            if ui.selectable_label(is_selected, format!("{}%", pct)).clicked() {
-                                ui.ctx().set_zoom_factor(preset);
-                            }
-                        }
-                    });
+                    ui.add_space(4.0);
 
-                ui.label(
-                    nih_plug_egui::egui::RichText::new("ZOOM")
-                        .font(FontId::new(9.0, FontFamily::Proportional))
-                        .color(theme::TEXT_SECONDARY),
-                );
-
-                ui.add_space(12.0);
-
-                // Quality selector (disabled in Accurate mode)
-                let is_accurate = params.topology.value() == crate::params::CircuitTopology::Accurate;
-                ui.add_enabled_ui(!is_accurate, |ui| {
-                    ui.add(SlideSwitch::new(
-                        &params.tier,
-                        setter,
-                        "QUALITY",
-                        &["LOW", "HIGH", "ULTRA"],
-                    ));
+                    // MONO voice mode badge
+                    let (mono_rect, _) = ui.allocate_exact_size(vec2(42.0, 16.0), nih_plug_egui::egui::Sense::hover());
+                    let painter = ui.painter();
+                    painter.rect_filled(mono_rect, CornerRadius::same(2), theme::WELL_BG);
+                    painter.rect_stroke(
+                        mono_rect,
+                        CornerRadius::same(2),
+                        Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
+                        StrokeKind::Inside,
+                    );
+                    painter.text(
+                        mono_rect.center(),
+                        Align2::CENTER_CENTER,
+                        "MONO",
+                        FontId::new(8.0, FontFamily::Monospace),
+                        theme::TEXT_SECONDARY,
+                    );
                 });
-
-                ui.add_space(8.0);
-
-                // Circuit Topology switch
-                let prev_topology = params.topology.value();
-                let switch_resp = ui.add(SlideSwitch::new(
-                    &params.topology,
-                    setter,
-                    "TOPOLOGY",
-                    &["ACCURATE", "FUN"],
-                ));
-                if switch_resp.changed() {
-                    let new_topology = params.topology.value();
-                    if new_topology != prev_topology {
-                        let target_comp = match new_topology {
-                            crate::params::CircuitTopology::Accurate => 0.0,
-                            crate::params::CircuitTopology::Fun => 0.5,
-                        };
-                        setter.begin_set_parameter(&params.reso_comp);
-                        setter.set_parameter_normalized(&params.reso_comp, target_comp);
-                        setter.end_set_parameter(&params.reso_comp);
-                    }
-                }
             },
         );
+
+        // 2. Right control group in dedicated right-aligned container
+        let right_rect = Rect::from_min_max(
+            pos2(bar_rect.right() - 360.0, bar_rect.top()),
+            bar_rect.right_bottom(),
+        );
+        ui.allocate_new_ui(
+            nih_plug_egui::egui::UiBuilder::new().max_rect(right_rect),
+            |ui| {
+                ui.with_layout(
+                    nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing = vec2(12.0, 0.0);
+
+                        // 1. Zoom factor dropdown
+                        let current_zoom = ui.ctx().zoom_factor();
+                        let current_pct = (current_zoom * 100.0).round() as i32;
+                        let zoom_label = format!("{}%", current_pct);
+
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
+                            ui.label(
+                                nih_plug_egui::egui::RichText::new("ZOOM")
+                                    .font(FontId::new(8.5, FontFamily::Proportional))
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                            ComboBox::from_id_salt("header_zoom_selector")
+                                .selected_text(zoom_label)
+                                .width(54.0)
+                                .show_ui(ui, |ui| {
+                                    let zoom_presets = [0.75_f32, 1.0, 1.25, 1.5, 2.0];
+                                    for preset in zoom_presets {
+                                        let pct = (preset * 100.0).round() as i32;
+                                        let is_selected = (current_zoom - preset).abs() < 0.01;
+                                        if ui.selectable_label(is_selected, format!("{}%", pct)).clicked() {
+                                            ui.ctx().set_zoom_factor(preset);
+                                        }
+                                    }
+                                });
+                        });
+
+                        // 2. Quality selector (disabled in Accurate mode)
+                        let is_accurate = params.topology.value() == crate::params::CircuitTopology::Accurate;
+                        ui.add_enabled_ui(!is_accurate, |ui| {
+                            ui.add(SlideSwitch::new(
+                                &params.tier,
+                                setter,
+                                "QUALITY",
+                                &["LOW", "HIGH", "ULTRA"],
+                            ));
+                        });
+
+                        // 3. Circuit Topology switch
+                        let prev_topology = params.topology.value();
+                        let switch_resp = ui.add(SlideSwitch::new(
+                            &params.topology,
+                            setter,
+                            "TOPOLOGY",
+                            &["ACCURATE", "FUN"],
+                        ));
+                        if switch_resp.changed() {
+                            let new_topology = params.topology.value();
+                            if new_topology != prev_topology {
+                                let target_comp = match new_topology {
+                                    crate::params::CircuitTopology::Accurate => 0.0,
+                                    crate::params::CircuitTopology::Fun => 0.5,
+                                };
+                                setter.begin_set_parameter(&params.reso_comp);
+                                setter.set_parameter_normalized(&params.reso_comp, target_comp);
+                                setter.end_set_parameter(&params.reso_comp);
+                            }
+                        }
+                    },
+                );
+            },
+        );
+
+        ui.advance_cursor_after_rect(bar_rect);
     });
 }

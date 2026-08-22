@@ -103,7 +103,12 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             ));
 
             // Active value arc
-            let accent = self.accent_color.unwrap_or(theme::ACCENT_ORANGE);
+            let is_enabled = ui.is_enabled();
+            let accent = if is_enabled {
+                self.accent_color.unwrap_or(theme::ACCENT_ORANGE)
+            } else {
+                theme::TEXT_MUTED
+            };
             if normalized > 0.001 {
                 let active_arc_points: Vec<_> = (0..=24)
                     .map(|i| {
@@ -128,16 +133,18 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 center.x + current_angle.cos() * (self.radius * 0.75),
                 center.y + current_angle.sin() * (self.radius * 0.75),
             );
-            painter.line_segment([needle_inner, needle_outer], Stroke::new(1.5_f32, theme::TEXT_PRIMARY));
+            let needle_color = if is_enabled { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED };
+            painter.line_segment([needle_inner, needle_outer], Stroke::new(1.5_f32, needle_color));
 
             // 4. Parameter Label
             let label_y = center.y + self.radius + 6.0;
+            let label_color = if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED };
             painter.text(
                 pos2(rect.center().x, label_y),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 self.label.to_uppercase(),
                 FontId::new(8.5, FontFamily::Proportional),
-                theme::TEXT_SECONDARY,
+                label_color,
             );
 
             // 5. Monospace Value Badge
@@ -173,6 +180,9 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     } else {
                         format!("{:.0}Ω", f)
                     }
+                } else if self.label.contains("DRIFT") || self.label.contains("RECAL") {
+                    let pct = if f <= 1.0 { f * 100.0 } else { f };
+                    format!("{:.0}%", pct)
                 } else if self.label.contains("RESONANCE")
                     || self.label.contains("ENV MOD")
                     || self.label.contains("ACCENT")
@@ -183,9 +193,10 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     || self.label.contains("SUB")
                     || self.label.contains("SWEEP")
                     || self.label.contains("VOL")
-                    || self.label.contains("DRIFT")
                     || self.label.contains("AGE")
                     || self.label.contains("DYN")
+                    || self.label.contains("R-COMP")
+                    || self.label.contains("TONE")
                 {
                     if (0.0..=1.0).contains(&f) {
                         format!("{:.0}%", f * 100.0)
@@ -223,7 +234,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                         format!("{:+.1} dB", f)
                     }
                 } else if self.label.contains("TONE") {
-                    format!("{:.2}", f)
+                    format!("{:.0}%", f * 100.0)
                 } else if self.label.contains("TEMPO") {
                     format!("{:.0} BPM", f)
                 } else if f.abs() >= 100.0 {

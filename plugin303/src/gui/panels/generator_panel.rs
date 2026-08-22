@@ -53,7 +53,7 @@ pub fn render_generator_panel(
                             // Seed Display Badge
                             ui.label(
                                 nih_plug_egui::egui::RichText::new(format!(
-                                    "SEED: {:016X}",
+                                    "GEN SEED: {:016X}",
                                     gen_params.seed
                                 ))
                                 .font(FontId::monospace(8.5))
@@ -217,14 +217,15 @@ pub fn render_generator_panel(
 
                         ui.horizontal(|ui| {
                             ui.label(
-                                nih_plug_egui::egui::RichText::new("OCT UP %:")
+                                nih_plug_egui::egui::RichText::new("OCT UP:")
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
                             ui.add(
                                 DragValue::new(&mut gen_params.octave_up_prob)
                                     .speed(0.01)
-                                    .range(0.0..=1.0),
+                                    .range(0.0..=1.0)
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
 
@@ -232,14 +233,15 @@ pub fn render_generator_panel(
 
                         ui.horizontal(|ui| {
                             ui.label(
-                                nih_plug_egui::egui::RichText::new("OCT DN %:")
+                                nih_plug_egui::egui::RichText::new("OCT DN:")
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
                             ui.add(
                                 DragValue::new(&mut gen_params.octave_down_prob)
                                     .speed(0.01)
-                                    .range(0.0..=1.0),
+                                    .range(0.0..=1.0)
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
                     });
@@ -259,25 +261,27 @@ pub fn render_generator_panel(
 
                         ui.horizontal(|ui| {
                             ui.label(
-                                nih_plug_egui::egui::RichText::new("REST %:")
+                                nih_plug_egui::egui::RichText::new("REST:")
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
                             ui.add(
                                 DragValue::new(&mut gen_params.rest_probability)
                                     .speed(0.01)
-                                    .range(0.0..=1.0),
+                                    .range(0.0..=1.0)
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
 
                             ui.label(
-                                nih_plug_egui::egui::RichText::new("ACCENT %:")
+                                nih_plug_egui::egui::RichText::new("ACCENT:")
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
                             ui.add(
                                 DragValue::new(&mut gen_params.accent_probability)
                                     .speed(0.01)
-                                    .range(0.0..=1.0),
+                                    .range(0.0..=1.0)
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
 
@@ -285,25 +289,27 @@ pub fn render_generator_panel(
 
                         ui.horizontal(|ui| {
                             ui.label(
-                                nih_plug_egui::egui::RichText::new("SLIDE %:")
+                                nih_plug_egui::egui::RichText::new("SLIDE:")
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
                             ui.add(
                                 DragValue::new(&mut gen_params.slide_probability)
                                     .speed(0.01)
-                                    .range(0.0..=1.0),
+                                    .range(0.0..=1.0)
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
 
                             ui.label(
-                                nih_plug_egui::egui::RichText::new("ACC BIAS %:")
+                                nih_plug_egui::egui::RichText::new("ACC BIAS:")
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
                             ui.add(
                                 DragValue::new(&mut gen_params.accent_pitch_bias)
                                     .speed(0.01)
-                                    .range(0.0..=1.0),
+                                    .range(0.0..=1.0)
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
 
@@ -327,14 +333,15 @@ pub fn render_generator_panel(
 
                         ui.horizontal(|ui| {
                             ui.label(
-                                nih_plug_egui::egui::RichText::new("MUTATION %:")
+                                nih_plug_egui::egui::RichText::new("MUTATION:")
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
                             ui.add(
                                 DragValue::new(&mut gen_params.mutation_rate)
                                     .speed(0.01)
-                                    .range(0.0..=1.0),
+                                    .range(0.0..=1.0)
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
 

@@ -70,7 +70,14 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 .color(theme::TEXT_SECONDARY),
                         );
                         let mut age_val = params.comp_age.value();
-                        if ui.add(DragValue::new(&mut age_val).range(0..=100)).changed() {
+                        if ui
+                            .add(
+                                DragValue::new(&mut age_val)
+                                    .range(0..=100)
+                                    .custom_formatter(|v, _| format!("{:.0} yrs", v)),
+                            )
+                            .changed()
+                        {
                             setter.begin_set_parameter(&params.comp_age);
                             setter.set_parameter(&params.comp_age, age_val);
                             setter.end_set_parameter(&params.comp_age);
@@ -83,7 +90,11 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         );
                         let mut noise_val = params.thermal_noise.value();
                         if ui
-                            .add(DragValue::new(&mut noise_val).range(0..=100))
+                            .add(
+                                DragValue::new(&mut noise_val)
+                                    .range(0..=100)
+                                    .custom_formatter(|v, _| format!("{:.0}%", v)),
+                            )
                             .changed()
                         {
                             setter.begin_set_parameter(&params.thermal_noise);
@@ -92,7 +103,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         }
 
                         ui.label(
-                            nih_plug_egui::egui::RichText::new("SEED:")
+                            nih_plug_egui::egui::RichText::new("COMP SEED:")
                                 .font(FontId::proportional(8.5))
                                 .color(theme::TEXT_SECONDARY),
                         );
@@ -111,8 +122,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                     // Bottom row: Drift and Recal knobs
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(16.0, 0.0);
-                        ui.add_space(6.0);
+                        ui.spacing_mut().item_spacing = vec2(32.0, 0.0);
+                        ui.add_space(24.0);
                         ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.5));
                         ui.add(Knob303::new(
                             &params.recalibration_scale,

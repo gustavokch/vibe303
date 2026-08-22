@@ -192,16 +192,16 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 })
             })
             .fold(0.0f32, f32::max);
-        let per_slot = (max_text_width + 12.0).max(32.0);
+        let per_slot = (max_text_width + 12.0).max(30.0);
         let width = per_slot * num_opts as f32 + 4.0;
-        let height = 36.0;
+        let height = 30.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag());
 
         let current_idx = self.param.value().to_index();
         let track_rect = Rect::from_min_size(
-            pos2(rect.left() + 2.0, rect.top() + 14.0),
-            vec2(width - 4.0, 18.0),
+            pos2(rect.left() + 2.0, rect.top() + 13.0),
+            vec2(width - 4.0, 15.0),
         );
         let slot_width = (width - 4.0) / num_opts as f32;
 
@@ -223,14 +223,16 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
 
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
+            let is_enabled = ui.is_enabled();
+            let switch_accent = if is_enabled { accent } else { theme::TEXT_MUTED };
 
             // Main parameter title
             painter.text(
-                pos2(rect.center().x, rect.top() + 2.0),
+                pos2(rect.center().x, rect.top() + 1.0),
                 nih_plug_egui::egui::Align2::CENTER_TOP,
                 self.label,
-                FontId::new(9.0, FontFamily::Proportional),
-                theme::TEXT_SECONDARY,
+                FontId::new(8.5, FontFamily::Proportional),
+                if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
             );
 
             // Recessed track container
@@ -249,7 +251,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             painter.rect_stroke(
                 thumb_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, accent),
+                Stroke::new(1.0_f32, switch_accent),
                 StrokeKind::Inside,
             );
 
@@ -257,7 +259,9 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             for (i, opt) in self.options.iter().enumerate() {
                 let opt_x = track_rect.left() + slot_width * (i as f32 + 0.5);
                 let is_selected = i == current_idx;
-                let text_color = if is_selected {
+                let text_color = if !is_enabled {
+                    theme::TEXT_MUTED
+                } else if is_selected {
                     theme::TEXT_PRIMARY
                 } else {
                     theme::TEXT_MUTED

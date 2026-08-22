@@ -27,7 +27,7 @@ pub fn render_sequencer_and_transport(
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
         .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::symmetric(8, 5))
+        .inner_margin(Margin::symmetric(8, 7))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
 
@@ -227,7 +227,11 @@ pub fn render_sequencer_and_transport(
                         );
                         let mut len_val = params.seq_length.value();
                         if ui
-                            .add(DragValue::new(&mut len_val).range(1..=16))
+                            .add(
+                                DragValue::new(&mut len_val)
+                                    .range(1..=16)
+                                    .custom_formatter(|n, _| format!("{:02}", n as i32)),
+                            )
                             .changed()
                         {
                             setter.begin_set_parameter(&params.seq_length);
@@ -236,17 +240,19 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
-                    ui.add_space(3.0);
+                    ui.add_space(2.0);
 
-                    // Row D: Timebase + Mode + Jitter
+                    // Row D: Timebase + Mode + Jitter + Clear
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+
                         let tb_val = params.seq_timebase.value();
                         ComboBox::from_id_salt("seq_tb_combo")
                             .selected_text(match tb_val {
                                 crate::params::Timebase::Straight => "16th",
                                 crate::params::Timebase::Triplet => "12th",
                             })
-                            .width(42.0)
+                            .width(38.0)
                             .show_ui(ui, |ui| {
                                 if ui
                                     .selectable_label(
@@ -278,15 +284,13 @@ pub fn render_sequencer_and_transport(
                                 }
                             });
 
-                        ui.add_space(2.0);
-
                         let mode_val = params.seq_mode.value();
                         ComboBox::from_id_salt("seq_mode_combo")
                             .selected_text(match mode_val {
                                 crate::params::SequencerMode::DirectGrid => "Direct",
                                 crate::params::SequencerMode::DecoupledHardware => "Decoupled",
                             })
-                            .width(64.0)
+                            .width(58.0)
                             .show_ui(ui, |ui| {
                                 if ui
                                     .selectable_label(
@@ -319,21 +323,12 @@ pub fn render_sequencer_and_transport(
                                 }
                             });
 
-                        ui.add_space(2.0);
-
                         let mut jitter_val = params.seq_jitter.value();
                         if ui.checkbox(&mut jitter_val, "JIT").changed() {
                             setter.begin_set_parameter(&params.seq_jitter);
                             setter.set_parameter(&params.seq_jitter, jitter_val);
                             setter.end_set_parameter(&params.seq_jitter);
                         }
-                    });
-
-                    ui.add_space(3.0);
-
-                    // Row E: Quick Actions (CLEAR / RANDOMIZE)
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
 
                         let clear_btn = Button::new(
                             nih_plug_egui::egui::RichText::new("CLEAR")
@@ -342,7 +337,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::WELL_BG)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(50.0, 18.0))
+                        .min_size(vec2(40.0, 18.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(clear_btn).on_hover_text("Reset all steps to default C3 notes").clicked() {

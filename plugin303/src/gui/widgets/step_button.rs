@@ -26,10 +26,11 @@ pub fn render_step_strip(
 
     ui.vertical(|ui| {
         ui.set_width(width);
-        ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+        ui.spacing_mut().item_spacing = vec2(0.0, 1.5);
 
         // 1. Playhead LED bar (4.0px flat bar at top)
-        let (led_rect, _) = ui.allocate_exact_size(vec2(width, 4.0), Sense::hover());
+        let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, 4.0), Sense::hover());
+        let _ = led_resp.on_hover_text("Playhead position indicator");
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             let led_color = if is_active {
@@ -53,6 +54,7 @@ pub fn render_step_strip(
                 ui.label(
                     nih_plug_egui::egui::RichText::new(format!("{:02}", step_idx + 1))
                         .font(FontId::new(8.5, FontFamily::Monospace))
+                        .strong()
                         .color(if is_active {
                             theme::ACCENT_ORANGE
                         } else {
@@ -68,7 +70,7 @@ pub fn render_step_strip(
             let btn_w = (width - 2.0) * 0.5;
 
             // ACC Button
-            let (acc_rect, acc_resp) = ui.allocate_exact_size(vec2(btn_w, 15.0), Sense::click());
+            let (acc_rect, acc_resp) = ui.allocate_exact_size(vec2(btn_w, 13.0), Sense::click());
             let acc_resp = acc_resp.on_hover_text("Toggle Accent (A)");
             if acc_resp.clicked() {
                 step.accent = !step.accent;
@@ -100,7 +102,7 @@ pub fn render_step_strip(
             }
 
             // SLD Button
-            let (sld_rect, sld_resp) = ui.allocate_exact_size(vec2(btn_w, 15.0), Sense::click());
+            let (sld_rect, sld_resp) = ui.allocate_exact_size(vec2(btn_w, 13.0), Sense::click());
             let sld_resp = sld_resp.on_hover_text("Toggle Slide (S)");
             if sld_resp.clicked() {
                 step.slide = !step.slide;
@@ -138,7 +140,7 @@ pub fn render_step_strip(
             StepGate::Tie => ("TIE", theme::ACCENT_GOLD, theme::TEXT_ON_ACCENT, theme::ACCENT_GOLD),
             StepGate::Rest => ("REST", theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT),
         };
-        let (gate_rect, gate_resp) = ui.allocate_exact_size(vec2(width, 16.0), Sense::click());
+        let (gate_rect, gate_resp) = ui.allocate_exact_size(vec2(width, 14.0), Sense::click());
         if gate_resp.clicked() {
             step.gate = match step.gate {
                 StepGate::Note => StepGate::Tie,
@@ -168,7 +170,7 @@ pub fn render_step_strip(
         // 5. Pitch Monospace Pill (de-emphasized on REST)
         let is_rest = step.gate == StepGate::Rest;
         let pitch_str = format_pitch(step.semitone, step.octave);
-        let (pitch_rect, pitch_resp) = ui.allocate_exact_size(vec2(width, 17.0), Sense::click_and_drag());
+        let (pitch_rect, pitch_resp) = ui.allocate_exact_size(vec2(width, 15.0), Sense::click_and_drag());
         let pitch_resp = pitch_resp.on_hover_text("Click: piano roll | Drag/R-Click: nudge pitch");
 
         if pitch_resp.clicked() {
@@ -200,14 +202,14 @@ pub fn render_step_strip(
             p.rect_stroke(
                 pitch_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
+                Stroke::new(1.0_f32, if is_active { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }),
                 StrokeKind::Inside,
             );
             p.text(
                 pitch_rect.center(),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 pitch_str,
-                FontId::new(9.0, FontFamily::Monospace),
+                FontId::new(8.5, FontFamily::Monospace),
                 if is_rest { theme::TEXT_MUTED } else { theme::TEXT_PRIMARY },
             );
         }
@@ -218,7 +220,7 @@ pub fn render_step_strip(
             let oct_w = (width - 2.0) * 0.5;
 
             // Octave Up Button
-            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(oct_w, 15.0), Sense::click());
+            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(oct_w, 13.0), Sense::click());
             let up_resp = up_resp.on_hover_text("Octave up (+1)");
             if up_resp.clicked() && step.octave < 2 {
                 step.octave += 1;
@@ -257,7 +259,7 @@ pub fn render_step_strip(
             }
 
             // Octave Down Button
-            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(oct_w, 15.0), Sense::click());
+            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(oct_w, 13.0), Sense::click());
             let dn_resp = dn_resp.on_hover_text("Octave down (-1)");
             if dn_resp.clicked() && step.octave > -2 {
                 step.octave -= 1;

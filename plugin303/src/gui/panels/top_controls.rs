@@ -18,7 +18,7 @@ fn render_adsr_bank(
         .fill(theme::WELL_BG)
         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
         .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::symmetric(4, 3));
+        .inner_margin(Margin::symmetric(4, 2));
 
     bank_frame.show(ui, |ui| {
         ui.vertical(|ui| {
@@ -38,28 +38,28 @@ fn render_adsr_bank(
                     attack,
                     setter,
                     "A",
-                    32.0,
+                    24.0,
                     theme::ACCENT_ORANGE,
                 ));
                 ui.add(MiniFader::new(
                     decay,
                     setter,
                     "D",
-                    32.0,
+                    24.0,
                     theme::ACCENT_ORANGE,
                 ));
                 ui.add(MiniFader::new(
                     sustain,
                     setter,
                     "S",
-                    32.0,
+                    24.0,
                     theme::ACCENT_ORANGE,
                 ));
                 ui.add(MiniFader::new(
                     release,
                     setter,
                     "R",
-                    32.0,
+                    24.0,
                     theme::ACCENT_ORANGE,
                 ));
             });
@@ -68,7 +68,7 @@ fn render_adsr_bank(
 }
 
 pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
-    let desired_size = vec2(ui.available_width(), 108.0);
+    let desired_size = vec2(ui.available_width(), 110.0);
     let (rect, _) = ui.allocate_exact_size(desired_size, nih_plug_egui::egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {
@@ -89,7 +89,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add_space(8.0);
 
                 // Classic 303 Parameter Gauges (7 Knobs)
-                ui.spacing_mut().item_spacing = vec2(20.0, 0.0);
+                ui.spacing_mut().item_spacing = vec2(28.0, 0.0);
                 ui.add(Knob303::new(&params.tuning, setter, "TUNING", 20.0));
                 ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
                 ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 20.0));
@@ -98,9 +98,9 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add(Knob303::new(&params.accent, setter, "ACCENT", 20.0));
                 ui.add(Knob303::new(&params.volume, setter, "VOLUME", 20.0));
 
-                ui.add_space(16.0);
+                ui.add_space(20.0);
                 ui.separator();
-                ui.add_space(16.0);
+                ui.add_space(20.0);
 
                 // Envelopes Module Frame: contains ADV ENV toggle in header + MEG ADSR + VEG ADSR
                 let env_frame = Frame::new()
