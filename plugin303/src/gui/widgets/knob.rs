@@ -89,18 +89,19 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             let end_angle = 405.0 * PI / 180.0;
             let arc_r = self.radius - 2.5;
 
-            // Background inactive arc
-            let bg_arc_points: Vec<_> = (0..=24)
-                .map(|i| {
-                    let t = i as f32 / 24.0;
-                    let a = start_angle + t * (end_angle - start_angle);
-                    pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r)
-                })
-                .collect();
-            painter.add(nih_plug_egui::egui::Shape::line(
-                bg_arc_points,
-                Stroke::new(2.0_f32, theme::SURFACE_ELEVATED),
-            ));
+            // Background inactive arc (24 segments, 0 heap allocations)
+            const ARC_SEGMENTS: usize = 24;
+            let mut prev_bg_pt = pos2(
+                center.x + start_angle.cos() * arc_r,
+                center.y + start_angle.sin() * arc_r,
+            );
+            for i in 1..=ARC_SEGMENTS {
+                let t = i as f32 / ARC_SEGMENTS as f32;
+                let a = start_angle + t * (end_angle - start_angle);
+                let cur_pt = pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r);
+                painter.line_segment([prev_bg_pt, cur_pt], Stroke::new(2.0_f32, theme::SURFACE_ELEVATED));
+                prev_bg_pt = cur_pt;
+            }
 
             // Active value arc
             let is_enabled = ui.is_enabled();
@@ -110,17 +111,17 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 theme::TEXT_MUTED
             };
             if normalized > 0.001 {
-                let active_arc_points: Vec<_> = (0..=24)
-                    .map(|i| {
-                        let t = i as f32 / 24.0;
-                        let a = start_angle + t * normalized * (end_angle - start_angle);
-                        pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r)
-                    })
-                    .collect();
-                painter.add(nih_plug_egui::egui::Shape::line(
-                    active_arc_points,
-                    Stroke::new(2.5_f32, accent),
-                ));
+                let mut prev_active_pt = pos2(
+                    center.x + start_angle.cos() * arc_r,
+                    center.y + start_angle.sin() * arc_r,
+                );
+                for i in 1..=ARC_SEGMENTS {
+                    let t = i as f32 / ARC_SEGMENTS as f32;
+                    let a = start_angle + t * normalized * (end_angle - start_angle);
+                    let cur_pt = pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r);
+                    painter.line_segment([prev_active_pt, cur_pt], Stroke::new(2.5_f32, accent));
+                    prev_active_pt = cur_pt;
+                }
             }
 
             // 3. Pointer Needle
