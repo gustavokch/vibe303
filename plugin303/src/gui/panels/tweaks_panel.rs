@@ -118,12 +118,15 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         }
                     });
 
-                    ui.add_space(2.0);
+                    ui.add_space(4.0);
 
-                    // Bottom row: Drift and Recal knobs
+                    // Bottom row: Drift and Recal knobs distributed symmetrically
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(32.0, 0.0);
-                        ui.add_space(24.0);
+                        let total_w = ui.available_width();
+                        let knob_w = 40.0;
+                        let gap = ((total_w - 2.0 * knob_w) / 3.0).max(0.0);
+                        ui.spacing_mut().item_spacing = vec2(gap, 0.0);
+                        ui.add_space(gap);
                         ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.5));
                         ui.add(Knob303::new(
                             &params.recalibration_scale,

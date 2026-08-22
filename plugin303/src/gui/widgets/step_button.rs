@@ -47,22 +47,30 @@ pub fn render_step_strip(
             );
         }
 
-        // 2. Step number label
-        ui.horizontal(|ui| {
-            ui.set_width(width);
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    nih_plug_egui::egui::RichText::new(format!("{:02}", step_idx + 1))
-                        .font(FontId::new(8.5, FontFamily::Monospace))
-                        .strong()
-                        .color(if is_active {
-                            theme::ACCENT_ORANGE
-                        } else {
-                            theme::TEXT_MUTED
-                        }),
-                );
-            });
-        });
+        // 2. Step number header pill
+        let (step_num_rect, _) = ui.allocate_exact_size(vec2(width, 14.0), Sense::hover());
+        if ui.is_rect_visible(step_num_rect) {
+            let p = ui.painter();
+            let (bg_color, text_color, stroke_color) = if is_active {
+                (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT, theme::ACCENT_ORANGE)
+            } else {
+                (theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT)
+            };
+            p.rect_filled(step_num_rect, CornerRadius::same(2), bg_color);
+            p.rect_stroke(
+                step_num_rect,
+                CornerRadius::same(2),
+                Stroke::new(1.0_f32, stroke_color),
+                StrokeKind::Inside,
+            );
+            p.text(
+                step_num_rect.center(),
+                nih_plug_egui::egui::Align2::CENTER_CENTER,
+                format!("{:02}", step_idx + 1),
+                FontId::new(8.5, FontFamily::Monospace),
+                text_color,
+            );
+        }
 
         // 3. Modifiers: ACC and SLD row
         ui.horizontal(|ui| {

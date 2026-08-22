@@ -24,3 +24,22 @@ fn test_gui_panel_width_budget() {
     let inner_content_width = window_width - 20; // 10px left/right margin
     assert_eq!(inner_content_width, 1260);
 }
+
+#[test]
+fn test_qa_running_state_playhead_preserved() {
+    use nih_plug::prelude::Plugin;
+    unsafe { std::env::set_var("VIBE303_QA_STATE", "running") };
+    let mut plugin = plugin303::Plugin303::default();
+    assert_eq!(
+        plugin.current_playing_step.load(std::sync::atomic::Ordering::Relaxed),
+        3,
+        "Running QA state must initialize playhead to step index 3"
+    );
+    plugin.reset();
+    assert_eq!(
+        plugin.current_playing_step.load(std::sync::atomic::Ordering::Relaxed),
+        3,
+        "Reset in running QA state must preserve active playhead index"
+    );
+    unsafe { std::env::remove_var("VIBE303_QA_STATE") };
+}
