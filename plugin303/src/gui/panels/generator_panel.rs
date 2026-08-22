@@ -408,7 +408,8 @@ pub fn render_generator_panel(
                                     let mode = params.seq_mode.value();
                                     let num_steps = params.seq_length.value() as u8;
                                     let mut pat = seq_pat.compile(num_steps, mode);
-                                    gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                                    // Independent Weyl sequence constant for mutation stream (distinct from NEW SEED)
+                                    gen_params.seed = gen_params.seed.wrapping_add(0x517C_C1B7_2722_0A95);
                                     AcidGenerator::mutate(&mut pat, gen_params, gen_params.seed);
 
                                     for i in 0..16 {
