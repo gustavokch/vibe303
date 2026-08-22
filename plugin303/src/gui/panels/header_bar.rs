@@ -86,8 +86,18 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
 
                         // 1. Zoom factor dropdown
                         let current_zoom = ui.ctx().zoom_factor();
-                        let current_pct = (current_zoom * 100.0).round() as i32;
-                        let zoom_label = format!("{}%", current_pct);
+                        const ZOOM_PRESETS: [(f32, &str); 5] = [
+                            (0.75, "75%"),
+                            (1.0, "100%"),
+                            (1.25, "125%"),
+                            (1.5, "150%"),
+                            (2.0, "200%"),
+                        ];
+                        let zoom_label = ZOOM_PRESETS
+                            .iter()
+                            .find(|(z, _)| (current_zoom - z).abs() < 0.01)
+                            .map(|(_, l)| *l)
+                            .unwrap_or("100%");
 
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
@@ -100,11 +110,9 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                 .selected_text(zoom_label)
                                 .width(54.0)
                                 .show_ui(ui, |ui| {
-                                    let zoom_presets = [0.75_f32, 1.0, 1.25, 1.5, 2.0];
-                                    for preset in zoom_presets {
-                                        let pct = (preset * 100.0).round() as i32;
+                                    for &(preset, label) in &ZOOM_PRESETS {
                                         let is_selected = (current_zoom - preset).abs() < 0.01;
-                                        if ui.selectable_label(is_selected, format!("{}%", pct)).clicked() {
+                                        if ui.selectable_label(is_selected, label).clicked() {
                                             ui.ctx().set_zoom_factor(preset);
                                         }
                                     }
