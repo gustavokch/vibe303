@@ -6,11 +6,13 @@
 //! harness exists; the wrapper layers above `voice.tick` are nih-plug-owned.
 
 use assert_no_alloc::*;
+use nih_plug::prelude::Plugin;
 use plugin303::dsp::filter::Filter303;
 use plugin303::dsp::ladder_wdf::LadderVcf;
 use plugin303::dsp::oversample::Os4x;
 use plugin303::dsp::vco::Vco303;
 use plugin303::dsp::voice::Voice;
+use plugin303::Plugin303;
 
 #[global_allocator]
 static ALLOC: AllocDisabler = AllocDisabler;
@@ -165,6 +167,23 @@ fn voice_reset_is_alloc_free() {
         violation_count(),
         0,
         "Voice::reset allocated (audio-thread path)"
+    );
+}
+
+#[test]
+fn plugin_reset_is_alloc_free() {
+    ensure_lut_cache_warm();
+    let mut plugin = Plugin303::default();
+    reset_violation_count();
+    assert_no_alloc(|| {
+        for _ in 0..16 {
+            plugin.reset();
+        }
+    });
+    assert_eq!(
+        violation_count(),
+        0,
+        "Plugin303::reset allocated (audio-thread path)"
     );
 }
 

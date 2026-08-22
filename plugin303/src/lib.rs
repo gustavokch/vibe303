@@ -238,11 +238,6 @@ impl Plugin for Plugin303 {
         // see `Voice::reset`. The LUT cache is warmed once in `initialize`.
         self.voice.reset();
         self.sequencer.reset();
-        if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
-            if state == "running" {
-                self.current_playing_step.store(3, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
         self.active_midi_note = None;
         self.current_sample_pos = 0;
         self.prev_transport_sample = None;
