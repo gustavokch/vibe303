@@ -35,6 +35,8 @@ pub struct Plugin303 {
     prev_transport_sample: Option<i64>,
     /// Cached compiled sequencer pattern for non-blocking RT audio safety.
     cached_pattern: crate::dsp::sequencer::Pattern,
+    /// Pre-cached QA playback step for visual regression captures.
+    qa_playhead_step: Option<u8>,
 }
 
 impl Plugin303 {
@@ -47,6 +49,16 @@ impl Plugin303 {
             .compile(params.seq_length.value() as u8, params.seq_mode.value());
         let sequencer = Sequencer::new(sample_rate as f64);
         let current_playing_step = sequencer.current_step.clone();
+        let qa_playhead_step = if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
+            if state == "running" {
+                current_playing_step.store(3, std::sync::atomic::Ordering::Relaxed);
+                Some(3)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         Self {
             params,
             sample_rate,
@@ -63,19 +75,14 @@ impl Plugin303 {
             current_sample_pos: 0,
             prev_transport_sample: None,
             cached_pattern,
+            qa_playhead_step,
         }
     }
 }
 
 impl Default for Plugin303 {
     fn default() -> Self {
-        let plugin = Self::new_with_params(Arc::new(Plugin303Params::default()));
-        if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
-            if state == "running" {
-                plugin.current_playing_step.store(3, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-        plugin
+        Self::new_with_params(Arc::new(Plugin303Params::default()))
     }
 }
 
@@ -137,7 +144,7 @@ const fn parse_vst3_class_id(name: &str, custom_id: Option<&str>) -> [u8; 16] {
             }
         }
         None => {
-            if str_eq(name, "TB303") {
+            if str_eq(name, "TB303") || str_eq(name, "TECHNEO 303") {
                 *b"desmen-tb303-vs3"
             } else {
                 hash_to_16_bytes(name)
@@ -148,7 +155,7 @@ const fn parse_vst3_class_id(name: &str, custom_id: Option<&str>) -> [u8; 16] {
 
 const PLUGIN_NAME: &'static str = match option_env!("VIBE303_NAME") {
     Some(name) => name,
-    None => "TB303",
+    None => "TECHNEO 303",
 };
 
 const CLAP_ID: &'static str = match option_env!("VIBE303_CLAP_ID") {
@@ -208,10 +215,8 @@ impl Plugin for Plugin303 {
         // would swap in a new atomic and disconnect the playhead LED.
         self.sequencer.set_sample_rate(self.sample_rate as f64);
         self.sequencer.reset();
-        if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
-            if state == "running" {
-                self.current_playing_step.store(3, std::sync::atomic::Ordering::Relaxed);
-            }
+        if let Some(step) = self.qa_playhead_step {
+            self.current_playing_step.store(step, std::sync::atomic::Ordering::Relaxed);
         }
         self.active_midi_note = None;
         if let Ok(guard) = self.params.pattern.read() {
@@ -238,6 +243,9 @@ impl Plugin for Plugin303 {
         // see `Voice::reset`. The LUT cache is warmed once in `initialize`.
         self.voice.reset();
         self.sequencer.reset();
+        if let Some(step) = self.qa_playhead_step {
+            self.current_playing_step.store(step, std::sync::atomic::Ordering::Relaxed);
+        }
         self.active_midi_note = None;
         self.current_sample_pos = 0;
         self.prev_transport_sample = None;

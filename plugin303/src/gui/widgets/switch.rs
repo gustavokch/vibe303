@@ -1,154 +1,9 @@
 use nih_plug::prelude::{EnumParam, ParamSetter};
 use nih_plug_egui::egui::{
-    pos2, vec2, Color32, FontFamily, FontId, Rect, Response, Sense, Stroke, StrokeKind, Ui, Widget,
+    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke, StrokeKind, Ui, Widget,
 };
 
 use crate::gui::theme;
-
-#[derive(Clone, Copy)]
-struct ThumbColors {
-    body: Color32,
-    stroke: Color32,
-    top_highlight: Option<Color32>,
-    rib: Color32,
-    active_text: Color32,
-}
-
-impl ThumbColors {
-    fn new(thumb_color: Option<Color32>, active_text_color: Option<Color32>) -> Self {
-        let mut tc = match thumb_color {
-            Some(base) => {
-                let r = base.r() as f32;
-                let g = base.g() as f32;
-                let b = base.b() as f32;
-
-                let stroke = Color32::from_rgb(
-                    (r * 0.65) as u8,
-                    (g * 0.65) as u8,
-                    (b * 0.65) as u8,
-                );
-
-                let top_highlight = Some(Color32::from_rgb(
-                    ((r * 1.28) + 20.0).min(255.0) as u8,
-                    ((g * 1.28) + 34.0).min(255.0) as u8,
-                    ((b * 1.28) + 34.0).min(255.0) as u8,
-                ));
-
-                let rib = Color32::from_rgb(
-                    (r * 0.53) as u8,
-                    (g * 0.53) as u8,
-                    (b * 0.53) as u8,
-                );
-
-                let active_text = Color32::from_rgb(
-                    ((r * 1.84) + 74.0).min(255.0) as u8,
-                    ((g * 1.84) + 74.0).min(255.0) as u8,
-                    ((b * 1.84) + 74.0).min(255.0) as u8,
-                );
-
-                Self {
-                    body: base,
-                    stroke,
-                    top_highlight,
-                    rib,
-                    active_text,
-                }
-            }
-            None => Self {
-                body: theme::KNOB_BODY_LIGHT,
-                stroke: theme::KNOB_BEZEL,
-                top_highlight: None,
-                rib: Color32::from_rgb(0x70, 0x75, 0x82),
-                active_text: theme::ACCENT_AMBER,
-            },
-        };
-        if let Some(atc) = active_text_color {
-            tc.active_text = atc;
-        }
-        tc
-    }
-}
-
-fn draw_thumb_carriage(
-    painter: &nih_plug_egui::egui::Painter,
-    thumb_rect: Rect,
-    colors: &ThumbColors,
-    is_vertical: bool,
-    glyph_idx: Option<usize>,
-) {
-    painter.rect_filled(thumb_rect, 2.0, colors.body);
-    if let Some(highlight_color) = colors.top_highlight {
-        // Brushed metallic top highlight
-        painter.line_segment(
-            [
-                pos2(thumb_rect.left() + 1.5, thumb_rect.top() + 1.0),
-                pos2(thumb_rect.right() - 1.5, thumb_rect.top() + 1.0),
-            ],
-            Stroke::new(1.0_f32, highlight_color),
-        );
-    }
-    painter.rect_stroke(
-        thumb_rect,
-        2.0,
-        Stroke::new(1.2_f32, colors.stroke),
-        StrokeKind::Inside,
-    );
-
-    if is_vertical {
-        let stroke = Stroke::new(1.2_f32, colors.rib);
-        let cx = thumb_rect.center().x;
-        let cy = thumb_rect.center().y;
-        match glyph_idx {
-            Some(0) => {
-                // Sawtooth wave glyph
-                let p1 = pos2(cx - 5.0, cy + 3.0);
-                let p2 = pos2(cx + 4.0, cy - 3.0);
-                let p3 = pos2(cx + 4.0, cy + 3.0);
-                painter.line_segment([p1, p2], stroke);
-                painter.line_segment([p2, p3], stroke);
-            }
-            Some(1) => {
-                // Square wave glyph
-                let p1 = pos2(cx - 5.0, cy + 3.0);
-                let p2 = pos2(cx - 5.0, cy - 3.0);
-                let p3 = pos2(cx, cy - 3.0);
-                let p4 = pos2(cx, cy + 3.0);
-                let p5 = pos2(cx + 5.0, cy + 3.0);
-                painter.line_segment([p1, p2], stroke);
-                painter.line_segment([p2, p3], stroke);
-                painter.line_segment([p3, p4], stroke);
-                painter.line_segment([p4, p5], stroke);
-            }
-            Some(2) => {
-                // Sweep wave glyph
-                let p1 = pos2(cx - 5.0, cy + 3.0);
-                let p2 = pos2(cx - 2.0, cy - 3.0);
-                let p3 = pos2(cx + 2.0, cy + 3.0);
-                let p4 = pos2(cx + 5.0, cy - 3.0);
-                painter.line_segment([p1, p2], stroke);
-                painter.line_segment([p2, p3], stroke);
-                painter.line_segment([p3, p4], stroke);
-            }
-            _ => {
-                painter.circle_filled(pos2(cx, cy), 1.5, colors.rib);
-            }
-        }
-    } else {
-        // Vertical knurling ribs on horizontal thumb
-        let num_ribs = 3;
-        for r in 0..num_ribs {
-            let rib_offset = (r as f32 - (num_ribs - 1) as f32 / 2.0) * 3.0;
-            let rx = thumb_rect.center().x + rib_offset;
-            painter.line_segment(
-                [
-                    pos2(rx, thumb_rect.top() + 3.0),
-                    pos2(rx, thumb_rect.bottom() - 3.0),
-                ],
-                Stroke::new(1.0_f32, colors.rib),
-            );
-        }
-    }
-}
 
 pub struct SlideSwitch<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> {
     param: &'a EnumParam<T>,
@@ -198,7 +53,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
     fn ui(self, ui: &mut Ui) -> Response {
         let num_opts = self.options.len().max(1);
         let opt_font = FontId::new(8.5, FontFamily::Proportional);
-        let colors = ThumbColors::new(self.thumb_color, self.active_text_color);
+        let accent = self.active_text_color.unwrap_or(theme::ACCENT_ORANGE);
 
         if self.is_vertical {
             let max_text_width = self
@@ -212,22 +67,22 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     })
                 })
                 .fold(0.0f32, f32::max);
-            let slot_height = 16.0_f32;
+            let slot_height = 20.0_f32;
             let track_height = slot_height * num_opts as f32;
-            let width = 24.0 + max_text_width + 12.0;
-            let height = track_height + 22.0;
+            let width = (20.0 + max_text_width + 16.0).max(52.0);
+            let height = track_height + 16.0;
             let (rect, mut response) =
                 ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag());
 
             let current_idx = self.param.value().to_index();
             let track_rect = Rect::from_min_size(
-                pos2(rect.left() + 4.0, rect.top() + 16.0),
-                vec2(12.0, track_height),
+                pos2(rect.left() + 2.0, rect.top() + 14.0),
+                vec2(width - 4.0, track_height),
             );
 
             if response.clicked() || response.dragged() {
                 if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rel_y = (mouse_pos.y - track_rect.top()).clamp(0.0, track_rect.height());
+                    let rel_y = (mouse_pos.y - track_rect.top()).clamp(0.0, track_rect.height() - 0.001);
                     let target_idx = ((rel_y / slot_height).floor() as usize).min(num_opts - 1);
                     if target_idx != current_idx || response.clicked() {
                         self.setter.begin_set_parameter(self.param);
@@ -243,65 +98,94 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
 
             if ui.is_rect_visible(rect) {
                 let painter = ui.painter();
+                let is_enabled = ui.is_enabled();
+                let switch_accent = if is_enabled { accent } else { theme::TEXT_MUTED };
 
                 // Main parameter title
                 painter.text(
-                    pos2(rect.left() + 2.0, rect.top() + 4.0),
-                    nih_plug_egui::egui::Align2::LEFT_TOP,
+                    pos2(rect.center().x, rect.top() + 1.0),
+                    nih_plug_egui::egui::Align2::CENTER_TOP,
                     self.label,
-                    FontId::new(9.0, FontFamily::Proportional),
-                    theme::TEXT_SECONDARY,
+                    FontId::new(8.5, FontFamily::Proportional),
+                    if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
                 );
 
-                // Recessed vertical track
-                painter.rect_filled(track_rect, 2.0, Color32::from_rgb(0x10, 0x12, 0x16));
+                // Recessed full-width vertical container
+                painter.rect_filled(track_rect, CornerRadius::same(2), theme::WELL_BG);
                 painter.rect_stroke(
                     track_rect,
-                    2.0,
-                    Stroke::new(1.0_f32, theme::PANEL_BORDER),
+                    CornerRadius::same(2),
+                    Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
                     StrokeKind::Inside,
                 );
 
-                // Detent tick marks
-                for i in 0..num_opts {
-                    let detent_y = track_rect.top() + slot_height * (i as f32 + 0.5);
-                    painter.line_segment(
-                        [
-                            pos2(track_rect.left() + 2.0, detent_y),
-                            pos2(track_rect.right() - 2.0, detent_y),
-                        ],
-                        Stroke::new(1.0_f32, Color32::from_rgb(0x28, 0x2c, 0x36)),
+                // Sliding active segmented pill
+                if is_enabled {
+                    let thumb_y = track_rect.top() + slot_height * current_idx as f32;
+                    let thumb_rect = Rect::from_min_size(
+                        pos2(track_rect.left() + 1.0, thumb_y + 1.0),
+                        vec2(track_rect.width() - 2.0, slot_height - 2.0),
+                    );
+                    painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
+                    painter.rect_stroke(
+                        thumb_rect,
+                        CornerRadius::same(2),
+                        Stroke::new(1.0_f32, switch_accent),
+                        StrokeKind::Inside,
                     );
                 }
 
-                // Sliding thumb carriage
-                let thumb_y = track_rect.top() + slot_height * (current_idx as f32 + 0.5);
-                let thumb_rect = Rect::from_center_size(
-                    pos2(track_rect.center().x, thumb_y),
-                    vec2(16.0, 12.0),
-                );
-
-                let glyph_idx = if self.label.contains("WAVE") {
-                    Some(current_idx)
-                } else {
-                    None
-                };
-                draw_thumb_carriage(painter, thumb_rect, &colors, true, glyph_idx);
-
-                // Option labels stacked vertically to the right of each detent
+                // Options with integrated glyphs & labels
                 for (i, opt) in self.options.iter().enumerate() {
-                    let detent_y = track_rect.top() + slot_height * (i as f32 + 0.5);
+                    let row_y = track_rect.top() + slot_height * i as f32;
+                    let cy = row_y + slot_height * 0.5;
                     let is_selected = i == current_idx;
-                    let text_color = if is_selected {
-                        colors.active_text
+                    let text_color = if !is_enabled {
+                        theme::TEXT_MUTED
+                    } else if is_selected {
+                        theme::TEXT_PRIMARY
                     } else {
                         theme::TEXT_MUTED
                     };
+                    let glyph_color = if !is_enabled {
+                        theme::TEXT_MUTED
+                    } else if is_selected {
+                        switch_accent
+                    } else {
+                        theme::TEXT_MUTED
+                    };
+
+                    // Waveform glyph
+                    let gx = track_rect.left() + 9.0;
+                    let stroke = Stroke::new(1.2_f32, glyph_color);
+                    match i {
+                        0 => {
+                            // Saw
+                            painter.line_segment([pos2(gx - 4.0, cy + 3.0), pos2(gx + 3.0, cy - 3.0)], stroke);
+                            painter.line_segment([pos2(gx + 3.0, cy - 3.0), pos2(gx + 3.0, cy + 3.0)], stroke);
+                        }
+                        1 => {
+                            // Square
+                            painter.line_segment([pos2(gx - 4.0, cy + 3.0), pos2(gx - 4.0, cy - 3.0)], stroke);
+                            painter.line_segment([pos2(gx - 4.0, cy - 3.0), pos2(gx, cy - 3.0)], stroke);
+                            painter.line_segment([pos2(gx, cy - 3.0), pos2(gx, cy + 3.0)], stroke);
+                            painter.line_segment([pos2(gx, cy + 3.0), pos2(gx + 4.0, cy + 3.0)], stroke);
+                        }
+                        2 => {
+                            // Sweep
+                            painter.line_segment([pos2(gx - 4.0, cy + 3.0), pos2(gx - 2.0, cy - 3.0)], stroke);
+                            painter.line_segment([pos2(gx - 2.0, cy - 3.0), pos2(gx + 2.0, cy + 3.0)], stroke);
+                            painter.line_segment([pos2(gx + 2.0, cy + 3.0), pos2(gx + 4.0, cy - 3.0)], stroke);
+                        }
+                        _ => {}
+                    }
+
+                    // Label text
                     painter.text(
-                        pos2(track_rect.right() + 8.0, detent_y - 1.5),
+                        pos2(track_rect.left() + 20.0, cy),
                         nih_plug_egui::egui::Align2::LEFT_CENTER,
                         *opt,
-                        FontId::new(8.0, FontFamily::Proportional),
+                        FontId::new(8.5, FontFamily::Proportional),
                         text_color,
                     );
                 }
@@ -322,36 +206,23 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             })
             .fold(0.0f32, f32::max);
         let per_slot = (max_text_width + 12.0).max(30.0);
-        let width = per_slot * num_opts as f32 + 8.0;
-        let height = 44.0;
+        let width = per_slot * num_opts as f32 + 4.0;
+        let height = 30.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag());
 
         let current_idx = self.param.value().to_index();
-
         let track_rect = Rect::from_min_size(
-            pos2(rect.left() + 4.0, rect.top() + 15.0),
-            vec2(width - 8.0, 12.0),
+            pos2(rect.left() + 2.0, rect.top() + 13.0),
+            vec2(width - 4.0, 15.0),
         );
-        let slot_width = (width - 8.0) / num_opts as f32;
+        let slot_width = (width - 4.0) / num_opts as f32;
 
-        if response.clicked() {
+        if response.clicked() || response.dragged() {
             if let Some(mouse_pos) = response.interact_pointer_pos() {
                 let rel_x = (mouse_pos.x - track_rect.left()).clamp(0.0, track_rect.width());
                 let target_idx = ((rel_x / slot_width).floor() as usize).min(num_opts - 1);
-                self.setter.begin_set_parameter(self.param);
-                self.setter.set_parameter_normalized(
-                    self.param,
-                    target_idx as f32 / (num_opts - 1).max(1) as f32,
-                );
-                self.setter.end_set_parameter(self.param);
-                response.mark_changed();
-            }
-        } else if response.dragged() {
-            if let Some(mouse_pos) = response.interact_pointer_pos() {
-                let rel_x = (mouse_pos.x - track_rect.left()).clamp(0.0, track_rect.width());
-                let target_idx = ((rel_x / slot_width).floor() as usize).min(num_opts - 1);
-                if target_idx != current_idx {
+                if target_idx != current_idx || response.clicked() {
                     self.setter.begin_set_parameter(self.param);
                     self.setter.set_parameter_normalized(
                         self.param,
@@ -365,61 +236,56 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
 
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
+            let is_enabled = ui.is_enabled();
+            let switch_accent = if is_enabled { accent } else { theme::TEXT_MUTED };
 
             // Main parameter title
             painter.text(
-                pos2(rect.center().x, rect.top() + 4.0),
-                nih_plug_egui::egui::Align2::CENTER_CENTER,
+                pos2(rect.center().x, rect.top() + 1.0),
+                nih_plug_egui::egui::Align2::CENTER_TOP,
                 self.label,
-                FontId::new(9.5, FontFamily::Proportional),
-                theme::TEXT_SECONDARY,
+                FontId::new(8.5, FontFamily::Proportional),
+                if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
             );
 
-            // Recessed track
-            painter.rect_filled(track_rect, 2.0, Color32::from_rgb(0x10, 0x12, 0x16));
+            // Recessed track container
+            painter.rect_filled(track_rect, CornerRadius::same(2), theme::WELL_BG);
             painter.rect_stroke(
                 track_rect,
-                2.0,
-                Stroke::new(1.0_f32, theme::PANEL_BORDER),
+                CornerRadius::same(2),
+                Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
                 StrokeKind::Inside,
             );
 
-            // Detent tick marks
-            for i in 0..num_opts {
-                let detent_x = track_rect.left() + slot_width * (i as f32 + 0.5);
-                painter.line_segment(
-                    [
-                        pos2(detent_x, track_rect.top() + 2.0),
-                        pos2(detent_x, track_rect.bottom() - 2.0),
-                    ],
-                    Stroke::new(1.0_f32, Color32::from_rgb(0x28, 0x2c, 0x36)),
+            // Active segmented pill (only when enabled)
+            if is_enabled {
+                let thumb_x = track_rect.left() + slot_width * current_idx as f32;
+                let thumb_rect = Rect::from_min_size(pos2(thumb_x + 1.0, track_rect.top() + 1.0), vec2(slot_width - 2.0, track_rect.height() - 2.0));
+                painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
+                painter.rect_stroke(
+                    thumb_rect,
+                    CornerRadius::same(2),
+                    Stroke::new(1.0_f32, switch_accent),
+                    StrokeKind::Inside,
                 );
             }
 
-            // Knurled silver sliding carriage (thumb)
-            let thumb_x = track_rect.left() + slot_width * (current_idx as f32 + 0.5);
-            let thumb_w = (slot_width * 0.75).clamp(12.0, 22.0);
-            let thumb_rect = Rect::from_center_size(
-                pos2(thumb_x, track_rect.center().y),
-                vec2(thumb_w, 16.0),
-            );
-
-            draw_thumb_carriage(painter, thumb_rect, &colors, false, None);
-
-            // Option labels positioned below the track at each detent
+            // Option labels
             for (i, opt) in self.options.iter().enumerate() {
                 let opt_x = track_rect.left() + slot_width * (i as f32 + 0.5);
                 let is_selected = i == current_idx;
-                let text_color = if is_selected {
-                    colors.active_text
+                let text_color = if !is_enabled {
+                    theme::TEXT_MUTED
+                } else if is_selected {
+                    theme::TEXT_PRIMARY
                 } else {
                     theme::TEXT_MUTED
                 };
                 painter.text(
-                    pos2(opt_x, rect.bottom() - 4.0),
+                    pos2(opt_x, track_rect.center().y),
                     nih_plug_egui::egui::Align2::CENTER_CENTER,
                     *opt,
-                    FontId::new(8.0, FontFamily::Proportional),
+                    FontId::new(8.5, FontFamily::Proportional),
                     text_color,
                 );
             }

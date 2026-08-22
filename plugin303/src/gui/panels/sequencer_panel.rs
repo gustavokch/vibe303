@@ -1,13 +1,14 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    vec2, Color32, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Ui,
+    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense, Stroke,
+    StrokeKind, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::gui::theme;
 use crate::gui::widgets::piano_roll_popup::render_piano_roll_popup;
 use crate::gui::widgets::render_step_strip;
-use crate::params::Plugin303Params;
+use crate::params::{Plugin303Params, SequencerStep, StepGate};
 
 pub fn render_sequencer_and_transport(
     ui: &mut Ui,
@@ -26,18 +27,14 @@ pub fn render_sequencer_and_transport(
     Frame::new()
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
-        .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin {
-            left: 8,
-            right: 8,
-            top: 4,
-            bottom: 6,
-        })
+        .corner_radius(CornerRadius::same(3))
+        .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
-            ui.set_max_width(1048.0);
+            ui.set_width(ui.available_width());
+            ui.set_min_height(ui.available_height());
 
             ui.horizontal(|ui| {
-                // 1. LEFT / MAIN: 16-Step Pitch Key Columns
+                // 1. LEFT / MAIN: 16-Step Pitch Key Columns (16 x 56px = 896px + spacing)
                 ui.vertical(|ui| {
                     if let Ok(mut pattern_guard) = params.pattern.write() {
                         ui.horizontal(|ui| {
@@ -56,33 +53,40 @@ pub fn render_sequencer_and_transport(
                     }
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 ui.separator();
-                ui.add_space(4.0);
+                ui.add_space(8.0);
 
-                // 2. RIGHT COLUMN: Compact Transport & Master
+                // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
                 ui.vertical(|ui| {
-                    ui.set_width(190.0);
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing = vec2(3.0, 1.5);
+                    ui.spacing_mut().button_padding = vec2(3.0, 1.0);
 
-                    // Row A: Run/Sync
-                    ui.horizontal(|ui| {
-                        let run_val = params.seq_run.value();
-                        let run_btn = nih_plug_egui::egui::Button::new(
-                            nih_plug_egui::egui::RichText::new(if run_val {
-                                "■ STOP"
-                            } else {
-                                "▶ RUN"
-                            })
-                            .font(FontId::proportional(10.0))
+                    ui.label(
+                        nih_plug_egui::egui::RichText::new("TRANSPORT & PATTERN")
+                            .font(FontId::proportional(9.0))
                             .strong()
-                            .color(Color32::BLACK),
+                            .color(theme::TEXT_PRIMARY),
+                    );
+
+                    // Row A: Run/Sync Buttons
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                        let run_val = params.seq_run.value();
+                        let run_btn = Button::new(
+                            nih_plug_egui::egui::RichText::new(if run_val {
+                                "STOP"
+                            } else {
+                                "RUN"
+                            })
+                            .font(FontId::proportional(9.0))
+                            .strong()
+                            .color(theme::TEXT_ON_ACCENT),
                         )
-                        .fill(if run_val {
-                            theme::PLAYHEAD_RED
-                        } else {
-                            theme::SOUPED_ORANGE
-                        })
-                        .min_size(vec2(80.0, 18.0));
+                        .fill(theme::ACCENT_ORANGE)
+                        .min_size(vec2(72.0, 20.0))
+                        .corner_radius(CornerRadius::same(2));
 
                         if ui.add(run_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_run);
@@ -91,22 +95,24 @@ pub fn render_sequencer_and_transport(
                         }
 
                         let sync_val = params.seq_sync.value();
-                        let sync_btn = nih_plug_egui::egui::Button::new(
+                        let sync_btn = Button::new(
                             nih_plug_egui::egui::RichText::new(if sync_val {
-                                "HOST"
+                                "SYNC: HOST"
                             } else {
-                                "INT"
+                                "SYNC: INT"
                             })
-                            .font(FontId::proportional(9.0))
+                            .font(FontId::proportional(8.5))
                             .strong()
-                            .color(theme::TEXT_PRIMARY),
+                            .color(if sync_val { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY }),
                         )
                         .fill(if sync_val {
-                            theme::BTN_ACTIVE_BG
+                            theme::SURFACE_ELEVATED
                         } else {
-                            theme::BTN_INACTIVE_BG
+                            theme::WELL_BG
                         })
-                        .min_size(vec2(50.0, 18.0));
+                        .stroke(Stroke::new(1.0_f32, if sync_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
+                        .min_size(vec2(84.0, 20.0))
+                        .corner_radius(CornerRadius::same(2));
 
                         if ui.add(sync_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_sync);
@@ -115,24 +121,60 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
-                    ui.add_space(1.0);
-
-                    // Row B: BPM + Length
+                    // Row B: Cyclic Pattern Shift Controls (< SHIFT and > SHIFT)
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+
+                        let shift_left_btn = Button::new(
+                            nih_plug_egui::egui::RichText::new("< SHIFT")
+                                .font(FontId::proportional(8.5))
+                                .strong()
+                                .color(theme::TEXT_PRIMARY),
+                        )
+                        .fill(theme::SURFACE_ELEVATED)
+                        .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
+                        .min_size(vec2(78.0, 18.0))
+                        .corner_radius(CornerRadius::same(2));
+
+                        if ui.add(shift_left_btn).on_hover_text("Rotate pattern steps left (cyclic)").clicked() {
+                            if let Ok(mut pattern_guard) = params.pattern.write() {
+                                pattern_guard.steps.rotate_left(1);
+                            }
+                        }
+
+                        let shift_right_btn = Button::new(
+                            nih_plug_egui::egui::RichText::new("> SHIFT")
+                                .font(FontId::proportional(8.5))
+                                .strong()
+                                .color(theme::TEXT_PRIMARY),
+                        )
+                        .fill(theme::SURFACE_ELEVATED)
+                        .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
+                        .min_size(vec2(78.0, 18.0))
+                        .corner_radius(CornerRadius::same(2));
+
+                        if ui.add(shift_right_btn).on_hover_text("Rotate pattern steps right (cyclic)").clicked() {
+                            if let Ok(mut pattern_guard) = params.pattern.write() {
+                                pattern_guard.steps.rotate_right(1);
+                            }
+                        }
+                    });
+
+                    // Row C: BPM + Length (BPM -/+ steppers with >= 24px hit targets)
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
                         ui.label(
                             nih_plug_egui::egui::RichText::new("BPM:")
-                                .font(FontId::proportional(9.0))
-                                .color(theme::TEXT_SECONDARY),
+                                .font(FontId::proportional(8.0))
+                                .color(theme::TEXT_MUTED),
                         );
                         let mut tempo_val = params.seq_tempo.value();
 
-                        let dn_btn = nih_plug_egui::egui::Button::new("-")
-                            .fill(theme::BTN_INACTIVE_BG)
-                            .stroke(nih_plug_egui::egui::Stroke::new(
-                                1.0_f32,
-                                theme::PANEL_BORDER,
-                            ))
-                            .min_size(vec2(12.0, 16.0));
+                        let dn_btn = Button::new("-")
+                            .fill(theme::WELL_BG)
+                            .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
+                            .min_size(vec2(24.0, 24.0))
+                            .corner_radius(CornerRadius::same(2));
                         if ui.add(dn_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_tempo);
                             setter.set_parameter(
@@ -156,13 +198,11 @@ pub fn render_sequencer_and_transport(
                             setter.end_set_parameter(&params.seq_tempo);
                         }
 
-                        let up_btn = nih_plug_egui::egui::Button::new("+")
-                            .fill(theme::BTN_INACTIVE_BG)
-                            .stroke(nih_plug_egui::egui::Stroke::new(
-                                1.0_f32,
-                                theme::PANEL_BORDER,
-                            ))
-                            .min_size(vec2(12.0, 16.0));
+                        let up_btn = Button::new("+")
+                            .fill(theme::WELL_BG)
+                            .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
+                            .min_size(vec2(24.0, 24.0))
+                            .corner_radius(CornerRadius::same(2));
                         if ui.add(up_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_tempo);
                             setter.set_parameter(
@@ -172,16 +212,20 @@ pub fn render_sequencer_and_transport(
                             setter.end_set_parameter(&params.seq_tempo);
                         }
 
-                        ui.add_space(2.0);
+                        ui.add_space(3.0);
 
                         ui.label(
                             nih_plug_egui::egui::RichText::new("LEN:")
-                                .font(FontId::proportional(9.0))
-                                .color(theme::TEXT_SECONDARY),
+                                .font(FontId::proportional(8.0))
+                                .color(theme::TEXT_MUTED),
                         );
                         let mut len_val = params.seq_length.value();
                         if ui
-                            .add(DragValue::new(&mut len_val).range(1..=16))
+                            .add(
+                                DragValue::new(&mut len_val)
+                                    .range(1..=16)
+                                    .custom_formatter(|n, _| format!("{:02}", n as i32)),
+                            )
                             .changed()
                         {
                             setter.begin_set_parameter(&params.seq_length);
@@ -190,17 +234,18 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
-                    ui.add_space(1.0);
-
-                    // Row C: Timebase + Mode
+                    // Row D: Timebase + Mode + Jitter + Clear (enlarged hit areas >= 24px)
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+                        ui.spacing_mut().button_padding = vec2(4.0, 3.0);
+
                         let tb_val = params.seq_timebase.value();
                         ComboBox::from_id_salt("seq_tb_combo")
                             .selected_text(match tb_val {
                                 crate::params::Timebase::Straight => "16th",
                                 crate::params::Timebase::Triplet => "12th",
                             })
-                            .width(42.0)
+                            .width(36.0)
                             .show_ui(ui, |ui| {
                                 if ui
                                     .selectable_label(
@@ -232,15 +277,13 @@ pub fn render_sequencer_and_transport(
                                 }
                             });
 
-                        ui.add_space(2.0);
-
                         let mode_val = params.seq_mode.value();
                         ComboBox::from_id_salt("seq_mode_combo")
                             .selected_text(match mode_val {
                                 crate::params::SequencerMode::DirectGrid => "Direct",
                                 crate::params::SequencerMode::DecoupledHardware => "Decoupled",
                             })
-                            .width(62.0)
+                            .width(54.0)
                             .show_ui(ui, |ui| {
                                 if ui
                                     .selectable_label(
@@ -273,13 +316,47 @@ pub fn render_sequencer_and_transport(
                                 }
                             });
 
-                        ui.add_space(2.0);
-
                         let mut jitter_val = params.seq_jitter.value();
-                        if ui.checkbox(&mut jitter_val, "JIT").changed() {
+                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
+                        if jit_resp.clicked() {
+                            jitter_val = !jitter_val;
                             setter.begin_set_parameter(&params.seq_jitter);
                             setter.set_parameter(&params.seq_jitter, jitter_val);
                             setter.end_set_parameter(&params.seq_jitter);
+                        }
+                        if ui.is_rect_visible(jit_hit_rect) {
+                            let p = ui.painter();
+                            let box_rect = nih_plug_egui::egui::Rect::from_center_size(pos2(jit_hit_rect.left() + 6.0, jit_hit_rect.center().y), vec2(12.0, 12.0));
+                            p.rect_filled(box_rect, CornerRadius::same(2), if jitter_val { theme::ACCENT_ORANGE } else { theme::WELL_BG });
+                            p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.0_f32, if jitter_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }), StrokeKind::Inside);
+                            p.text(pos2(jit_hit_rect.left() + 15.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JIT", FontId::proportional(8.0), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED });
+                        }
+
+                        let clear_btn = Button::new(
+                            nih_plug_egui::egui::RichText::new("CLEAR")
+                                .font(FontId::proportional(8.0))
+                                .strong()
+                                .color(theme::TEXT_PRIMARY),
+                        )
+                        .fill(theme::SURFACE_ELEVATED)
+                        .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
+                        .min_size(vec2(36.0, 20.0))
+                        .corner_radius(CornerRadius::same(2));
+
+                        if ui.add(clear_btn).on_hover_text("Reset all steps to default C3 notes").clicked() {
+                            if let Ok(mut pattern_guard) = params.pattern.write() {
+                                for step in pattern_guard.steps.iter_mut() {
+                                    *step = SequencerStep {
+                                        semitone: 0,
+                                        octave: 0,
+                                        gate: StepGate::Note,
+                                        accent: false,
+                                        slide: false,
+                                        gate_len: 0.5,
+                                        velocity: 0.7,
+                                    };
+                                }
+                            }
                         }
                     });
                 });

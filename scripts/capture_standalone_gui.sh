@@ -55,7 +55,7 @@ if let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as
         let owner = w[kCGWindowOwnerName as String] as? String ?? ""
         let width = bounds["Width"] as? Int ?? 0
         let height = bounds["Height"] as? Int ?? 0
-        if (pid == envPid || owner == "standalone") && width >= 1000 && height >= 700 {
+        if (pid == envPid || owner == "standalone") && width >= 1200 && height >= 700 {
             print(id)
             break
         }

@@ -1,5 +1,5 @@
 use nih_plug::prelude::ParamSetter;
-use nih_plug_egui::egui::{vec2, Frame, Margin, Ui};
+use nih_plug_egui::egui::{vec2, CornerRadius, FontId, Frame, Margin, Ui};
 
 use crate::gui::theme;
 use crate::gui::widgets::{Knob303, SlideSwitch};
@@ -11,52 +11,63 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
     Frame::new()
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
+        .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::same(6))
         .show(ui, |ui| {
-            // Single-row layout: keeps the panel short enough for the whole
-            // window to fit the fixed 1080x640 frame.
+            ui.set_min_height(96.0);
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
 
+                // Section title & bypass toggle
                 ui.vertical(|ui| {
                     ui.label(
                         nih_plug_egui::egui::RichText::new("OUTPUT CLIPPER")
+                            .font(FontId::proportional(10.0))
                             .strong()
-                            .color(theme::SOUPED_ORANGE),
+                            .color(theme::ACCENT_ORANGE),
                     );
+                    ui.add_space(2.0);
                     let mut bypass = params.clipper_bypass.value();
-                    if ui.checkbox(&mut bypass, "BYPASS").changed() {
+                    let is_bypassed = bypass;
+                    if ui
+                        .checkbox(
+                            &mut bypass,
+                            nih_plug_egui::egui::RichText::new("BYPASS")
+                                .font(FontId::proportional(8.5))
+                                .color(if is_bypassed { theme::ACCENT_ORANGE } else { theme::TEXT_SECONDARY }),
+                        )
+                        .changed()
+                    {
                         setter.begin_set_parameter(&params.clipper_bypass);
                         setter.set_parameter(&params.clipper_bypass, bypass);
                         setter.end_set_parameter(&params.clipper_bypass);
                     }
                 });
 
-                ui.add(SlideSwitch::new(&params.clipper_os, setter, "OS", &["2X", "4X"]));
-
-                ui.add(Knob303::new(&params.clipper_drive, setter, "DRIVE", 12.0));
-                ui.add(Knob303::new(
-                    &params.clipper_threshold,
-                    setter,
-                    "THRESH",
-                    12.0,
-                ));
-                ui.add(Knob303::new(&params.clipper_bass, setter, "BASS", 12.0));
-                ui.add(Knob303::new(&params.clipper_tone, setter, "TONE", 12.0));
+                ui.add_space(2.0);
 
                 let bypassed = params.clipper_bypass.value();
                 ui.add_enabled_ui(!bypassed, |ui| {
-                    let in_resp = ui.add(Knob303::new(&params.clipper_in_gain, setter, "IN", 12.0));
-                    let out_resp =
-                        ui.add(Knob303::new(&params.clipper_out_gain, setter, "OUT", 12.0));
-                    ui.add(Knob303::new(&params.clipper_tilt, setter, "TILT", 12.0));
-                    ui.add(Knob303::new(&params.clipper_dynamics, setter, "DYN", 12.0));
-                    ui.add(Knob303::new(&params.clipper_mix, setter, "MIX", 12.0));
+                    ui.add(SlideSwitch::new(&params.clipper_os, setter, "OS", &["2X", "4X"]));
 
-                    // Gain link: mirror only on genuine user gestures (drag,
-                    // double-click reset). Host-driven changes (preset recall,
-                    // automation) produce no widget events, so they never
-                    // trigger counterpart writes.
+                    ui.add(Knob303::new(&params.clipper_drive, setter, "DRIVE", 11.5));
+                    ui.add(Knob303::new(
+                        &params.clipper_threshold,
+                        setter,
+                        "THRESH",
+                        11.5,
+                    ));
+                    ui.add(Knob303::new(&params.clipper_bass, setter, "BASS", 11.5));
+                    ui.add(Knob303::new(&params.clipper_tone, setter, "TONE", 11.5));
+
+                    let in_resp = ui.add(Knob303::new(&params.clipper_in_gain, setter, "IN", 11.5));
+                    let out_resp =
+                        ui.add(Knob303::new(&params.clipper_out_gain, setter, "OUT", 11.5));
+                    ui.add(Knob303::new(&params.clipper_tilt, setter, "TILT", 11.5));
+                    ui.add(Knob303::new(&params.clipper_dynamics, setter, "DYN", 11.5));
+                    ui.add(Knob303::new(&params.clipper_mix, setter, "MIX", 11.5));
+
+                    // Gain link: mirror only on genuine user gestures (drag, double-click reset)
                     if params.clipper_gain_link.value() {
                         if in_resp.drag_started() || in_resp.double_clicked() {
                             setter.begin_set_parameter(&params.clipper_out_gain);
@@ -83,38 +94,64 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                             setter.end_set_parameter(&params.clipper_in_gain);
                         }
                     }
-                });
 
-                ui.vertical(|ui| {
-                    let mut link = params.clipper_gain_link.value();
-                    if ui
-                        .checkbox(&mut link, "LINK")
-                        .on_hover_text("Link: OUT tracks −IN while dragging (edit-time only)")
-                        .changed()
-                    {
-                        setter.begin_set_parameter(&params.clipper_gain_link);
-                        setter.set_parameter(&params.clipper_gain_link, link);
-                        setter.end_set_parameter(&params.clipper_gain_link);
-                        if link {
-                            // Snap OUT to the inverse of IN when link engages.
-                            setter.begin_set_parameter(&params.clipper_out_gain);
-                            setter.set_parameter(
-                                &params.clipper_out_gain,
-                                -params.clipper_in_gain.value(),
-                            );
-                            setter.end_set_parameter(&params.clipper_out_gain);
+                    ui.vertical(|ui| {
+                        ui.add_space(4.0);
+                        let mut link = params.clipper_gain_link.value();
+                        if ui
+                            .checkbox(
+                                &mut link,
+                                nih_plug_egui::egui::RichText::new("LINK")
+                                    .font(FontId::proportional(8.5))
+                                    .color(theme::TEXT_SECONDARY),
+                            )
+                            .on_hover_text("Link: OUT tracks −IN while dragging (edit-time only)")
+                            .changed()
+                        {
+                            setter.begin_set_parameter(&params.clipper_gain_link);
+                            setter.set_parameter(&params.clipper_gain_link, link);
+                            setter.end_set_parameter(&params.clipper_gain_link);
+                            if link {
+                                setter.begin_set_parameter(&params.clipper_out_gain);
+                                setter.set_parameter(
+                                    &params.clipper_out_gain,
+                                    -params.clipper_in_gain.value(),
+                                );
+                                setter.end_set_parameter(&params.clipper_out_gain);
+                            }
                         }
-                    }
-                    let mut asym = params.clipper_asym.value();
-                    if ui
-                        .checkbox(&mut asym, "ASYM (GE)")
-                        .on_hover_text("Toggle asymmetric Germanium diode clipping")
-                        .changed()
-                    {
-                        setter.begin_set_parameter(&params.clipper_asym);
-                        setter.set_parameter(&params.clipper_asym, asym);
-                        setter.end_set_parameter(&params.clipper_asym);
-                    }
+
+                        ui.add_space(4.0);
+
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                            ui.label(
+                                nih_plug_egui::egui::RichText::new("DIODE:")
+                                    .font(FontId::proportional(8.0))
+                                    .color(theme::TEXT_MUTED),
+                            );
+                            let asym = params.clipper_asym.value();
+                            for (is_ge, label) in [(false, "SI"), (true, "GE")] {
+                                let is_selected = asym == is_ge;
+                                let btn = nih_plug_egui::egui::Button::new(
+                                    nih_plug_egui::egui::RichText::new(label)
+                                        .font(FontId::proportional(8.0))
+                                        .strong()
+                                        .color(if is_selected { theme::ACCENT_ORANGE } else { theme::TEXT_MUTED }),
+                                )
+                                .fill(if is_selected { theme::SURFACE_ELEVATED } else { theme::WELL_BG })
+                                .stroke(nih_plug_egui::egui::Stroke::new(1.0_f32, if is_selected { theme::ACCENT_ORANGE } else { theme::BORDER_SUBTLE }))
+                                .min_size(vec2(18.0, 14.0))
+                                .corner_radius(CornerRadius::same(2));
+
+                                if ui.add(btn).on_hover_text(format!("Diode Model: {}", if is_ge { "Germanium (Asymmetric)" } else { "Silicon (Symmetric)" })).clicked() && asym != is_ge {
+                                    setter.begin_set_parameter(&params.clipper_asym);
+                                    setter.set_parameter(&params.clipper_asym, is_ge);
+                                    setter.end_set_parameter(&params.clipper_asym);
+                                }
+                            }
+                        });
+                    });
                 });
             });
         });

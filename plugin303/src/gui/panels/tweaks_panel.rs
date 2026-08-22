@@ -7,32 +7,43 @@ use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
 
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
+    let label_color = if is_accurate {
+        theme::TEXT_MUTED
+    } else {
+        theme::TEXT_SECONDARY
+    };
 
     Frame::new()
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
-        .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin::symmetric(6, 4))
+        .corner_radius(CornerRadius::same(3))
+        .inner_margin(Margin::symmetric(6, 6))
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.set_min_height(96.0);
             ui.add_enabled_ui(!is_accurate, |ui| {
                 ui.vertical(|ui| {
                     ui.label(
-                        nih_plug_egui::egui::RichText::new("TWEAKS")
+                        nih_plug_egui::egui::RichText::new("ANALOG CHARACTER & TWEAKS")
                             .font(FontId::proportional(10.0))
                             .strong()
-                            .color(theme::TEXT_PRIMARY),
+                            .color(if is_accurate {
+                                theme::TEXT_MUTED
+                            } else {
+                                theme::TEXT_PRIMARY
+                            }),
                     );
 
-                    ui.add_space(2.0);
+                    ui.add_space(3.0);
 
-                    // Row 1: Tolerance, Age, Noise, Seed
+                    // Top row: Tolerance, Age, Noise, Seed
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
 
                         ui.label(
                             nih_plug_egui::egui::RichText::new("TOL:")
-                                .font(FontId::proportional(9.0))
-                                .color(theme::TEXT_SECONDARY),
+                                .font(FontId::proportional(8.5))
+                                .color(label_color),
                         );
                         let tol = params.tolerance.value();
                         ComboBox::from_id_salt("tweaks_tolerance_combo")
@@ -43,7 +54,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 CompTolerance::Five => "5%",
                                 CompTolerance::Ten => "10%",
                             })
-                            .width(48.0)
+                            .width(44.0)
                             .show_ui(ui, |ui| {
                                 for (variant, label) in [
                                     (CompTolerance::Zero, "0%"),
@@ -62,11 +73,18 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         ui.label(
                             nih_plug_egui::egui::RichText::new("AGE:")
-                                .font(FontId::proportional(9.0))
-                                .color(theme::TEXT_SECONDARY),
+                                .font(FontId::proportional(8.5))
+                                .color(label_color),
                         );
                         let mut age_val = params.comp_age.value();
-                        if ui.add(DragValue::new(&mut age_val).range(0..=100)).changed() {
+                        if ui
+                            .add(
+                                DragValue::new(&mut age_val)
+                                    .range(0..=100)
+                                    .custom_formatter(|v, _| format!("{:.0} yrs", v)),
+                            )
+                            .changed()
+                        {
                             setter.begin_set_parameter(&params.comp_age);
                             setter.set_parameter(&params.comp_age, age_val);
                             setter.end_set_parameter(&params.comp_age);
@@ -74,12 +92,16 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         ui.label(
                             nih_plug_egui::egui::RichText::new("NOISE:")
-                                .font(FontId::proportional(9.0))
-                                .color(theme::TEXT_SECONDARY),
+                                .font(FontId::proportional(8.5))
+                                .color(label_color),
                         );
                         let mut noise_val = params.thermal_noise.value();
                         if ui
-                            .add(DragValue::new(&mut noise_val).range(0..=100))
+                            .add(
+                                DragValue::new(&mut noise_val)
+                                    .range(0..=100)
+                                    .custom_formatter(|v, _| format!("{:.0}%", v)),
+                            )
                             .changed()
                         {
                             setter.begin_set_parameter(&params.thermal_noise);
@@ -89,8 +111,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         ui.label(
                             nih_plug_egui::egui::RichText::new("DRIFT SEED:")
-                                .font(FontId::proportional(9.0))
-                                .color(theme::TEXT_SECONDARY),
+                                .font(FontId::proportional(8.5))
+                                .color(label_color),
                         );
                         let mut seed_val = params.comp_seed.value();
                         if ui
@@ -103,18 +125,21 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         }
                     });
 
-                    ui.add_space(2.0);
+                    ui.add_space(4.0);
 
-                    // Row 2: Drift and Recal knobs
+                    // Bottom row: Drift and Recal knobs distributed symmetrically
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
-                        ui.add_space(4.0);
-                        ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.0));
+                        let total_w = ui.available_width();
+                        let knob_w = 40.0;
+                        let gap = ((total_w - 2.0 * knob_w) / 3.0).max(0.0);
+                        ui.spacing_mut().item_spacing = vec2(gap, 0.0);
+                        ui.add_space(gap);
+                        ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.5));
                         ui.add(Knob303::new(
                             &params.recalibration_scale,
                             setter,
                             "RECAL",
-                            11.0,
+                            11.5,
                         ));
                     });
                 });
