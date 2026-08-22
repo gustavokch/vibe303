@@ -35,14 +35,14 @@ pub fn create_editor(
                 .frame(
                     Frame::new()
                         .fill(theme::CHASSIS_BG)
-                        .inner_margin(Margin::same(10)),
+                        .inner_margin(Margin::symmetric(10, 8)),
                 )
                 .show(egui_ctx, |ui| {
                     let mut gen_params = gen_params_state.lock().unwrap();
 
                     // 1. Header Bar
                     panels::header_bar::render_header(ui, &params, setter);
-                    ui.add_space(6.0);
+                    ui.add_space(4.0);
 
                     // 2. Vertical Waveform Selector + Classic 303 Control Panel
                     ui.horizontal(|ui| {
@@ -63,11 +63,11 @@ pub fn create_editor(
                         // Classic controls panel (knobs + ADSR banks)
                         panels::top_controls::render_top_controls(ui, &params, setter);
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(4.0);
 
                     // 3. Souped-Up Engine Drawer Panel
                     panels::souped_panel::render_souped_panel(ui, &params, setter);
-                    ui.add_space(6.0);
+                    ui.add_space(4.0);
 
                     // 4. Output Clipper + Tweaks Panel
                     ui.horizontal(|ui| {
@@ -75,7 +75,7 @@ pub fn create_editor(
                         ui.add_space(6.0);
                         panels::tweaks_panel::render_tweaks_panel(ui, &params, setter);
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(4.0);
 
                     // 5. Bottom Sequencer Grid & Transport Column
                     panels::sequencer_panel::render_sequencer_and_transport(

@@ -27,7 +27,7 @@ pub fn render_sequencer_and_transport(
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
         .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::same(8))
+        .inner_margin(Margin::symmetric(8, 5))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
 

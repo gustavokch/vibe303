@@ -17,7 +17,7 @@ pub fn render_generator_panel(
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
         .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::same(8))
+        .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 // Header Bar
