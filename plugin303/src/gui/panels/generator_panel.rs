@@ -63,9 +63,9 @@ pub fn render_generator_panel(
                     );
                 });
 
-                ui.add_space(4.0);
+                ui.add_space(2.0);
                 ui.separator();
-                ui.add_space(4.0);
+                ui.add_space(2.0);
 
                 // 4-Column Technical Grid
                 ui.horizontal(|ui| {

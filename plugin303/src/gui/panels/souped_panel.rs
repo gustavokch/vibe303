@@ -61,23 +61,31 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.separator();
                     ui.add_space(2.0);
 
-                    // Row 2: Engine Rotary Dials (spaced evenly across full width)
+                    // Row 2: Engine Rotary Dials (9 equal columns across full width)
                     ui.horizontal(|ui| {
-                        let num_knobs = 9;
-                        let avail_w = ui.available_width();
-                        let spacing = ((avail_w - (num_knobs as f32 * 42.0)) / (num_knobs as f32 + 1.0)).max(12.0);
-                        ui.spacing_mut().item_spacing = vec2(spacing, 0.0);
-                        ui.add_space(spacing * 0.5);
+                        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                        let total_w = ui.available_width();
+                        let col_w = total_w / 9.0;
 
-                        ui.add(Knob303::new(&params.vcf_drive, setter, "DRIVE", 12.0));
-                        ui.add(Knob303::new(&params.sub_vol, setter, "SUB", 12.0));
-                        ui.add(Knob303::new(&params.glide, setter, "GLIDE", 12.0));
-                        ui.add(Knob303::new(&params.osc1_pitch, setter, "PITCH1", 12.0));
-                        ui.add(Knob303::new(&params.osc2_pitch, setter, "PITCH2", 12.0));
-                        ui.add(Knob303::new(&params.osc2_vol, setter, "MIX2", 12.0));
-                        ui.add(Knob303::new(&params.osc1_pw, setter, "PW", 12.0));
-                        ui.add(Knob303::new(&params.sweep_pos, setter, "SWEEP", 12.0));
-                        ui.add(Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));
+                        let mut render_knob = |knob: Knob303<'_, _>| {
+                            ui.allocate_ui_with_layout(
+                                vec2(col_w, 56.0),
+                                nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
+                                |ui| {
+                                    ui.add(knob);
+                                },
+                            );
+                        };
+
+                        render_knob(Knob303::new(&params.vcf_drive, setter, "DRIVE", 12.0));
+                        render_knob(Knob303::new(&params.sub_vol, setter, "SUB", 12.0));
+                        render_knob(Knob303::new(&params.glide, setter, "GLIDE", 12.0));
+                        render_knob(Knob303::new(&params.osc1_pitch, setter, "PITCH1", 12.0));
+                        render_knob(Knob303::new(&params.osc2_pitch, setter, "PITCH2", 12.0));
+                        render_knob(Knob303::new(&params.osc2_vol, setter, "MIX2", 12.0));
+                        render_knob(Knob303::new(&params.osc1_pw, setter, "PW", 12.0));
+                        render_knob(Knob303::new(&params.sweep_pos, setter, "SWEEP", 12.0));
+                        render_knob(Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));
                     });
                 });
             });
