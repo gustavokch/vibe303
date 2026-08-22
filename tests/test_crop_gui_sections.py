@@ -25,7 +25,7 @@ class TestCropGuiSections(unittest.TestCase):
 
     def test_parse_gui_dimensions(self):
         dims = crop_gui_sections.parse_gui_dimensions()
-        self.assertEqual(dims["width"], 1080)
+        self.assertEqual(dims["width"], 1280)
         self.assertEqual(dims["height"], 720)
 
     def test_generate_all_crops(self):

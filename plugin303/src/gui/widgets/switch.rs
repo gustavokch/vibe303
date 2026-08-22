@@ -67,22 +67,22 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     })
                 })
                 .fold(0.0f32, f32::max);
-            let slot_height = 18.0_f32;
+            let slot_height = 20.0_f32;
             let track_height = slot_height * num_opts as f32;
-            let width = 24.0 + max_text_width + 12.0;
-            let height = track_height + 22.0;
+            let width = (20.0 + max_text_width + 16.0).max(52.0);
+            let height = track_height + 16.0;
             let (rect, mut response) =
                 ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag());
 
             let current_idx = self.param.value().to_index();
             let track_rect = Rect::from_min_size(
-                pos2(rect.left() + 4.0, rect.top() + 16.0),
-                vec2(14.0, track_height),
+                pos2(rect.left() + 2.0, rect.top() + 14.0),
+                vec2(width - 4.0, track_height),
             );
 
             if response.clicked() || response.dragged() {
                 if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rel_y = (mouse_pos.y - track_rect.top()).clamp(0.0, track_rect.height());
+                    let rel_y = (mouse_pos.y - track_rect.top()).clamp(0.0, track_rect.height() - 0.001);
                     let target_idx = ((rel_y / slot_height).floor() as usize).min(num_opts - 1);
                     if target_idx != current_idx || response.clicked() {
                         self.setter.begin_set_parameter(self.param);
@@ -98,17 +98,19 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
 
             if ui.is_rect_visible(rect) {
                 let painter = ui.painter();
+                let is_enabled = ui.is_enabled();
+                let switch_accent = if is_enabled { accent } else { theme::TEXT_MUTED };
 
                 // Main parameter title
                 painter.text(
-                    pos2(rect.left() + 2.0, rect.top() + 4.0),
-                    nih_plug_egui::egui::Align2::LEFT_TOP,
+                    pos2(rect.center().x, rect.top() + 1.0),
+                    nih_plug_egui::egui::Align2::CENTER_TOP,
                     self.label,
-                    FontId::new(9.0, FontFamily::Proportional),
-                    theme::TEXT_SECONDARY,
+                    FontId::new(8.5, FontFamily::Proportional),
+                    if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
                 );
 
-                // Recessed vertical track
+                // Recessed full-width vertical container
                 painter.rect_filled(track_rect, CornerRadius::same(2), theme::WELL_BG);
                 painter.rect_stroke(
                     track_rect,
@@ -117,59 +119,70 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     StrokeKind::Inside,
                 );
 
-                // Sliding active thumb tab
-                let thumb_y = track_rect.top() + slot_height * (current_idx as f32 + 0.5);
-                let thumb_rect = Rect::from_center_size(
-                    pos2(track_rect.center().x, thumb_y),
-                    vec2(14.0, slot_height - 2.0),
-                );
-                painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
-                painter.rect_stroke(
-                    thumb_rect,
-                    CornerRadius::same(2),
-                    Stroke::new(1.0_f32, accent),
-                    StrokeKind::Inside,
-                );
-
-                // Waveform glyph inside thumb
-                let cx = thumb_rect.center().x;
-                let cy = thumb_rect.center().y;
-                let stroke = Stroke::new(1.5_f32, accent);
-                match current_idx {
-                    0 => {
-                        // Saw
-                        painter.line_segment([pos2(cx - 4.0, cy + 3.0), pos2(cx + 4.0, cy - 3.0)], stroke);
-                        painter.line_segment([pos2(cx + 4.0, cy - 3.0), pos2(cx + 4.0, cy + 3.0)], stroke);
-                    }
-                    1 => {
-                        // Square
-                        painter.line_segment([pos2(cx - 4.0, cy + 3.0), pos2(cx - 4.0, cy - 3.0)], stroke);
-                        painter.line_segment([pos2(cx - 4.0, cy - 3.0), pos2(cx, cy - 3.0)], stroke);
-                        painter.line_segment([pos2(cx, cy - 3.0), pos2(cx, cy + 3.0)], stroke);
-                        painter.line_segment([pos2(cx, cy + 3.0), pos2(cx + 4.0, cy + 3.0)], stroke);
-                    }
-                    2 => {
-                        // Sweep
-                        painter.line_segment([pos2(cx - 4.0, cy + 3.0), pos2(cx - 2.0, cy - 3.0)], stroke);
-                        painter.line_segment([pos2(cx - 2.0, cy - 3.0), pos2(cx + 2.0, cy + 3.0)], stroke);
-                        painter.line_segment([pos2(cx + 2.0, cy + 3.0), pos2(cx + 4.0, cy - 3.0)], stroke);
-                    }
-                    _ => {
-                        painter.circle_filled(pos2(cx, cy), 1.5, accent);
-                    }
+                // Sliding active segmented pill
+                if is_enabled {
+                    let thumb_y = track_rect.top() + slot_height * current_idx as f32;
+                    let thumb_rect = Rect::from_min_size(
+                        pos2(track_rect.left() + 1.0, thumb_y + 1.0),
+                        vec2(track_rect.width() - 2.0, slot_height - 2.0),
+                    );
+                    painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
+                    painter.rect_stroke(
+                        thumb_rect,
+                        CornerRadius::same(2),
+                        Stroke::new(1.0_f32, switch_accent),
+                        StrokeKind::Inside,
+                    );
                 }
 
-                // Option labels stacked vertically
+                // Options with integrated glyphs & labels
                 for (i, opt) in self.options.iter().enumerate() {
-                    let detent_y = track_rect.top() + slot_height * (i as f32 + 0.5);
+                    let row_y = track_rect.top() + slot_height * i as f32;
+                    let cy = row_y + slot_height * 0.5;
                     let is_selected = i == current_idx;
-                    let text_color = if is_selected {
+                    let text_color = if !is_enabled {
+                        theme::TEXT_MUTED
+                    } else if is_selected {
                         theme::TEXT_PRIMARY
                     } else {
                         theme::TEXT_MUTED
                     };
+                    let glyph_color = if !is_enabled {
+                        theme::TEXT_MUTED
+                    } else if is_selected {
+                        switch_accent
+                    } else {
+                        theme::TEXT_MUTED
+                    };
+
+                    // Waveform glyph
+                    let gx = track_rect.left() + 9.0;
+                    let stroke = Stroke::new(1.2_f32, glyph_color);
+                    match i {
+                        0 => {
+                            // Saw
+                            painter.line_segment([pos2(gx - 4.0, cy + 3.0), pos2(gx + 3.0, cy - 3.0)], stroke);
+                            painter.line_segment([pos2(gx + 3.0, cy - 3.0), pos2(gx + 3.0, cy + 3.0)], stroke);
+                        }
+                        1 => {
+                            // Square
+                            painter.line_segment([pos2(gx - 4.0, cy + 3.0), pos2(gx - 4.0, cy - 3.0)], stroke);
+                            painter.line_segment([pos2(gx - 4.0, cy - 3.0), pos2(gx, cy - 3.0)], stroke);
+                            painter.line_segment([pos2(gx, cy - 3.0), pos2(gx, cy + 3.0)], stroke);
+                            painter.line_segment([pos2(gx, cy + 3.0), pos2(gx + 4.0, cy + 3.0)], stroke);
+                        }
+                        2 => {
+                            // Sweep
+                            painter.line_segment([pos2(gx - 4.0, cy + 3.0), pos2(gx - 2.0, cy - 3.0)], stroke);
+                            painter.line_segment([pos2(gx - 2.0, cy - 3.0), pos2(gx + 2.0, cy + 3.0)], stroke);
+                            painter.line_segment([pos2(gx + 2.0, cy + 3.0), pos2(gx + 4.0, cy - 3.0)], stroke);
+                        }
+                        _ => {}
+                    }
+
+                    // Label text
                     painter.text(
-                        pos2(track_rect.right() + 8.0, detent_y),
+                        pos2(track_rect.left() + 20.0, cy),
                         nih_plug_egui::egui::Align2::LEFT_CENTER,
                         *opt,
                         FontId::new(8.5, FontFamily::Proportional),
@@ -244,16 +257,18 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 StrokeKind::Inside,
             );
 
-            // Active segmented pill
-            let thumb_x = track_rect.left() + slot_width * current_idx as f32;
-            let thumb_rect = Rect::from_min_size(pos2(thumb_x + 1.0, track_rect.top() + 1.0), vec2(slot_width - 2.0, track_rect.height() - 2.0));
-            painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
-            painter.rect_stroke(
-                thumb_rect,
-                CornerRadius::same(2),
-                Stroke::new(1.0_f32, switch_accent),
-                StrokeKind::Inside,
-            );
+            // Active segmented pill (only when enabled)
+            if is_enabled {
+                let thumb_x = track_rect.left() + slot_width * current_idx as f32;
+                let thumb_rect = Rect::from_min_size(pos2(thumb_x + 1.0, track_rect.top() + 1.0), vec2(slot_width - 2.0, track_rect.height() - 2.0));
+                painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
+                painter.rect_stroke(
+                    thumb_rect,
+                    CornerRadius::same(2),
+                    Stroke::new(1.0_f32, switch_accent),
+                    StrokeKind::Inside,
+                );
+            }
 
             // Option labels
             for (i, opt) in self.options.iter().enumerate() {

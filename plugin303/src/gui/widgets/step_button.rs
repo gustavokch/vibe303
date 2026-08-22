@@ -26,15 +26,15 @@ pub fn render_step_strip(
 
     ui.vertical(|ui| {
         ui.set_width(width);
-        ui.spacing_mut().item_spacing = vec2(0.0, 1.5);
+        ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
 
-        // 1. Playhead LED bar (4.0px flat bar at top)
+        // 1. Playhead LED bar (4.0px flat bar at top, bright white distinct from Note/Tie/Acc)
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, 4.0), Sense::hover());
         let _ = led_resp.on_hover_text("Playhead position indicator");
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             let led_color = if is_active {
-                theme::ACCENT_GOLD
+                nih_plug_egui::egui::Color32::WHITE
             } else {
                 theme::SURFACE_ELEVATED
             };
@@ -42,17 +42,17 @@ pub fn render_step_strip(
             p.rect_stroke(
                 led_rect,
                 CornerRadius::same(1),
-                Stroke::new(1.0_f32, if is_active { theme::ACCENT_GOLD } else { theme::BORDER_DEFAULT }),
+                Stroke::new(1.0_f32, if is_active { nih_plug_egui::egui::Color32::WHITE } else { theme::BORDER_DEFAULT }),
                 StrokeKind::Inside,
             );
         }
 
         // 2. Step number header pill
-        let (step_num_rect, _) = ui.allocate_exact_size(vec2(width, 14.0), Sense::hover());
+        let (step_num_rect, _) = ui.allocate_exact_size(vec2(width, 16.0), Sense::hover());
         if ui.is_rect_visible(step_num_rect) {
             let p = ui.painter();
             let (bg_color, text_color, stroke_color) = if is_active {
-                (theme::ACCENT_GOLD, theme::TEXT_ON_ACCENT, theme::ACCENT_GOLD)
+                (nih_plug_egui::egui::Color32::WHITE, theme::TEXT_ON_ACCENT, nih_plug_egui::egui::Color32::WHITE)
             } else {
                 (theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT)
             };
@@ -72,20 +72,21 @@ pub fn render_step_strip(
             );
         }
 
-        // 3. Modifiers: ACC and SLD row
+        // 3. Modifiers: ACC and SLD row (enlarged hit target >= 24px)
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
             let btn_w = (width - 2.0) * 0.5;
 
-            // ACC Button
-            let (acc_rect, acc_resp) = ui.allocate_exact_size(vec2(btn_w, 13.0), Sense::click());
+            // ACC Button (allocated 24.0px logical height for touch/hit target)
+            let (acc_hit_rect, acc_resp) = ui.allocate_exact_size(vec2(btn_w, 24.0), Sense::click());
             let acc_resp = acc_resp.on_hover_text("Toggle Accent (A)");
             if acc_resp.clicked() {
                 step.accent = !step.accent;
                 changed = true;
             }
-            if ui.is_rect_visible(acc_rect) {
+            if ui.is_rect_visible(acc_hit_rect) {
                 let p = ui.painter();
+                let acc_rect = nih_plug_egui::egui::Rect::from_center_size(acc_hit_rect.center(), vec2(btn_w, 18.0));
                 let (bg, text_col) = if step.accent {
                     (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
                 } else if acc_resp.hovered() {
@@ -109,15 +110,16 @@ pub fn render_step_strip(
                 );
             }
 
-            // SLD Button
-            let (sld_rect, sld_resp) = ui.allocate_exact_size(vec2(btn_w, 13.0), Sense::click());
+            // SLD Button (allocated 24.0px logical height for touch/hit target)
+            let (sld_hit_rect, sld_resp) = ui.allocate_exact_size(vec2(btn_w, 24.0), Sense::click());
             let sld_resp = sld_resp.on_hover_text("Toggle Slide (S)");
             if sld_resp.clicked() {
                 step.slide = !step.slide;
                 changed = true;
             }
-            if ui.is_rect_visible(sld_rect) {
+            if ui.is_rect_visible(sld_hit_rect) {
                 let p = ui.painter();
+                let sld_rect = nih_plug_egui::egui::Rect::from_center_size(sld_hit_rect.center(), vec2(btn_w, 18.0));
                 let (bg, text_col) = if step.slide {
                     (theme::ACCENT_CYAN, theme::TEXT_ON_ACCENT)
                 } else if sld_resp.hovered() {
@@ -142,13 +144,13 @@ pub fn render_step_strip(
             }
         });
 
-        // 4. Gate Pill: NOTE / TIE / REST
+        // 4. Gate Pill: NOTE / TIE / REST (allocated 24.0px logical height)
         let (gate_str, gate_bg, gate_text, gate_border) = match step.gate {
             StepGate::Note => ("NOTE", theme::ACCENT_CYAN, theme::TEXT_ON_ACCENT, theme::ACCENT_CYAN),
             StepGate::Tie => ("TIE", theme::ACCENT_GOLD, theme::TEXT_ON_ACCENT, theme::ACCENT_GOLD),
             StepGate::Rest => ("REST", theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT),
         };
-        let (gate_rect, gate_resp) = ui.allocate_exact_size(vec2(width, 14.0), Sense::click());
+        let (gate_hit_rect, gate_resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click());
         if gate_resp.clicked() {
             step.gate = match step.gate {
                 StepGate::Note => StepGate::Tie,
@@ -157,8 +159,9 @@ pub fn render_step_strip(
             };
             changed = true;
         }
-        if ui.is_rect_visible(gate_rect) {
+        if ui.is_rect_visible(gate_hit_rect) {
             let p = ui.painter();
+            let gate_rect = nih_plug_egui::egui::Rect::from_center_size(gate_hit_rect.center(), vec2(width, 18.0));
             p.rect_filled(gate_rect, CornerRadius::same(2), gate_bg);
             p.rect_stroke(
                 gate_rect,
@@ -175,10 +178,10 @@ pub fn render_step_strip(
             );
         }
 
-        // 5. Pitch Monospace Pill (de-emphasized on REST)
+        // 5. Pitch Monospace Pill (allocated 24.0px logical height)
         let is_rest = step.gate == StepGate::Rest;
         let pitch_str = format_pitch(step.semitone, step.octave);
-        let (pitch_rect, pitch_resp) = ui.allocate_exact_size(vec2(width, 15.0), Sense::click_and_drag());
+        let (pitch_hit_rect, pitch_resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click_and_drag());
         let pitch_resp = pitch_resp.on_hover_text("Click: piano roll | Drag/R-Click: nudge pitch");
 
         let drag_id = ui.make_persistent_id(format!("step_drag_{}", step_idx));
@@ -213,8 +216,9 @@ pub fn render_step_strip(
             ui.ctx().data_mut(|d| d.remove_temp::<f32>(drag_id));
         }
 
-        if ui.is_rect_visible(pitch_rect) {
+        if ui.is_rect_visible(pitch_hit_rect) {
             let p = ui.painter();
+            let pitch_rect = nih_plug_egui::egui::Rect::from_center_size(pitch_hit_rect.center(), vec2(width, 18.0));
             let bg = if pitch_resp.hovered() {
                 theme::SURFACE_HOVER
             } else {
@@ -224,7 +228,7 @@ pub fn render_step_strip(
             p.rect_stroke(
                 pitch_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, if is_active && !is_rest { theme::ACCENT_GOLD } else { theme::BORDER_DEFAULT }),
+                Stroke::new(1.0_f32, if is_active && !is_rest { nih_plug_egui::egui::Color32::WHITE } else { theme::BORDER_DEFAULT }),
                 StrokeKind::Inside,
             );
             p.text(
@@ -236,20 +240,21 @@ pub fn render_step_strip(
             );
         }
 
-        // 6. Octave Up / Down flat buttons
+        // 6. Octave Up / Down flat buttons (allocated >= 24px logical height for hit area)
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
             let oct_w = (width - 2.0) * 0.5;
 
             // Octave Up Button
-            let (up_rect, up_resp) = ui.allocate_exact_size(vec2(oct_w, 13.0), Sense::click());
+            let (up_hit_rect, up_resp) = ui.allocate_exact_size(vec2(oct_w, 24.0), Sense::click());
             let up_resp = up_resp.on_hover_text("Octave up (+1)");
             if up_resp.clicked() && step.octave < 2 {
                 step.octave += 1;
                 changed = true;
             }
-            if ui.is_rect_visible(up_rect) {
+            if ui.is_rect_visible(up_hit_rect) {
                 let p = ui.painter();
+                let up_rect = nih_plug_egui::egui::Rect::from_center_size(up_hit_rect.center(), vec2(oct_w, 18.0));
                 let bg = if up_resp.hovered() && step.octave < 2 {
                     theme::SURFACE_HOVER
                 } else {
@@ -281,14 +286,15 @@ pub fn render_step_strip(
             }
 
             // Octave Down Button
-            let (dn_rect, dn_resp) = ui.allocate_exact_size(vec2(oct_w, 13.0), Sense::click());
+            let (dn_hit_rect, dn_resp) = ui.allocate_exact_size(vec2(oct_w, 24.0), Sense::click());
             let dn_resp = dn_resp.on_hover_text("Octave down (-1)");
             if dn_resp.clicked() && step.octave > -2 {
                 step.octave -= 1;
                 changed = true;
             }
-            if ui.is_rect_visible(dn_rect) {
+            if ui.is_rect_visible(dn_hit_rect) {
                 let p = ui.painter();
+                let dn_rect = nih_plug_egui::egui::Rect::from_center_size(dn_hit_rect.center(), vec2(oct_w, 18.0));
                 let bg = if dn_resp.hovered() && step.octave > -2 {
                     theme::SURFACE_HOVER
                 } else {

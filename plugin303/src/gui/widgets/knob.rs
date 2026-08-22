@@ -218,13 +218,13 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     let ms = f.clamp(0.0, 1.0) * 500.0;
                     format!("{:.0} ms", ms)
                 } else if self.label.contains("TUNING") {
-                    if f.abs() < 0.01 {
-                        "+0 ct".to_string()
+                    if f.abs() < 0.05 {
+                        "+0.0 ct".to_string()
                     } else {
-                        format!("{:+.0} ct", f)
+                        format!("{:+.1} ct", f)
                     }
                 } else if self.label.contains("PITCH") || self.label.contains("DET") {
-                    if f.abs() < 0.01 {
+                    if f.abs() < 0.05 {
                         "+0.0 st".to_string()
                     } else {
                         format!("{:+.1} st", f)

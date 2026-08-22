@@ -5,6 +5,9 @@ use crate::gui::theme;
 use crate::gui::widgets::{Knob303, MiniFader, SlideSwitch};
 use crate::params::Plugin303Params;
 
+/// Envelope Generators:
+/// - MEG ADSR: Modulation Envelope Generator (modulates VCF cutoff filter modulation)
+/// - VEG ADSR: Voice / Volume Envelope Generator (modulates VCA amplitude)
 fn render_adsr_bank(
     ui: &mut Ui,
     title: &str,

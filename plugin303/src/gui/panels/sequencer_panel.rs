@@ -1,6 +1,7 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Stroke, Ui,
+    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense, Stroke,
+    StrokeKind, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -30,6 +31,7 @@ pub fn render_sequencer_and_transport(
         .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            ui.set_min_height(ui.available_height());
 
             ui.horizontal(|ui| {
                 // 1. LEFT / MAIN: 16-Step Pitch Key Columns (16 x 56px = 896px + spacing)
@@ -82,12 +84,8 @@ pub fn render_sequencer_and_transport(
                             .strong()
                             .color(theme::TEXT_ON_ACCENT),
                         )
-                        .fill(if run_val {
-                            theme::ACCENT_RUBY
-                        } else {
-                            theme::ACCENT_ORANGE
-                        })
-                        .min_size(vec2(72.0, 16.0))
+                        .fill(theme::ACCENT_ORANGE)
+                        .min_size(vec2(72.0, 20.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(run_btn).clicked() {
@@ -113,7 +111,7 @@ pub fn render_sequencer_and_transport(
                             theme::WELL_BG
                         })
                         .stroke(Stroke::new(1.0_f32, if sync_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                        .min_size(vec2(84.0, 16.0))
+                        .min_size(vec2(84.0, 20.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(sync_btn).clicked() {
@@ -135,7 +133,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(78.0, 15.0))
+                        .min_size(vec2(78.0, 18.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_left_btn).on_hover_text("Rotate pattern steps left (cyclic)").clicked() {
@@ -152,7 +150,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(78.0, 15.0))
+                        .min_size(vec2(78.0, 18.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_right_btn).on_hover_text("Rotate pattern steps right (cyclic)").clicked() {
@@ -162,7 +160,7 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
-                    // Row C: BPM + Length
+                    // Row C: BPM + Length (BPM -/+ steppers with >= 24px hit targets)
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
                         ui.label(
@@ -175,7 +173,7 @@ pub fn render_sequencer_and_transport(
                         let dn_btn = Button::new("-")
                             .fill(theme::WELL_BG)
                             .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                            .min_size(vec2(12.0, 14.0))
+                            .min_size(vec2(24.0, 24.0))
                             .corner_radius(CornerRadius::same(2));
                         if ui.add(dn_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_tempo);
@@ -203,7 +201,7 @@ pub fn render_sequencer_and_transport(
                         let up_btn = Button::new("+")
                             .fill(theme::WELL_BG)
                             .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                            .min_size(vec2(12.0, 14.0))
+                            .min_size(vec2(24.0, 24.0))
                             .corner_radius(CornerRadius::same(2));
                         if ui.add(up_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_tempo);
@@ -236,10 +234,10 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
-                    // Row D: Timebase + Mode + Jitter + Clear
+                    // Row D: Timebase + Mode + Jitter + Clear (enlarged hit areas >= 24px)
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-                        ui.spacing_mut().button_padding = vec2(2.0, 1.0);
+                        ui.spacing_mut().button_padding = vec2(4.0, 3.0);
 
                         let tb_val = params.seq_timebase.value();
                         ComboBox::from_id_salt("seq_tb_combo")
@@ -319,10 +317,19 @@ pub fn render_sequencer_and_transport(
                             });
 
                         let mut jitter_val = params.seq_jitter.value();
-                        if ui.checkbox(&mut jitter_val, nih_plug_egui::egui::RichText::new("JIT").font(FontId::proportional(8.0))).changed() {
+                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
+                        if jit_resp.clicked() {
+                            jitter_val = !jitter_val;
                             setter.begin_set_parameter(&params.seq_jitter);
                             setter.set_parameter(&params.seq_jitter, jitter_val);
                             setter.end_set_parameter(&params.seq_jitter);
+                        }
+                        if ui.is_rect_visible(jit_hit_rect) {
+                            let p = ui.painter();
+                            let box_rect = nih_plug_egui::egui::Rect::from_center_size(pos2(jit_hit_rect.left() + 6.0, jit_hit_rect.center().y), vec2(12.0, 12.0));
+                            p.rect_filled(box_rect, CornerRadius::same(2), if jitter_val { theme::ACCENT_ORANGE } else { theme::WELL_BG });
+                            p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.0_f32, if jitter_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }), StrokeKind::Inside);
+                            p.text(pos2(jit_hit_rect.left() + 15.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JIT", FontId::proportional(8.0), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED });
                         }
 
                         let clear_btn = Button::new(
@@ -333,7 +340,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(36.0, 14.0))
+                        .min_size(vec2(36.0, 20.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(clear_btn).on_hover_text("Reset all steps to default C3 notes").clicked() {

@@ -132,7 +132,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 if self.label == "S" {
                     format!("{:.0}%", f * 100.0)
                 } else if f >= 1000.0 {
-                    format!("{:.1} s", f / 1000.0)
+                    format!("{:.2} s", f / 1000.0)
                 } else {
                     format!("{:.0} ms", f)
                 }

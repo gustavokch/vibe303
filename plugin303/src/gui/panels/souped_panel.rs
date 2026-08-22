@@ -17,21 +17,19 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height(86.0);
 
             if is_accurate {
                 // Centered overlay card when bypassed with zero ghost rendering
                 let total_w = ui.available_width();
                 let card_w = 320.0_f32.min(total_w - 20.0);
-                let card_h = 70.0_f32;
+                let card_h = 68.0_f32;
 
                 ui.vertical_centered(|ui| {
-                    ui.add_space(8.0);
                     Frame::new()
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_FOCUS))
                         .corner_radius(CornerRadius::same(3))
-                        .inner_margin(Margin::symmetric(16, 8))
+                        .inner_margin(Margin::symmetric(16, 6))
                         .show(ui, |ui| {
                             ui.set_width(card_w);
                             ui.set_min_height(card_h);
@@ -71,9 +69,9 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 }
                             });
                         });
-                    ui.add_space(8.0);
                 });
             } else {
+                ui.set_min_height(86.0);
                 ui.vertical(|ui| {
                     // Header Bar
                     ui.horizontal(|ui| {
