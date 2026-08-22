@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::params::Plugin303Params;
 
-pub const GUI_WIDTH: u32 = 1080;
+pub const GUI_WIDTH: u32 = 1280;
 pub const GUI_HEIGHT: u32 = 720;
 
 pub fn create_editor(
@@ -28,21 +28,21 @@ pub fn create_editor(
         |_, _| {},
         move |egui_ctx, setter, _state| {
             egui_ctx.send_viewport_cmd(nih_plug_egui::egui::ViewportCommand::Title(
-                "TECHNEO".into(),
+                "TECHNEO 303".into(),
             ));
             egui_ctx.set_visuals(nih_plug_egui::egui::Visuals::dark());
             nih_plug_egui::egui::CentralPanel::default()
                 .frame(
                     Frame::new()
                         .fill(theme::CHASSIS_BG)
-                        .inner_margin(Margin::same(8)),
+                        .inner_margin(Margin::same(10)),
                 )
                 .show(egui_ctx, |ui| {
                     let mut gen_params = gen_params_state.lock().unwrap();
 
                     // 1. Header Bar
                     panels::header_bar::render_header(ui, &params, setter);
-                    ui.add_space(5.0);
+                    ui.add_space(6.0);
 
                     // 2. Vertical Waveform Selector + Classic 303 Control Panel
                     ui.horizontal(|ui| {
@@ -54,7 +54,7 @@ pub fn create_editor(
                             widgets::SlideSwitch::new(
                                 &params.waveform,
                                 setter,
-                                "WAVEFORM",
+                                "WAVE",
                                 &["SAW", "SQR", "SWP"],
                             )
                             .vertical(),
@@ -63,19 +63,19 @@ pub fn create_editor(
                         // Classic controls panel (knobs + ADSR banks)
                         panels::top_controls::render_top_controls(ui, &params, setter);
                     });
-                    ui.add_space(5.0);
+                    ui.add_space(6.0);
 
                     // 3. Souped-Up Engine Drawer Panel
                     panels::souped_panel::render_souped_panel(ui, &params, setter);
-                    ui.add_space(5.0);
+                    ui.add_space(6.0);
 
                     // 4. Output Clipper + Tweaks Panel
                     ui.horizontal(|ui| {
                         panels::output_clipper::render_output_clipper(ui, &params, setter);
-                        ui.add_space(4.0);
+                        ui.add_space(6.0);
                         panels::tweaks_panel::render_tweaks_panel(ui, &params, setter);
                     });
-                    ui.add_space(5.0);
+                    ui.add_space(6.0);
 
                     // 5. Bottom Sequencer Grid & Transport Column
                     panels::sequencer_panel::render_sequencer_and_transport(
