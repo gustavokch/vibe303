@@ -25,10 +25,33 @@ fn test_gui_panel_width_budget() {
     assert_eq!(inner_content_width, 1260);
 }
 
+use std::sync::Mutex;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvGuard<'a> {
+    key: &'a str,
+}
+
+impl<'a> EnvGuard<'a> {
+    fn set(key: &'a str, val: &str) -> Self {
+        unsafe { std::env::set_var(key, val) };
+        Self { key }
+    }
+}
+
+impl<'a> Drop for EnvGuard<'a> {
+    fn drop(&mut self) {
+        unsafe { std::env::remove_var(self.key) };
+    }
+}
+
 #[test]
 fn test_qa_running_state_playhead_preserved() {
     use nih_plug::prelude::Plugin;
-    unsafe { std::env::set_var("VIBE303_QA_STATE", "running") };
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _guard = EnvGuard::set("VIBE303_QA_STATE", "running");
+
     let mut plugin = plugin303::Plugin303::default();
     assert_eq!(
         plugin.current_playing_step.load(std::sync::atomic::Ordering::Relaxed),
@@ -41,5 +64,4 @@ fn test_qa_running_state_playhead_preserved() {
         3,
         "Reset in running QA state must preserve active playhead index"
     );
-    unsafe { std::env::remove_var("VIBE303_QA_STATE") };
 }
