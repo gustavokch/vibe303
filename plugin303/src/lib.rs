@@ -386,6 +386,9 @@ impl Plugin for Plugin303 {
         let mut seq_event_count = 0;
         let mut seq_event_idx = 0;
 
+        let midi_out_enabled = self.params.midi_out.value();
+        let midi_channel = (self.params.midi_out_channel.value().clamp(1, 16) - 1) as u8;
+
         if is_running {
             self.sequencer.process_block(
                 &self.cached_pattern,
@@ -397,11 +400,22 @@ impl Plugin for Plugin303 {
                 timebase,
                 jitter,
             );
+        } else if let Some(prev_note) = self.active_seq_midi_note.take() {
+            if midi_out_enabled {
+                context.send_event(NoteEvent::NoteOff {
+                    timing: 0,
+                    voice_id: None,
+                    channel: midi_channel,
+                    note: prev_note,
+                    velocity: 0.0,
+                });
+            }
         }
 
         let mut next_event = context.next_event();
         let mut active_midi_note = self.active_midi_note;
         let glide_val = self.params.glide.value();
+        let synth_bypass = self.params.synth_bypass.value();
 
         for (sample_idx, mut frame) in buffer.iter_samples().enumerate() {
             // Apply every event scheduled for this sample (sample-accurate).
@@ -415,13 +429,17 @@ impl Plugin for Plugin303 {
                         active_midi_note = Some(note);
                         let slide = is_legato && glide_val > 0.0;
                         let trigger = !is_legato;
-                        self.voice.set_gate(true, trigger, velocity >= 0.78, slide);
-                        self.voice.note_on(note);
+                        if !synth_bypass {
+                            self.voice.set_gate(true, trigger, velocity >= 0.78, slide);
+                            self.voice.note_on(note);
+                        }
                     }
                     NoteEvent::NoteOff { note, .. } => {
                         if active_midi_note == Some(note) {
                             active_midi_note = None;
-                            self.voice.set_gate(false, false, false, false);
+                            if !synth_bypass {
+                                self.voice.set_gate(false, false, false, false);
+                            }
                         }
                     }
                     _ => {}
@@ -435,11 +453,84 @@ impl Plugin for Plugin303 {
                 while seq_event_idx < seq_event_count
                     && seq_events[seq_event_idx].0 == sample_idx as u32
                 {
-                    self.voice.on_seq_event(
-                        seq_events[seq_event_idx].1,
-                        self.params.accent.value(),
-                        self.params.decay.value() * 3000.0,
-                    );
+                    let ev = seq_events[seq_event_idx].1;
+                    let timing = sample_idx as u32;
+
+                    if midi_out_enabled {
+                        match ev {
+                            SeqEvent::Trigger {
+                                key,
+                                octave,
+                                accent,
+                            } => {
+                                if let Some(prev_note) = self.active_seq_midi_note.take() {
+                                    context.send_event(NoteEvent::NoteOff {
+                                        timing,
+                                        voice_id: None,
+                                        channel: midi_channel,
+                                        note: prev_note,
+                                        velocity: 0.0,
+                                    });
+                                }
+                                let note = seq_pitch_to_midi_note(key, octave);
+                                let velocity = if accent { 1.0 } else { 0.70 };
+                                context.send_event(NoteEvent::NoteOn {
+                                    timing,
+                                    voice_id: None,
+                                    channel: midi_channel,
+                                    note,
+                                    velocity,
+                                });
+                                self.active_seq_midi_note = Some(note);
+                            }
+                            SeqEvent::SlideTo {
+                                key,
+                                octave,
+                                accent,
+                            } => {
+                                let note = seq_pitch_to_midi_note(key, octave);
+                                let velocity = if accent { 1.0 } else { 0.70 };
+                                context.send_event(NoteEvent::NoteOn {
+                                    timing,
+                                    voice_id: None,
+                                    channel: midi_channel,
+                                    note,
+                                    velocity,
+                                });
+                                if let Some(prev_note) = self.active_seq_midi_note {
+                                    if prev_note != note {
+                                        context.send_event(NoteEvent::NoteOff {
+                                            timing,
+                                            voice_id: None,
+                                            channel: midi_channel,
+                                            note: prev_note,
+                                            velocity: 0.0,
+                                        });
+                                    }
+                                }
+                                self.active_seq_midi_note = Some(note);
+                            }
+                            SeqEvent::GateOff => {
+                                if let Some(prev_note) = self.active_seq_midi_note.take() {
+                                    context.send_event(NoteEvent::NoteOff {
+                                        timing,
+                                        voice_id: None,
+                                        channel: midi_channel,
+                                        note: prev_note,
+                                        velocity: 0.0,
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    if !synth_bypass {
+                        self.voice.on_seq_event(
+                            ev,
+                            self.params.accent.value(),
+                            self.params.decay.value() * 3000.0,
+                        );
+                    }
                     seq_event_idx += 1;
                 }
             }
