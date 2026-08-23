@@ -288,6 +288,12 @@ pub struct Plugin303Params {
     pub seq_timebase: EnumParam<Timebase>,
     #[id = "seq_jitter"]
     pub seq_jitter: BoolParam,
+    #[id = "midi_out"]
+    pub midi_out: BoolParam,
+    #[id = "midi_out_channel"]
+    pub midi_out_channel: IntParam,
+    #[id = "synth_bypass"]
+    pub synth_bypass: BoolParam,
 
     // --- Souped-up ---
     #[id = "osc1_pitch"]
@@ -472,6 +478,13 @@ impl Default for Plugin303Params {
             seq_mode: EnumParam::new("Seq Mode", SequencerMode::DirectGrid),
             seq_timebase: EnumParam::new("Seq Timebase", Timebase::Straight),
             seq_jitter: BoolParam::new("Seq Jitter", false),
+            midi_out: BoolParam::new("MIDI Out", false),
+            midi_out_channel: IntParam::new(
+                "MIDI Out Ch",
+                1,
+                IntRange::Linear { min: 1, max: 16 },
+            ),
+            synth_bypass: BoolParam::new("Synth Bypass", false),
 
             osc1_pitch: FloatParam::new(
                 "Osc 1 Pitch",
