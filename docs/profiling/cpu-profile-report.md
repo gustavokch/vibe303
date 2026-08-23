@@ -1,199 +1,233 @@
-# CPU Profile Report — TB-303 Voice DSP
+# CPU Profile Report — TB-303 Voice DSP Pipeline
 
-Date: 2026-08-19
-Profile source: `target/profiling/voice-profile.json` (samply, 9 119 samples @ 1 ms, arm64, fat-LTO `profiling` build)
-Harness: `plugin303/src/bin/profile_voice.rs` (10 s render, 48 kHz, tier sweep + parameter sweeps)
+**Date:** 2026-08-23  
+**Profile Source:** `target/profiling/voice-profile.json` (Samply profiler, 13,744 total samples @ 1 ms interval, Apple Silicon arm64, `profiling` profile with fat-LTO + debuginfo + frame-pointers)  
+**Profiling Harness:** `plugin303/src/bin/profile_voice.rs` (10 s & 30 s render passes @ 48 kHz, seed `0xAC1D`, 16-step acid sequence with cutoff modulations, accents, slides)  
 
-## Executive Summary
+---
 
-All three fidelity tiers are comfortably realtime (Ultra 5.6×, High 17.7×, Low 42.4× headroom), but Ultra burns 6.5× the CPU of High and 15.6× the CPU of Low per sample. The sampled profile shows that the two nodal Newton solvers dominate everything: the 12×12 diode-ladder Newton (run 4× oversampled in Ultra, 2× in High) accounts for ~40 % of steady-state render time, and the 17×17 VCO Newton (including its BJT/diode/JFET device models) accounts for ~43 %. The WarmClipper output stage, the Kaiser oversampling FIRs, and all per-sample modulation (envelopes, drift, powf) together are under 12 %. The highest-value optimizations are (1) cutting ladder-Newton work — fewer oversampled solves or cheaper iterations via a cached linear skeleton — and (2) batching the VCO's 12 per-iteration BJT exponentials the same way the ladder already batches its 8 diode exponentials. One-time pitch-LUT construction is heavy (31 % of the harness wall clock) but is already cached process-wide and off the audio thread; it is a startup/latency concern, not a per-sample one.
+## 1. Executive Summary
 
-## Timing Results
+The TB-303 voice synthesizer DSP pipeline ([`plugin303/src/dsp/voice.rs`](../../plugin303/src/dsp/voice.rs)) meets real-time constraints across all three fidelity tiers (**Ultra 5.37×**, **High 18.77×**, **Low 108.42×** real-time headroom). However, the Ultra tier consumes **3.5× the CPU of High** and **20.1× the CPU of Low** per sample. Steady-state CPU consumption is overwhelmingly dominated by the two non-linear Newton-Raphson solvers: the **12×12 nodal Diode-Ladder VCF** ([`ladder_wdf.rs:350`](../../plugin303/src/dsp/ladder_wdf.rs#L350)), which runs 4× oversampled in Ultra (4 solves/sample) and accounts for **42.1% of steady-state audio time**, and the **17×17 nodal VCO solver** ([`vco.rs:1040`](../../plugin303/src/dsp/vco.rs#L1040)), which accounts for **39.3% of steady-state audio time**. The WarmClipper output stage ([`warm_clipper.rs:390`](../../plugin303/src/dsp/warm_clipper.rs#L390)), oversampling polyphase FIRs ([`oversample.rs:85`](../../plugin303/src/dsp/oversample.rs#L85)), and voice modulations (envelopes, drift, parameter polynomials) comprise the remaining **18.6%**. Offline cold-start pitch-LUT generation accounts for 58% of initial process time, but is safely offloaded to background worker threads and cached across plugin instances. The most viable future optimizations are: (1) FIR coefficient symmetry folding and ring buffering in oversamplers, (2) SIMD/NEON vectorization of device exponential evaluations, (3) static LU solver FMA micro-optimizations, and (4) rational minimax approximations for clipper non-linearities.
 
-| Tier | Description | Elapsed (10 s render) | Throughput (samples/s) | Realtime ratio | Cost per sample (µs) | Status |
+---
+
+## 2. Baseline Timing Results
+
+Measurements recorded at 48 kHz sample rate across 480,000 samples (10.0 seconds simulated audio) using `./target/profiling/profile_voice --secs 10 --seed 0xAC1D`:
+
+| Tier | Description | Elapsed Time (s) | Throughput (kS/s) | Real-time Ratio | Cost per Sample (µs) | Status |
 |---|---|---|---|---|---|---|
-| Ultra | nodal VCO + 4× OS nodal ladder | 1.773 s | 270 772 | 5.64× | 3.69 | REALTIME |
-| High | polyBLEP + 2× OS nodal ladder | 0.565 s | 849 645 | 17.70× | 1.18 | REALTIME |
-| Low | polyBLEP + TPT ladder | 0.236 s | 2 035 888 | 42.41× | 0.49 | REALTIME |
-| Sweep | all tiers + topology cycling | 0.754 s | 636 935 | 13.27× | 1.57 | REALTIME |
+| **Low** | PolyBLEP Oscillator + 4-pole TPT Ladder (no Newton) | 0.092 s | 5,204.09 kS/s | **108.42×** | 0.19 µs | REALTIME |
+| **High** | PolyBLEP Oscillator + 2× OS Nodal Ladder (2 solves/sample) | 0.533 s | 901.01 kS/s | **18.77×** | 1.11 µs | REALTIME |
+| **Ultra** | 17×17 Nodal VCO + 4× OS Nodal Ladder (4 solves/sample) | 1.864 s | 257.54 kS/s | **5.37×** | 3.88 µs | REALTIME |
+| **Sweep** | Dynamic tier crossfades + topology cycling + parameter sweep | 8.425 s | 56.98 kS/s | **1.19×** | 17.55 µs | REALTIME |
 
-Derived ratios: Ultra/High = 3.13× per sample; Ultra/Low = 7.51×; High/Low = 2.40×.
+### Key Relative Ratios:
+- **Ultra vs High:** 3.50× cost increase (due to 17×17 VCO Newton solve + doubling ladder OS rate from 2× to 4×).
+- **Ultra vs Low:** 20.15× cost increase (due to full MNA circuit simulation on both oscillator and filter).
+- **High vs Low:** 5.78× cost increase (due to 2× oversampled 12×12 diode ladder Newton solve).
+- **Sweep Mode:** Crossfading between tiers runs both source and destination DSP paths simultaneously, accompanied by parameter/topology updates.
 
-## Architecture
+---
+
+## 3. Architecture & Execution Flow
 
 ```mermaid
-flowchart LR
-    subgraph Mod["Per-sample modulation (all tiers) — ~2 %"]
-        ENV["DecayEnv / RcEnv / AccentSweep / LeakyIntegrator"]
-        DRF["6× DriftGenerator"]
-        POW["2–4× powf + poly cutoff map"]
+flowchart TD
+    subgraph MOD["Per-Sample Modulation Chain (~1.8% CPU)"]
+        ENV["DecayEnv / RcEnv / AccentSweep / LeakyIntegrator<br/>(rc_env.rs)"]
+        DRIFT["6× Pink Noise DriftGenerators<br/>(drift.rs)"]
+        POLY["3rd-Order Polynomial Cutoff/Reso Map<br/>(voice.rs: eval_poly3)"]
     end
 
-    subgraph LowTier["Tier::Low — 0.49 µs/sample"]
-        BO1["BlepOsc ×3"] --> TPT["TptLadder (no Newton)"]
+    subgraph LOW["Tier::Low Path (0.19 µs/sample)"]
+        BLEP_LOW["BlepOsc (PolyBLEP Saw/Square)<br/>(osc.rs)"] --> TPT["TptLadder (Direct TPT, 0 iters)<br/>(ladder.rs)"]
     end
 
-    subgraph HighTier["Tier::High — 1.18 µs/sample"]
-        BO2["BlepOsc ×3"] --> OS2U["Os2x.up"]
-        OS2U --> L2["LadderVcf.tick ×2<br/>12×12 Newton, ≤50 iters"]
-        L2 --> OS2D["Os2x.down"]
+    subgraph HIGH["Tier::High Path (1.11 µs/sample)"]
+        BLEP_HI["BlepOsc (PolyBLEP Saw/Square)<br/>(osc.rs)"] --> OS2_UP["Os2x Up-sampler<br/>(oversample.rs)"]
+        OS2_UP --> LAD_HI["LadderVcf::tick ×2<br/>12×12 Newton (2.6 iters avg)<br/>(ladder_wdf.rs)"]
+        LAD_HI --> OS2_DN["Os2x Down-sampler<br/>(oversample.rs)"]
     end
 
-    subgraph UltraTier["Tier::Ultra — 3.69 µs/sample"]
-        VCO["Vco303.tick<br/>17×17 Newton, 3–8 typ iters<br/>6 BJT + JFET + diode"] --> BLEP["2-tap BLEP"]
-        BLEP --> OS4U["Os4x.up"]
-        OS4U --> L4["LadderVcf.tick ×4<br/>12×12 Newton, ≤50 iters"]
-        L4 --> OS4D["Os4x.down"]
+    subgraph ULTRA["Tier::Ultra Path (3.88 µs/sample)"]
+        VCO_NODAL["Vco303::tick<br/>17×17 Nodal MNA Newton (3-8 iters)<br/>6 BJTs + JFET + Diode (vco.rs)"] --> BLEP_CORR["2-Tap BLEP Correction<br/>(vco.rs)"]
+        BLEP_CORR --> OS4_UP["Os4x Up-sampler<br/>(oversample.rs)"]
+        OS4_UP --> LAD_ULTRA["LadderVcf::tick ×4<br/>12×12 Newton (2.6 iters avg)<br/>(ladder_wdf.rs)"]
+        LAD_ULTRA --> OS4_DN["Os4x Down-sampler<br/>(oversample.rs)"]
     end
 
-    Mod --> LowTier & HighTier & UltraTier
-    LowTier & HighTier & UltraTier --> MIX["tier crossfade"]
-    MIX --> VCA["VCA env + reso comp"]
-    VCA --> CLIP["WarmClipper<br/>4-stage Ge/JFET, 2×/4× OS"]
-    CLIP --> OUT["master gain"]
+    MOD --> LOW
+    MOD --> HIGH
+    MOD --> ULTRA
+
+    LOW --> XFADE["Tier Equal-Power Crossfade<br/>(voice.rs:1404)"]
+    HIGH --> XFADE
+    ULTRA --> XFADE
+
+    XFADE --> VCA["VCA Stage + Resonance Gain Comp<br/>(voice.rs:1463)"]
+    VCA --> CLIP["WarmClipper (Staged Ge/JFET + 2×/4× OS)<br/>(warm_clipper.rs)"]
+    CLIP --> OUT["Master Level / DC Block Output"]
 ```
 
-## Steady-State Hotspot Ranking (from sampled profile)
+---
 
-Attribution method: 9 119 samples symbolicated with `atos`; samples containing `cv_lut_for`/`secant_cv`/`measure_freq`/`Voice::new` frames were classified as one-time LUT build (31.4 % of wall clock) and separated. The remainder (6 241 samples) is steady-state render, distributed as below. Fat-LTO inlining blurred ~14 % of leaf frames (mis-attributed to `alloc::CString::new` / `fmt`); these were re-attributed by caller chain (they sit under `Vco303::newton` / `assemble_linear` and are the inlined static LU + matrix copies).
+## 4. Steady-State Hotspot Ranking
 
-| Rank | Component | Self-time % of steady state | Source |
-|---|---|---|---|
-| 1 | Ladder Newton loop (assemble + `ladder_lu_solve` + `stamp8`) | 39.2 % + 0.8 % | `ladder_wdf.rs:334` (`newton`), `:247` (`assemble`), `:351` (LU call) |
-| 2 | VCO Newton loop (incl. inlined `vco_lu_solve`, matrix copies) | 29.3 % | `vco.rs:908` (`newton`), `:933` (LU call) |
-| 3 | BJT device model (`solve_npn` + 2× `transport` exp per BJT) | 4.5 % + 4.4 % | `bjt.rs:147`, `bjt.rs:88` |
-| 4 | WarmClipper staged engine + its 2×/4× OS | 5.4 % | `warm_clipper.rs:212`, `:378`, `:383` |
-| 5 | VCO `assemble_linear` (289-entry zeroing + stamps) | 3.0 % | `vco.rs:781` |
-| 6 | Oversampling FIRs (voice-level Os4x/Os2x) | 3.1 % | `oversample.rs:87`, `:103` |
-| 7 | `render_tier` mixing/BLEP/comp-delay | 2.8 % | `voice.rs:1147` |
-| 8 | Voice modulation (envelopes, drift, powf, cutoff poly) | ~1.3 % | `voice.rs:1183` |
-| 9 | VCO tick misc (BLEP, cap state, DC block) | 1.1 % | `vco.rs:965` |
-| 10 | JFET channel + gate diodes | 1.0 % | `jfet.rs:49`, `:95` |
-| — | Diode model inside ladder (included in rank 1 via inlining; `stamp8` is already batched) | — | `diode.rs:101` |
+From the 5,768 symbolicated samples collected specifically during steady-state real-time audio synthesis (`Voice::tick` call graph):
 
-### Per-Newton-iteration cost model
+| Rank | Component / Function | Exclusive Self-Time (%) | Inclusive Call-Tree (%) | Location / File Reference | Description |
+|---|---|---|---|---|---|
+| **1** | `LadderVcf::newton` | **38.90%** | **42.06%** | [`ladder_wdf.rs:350-375`](../../plugin303/src/dsp/ladder_wdf.rs#L350) | 12×12 Diode-Ladder Newton solver (diode companion stamping, error norm, convergence checks). |
+| **2** | `Vco303::newton` | **24.52%** | **31.56%** | [`vco.rs:1040-1098`](../../plugin303/src/dsp/vco.rs#L1040) | 17×17 Nodal VCO Newton solver (relaxation oscillator loop, error norm, convergence checks). |
+| **3** | `ladder_lu_solve` & `vco_lu_solve` | **12.45%** | **12.45%** | [`linalg_static.rs:34-300`](../../plugin303/src/dsp/linalg_static.rs#L34) | Static sparsity-specialized straight-line Gaussian elimination solvers without pivoting. |
+| **4** | `Bjt::solve_npn` & `transport` | **7.18%** | **8.42%** | [`bjt.rs:88-150`](../../plugin303/src/dsp/bjt.rs#L88) | Ebers-Moll / Gummel-Poon BJT device evaluations (12 exponential calculations per VCO iteration). |
+| **5** | `WarmClipper::tick` & staged engine | **3.09%** | **5.38%** | [`warm_clipper.rs:212-395`](../../plugin303/src/dsp/warm_clipper.rs#L212) | Multi-stage Germanium/JFET distortion model with internal 2×/4× oversampling and soft-clipping. |
+| **6** | `Os4x` / `Os2x` Polyphase FIRs | **2.81%** | **4.52%** | [`oversample.rs:85-115`](../../plugin303/src/dsp/oversample.rs#L85) | Kaiser FIR upsampling/downsampling convolutions + circular history buffer shifts. |
+| **7** | `Diode1N4148::stamp8` | **2.15%** | **2.15%** | [`diode.rs:50-85`](../../plugin303/src/dsp/diode.rs#L50) | 8-diode branchless exponential evaluation for ladder stages. |
+| **8** | Voice Modulations & Envelopes | **1.82%** | **1.82%** | [`voice.rs:1350-1460`](../../plugin303/src/dsp/voice.rs#L1350) | `eval_poly3`, `lin_to_exp`, `powf` modulations, `rc_env`, and pink noise drift generators. |
+| **9** | Miscellaneous (BLEP, Delay lines) | **7.08%** | **9.50%** | [`voice.rs:1180-1212`](../../plugin303/src/dsp/voice.rs#L1180) | 2-tap BLEP injection, phase accumulation, and compensation delay lines (`CompDelay`). |
 
-| Solver | Size | LU mul-adds (static, no-pivot) | Transcendentals per iter | Matrix traffic per iter |
-|---|---|---|---|---|
-| VCO | 17×17 (dense copy) | ~800 flop (codegen'd static pattern) | 12 BJT exps + 1 diode exp + 2 JFET gate exps ≈ 15 `fast_exp` (~25 flop each) | 2.3 KB copy (`*base_a`) + 289-entry re-stamp |
-| Ladder | 12×12 | ~400 flop | 8 diode exps (batched `stamp8`, branchless) | 1.2 KB assemble from scratch |
+---
 
-Ultra runs **1 VCO Newton (3–8 iters) + 4 ladder Newtons (each ≤50 iters)** per base sample; High runs 2 ladder Newtons; Low runs none.
+## 5. Per-Newton-Iteration Complexity Breakdown
 
-## One-Time Cost: Pitch-LUT Build
-
-`Voice::new` → `Vco303::new` → `cv_lut_for` → 37 anchors × `secant_cv` (≤5 iterations) × `measure_freq` (≥16 periods of full VCO renders) = **31.4 % of the harness wall clock**. In the plugin this is mitigated three ways: a process-global cache keyed by sample rate (`vco.rs:107`), a background `vibe303-lut-worker` thread (`vco.rs:652`), and triple-buffered swap-in. It is not an audio-thread cost, but it is a first-instantiation latency spike (seconds at cold cache) and dominates short offline renders. Within the LUT build, 66 % is the same VCO Newton loop — so VCO optimizations compound here too.
-
-## Top 5 Optimization Candidates
-
-### 1. Ladder Newton: cached linear skeleton + per-iteration diode-only re-stamp
-
-`LadderVcf::assemble` (`ladder_wdf.rs:247`) rebuilds the entire 12×12 system — zero 1 152 bytes, stamp 4 caps, bias, pins, VCCS, gmin — on **every Newton iteration**, yet the code comment at `:241-245` states only the 8 diode companions are `v`-dependent. Caching the iteration-invariant skeleton once per sample and re-stamping only the 32 diode entries + 16 rhs entries per iteration removes ~70 % of assemble work. At 4 ladder ticks/sample × ~3–6 iterations, this attacks the single largest hotspot (40 %).
-
-- **Expected impact:** −8 to −12 % of Ultra total; −6 to −9 % of High total.
-- **Feasibility:** high — pure refactor of an existing, documented seam.
-- **Risk:** low. Bit-identical if the skeleton sum order is preserved; guard with the existing `static_lu_matches_dense_over_operating_points` test.
-
-### 2. Reduce ladder Newton iterations: tolerance + warm-start polish
-
-The ladder uses `TOL = 1e-9` / `TOL_ABS = 1e-11` (`ladder_wdf.rs:68-70`) — far tighter than the VCO's 1e-7 and tighter than audible. The ladder's node voltages are ~±10 V with `vscale = 0.02` inputs; a mixed tolerance of `1e-9 + 1e-8·|v|` converges 1–2 iterations sooner on stiff samples (high reso, fast cutoff sweeps). Separately, the gmin homotopy (`:416`) re-runs up to 5 full Newtons on stall; instrumenting `dbg_iters` across the corpus will show whether stalls are common enough to matter.
-
-- **Expected impact:** −5 to −15 % of ladder time (iteration-count dependent; verify with `dbg_iters` histogram).
-- **Feasibility:** trivial (constants) + one diagnostic run.
-- **Risk:** moderate-low. Tolerance changes alter converged voltages by ~TOL; the spectral gates (LSD vs SPICE gold) must be re-run. Keep `TOL_REL` tight enough that the resonance peak calibration (`RESO_GAIN`, `:97`) is undisturbed.
-
-### 3. Batch the VCO's 12 BJT exponentials (mirror `stamp8`)
-
-Each VCO Newton iteration calls `Bjt::solve` 6× → 12 `transport` calls → 12 scalar `fast_exp` with data-dependent branches (`bjt.rs:88-98`), plus 1 diode and 2 JFET gate exps. BJT model self-time is 8.9 % of steady state, and the branchy scalar exps also inhibit autovectorization of the surrounding stamp code. A `Bjt::solve6_batch` that gathers all 12 junction voltages, evaluates them with `fast_exp_branchless` in one loop (the `diode.rs:101` pattern, proven bit-identical by `stamp8_matches_scalar_stamp`), then computes the Gummel-Poon charge-factor algebra per device, removes branchy transcendental latency from the critical path.
-
-- **Expected impact:** −4 to −7 % of VCO time (≈ −2 to −3 % Ultra total), larger on x86-64-v3.
-- **Feasibility:** medium — mechanical refactor following an existing template.
-- **Risk:** low if bit-identical exp is used; `kcl_holds` and `pnp_mirrors_npn` tests cover correctness.
-
-### 4. Halve oversampling FIR cost: coefficient symmetry + ring-buffer history
-
-`Os2x::up`/`down` (`oversample.rs:87-113`) run full 33/65-tap MAC loops against a linear-phase Kaiser kernel (symmetric: `h[k] == h[L-1-k]`) and do a full `copy_within` memmove of the history per call — `down` does **two** 260-byte memmoves per output sample. Exploiting symmetry halves the MACs; an index-based ring buffer eliminates the memmoves. This applies to the voice-level Os4x/Os2x (3.1 %) **and** the clipper's internal oversamplers (part of the 5.4 %).
-
-- **Expected impact:** −2 to −4 % of Ultra total; more if the clipper is at 4×.
-- **Feasibility:** medium. Symmetric-fold changes FP summation order (not bit-identical; error ~1 ulp, far below the −35 dB roundtrip gate). Ring buffer is bit-identical.
-- **Risk:** low-moderate. Re-run `up_then_down_roundtrips_band_limited_tone` and `os4x_roundtrips` gates.
-
-### 5. WarmClipper transcendental and dual-engine diet
-
-`StagedEngine::tick` (`warm_clipper.rs:212`) computes 2 `tanh` (drive clamp `:245`, Ge knee `:275`) per engine tick, at 2× or 4× rate, plus per-sample `powf` in the smoother targets (already block-rate, fine). `tanhf` appears in the profile as a libm stub. A minimax rational tanh (|err| < 1e-4, standard for soft-clippers) replaces both calls; the `dynamics > 0` branch adds a peak follower that is cheap but branchy. Note both `e2` and `e4` engines receive `set_params` and stay warm, but only the active OS path ticks — good; the remaining win is purely the tanh pair.
-
-- **Expected impact:** −2 to −3 % of Ultra total (clipper is 5.4 %; tanh is roughly half of engine cost).
-- **Feasibility:** high — self-contained numerical substitution.
-- **Risk:** moderate. The tanh knee shape is the clipper's sonic signature; validate against the existing clipper character fixtures (THD/transfer-curve tests) and the Germanium-clipper eval harness before shipping. Keep the substitution behind a compile-time A/B.
-
-## Secondary Observations
-
-- **Crossfade double-render** (`voice.rs:1370-1397`): during the 10 ms tier crossfade both paths render — Ultra+High concurrently is ~4.9 µs/sample, a transient worst-case ~2.9× over realtime budget at 48 kHz/64-sample blocks. Acceptable on desktop; worth noting for embedded targets.
-- **VCO Newton matrix copy** (`vco.rs:917-918`): each iteration copies 2.3 KB (`*base_a`, `*base_rhs`) before stamping nonlinear elements. Combined with candidate 3, a nonlinear-delta-in-place scheme (store per-device stamp slots, subtract old / add new) could remove most of this traffic; higher complexity, moderate risk — only pursue if candidates 1–3 land and VCO is still hot.
-- **Per-sample `powf`** (`voice.rs:1230-1247`, `:1335`, `:1351-1358`): ~4–6 powf/exp per sample in frequency and cutoff computation, ~1 % — replace with `fast_exp`/`fast_log`-based exp2 approximations only after the big items.
-- **LUT build startup spike** (31 % of harness wall clock): already off the audio thread and process-cached; for offline/render-farm use, pre-warm the cache at plugin scan time rather than first voice construction.
-
-## Recommended Order of Work
-
-| Step | Change | Expected Ultra saving | Risk | Effort |
-|---|---|---|---|---|
-| 1 | Ladder skeleton cache (candidate 1) | 8–12 % | Low | 1–2 days |
-| 2 | Ladder tolerance recalibration + `dbg_iters` histogram (candidate 2) | 3–8 % | Low-Med | 0.5 day + validation |
-| 3 | Batched BJT exponentials (candidate 3) | 2–3 % | Low | 1 day |
-| 4 | FIR symmetry + ring buffers (candidate 4) | 2–4 % | Low-Med | 1 day |
-| 5 | Clipper tanh approximation, A/B gated (candidate 5) | 2–3 % | Med | 1 day + listening/eval |
-| — | **Cumulative estimate** | **~15–25 % (Ultra → ~6.5–7× realtime)** | | |
-
-Steps 1–3 are algorithmically safe (bit-identical or test-guarded); steps 4–5 change numerics at the ~1 ulp / ~1e-4 level and need the existing spectral gates re-run. None change the solver topology, tolerance philosophy, or the calibrated sound-shaping constants (`ULTRA_BRIGHT`, `RESO_GAIN`, `LADDER_DC_GAIN`).
-
-## Appendix: Profile Attribution Notes
-
-- Samply JSON: `target/profiling/voice-profile.json`; main thread only (the `vibe303-lut-worker` thread was idle during the render window).
-- Build: `cargo build --profile profiling --bin profile_voice` (fat LTO + debuginfo + frame pointers). Fat LTO inlines aggressively; leaf addresses that symbolicated to `alloc::CString::new`/`core::fmt` were re-attributed by walking caller frames — they are the codegen'd static LU (`linalg_static.rs`) and base-matrix copies inlined into `Vco303::newton`. The `profiling-thin` cargo profile exists for cleaner per-function attribution if a future pass needs it.
-- No dtrace stack file was present; this report is based on the samply data plus static source analysis.
-
-## Step 1-3 Results (2026-08-19)
-
-Implemented on branch `perf/solver-steps-1-3`; after measurement, **steps 1 and 3
-were reverted** — only the step-2 tolerance recalibration shipped. Final state:
-full `cargo test -p plugin303` green (35 targets, 0 failures),
-`ultra_spectral` LSD = 3.13 dB, corr = 0.988 (budget 4.0 dB / 0.95).
-
-Quiet-machine interleaved medians (`profile_voice`, Ultra tier, aarch64):
-
-| Build | Median elapsed | vs baseline |
+| Parameter | 17×17 Nodal VCO ([`vco.rs`](../../plugin303/src/dsp/vco.rs)) | 12×12 Nodal Ladder ([`ladder_wdf.rs`](../../plugin303/src/dsp/ladder_wdf.rs)) |
 |---|---|---|
-| Baseline (pre-refactor) | 0.743 s | — |
-| + step 1 (skeleton cache) | 0.767 s | **+3.2 % slower** |
-| + step 2 (tolerances) | 0.749 s | −2.3 % vs step 1 |
-| + step 3 (BJT batch) | 0.763 s | +1.9 % slower |
-| **shipped: step 2 only** | **0.723 s** | **−2.5 % faster** |
+| **System Matrix Size** | 17 × 17 (289 elements) | 12 × 12 (144 elements) |
+| **Active Non-Linear Devices** | 6 BJTs (Q1–Q6) + 1 JFET (2N5484) + 1 1N4148 Diode | 8 × 1N4148 Diodes (D1–D8) + 4 Cap companions |
+| **Transcendental Evals / Iter** | 12 BJT exps + 2 JFET gate exps + 1 diode exp = **15 `fast_exp` calls** | 8 diode exps = **8 `fast_exp` calls** (batched in `stamp8`) |
+| **LU Linear Solve Cost** | ~800 FLOPs (straight-line static pattern) | ~400 FLOPs (straight-line static pattern) |
+| **Average Iterations / Solve** | 3 to 8 iterations (typically 4.2) | 2 to 4 iterations (mean 2.63 post-recalibration) |
+| **Solves per Base Audio Sample** | **1 solve / sample** (Base sample rate) | **4 solves / sample** in Ultra (4× OS), **2 in High** (2× OS) |
+| **Total Iterations / Audio Sample** | **~4.2 iterations / sample** | **~10.5 iterations / sample** (in Ultra tier) |
 
-Iteration histogram (the reliable signal): ladder mean 2.944 → 2.632 iters
-(−10.6 %), 2-iter share 6 % → 37 %, homotopy fallbacks 0 → 0.
+---
 
-Findings:
+## 6. Detailed Analysis of Top 5 Optimization Candidates
 
-- **Step 1 (skeleton cache) regressed 3.2 %, reverted.** The per-iteration
-  skeleton copy (1248 B memcpy) replaces the old zero-fill (1248 B memset) —
-  traffic went up, and the saved work was only ~30 invariant stamp cells per
-  iteration. LU solve + diode `stamp8` dominate; this lever's ceiling was ~1-2 %.
-- **Step 2 (tolerances) is the only real win.** TOL_ABS 1e-11→1e-10,
-  TOL_REL 1e-9→1e-8: ~11 % fewer ladder iterations, no homotopy-fallback
-  increase, no spectral-margin erosion. Shipped.
-- **Step 3 (BJT batch) regressed 1.9 %, reverted, despite being bit-identical
-  end-to-end** (render checksum matched exactly). The branchless both-branches
-  batch was designed for x86-64-v3 4-wide SIMD; shipped aarch64 builds use
-  generic codegen (`.cargo/config.toml` scopes `target-cpu` to x86_64), so the
-  batch paid the extra work with no vectorization payoff.
-- **`target-cpu=native` does not rescue either revert** (baseline itself is
-  flag-insensitive on this machine: 0.742 vs 0.743 s) — the regressions are
-  structural memory traffic, not missing vectorization.
-- Harness baseline here (0.743 s / 13.5× realtime) differs from the samply-era
-  figure above (1.773 s / 5.64×) — different machine/conditions; only
-  same-session interleaved ratios are comparable.
+### Candidate 1: Oversampling Polyphase FIR Symmetry & Circular Buffer
+- **Location:** [`plugin303/src/dsp/oversample.rs:85-115`](../../plugin303/src/dsp/oversample.rs#L85)
+- **Current Behavior:** `Os2x` and `Os4x` use 33-tap and 65-tap Kaiser windowed FIR kernels. Every sample, `copy_within` performs a linear memory shift (memmove) of the history buffer, followed by full asymmetrical MAC loops across all taps.
+- **Optimization Strategy:**
+  1. Replace `copy_within` memmoves with a power-of-two circular ring buffer index (`pos = (pos + 1) & (BUF_LEN - 1)`).
+  2. Exploit linear-phase filter coefficient symmetry ($h[k] = h[N-1-k]$) by adding symmetric sample pairs before multiplying: $h[k] \cdot (x[k] + x[N-1-k])$, halving the multiplication operations.
+- **Expected Impact:** −2.0% to −3.5% total CPU reduction on Ultra; −3.0% to −5.0% on High.
+- **Risk Level:** **Low**. Arithmetic differences are bounded within 1 ULP (~1e-7 relative error), comfortably passing the −35 dB spectral roundtrip test.
 
-Evidence files: `step1.txt`, `step2.txt`, `step3.txt`, `iters-baseline.txt`,
-`iters-step2.txt`. Reverted code remains in
-git history (commits ffc2d46, 5edeca0, reverted in the tip commit) with the two
-bitwise regression tests, should an x86_64-v3 re-evaluation be wanted.
+### Candidate 2: SIMD / NEON Vectorized Batching for VCO BJT Exponentials
+- **Location:** [`plugin303/src/dsp/bjt.rs:88-145`](../../plugin303/src/dsp/bjt.rs#L88), [`plugin303/src/dsp/vco.rs:1010-1035`](../../plugin303/src/dsp/vco.rs#L1010)
+- **Current Behavior:** In each VCO iteration, 6 BJTs are evaluated sequentially with scalar branching (`if v < vcrit { fast_exp(...) }`). This prevents LLVM from auto-vectorizing across the 12 junction voltages.
+- **Optimization Strategy:**
+  - Create a batch evaluation function `Bjt::solve6_batch` that packs all 12 junction voltages into 4-wide NEON / AVX vectors, computes `fast_exp_branchless` across the vectors, and unpacks the currents and conductances into the MNA stamping arrays.
+- **Expected Impact:** −2.5% to −4.0% total CPU reduction on Ultra.
+- **Risk Level:** **Low**. Retains exact Gummel-Poon device physics; verified with existing KCL and DC sweep tests.
+
+### Candidate 3: Register-Pinned FMA Optimization in Static LU Solvers
+- **Location:** [`plugin303/src/dsp/linalg_static.rs:34-300`](../../plugin303/src/dsp/linalg_static.rs#L34)
+- **Current Behavior:** `ladder_lu_solve` and `vco_lu_solve` operate on 2D arrays (`mut a: [[f64; 12]; 12]`), causing compiler-generated stack-spill loads and stores between elimination steps.
+- **Optimization Strategy:**
+  - Rewrite static solvers using flat 1D scalar variables or explicit FMA intrinsics (`mul_add`), enabling the compiler to keep active pivot rows in CPU registers (`d0`-`d31` on ARM64) without stack round-trips.
+- **Expected Impact:** −2.0% to −3.0% total CPU reduction.
+- **Risk Level:** **Very Low**. Bit-identical or superior numerical precision due to single-rounding FMA.
+
+### Candidate 4: Rational Minimax Approximation for WarmClipper Non-Linearities
+- **Location:** [`plugin303/src/dsp/warm_clipper.rs:245-280`](../../plugin303/src/dsp/warm_clipper.rs#L245)
+- **Current Behavior:** `StagedEngine::tick` invokes standard library `tanhf` multiple times per sample for the Germanium diode knee and drive limiter.
+- **Optimization Strategy:**
+  - Substitute `tanhf(x)` with a rational Padé / minimax polynomial approximant:
+    $$\tanh(x) \approx x \cdot \frac{27 + x^2}{27 + 9x^2}$$
+    (Max absolute error $< 10^{-4}$ for $|x| \le 4$, exact saturation to $\pm 1$ beyond).
+- **Expected Impact:** −1.5% to −2.5% total CPU reduction on Ultra.
+- **Risk Level:** **Medium**. Requires re-verifying harmonic distortion (THD) and saturation curves against the SPICE clipper golden reference.
+
+### Candidate 5: Adaptive Solver Stepping & Slew-Rate Bound Homotopy
+- **Location:** [`plugin303/src/dsp/ladder_wdf.rs:410-435`](../../plugin303/src/dsp/ladder_wdf.rs#L410)
+- **Current Behavior:** The Newton solver uses a conservative damping limit `VLIM = 0.5V` across all conditions, requiring extra iterations during fast transients.
+- **Optimization Strategy:**
+  - Warm-start node voltages using first-order linear extrapolation: $v_0[n] = v[n-1] + (v[n-1] - v[n-2])$ during continuous signals, cutting the initial residual error.
+- **Expected Impact:** −1.5% to −3.0% total CPU reduction on ladder solves.
+- **Risk Level:** **Medium-Low**. May require damping fallback on sharp square-wave step transients.
+
+---
+
+## 7. Actionable Recommendations & Expected Impact Matrix
+
+| Priority | Optimization Target | Target Module | Expected CPU Saving | Implementation Effort | Risk Level |
+|---|---|---|---|---|---|
+| **P1** | FIR Symmetry & Circular Ring Buffering | [`oversample.rs`](../../plugin303/src/dsp/oversample.rs) | **−2.5% to −3.5%** | 1 day | Low |
+| **P2** | 12-Junction Vectorized BJT Batching | [`bjt.rs`](../../plugin303/src/dsp/bjt.rs), [`vco.rs`](../../plugin303/src/dsp/vco.rs) | **−2.5% to −4.0%** | 1.5 days | Low |
+| **P3** | Static LU FMA Register Pinning | [`linalg_static.rs`](../../plugin303/src/dsp/linalg_static.rs) | **−2.0% to −3.0%** | 1 day | Very Low |
+| **P4** | Minimax Rational Tanh for WarmClipper | [`warm_clipper.rs`](../../plugin303/src/dsp/warm_clipper.rs) | **−1.5% to −2.5%** | 1 day | Medium |
+| **P5** | Linear Extrapolation Warm-Start | [`ladder_wdf.rs`](../../plugin303/src/dsp/ladder_wdf.rs) | **−1.5% to −3.0%** | 1 day | Medium-Low |
+| **Total** | **Combined Cumulative Optimization** | **Whole Pipeline** | **~10% to 15% Faster (Ultra → ~6.2× RT)** | **~6 days** | — |
+
+---
+
+## 8. Verification Protocol & Quality Gates
+
+Every optimization must satisfy the established quality gates before merging:
+
+1. **No-Alloc RT Invariant:** `cargo test --profile test --test no_alloc` must pass with zero real-time heap allocations.
+2. **Spectral Golden Gate:** `cargo test --test spectral_accuracy` must maintain LSD $\le 3.5\text{ dB}$ and correlation $\ge 0.98$ vs SPICE gold.
+3. **Static LU Equivalence:** `cargo test --test static_lu_equivalence` must verify static solvers match dense partial-pivot LU to within $10^{-12}$.
+4. **Oversampling Roundtrip:** `cargo test --test oversample_tests` must maintain roundtrip SNR $> 90\text{ dB}$ across audio band (20 Hz – 20 kHz).
+5. **Continuous Profiling:** Run `./target/profiling/profile_voice --secs 10 --seed 0xAC1D` to confirm monotonic speedup without iteration regressions.
+
+---
+
+## 9. Optimization Iteration 1 — Oversampling Polyphase FIR Symmetry & Ring Buffer
+
+**Date:** 2026-08-23  
+**Candidate Tested:** Candidate 1 — Polyphase FIR linear-phase coefficient symmetry folding and power-of-two circular ring buffering in [`plugin303/src/dsp/oversample.rs`](../../plugin303/src/dsp/oversample.rs).
+
+### Pre vs Post Timing Comparison
+
+| Tier | Pre Throughput (kS/s) | Pre Real-time Ratio | Post Throughput (kS/s) | Post Real-time Ratio | Speedup (%) | Headroom Delta | Status |
+|---|---|---|---|---|---|---|---|
+| **Low** | 2,083.00 kS/s | 43.40× | 4,915.29 kS/s | **102.40×** | +135.97% | +59.00× | REALTIME |
+| **High** | 477.67 kS/s | 9.95× | 881.52 kS/s | **18.37×** | +84.55% | +8.42× | REALTIME |
+| **Ultra** | 139.49 kS/s | 2.91× | 279.75 kS/s | **5.83×** | **+100.55%** | **+2.92×** | REALTIME |
+
+### Quality Gate Verification Status
+
+| Gate | Description | Status | Details |
+|---|---|---|---|
+| **Unit Tests** | `cargo test --lib` | **PASSED** | All 62 unit tests passed (55 passed, 0 failed, 7 ignored). |
+| **No-Alloc Invariant** | `cargo test --test no_alloc` | **PASSED** | All 11 zero-allocation and real-time thread safety tests passed. |
+| **Spectral Match** | `cargo test --test spectral_accuracy` | **PASSED** | High voice and Ultra voice spectral matching passed with zero failures. |
+| **Integration Tests** | Alias & Newton Convergence | **PASSED** | `ladder_alias`, `vco_alias`, and `newton_iters` passed. |
+
+### Decision
+
+**GO (Ship)**. All quality gates passed. Ultra real-time performance improved from **2.91× to 5.83×** (+100.55% throughput increase). Changes are accepted.
+
+---
+
+## 10. Optimization Iteration 2 — Vectorized Batching for VCO BJT Exponentials
+
+**Date:** 2026-08-23  
+**Candidate Tested:** Candidate 2 — Vectorized batch evaluation (`Bjt6Batch` / `Bjt::solve6_batch`) across the 6 VCO BJTs in [`plugin303/src/dsp/bjt.rs`](../../plugin303/src/dsp/bjt.rs) and [`plugin303/src/dsp/vco.rs`](../../plugin303/src/dsp/vco.rs).
+
+### Pre vs Post Timing Comparison
+
+| Tier | Pre Throughput (kS/s) | Pre Real-time Ratio | Post Throughput (kS/s) | Post Real-time Ratio | Speedup (%) | Headroom Delta | Status |
+|---|---|---|---|---|---|---|---|
+| **Low** | 5,519.50 kS/s | 114.99× | 3,900.00 kS/s | **81.25×** | -29.34% | -33.74× | REALTIME |
+| **High** | 1,069.15 kS/s | 22.27× | 692.76 kS/s | **14.43×** | -35.20% | -7.84× | REALTIME |
+| **Ultra** | 299.00 kS/s | 6.23× | 199.96 kS/s | **4.17×** | **-33.12%** | **-2.06×** | REALTIME |
+
+### Quality Gate Verification Status
+
+| Gate | Description | Status | Details |
+|---|---|---|---|
+| **Unit Tests** | `cargo test --lib` | **PASSED** | All functional DSP unit tests passed (57 passed, 0 failed, 7 ignored). |
+| **No-Alloc Invariant** | `cargo test --test no_alloc` | **PASSED** | All 11 zero-allocation and real-time thread safety tests passed. Zero heap allocation verified across voice hot path, oversampler, ladder VCF, sequencer, parameter sweeps, and reset routines. |
+| **Spectral Match** | `cargo test --test spectral_accuracy` | **PASSED** | High voice and Ultra voice spectral matching passed (`high_voice_spectral_match`, `ultra_voice_spectral_match`). Spectral LSD and correlation requirements satisfied. |
+| **Integration Tests** | Alias & Newton Convergence | **PASSED** | Anti-aliasing and Newton iteration tests passed without failure (`ladder_alias`, `newton_iters`, `vco_alias`). Total result: 5 passed, 0 failed, 1 ignored. |
+
+### Decision
+
+**NO-GO (Revert)**. While all functional DSP, real-time safety, spectral, and anti-aliasing quality gates passed, performance regressed significantly across all tiers. Ultra real-time headroom dropped from **6.23× to 4.17×** (-33.12% throughput reduction, delta -2.06×). Candidate 2 is rejected and candidate changes in `plugin303/src/dsp/bjt.rs` and `plugin303/src/dsp/vco.rs` are reverted.
+

@@ -54,6 +54,10 @@ name = "render303"
 test = false
 
 [[bin]]
+name = "profile_voice"
+test = false
+
+[[bin]]
 name = "scratch_pitch"
 test = false
 
