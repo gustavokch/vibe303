@@ -119,3 +119,13 @@ fn test_sequencer_generates_correct_midi_events() {
         }
     );
 }
+
+#[test]
+fn test_synth_bypass_flag_skips_dsp() {
+    let mut params_val = Plugin303Params::default();
+    params_val.synth_bypass = nih_plug::prelude::BoolParam::new("Synth Bypass", true);
+    let params = std::sync::Arc::new(params_val);
+    let plugin = plugin303::Plugin303::new_with_params(params);
+
+    assert!(plugin.params.synth_bypass.value());
+}

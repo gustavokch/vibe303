@@ -274,61 +274,65 @@ impl Plugin for Plugin303 {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // Expose parameters block-rate
-        self.voice.update_params(
-            self.params.tuning.value(),
-            self.params.osc1_pitch.value(),
-            self.params.osc2_pitch.value(),
-            self.params.osc2_vol.value(),
-            self.params.waveform.value(),
-            self.params.osc1_pw.value(),
-            self.params.sub_vol.value(),
-            self.params.cutoff.value(),
-            self.params.resonance.value(),
-            self.params.env_mod.value(),
-            self.params.decay.value(),
-            self.params.accent.value(),
-            self.params.volume.value(),
-            self.params.vcf_taps.value(),
-            self.params.vcf_drive.value(),
-            self.params.advanced_env.value(),
-            self.params.meg_attack.value(),
-            self.params.meg_decay_adj.value(),
-            self.params.meg_sustain.value(),
-            self.params.meg_release.value(),
-            self.params.veg_attack.value(),
-            self.params.veg_decay_adj.value(),
-            self.params.veg_sustain.value(),
-            self.params.veg_release.value(),
-            self.params.vca_env_mode.value(),
-            self.params.comp_age.value(),
-            self.params.comp_drift.value(),
-            self.params.tolerance.value(),
-            self.params.thermal_noise.value(),
-            self.params.topology.value(),
-            self.params.sweep_pos.value(),
-            self.params.comp_seed.value(),
-            self.params.glide.value(),
-            self.params.reso_comp.value(),
-            self.params.recalibration_scale.value() as f64,
-        );
-        self.voice.update_clipper_params(VoiceClipperParams {
-            bypass: self.params.clipper_bypass.value(),
-            os: self.params.clipper_os.value(),
-            drive: self.params.clipper_drive.value(),
-            threshold: self.params.clipper_threshold.value(),
-            bass: self.params.clipper_bass.value(),
-            tone: self.params.clipper_tone.value(),
-            asym: self.params.clipper_asym.value(),
-            mix: self.params.clipper_mix.value(),
-            in_db: self.params.clipper_in_gain.value(),
-            out_db: self.params.clipper_out_gain.value(),
-            tilt_db: self.params.clipper_tilt.value(),
-            dynamics: self.params.clipper_dynamics.value(),
-        });
+        let synth_bypass = self.params.synth_bypass.value();
 
-        // Block-rate read of the fidelity tier (starts a crossfade on change).
-        self.voice.set_tier(self.params.tier.value());
+        if !synth_bypass {
+            // Expose parameters block-rate only when synth audio is active
+            self.voice.update_params(
+                self.params.tuning.value(),
+                self.params.osc1_pitch.value(),
+                self.params.osc2_pitch.value(),
+                self.params.osc2_vol.value(),
+                self.params.waveform.value(),
+                self.params.osc1_pw.value(),
+                self.params.sub_vol.value(),
+                self.params.cutoff.value(),
+                self.params.resonance.value(),
+                self.params.env_mod.value(),
+                self.params.decay.value(),
+                self.params.accent.value(),
+                self.params.volume.value(),
+                self.params.vcf_taps.value(),
+                self.params.vcf_drive.value(),
+                self.params.advanced_env.value(),
+                self.params.meg_attack.value(),
+                self.params.meg_decay_adj.value(),
+                self.params.meg_sustain.value(),
+                self.params.meg_release.value(),
+                self.params.veg_attack.value(),
+                self.params.veg_decay_adj.value(),
+                self.params.veg_sustain.value(),
+                self.params.veg_release.value(),
+                self.params.vca_env_mode.value(),
+                self.params.comp_age.value(),
+                self.params.comp_drift.value(),
+                self.params.tolerance.value(),
+                self.params.thermal_noise.value(),
+                self.params.topology.value(),
+                self.params.sweep_pos.value(),
+                self.params.comp_seed.value(),
+                self.params.glide.value(),
+                self.params.reso_comp.value(),
+                self.params.recalibration_scale.value() as f64,
+            );
+            self.voice.update_clipper_params(VoiceClipperParams {
+                bypass: self.params.clipper_bypass.value(),
+                os: self.params.clipper_os.value(),
+                drive: self.params.clipper_drive.value(),
+                threshold: self.params.clipper_threshold.value(),
+                bass: self.params.clipper_bass.value(),
+                tone: self.params.clipper_tone.value(),
+                asym: self.params.clipper_asym.value(),
+                mix: self.params.clipper_mix.value(),
+                in_db: self.params.clipper_in_gain.value(),
+                out_db: self.params.clipper_out_gain.value(),
+                tilt_db: self.params.clipper_tilt.value(),
+                dynamics: self.params.clipper_dynamics.value(),
+            });
+
+            // Block-rate read of the fidelity tier (starts a crossfade on change).
+            self.voice.set_tier(self.params.tier.value());
+        }
 
         // Report PDC only when the tier's latency actually changes, so the host
         // isn't spammed with redundant restarts every block.
@@ -535,7 +539,7 @@ impl Plugin for Plugin303 {
                 }
             }
 
-            let out = self.voice.tick();
+            let out = if synth_bypass { 0.0 } else { self.voice.tick() };
             for s in frame.iter_mut() {
                 *s = out;
             }
