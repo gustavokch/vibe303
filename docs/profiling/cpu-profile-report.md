@@ -202,3 +202,32 @@ Every optimization must satisfy the established quality gates before merging:
 ### Decision
 
 **GO (Ship)**. All quality gates passed. Ultra real-time performance improved from **2.91× to 5.83×** (+100.55% throughput increase). Changes are accepted.
+
+---
+
+## 10. Optimization Iteration 2 — Vectorized Batching for VCO BJT Exponentials
+
+**Date:** 2026-08-23  
+**Candidate Tested:** Candidate 2 — Vectorized batch evaluation (`Bjt6Batch` / `Bjt::solve6_batch`) across the 6 VCO BJTs in [`plugin303/src/dsp/bjt.rs`](../../plugin303/src/dsp/bjt.rs) and [`plugin303/src/dsp/vco.rs`](../../plugin303/src/dsp/vco.rs).
+
+### Pre vs Post Timing Comparison
+
+| Tier | Pre Throughput (kS/s) | Pre Real-time Ratio | Post Throughput (kS/s) | Post Real-time Ratio | Speedup (%) | Headroom Delta | Status |
+|---|---|---|---|---|---|---|---|
+| **Low** | 5,519.50 kS/s | 114.99× | 3,900.00 kS/s | **81.25×** | -29.34% | -33.74× | REALTIME |
+| **High** | 1,069.15 kS/s | 22.27× | 692.76 kS/s | **14.43×** | -35.20% | -7.84× | REALTIME |
+| **Ultra** | 299.00 kS/s | 6.23× | 199.96 kS/s | **4.17×** | **-33.12%** | **-2.06×** | REALTIME |
+
+### Quality Gate Verification Status
+
+| Gate | Description | Status | Details |
+|---|---|---|---|
+| **Unit Tests** | `cargo test --lib` | **PASSED** | All functional DSP unit tests passed (57 passed, 0 failed, 7 ignored). |
+| **No-Alloc Invariant** | `cargo test --test no_alloc` | **PASSED** | All 11 zero-allocation and real-time thread safety tests passed. Zero heap allocation verified across voice hot path, oversampler, ladder VCF, sequencer, parameter sweeps, and reset routines. |
+| **Spectral Match** | `cargo test --test spectral_accuracy` | **PASSED** | High voice and Ultra voice spectral matching passed (`high_voice_spectral_match`, `ultra_voice_spectral_match`). Spectral LSD and correlation requirements satisfied. |
+| **Integration Tests** | Alias & Newton Convergence | **PASSED** | Anti-aliasing and Newton iteration tests passed without failure (`ladder_alias`, `newton_iters`, `vco_alias`). Total result: 5 passed, 0 failed, 1 ignored. |
+
+### Decision
+
+**NO-GO (Revert)**. While all functional DSP, real-time safety, spectral, and anti-aliasing quality gates passed, performance regressed significantly across all tiers. Ultra real-time headroom dropped from **6.23× to 4.17×** (-33.12% throughput reduction, delta -2.06×). Candidate 2 is rejected and candidate changes in `plugin303/src/dsp/bjt.rs` and `plugin303/src/dsp/vco.rs` are reverted.
+
