@@ -5,6 +5,8 @@
 //! FIR length is odd (`L = 2P-1`) so the linear-phase group delay `(L-1)/2` is an
 //! integer; the up→down round trip then has an integer base-rate latency.
 
+use std::sync::LazyLock;
+
 /// Half the FIR length (taps per polyphase branch on the up path).
 const P: usize = 33;
 /// Full FIR length — odd and `≡ 1 (mod 4)`, so every cascade stage's base-rate group
@@ -63,6 +65,21 @@ fn build_lp(beta: f64, fc: f64) -> [f32; L] {
     out
 }
 
+static COEFFS: LazyLock<([f32; 17], [f32; 16], [f32; 33])> = LazyLock::new(|| {
+    let h_full = build_lp(8.0, 0.25);
+    let mut he = [0.0f32; 17];
+    let mut ho = [0.0f32; 16];
+    for k in 0..17 {
+        he[k] = h_full[2 * k];
+    }
+    for k in 0..16 {
+        ho[k] = h_full[2 * k + 1];
+    }
+    let mut h = [0.0f32; 33];
+    h.copy_from_slice(&h_full[0..33]);
+    (he, ho, h)
+});
+
 /// 2× polyphase oversampler. `up` zero-stuff-interpolates one base sample into two
 /// high-rate samples; `down` lowpass-decimates two high-rate samples into one.
 pub struct Os2x {
@@ -77,17 +94,7 @@ pub struct Os2x {
 
 impl Os2x {
     pub fn new() -> Self {
-        let h_full = build_lp(8.0, 0.25);
-        let mut he = [0.0f32; 17];
-        let mut ho = [0.0f32; 16];
-        for k in 0..17 {
-            he[k] = h_full[2 * k];
-        }
-        for k in 0..16 {
-            ho[k] = h_full[2 * k + 1];
-        }
-        let mut h = [0.0f32; 33];
-        h.copy_from_slice(&h_full[0..33]);
+        let (he, ho, h) = *COEFFS;
         Self {
             he,
             ho,
@@ -327,5 +334,16 @@ mod tests {
             "os4x roundtrip ESR {:.2} dB too high",
             esr(report)
         );
+    }
+
+    #[test]
+    fn coeffs_are_cached_and_consistent() {
+        let os1 = Os2x::new();
+        let os2 = Os2x::new();
+        assert_eq!(os1.he, os2.he);
+        assert_eq!(os1.ho, os2.ho);
+        assert_eq!(os1.h, os2.h);
+        assert!(os1.he[16] > 0.0);
+        assert!(os1.h[32] > 0.0);
     }
 }
