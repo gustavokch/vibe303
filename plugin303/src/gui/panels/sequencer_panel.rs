@@ -121,6 +121,72 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
+                    // Row: MIDI Out Toggle + Channel + Synth Bypass
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+
+                        // MIDI OUT button
+                        let midi_val = params.midi_out.value();
+                        let midi_btn = Button::new(
+                            nih_plug_egui::egui::RichText::new(if midi_val { "MIDI: ON" } else { "MIDI: OFF" })
+                                .font(FontId::proportional(8.5))
+                                .strong()
+                                .color(if midi_val { theme::TEXT_ON_ACCENT } else { theme::TEXT_SECONDARY }),
+                        )
+                        .fill(if midi_val { theme::ACCENT_ORANGE } else { theme::WELL_BG })
+                        .stroke(Stroke::new(1.0_f32, if midi_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
+                        .min_size(vec2(60.0, 20.0))
+                        .corner_radius(CornerRadius::same(2));
+
+                        if ui.add(midi_btn).on_hover_text("Toggle MIDI Output from 16-step sequencer").clicked() {
+                            setter.begin_set_parameter(&params.midi_out);
+                            setter.set_parameter(&params.midi_out, !midi_val);
+                            setter.end_set_parameter(&params.midi_out);
+                        }
+
+                        // MIDI Channel selector
+                        ui.label(
+                            nih_plug_egui::egui::RichText::new("CH:")
+                                .font(FontId::proportional(8.0))
+                                .color(theme::TEXT_MUTED),
+                        );
+                        let mut ch_val = params.midi_out_channel.value();
+                        if ui
+                            .add(
+                                DragValue::new(&mut ch_val)
+                                    .range(1..=16)
+                                    .custom_formatter(|n, _| format!("{:02}", n as i32)),
+                            )
+                            .on_hover_text("MIDI Output Channel (1-16)")
+                            .changed()
+                        {
+                            setter.begin_set_parameter(&params.midi_out_channel);
+                            setter.set_parameter(&params.midi_out_channel, ch_val);
+                            setter.end_set_parameter(&params.midi_out_channel);
+                        }
+
+                        ui.add_space(2.0);
+
+                        // SYNTH BYPASS button
+                        let bypass_val = params.synth_bypass.value();
+                        let bypass_btn = Button::new(
+                            nih_plug_egui::egui::RichText::new(if bypass_val { "SYNTH: MUTE" } else { "SYNTH: ON" })
+                                .font(FontId::proportional(8.5))
+                                .strong()
+                                .color(if bypass_val { theme::ACCENT_RUBY } else { theme::TEXT_PRIMARY }),
+                        )
+                        .fill(if bypass_val { theme::SURFACE_ELEVATED } else { theme::WELL_BG })
+                        .stroke(Stroke::new(1.0_f32, if bypass_val { theme::ACCENT_RUBY } else { theme::BORDER_DEFAULT }))
+                        .min_size(vec2(72.0, 20.0))
+                        .corner_radius(CornerRadius::same(2));
+
+                        if ui.add(bypass_btn).on_hover_text("Bypass internal synth voice (outputs silence, 0% CPU)").clicked() {
+                            setter.begin_set_parameter(&params.synth_bypass);
+                            setter.set_parameter(&params.synth_bypass, !bypass_val);
+                            setter.end_set_parameter(&params.synth_bypass);
+                        }
+                    });
+
                     // Row B: Cyclic Pattern Shift Controls (< SHIFT and > SHIFT)
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
