@@ -35,6 +35,21 @@ fn has_flag(flag: &str) -> bool {
     std::env::args().any(|s| s == flag)
 }
 
+fn arg_tier(flag: &str) -> Option<i32> {
+    let args: Vec<String> = std::env::args().collect();
+    let val = args.iter()
+        .position(|s| s == flag)
+        .and_then(|i| args.get(i + 1))?;
+
+    match val.to_ascii_lowercase().as_str() {
+        "0" | "low" => Some(0),
+        "1" | "high" => Some(1),
+        "2" | "ultra" => Some(2),
+        "3" | "sweep" => Some(3),
+        _ => val.parse::<i32>().ok(),
+    }
+}
+
 fn run_tier(name: &str, tier: Tier, secs: f32, sr: f32, seed: u64) -> (f64, f64, f64, bool) {
     let num_samples = (secs * sr) as usize;
     let mut voice = Voice::new(sr);
@@ -193,23 +208,23 @@ fn main() {
     let sr = arg_f32("--sr", 48_000.0);
     let seed = arg_u64("--seed", 0xAC1D);
     let has_tier_flag = has_flag("--tier");
-    let target_tier = arg_f32("--tier", -1.0) as i32;
+    let target_tier = arg_tier("--tier");
 
     let header = format!("== Voice DSP Profile ({} seconds @ {} Hz, seed: 0x{:X}) ==", secs, sr, seed);
     println!("{}", header);
     eprintln!("{}", header);
 
-    if !has_tier_flag || target_tier < 0 {
-        run_tier("low", Tier::Low, secs, sr, seed);
-        run_tier("high", Tier::High, secs, sr, seed);
-        run_tier("ultra", Tier::Ultra, secs, sr, seed);
-        run_sweep(secs, sr, seed);
-    } else {
-        match target_tier {
-            0 => { run_tier("low", Tier::Low, secs, sr, seed); }
-            1 => { run_tier("high", Tier::High, secs, sr, seed); }
-            2 => { run_tier("ultra", Tier::Ultra, secs, sr, seed); }
-            _ => { run_sweep(secs, sr, seed); }
+    match target_tier {
+        Some(0) => { run_tier("low", Tier::Low, secs, sr, seed); }
+        Some(1) => { run_tier("high", Tier::High, secs, sr, seed); }
+        Some(2) => { run_tier("ultra", Tier::Ultra, secs, sr, seed); }
+        Some(3) => { run_sweep(secs, sr, seed); }
+        _ if has_tier_flag => { run_sweep(secs, sr, seed); }
+        _ => {
+            run_tier("low", Tier::Low, secs, sr, seed);
+            run_tier("high", Tier::High, secs, sr, seed);
+            run_tier("ultra", Tier::Ultra, secs, sr, seed);
+            run_sweep(secs, sr, seed);
         }
     }
 }
