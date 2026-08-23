@@ -222,7 +222,14 @@ if (allGatesPassed) {
     }
   );
 } else {
-  postResult = null;
+  postResult = {
+    ultra_ratio: 0.0,
+    ultra_ksps: 0.0,
+    high_ratio: 0.0,
+    high_ksps: 0.0,
+    low_ratio: 0.0,
+    low_ksps: 0.0
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
