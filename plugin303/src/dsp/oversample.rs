@@ -11,6 +11,14 @@ const P: usize = 33;
 /// delay `(L-1)/2^stage` stays an integer (L=65 → 32 / 16 / 8 for 2×/4×/8×).
 const L: usize = 2 * P - 1; // 65
 
+/// Power-of-two ring buffer capacity for up-sampler history (P=33 <= 64).
+const BUF_UP: usize = 64;
+const MASK_UP: usize = BUF_UP - 1;
+
+/// Power-of-two ring buffer capacity for down-sampler history (L+1=66 <= 128).
+const BUF_DN: usize = 128;
+const MASK_DN: usize = BUF_DN - 1;
+
 /// Modified Bessel I0 via series (enough terms for double precision at beta≈8).
 fn i0(x: f64) -> f64 {
     let mut term = 1.0;
@@ -58,40 +66,53 @@ fn build_lp(beta: f64, fc: f64) -> [f32; L] {
 /// 2× polyphase oversampler. `up` zero-stuff-interpolates one base sample into two
 /// high-rate samples; `down` lowpass-decimates two high-rate samples into one.
 pub struct Os2x {
-    he: [f32; P], // even polyphase branch (33 taps)
-    ho: [f32; P], // odd polyphase branch (32 taps, last padded 0)
-    hist_up: [f32; P],
-    h: [f32; L],
-    hist_dn: [f32; L + 1], // +1: decimator output reads the even phase (index 2n)
+    he: [f32; 17], // even polyphase branch (16 symmetric pairs + 1 center tap)
+    ho: [f32; 16], // odd polyphase branch (16 symmetric pairs)
+    hist_up: [f32; BUF_UP],
+    head_up: usize,
+    h: [f32; 33], // lowpass FIR (32 symmetric pairs + 1 center tap)
+    hist_dn: [f32; BUF_DN],
+    head_dn: usize,
 }
 
 impl Os2x {
     pub fn new() -> Self {
-        let h = build_lp(8.0, 0.25);
-        let mut he = [0.0f32; P];
-        let mut ho = [0.0f32; P];
-        for k in 0..P {
-            he[k] = h[2 * k]; // indices 0,2,..,62
-            ho[k] = if 2 * k + 1 < L { h[2 * k + 1] } else { 0.0 }; // 1,3,..,61
+        let h_full = build_lp(8.0, 0.25);
+        let mut he = [0.0f32; 17];
+        let mut ho = [0.0f32; 16];
+        for k in 0..17 {
+            he[k] = h_full[2 * k];
         }
+        for k in 0..16 {
+            ho[k] = h_full[2 * k + 1];
+        }
+        let mut h = [0.0f32; 33];
+        h.copy_from_slice(&h_full[0..33]);
         Self {
             he,
             ho,
-            hist_up: [0.0; P],
+            hist_up: [0.0; BUF_UP],
+            head_up: 0,
             h,
-            hist_dn: [0.0; L + 1],
+            hist_dn: [0.0; BUF_DN],
+            head_dn: 0,
         }
     }
 
     /// One base sample -> two high-rate samples. ×2 compensates the zero-stuff loss.
     pub fn up(&mut self, x: f32) -> [f32; 2] {
-        self.hist_up.copy_within(0..P - 1, 1);
-        self.hist_up[0] = x;
-        let mut ye = 0.0f32;
+        self.head_up = (self.head_up + 1) & MASK_UP;
+        self.hist_up[self.head_up] = x;
+        let head = self.head_up;
+
+        let mut ye = self.he[16] * self.hist_up[(head + 48) & MASK_UP];
         let mut yo = 0.0f32;
-        for k in 0..P {
-            ye += self.he[k] * self.hist_up[k];
-            yo += self.ho[k] * self.hist_up[k];
+        for k in 0..16 {
+            let s_k = self.hist_up[(head + 64 - k) & MASK_UP];
+            let s_32_k = self.hist_up[(head + 32 + k) & MASK_UP];
+            let s_31_k = self.hist_up[(head + 33 + k) & MASK_UP];
+            ye += self.he[k] * (s_k + s_32_k);
+            yo += self.ho[k] * (s_k + s_31_k);
         }
         [2.0 * ye, 2.0 * yo]
     }
@@ -101,13 +122,18 @@ impl Os2x {
     /// (`xhi[2n]`, = `hist_dn[k+1]`), which makes the up→down delay an integer
     /// `(L-1)/2` base samples instead of a half-sample.
     pub fn down(&mut self, hi: [f32; 2]) -> f32 {
-        self.hist_dn.copy_within(0..L, 1);
-        self.hist_dn[0] = hi[0];
-        self.hist_dn.copy_within(0..L, 1);
-        self.hist_dn[0] = hi[1];
-        let mut y = 0.0f32;
-        for k in 0..L {
-            y += self.h[k] * self.hist_dn[k + 1];
+        let p0 = (self.head_dn + 1) & MASK_DN;
+        let p1 = (self.head_dn + 2) & MASK_DN;
+        self.hist_dn[p0] = hi[0];
+        self.hist_dn[p1] = hi[1];
+        self.head_dn = p1;
+        let head = p1;
+
+        let mut y = self.h[32] * self.hist_dn[(head + 95) & MASK_DN];
+        for k in 0..32 {
+            let s_a = self.hist_dn[(head + 127 - k) & MASK_DN];
+            let s_b = self.hist_dn[(head + 63 + k) & MASK_DN];
+            y += self.h[k] * (s_a + s_b);
         }
         y
     }
