@@ -135,7 +135,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(if midi_val { theme::ACCENT_ORANGE } else { theme::WELL_BG })
                         .stroke(Stroke::new(1.0_f32, if midi_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                        .min_size(vec2(60.0, 20.0))
+                        .min_size(vec2(60.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(midi_btn).on_hover_text("Toggle MIDI Output from 16-step sequencer").clicked() {
@@ -177,7 +177,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(if bypass_val { theme::SURFACE_ELEVATED } else { theme::WELL_BG })
                         .stroke(Stroke::new(1.0_f32, if bypass_val { theme::ACCENT_RUBY } else { theme::BORDER_DEFAULT }))
-                        .min_size(vec2(72.0, 20.0))
+                        .min_size(vec2(72.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(bypass_btn).on_hover_text("Bypass internal synth voice (outputs silence, 0% CPU)").clicked() {

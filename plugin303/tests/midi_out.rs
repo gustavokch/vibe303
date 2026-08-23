@@ -121,6 +121,52 @@ fn test_sequencer_generates_correct_midi_events() {
 }
 
 #[test]
+fn test_same_pitch_slide_sequencer_events() {
+    let mut seq = Sequencer::new(48000.0);
+    seq.set_running(true);
+
+    let mut pattern = Pattern::default();
+    pattern.num_steps = 2;
+    // Step 0: C3 with slide
+    pattern.pitches[0] = PitchEntry {
+        key: 0,
+        octave: 0,
+        accent: false,
+        slide: true,
+    };
+    pattern.timing[0] = TimeEntry::Note;
+    // Step 1: C3 without slide
+    pattern.pitches[1] = PitchEntry {
+        key: 0,
+        octave: 0,
+        accent: false,
+        slide: false,
+    };
+    pattern.timing[1] = TimeEntry::Note;
+
+    let mut events = [(0, SeqEvent::GateOff); 64];
+    let mut count = 0;
+
+    seq.process_block(
+        &pattern,
+        0,
+        12000,
+        &mut events,
+        &mut count,
+        120.0,
+        plugin303::params::Timebase::Straight,
+        false,
+    );
+
+    assert_eq!(count, 3);
+    assert_eq!(events[0].0, 0);
+    assert_eq!(events[0].1, SeqEvent::Trigger { key: 0, octave: 0, accent: false });
+    assert_eq!(events[1].0, 6000);
+    assert_eq!(events[1].1, SeqEvent::SlideTo { key: 0, octave: 0, accent: false });
+    assert_eq!(events[2].1, SeqEvent::GateOff);
+}
+
+#[test]
 fn test_synth_bypass_flag_skips_dsp() {
     let mut params_val = Plugin303Params::default();
     params_val.synth_bypass = nih_plug::prelude::BoolParam::new("Synth Bypass", true);
