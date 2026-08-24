@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use crate::gui::theme;
 use crate::gui::widgets::piano_roll_popup::render_piano_roll_popup;
 use crate::gui::widgets::render_step_strip;
+use crate::gui::widgets::step_button::STRIP_HEIGHT;
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
 
 pub fn render_sequencer_and_transport(
@@ -43,7 +44,7 @@ pub fn render_sequencer_and_transport(
             // Grid geometry: 2 rows x 8 columns; transport column keeps ~232px on the right
             let grid_avail_w = ui.available_width() - 232.0 - 8.0 - 8.0 - 2.0;
             let cell_w = ((grid_avail_w - 7.0 * 4.0) / 8.0).max(72.0);
-            let cell_h = 140.0;
+            let cell_h = STRIP_HEIGHT;
 
             ui.horizontal(|ui| {
                 // 1. LEFT / MAIN: step pitch key columns in a 2x8 grid (steps 01-08 top, 09-16 bottom)
