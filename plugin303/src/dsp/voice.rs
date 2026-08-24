@@ -661,8 +661,8 @@ impl Voice {
             self.ladder.set_analog_wear(tol_f64, comp_age, comp_seed as u32, self.recalibration_scale);
             self.ladder_hi.set_analog_wear(tol_f64, comp_age, comp_seed as u32, self.recalibration_scale);
 
-            if self.tier == Tier::Ultra
-                || self.pending_tier == Some(Tier::Ultra)
+            if self.tier == Tier::Ultra || self.tier == Tier::Ultra2x
+                || self.pending_tier == Some(Tier::Ultra) || self.pending_tier == Some(Tier::Ultra2x)
                 || self.xfade_from.is_some()
             {
                 let ok1 = self.vco.recalculate_luts_async(comp_age, tol_f64, comp_seed as u32, recalibration_scale);
