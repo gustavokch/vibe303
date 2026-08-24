@@ -16,7 +16,14 @@ fn render_adsr_bank(
     sustain: &FloatParam,
     release: &FloatParam,
     setter: &ParamSetter,
+    is_active: bool,
 ) {
+    let accent = if is_active {
+        theme::ACCENT_ORANGE
+    } else {
+        theme::TEXT_MUTED
+    };
+
     let bank_frame = Frame::new()
         .fill(theme::WELL_BG)
         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
@@ -32,7 +39,7 @@ fn render_adsr_bank(
                         nih_plug_egui::egui::FontFamily::Proportional,
                     ))
                     .strong()
-                    .color(theme::TEXT_PRIMARY),
+                    .color(if is_active { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED }),
             );
             ui.add_space(1.0);
             ui.horizontal(|ui| {
@@ -42,28 +49,28 @@ fn render_adsr_bank(
                     setter,
                     "A",
                     24.0,
-                    theme::ACCENT_ORANGE,
+                    accent,
                 ));
                 ui.add(MiniFader::new(
                     decay,
                     setter,
                     "D",
                     24.0,
-                    theme::ACCENT_ORANGE,
+                    accent,
                 ));
                 ui.add(MiniFader::new(
                     sustain,
                     setter,
                     "S",
                     24.0,
-                    theme::ACCENT_ORANGE,
+                    accent,
                 ));
                 ui.add(MiniFader::new(
                     release,
                     setter,
                     "R",
                     24.0,
-                    theme::ACCENT_ORANGE,
+                    accent,
                 ));
             });
         });
@@ -127,7 +134,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                 env_frame.show(ui, |ui| {
                     ui.vertical(|ui| {
-                        // Header with Title and ADV ENV checkbox anchored together
+                        // Header with Title and right-aligned ADV ENV checkbox
                         ui.horizontal(|ui| {
                             ui.label(
                                 nih_plug_egui::egui::RichText::new("ENVELOPES")
@@ -135,47 +142,57 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     .strong()
                                     .color(theme::TEXT_PRIMARY),
                             );
-                            ui.add_space(8.0);
-                            let mut adv_env = params.advanced_env.value();
-                            if ui
-                                .checkbox(
-                                    &mut adv_env,
-                                    nih_plug_egui::egui::RichText::new("ADV ENV")
-                                        .font(FontId::proportional(8.5))
-                                        .color(theme::TEXT_SECONDARY),
-                                )
-                                .changed()
-                            {
-                                setter.begin_set_parameter(&params.advanced_env);
-                                setter.set_parameter(&params.advanced_env, adv_env);
-                                setter.end_set_parameter(&params.advanced_env);
-                            }
+                            ui.with_layout(
+                                nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
+                                |ui| {
+                                    let mut adv_env = params.advanced_env.value();
+                                    let is_adv_checked = adv_env;
+                                    if ui
+                                        .checkbox(
+                                            &mut adv_env,
+                                            nih_plug_egui::egui::RichText::new("ADV ENV")
+                                                .font(FontId::proportional(8.5))
+                                                .color(if is_adv_checked { theme::ACCENT_ORANGE } else { theme::TEXT_SECONDARY }),
+                                        )
+                                        .changed()
+                                    {
+                                        setter.begin_set_parameter(&params.advanced_env);
+                                        setter.set_parameter(&params.advanced_env, adv_env);
+                                        setter.end_set_parameter(&params.advanced_env);
+                                    }
+                                },
+                            );
                         });
 
                         ui.add_space(2.0);
 
                         // ADSR banks row
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
-                            render_adsr_bank(
-                                ui,
-                                "MEG ADSR",
-                                &params.meg_attack,
-                                &params.meg_decay_adj,
-                                &params.meg_sustain,
-                                &params.meg_release,
-                                setter,
-                            );
+                        let is_adv = params.advanced_env.value();
+                        ui.add_enabled_ui(is_adv, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                                render_adsr_bank(
+                                    ui,
+                                    "MEG ADSR",
+                                    &params.meg_attack,
+                                    &params.meg_decay_adj,
+                                    &params.meg_sustain,
+                                    &params.meg_release,
+                                    setter,
+                                    is_adv,
+                                );
 
-                            render_adsr_bank(
-                                ui,
-                                "VEG ADSR",
-                                &params.veg_attack,
-                                &params.veg_decay_adj,
-                                &params.veg_sustain,
-                                &params.veg_release,
-                                setter,
-                            );
+                                render_adsr_bank(
+                                    ui,
+                                    "VEG ADSR",
+                                    &params.veg_attack,
+                                    &params.veg_decay_adj,
+                                    &params.veg_sustain,
+                                    &params.veg_release,
+                                    setter,
+                                    is_adv,
+                                );
+                            });
                         });
                     });
                 });

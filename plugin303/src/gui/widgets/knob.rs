@@ -103,8 +103,21 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 prev_bg_pt = cur_pt;
             }
 
-            // Active value arc
+            // Radial Tick Marks (7 discrete ticks along the 270° sweep)
             let is_enabled = ui.is_enabled();
+            const NUM_TICKS: usize = 7;
+            let tick_r_inner = self.radius - 1.0;
+            let tick_r_outer = self.radius + 1.5;
+            let tick_color = if is_enabled { theme::BORDER_DEFAULT } else { theme::WELL_BG };
+            for i in 0..NUM_TICKS {
+                let t = i as f32 / (NUM_TICKS - 1) as f32;
+                let a = start_angle + t * (end_angle - start_angle);
+                let p1 = pos2(center.x + a.cos() * tick_r_inner, center.y + a.sin() * tick_r_inner);
+                let p2 = pos2(center.x + a.cos() * tick_r_outer, center.y + a.sin() * tick_r_outer);
+                painter.line_segment([p1, p2], Stroke::new(1.0_f32, tick_color));
+            }
+
+            // Active value arc
             let accent = if is_enabled {
                 self.accent_color.unwrap_or(theme::ACCENT_ORANGE)
             } else {
@@ -166,27 +179,13 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     } else {
                         format!("{:+.1} dB", f)
                     }
-                } else if raw_str.contains("ohm") {
-                    if self.label.contains("DRIVE") {
-                        let pct = ((f - 22_000.0) / (100_000.0 - 22_000.0) * 100.0).clamp(0.0, 100.0);
-                        format!("{:.0}%", pct)
-                    } else if self.label.contains("THRESH") {
-                        let pct = ((f - 2_200.0) / (22_000.0 - 2_200.0) * 100.0).clamp(0.0, 100.0);
-                        format!("{:.0}%", pct)
-                    } else if self.label.contains("BASS") {
-                        let pct = ((f - 4_700.0) / (22_000.0 - 4_700.0) * 100.0).clamp(0.0, 100.0);
-                        format!("{:.0}%", pct)
-                    } else if f >= 1_000.0 {
-                        format!("{:.1}kΩ", f / 1000.0)
-                    } else {
-                        format!("{:.0}Ω", f)
-                    }
                 } else if self.label.contains("DRIFT") || self.label.contains("RECAL") {
                     let pct = if f <= 1.0 { f * 100.0 } else { f };
                     format!("{:.0}%", pct)
-                } else if self.label.contains("TONE") {
-                    format!("{:.0}%", normalized * 100.0)
-                } else if self.label.contains("RESONANCE")
+                } else if self.label.contains("TONE")
+                    || self.label.contains("THRESH")
+                    || self.label.contains("BASS")
+                    || self.label.contains("RESONANCE")
                     || self.label.contains("ENV MOD")
                     || self.label.contains("ACCENT")
                     || self.label.contains("MIX")

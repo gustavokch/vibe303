@@ -67,6 +67,8 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
 
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
+            let is_enabled = ui.is_enabled();
+            let accent = if is_enabled { self.accent_color } else { theme::TEXT_MUTED };
 
             // Label above (A, D, S, R)
             painter.text(
@@ -74,7 +76,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 nih_plug_egui::egui::Align2::CENTER_TOP,
                 self.label,
                 FontId::new(8.5, FontFamily::Proportional),
-                theme::TEXT_SECONDARY,
+                if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
             );
 
             // Recessed vertical track
@@ -87,7 +89,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             painter.rect_stroke(
                 track_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
+                Stroke::new(1.0_f32, if is_enabled { theme::BORDER_DEFAULT } else { theme::BORDER_SUBTLE }),
                 StrokeKind::Inside,
             );
 
@@ -99,7 +101,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                     pos2(rect.center().x - 2.0, fill_top),
                     pos2(rect.center().x + 2.0, track_bottom - 1.0),
                 );
-                painter.rect_filled(fill_rect, CornerRadius::same(1), self.accent_color);
+                painter.rect_filled(fill_rect, CornerRadius::same(1), accent);
             }
 
             // Flat thumb handle
@@ -114,7 +116,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             painter.rect_stroke(
                 thumb_rect,
                 CornerRadius::same(1),
-                Stroke::new(1.0_f32, theme::BORDER_FOCUS),
+                Stroke::new(1.0_f32, if is_enabled { theme::BORDER_FOCUS } else { theme::BORDER_DEFAULT }),
                 StrokeKind::Inside,
             );
             painter.line_segment(
@@ -122,7 +124,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                     pos2(thumb_rect.left() + 2.0, thumb_y),
                     pos2(thumb_rect.right() - 2.0, thumb_y),
                 ],
-                Stroke::new(1.0_f32, self.accent_color),
+                Stroke::new(1.0_f32, accent),
             );
 
             // Readout / value below (compact monospace)
@@ -144,7 +146,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 nih_plug_egui::egui::Align2::CENTER_BOTTOM,
                 formatted_val,
                 FontId::new(7.5, FontFamily::Monospace),
-                theme::TEXT_PRIMARY,
+                if is_enabled { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED },
             );
         }
 
