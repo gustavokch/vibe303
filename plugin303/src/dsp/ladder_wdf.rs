@@ -209,7 +209,7 @@ impl LadderVcf {
         self.i0 = self.diode.n_vt * TAU * self.fc * C_REF * self.cal;
     }
 
-    pub fn set_analog_wear(&mut self, tolerance: f64, age: i32, seed: u32) {
+    pub fn set_analog_wear(&mut self, tolerance: f64, age: i32, seed: u32, recalibration_scale: f64) {
         let mut rng_state = seed ^ (self.instance_id.wrapping_mul(0x9E3779B9) ^ 0x55AA55AA);
         let mut next_f64 = || {
             rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
@@ -224,8 +224,8 @@ impl LadderVcf {
             (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
         };
 
-        let systematic_c = -0.05 * (age as f64 / 100.0);
-        let bjt_age_factor = 1.0 - 0.15 * (age as f64 / 100.0);
+        let systematic_c = -0.05 * (age as f64 / 100.0) * recalibration_scale;
+        let bjt_age_factor = 1.0 - 0.15 * (age as f64 / 100.0) * recalibration_scale;
 
         self.cal = CAL * bjt_age_factor;
         self.set_cal(self.cal);

@@ -658,8 +658,8 @@ impl Voice {
             let is_fun_mode = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun_mode);
             self.vco2.set_fun(is_fun_mode);
-            self.ladder.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
-            self.ladder_hi.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
+            self.ladder.set_analog_wear(tol_f64, comp_age, comp_seed as u32, self.recalibration_scale);
+            self.ladder_hi.set_analog_wear(tol_f64, comp_age, comp_seed as u32, self.recalibration_scale);
 
             if self.tier == Tier::Ultra
                 || self.pending_tier == Some(Tier::Ultra)

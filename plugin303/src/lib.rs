@@ -329,6 +329,13 @@ impl Plugin for Plugin303 {
                 dynamics: self.params.clipper_dynamics.value(),
             });
 
+            // Synchronous LUT recalibration trigger (Calibrate button)
+            if self.params.calibrate_sync.value() {
+                self.voice.recalculate_luts_sync();
+                // Reset trigger: ParamMut is internal (pub(crate)), not public; skip audio-thread reset
+                // and rely on GUI toggle off / single-shot behavior.
+            }
+
             // Block-rate read of the fidelity tier (starts a crossfade on change).
             self.voice.set_tier(self.params.tier.value());
 

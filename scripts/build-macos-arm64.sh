@@ -11,6 +11,18 @@
 #
 set -euo pipefail
 
+ADD_VERSION=""
+for arg in "$@"; do
+  case $arg in
+    --add-version) ADD_VERSION=1 ;;
+  esac
+done
+
+VERSION_SUFFIX=""
+if [ -n "$ADD_VERSION" ]; then
+  VERSION_SUFFIX="-$(date +%d-%m-%Y)"
+fi
+
 TARGET="aarch64-apple-darwin"
 PROFILE="release"
 PKG="plugin303"
@@ -68,6 +80,8 @@ cargo xtask bundle "$PKG" --profile "$PROFILE" --target "$TARGET"
 BUNDLE_DIR="target/$TARGET/bundled"
 [ -d "$BUNDLE_DIR" ] || BUNDLE_DIR="target/bundled"
 
+BUNDLE_NAME="${VIBE303_NAME}${VERSION_SUFFIX}"
+
 VST3_SRC="$BUNDLE_DIR/${VIBE303_NAME}.vst3"
 CLAP_SRC="$BUNDLE_DIR/${VIBE303_NAME}.clap"
 
@@ -76,21 +90,21 @@ CLAP_SRC="$BUNDLE_DIR/${VIBE303_NAME}.clap"
 
 echo ">> installing VST3 -> $VST3_DIR"
 mkdir -p "$VST3_DIR"
-rm -rf "$VST3_DIR/${VIBE303_NAME}.vst3"
-cp -R "$VST3_SRC" "$VST3_DIR/"
+rm -rf "$VST3_DIR/${BUNDLE_NAME}.vst3"
+cp -R "$VST3_SRC" "$VST3_DIR/${BUNDLE_NAME}.vst3"
 
 echo ">> installing CLAP -> $CLAP_DIR"
 mkdir -p "$CLAP_DIR"
-rm -rf "$CLAP_DIR/${VIBE303_NAME}.clap"
-cp -R "$CLAP_SRC" "$CLAP_DIR/"
+rm -rf "$CLAP_DIR/${BUNDLE_NAME}.clap"
+cp -R "$CLAP_SRC" "$CLAP_DIR/${BUNDLE_NAME}.clap"
 
 # Ad-hoc codesign so Gatekeeper / hardened DAWs load the bundles.
 if command -v codesign >/dev/null 2>&1; then
   echo ">> ad-hoc codesigning"
-  codesign --force --deep --sign - "$VST3_DIR/${VIBE303_NAME}.vst3" || true
-  codesign --force --deep --sign - "$CLAP_DIR/${VIBE303_NAME}.clap" || true
+  codesign --force --deep --sign - "$VST3_DIR/${BUNDLE_NAME}.vst3" || true
+  codesign --force --deep --sign - "$CLAP_DIR/${BUNDLE_NAME}.clap" || true
 fi
 
 echo "OK"
-echo "  VST3: $VST3_DIR/${VIBE303_NAME}.vst3"
-echo "  CLAP: $CLAP_DIR/${VIBE303_NAME}.clap"
+echo "  VST3: $VST3_DIR/${BUNDLE_NAME}.vst3"
+echo "  CLAP: $CLAP_DIR/${BUNDLE_NAME}.clap"

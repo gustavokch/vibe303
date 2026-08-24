@@ -142,6 +142,29 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             "RECAL",
                             11.5,
                         ));
+                        // Calibrate sync trigger — shaded when idle, lights when aging/recal changes need rebuild
+                        let needs_rebuild = params.recalibration_scale.value() != 1.0
+                            || params.comp_age.value() != 0
+                            || params.tolerance.value() != crate::params::CompTolerance::Zero
+                            || params.thermal_noise.value() != 0
+                            || params.comp_drift.value() != 0.1;
+                        let btn_color = if params.calibrate_sync.value() {
+                            theme::ACCENT_CYAN
+                        } else if needs_rebuild {
+                            theme::ACCENT_ORANGE
+                        } else {
+                            theme::TEXT_MUTED
+                        };
+                        let btn_label = if params.calibrate_sync.value() {
+                            "CALIBRATING..."
+                        } else {
+                            "CALIBRATE"
+                        };
+                        if ui.add(nih_plug_egui::egui::Button::new(btn_label).fill(btn_color)).clicked() {
+                            setter.begin_set_parameter(&params.calibrate_sync);
+                            setter.set_parameter(&params.calibrate_sync, true);
+                            setter.end_set_parameter(&params.calibrate_sync);
+                        }
                     });
                 });
             });
