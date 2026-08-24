@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::params::Plugin303Params;
 
-pub const GUI_WIDTH: u32 = 1280;
-pub const GUI_HEIGHT: u32 = 720;
+pub const GUI_WIDTH: u32 = 1366;
+pub const GUI_HEIGHT: u32 = 960;
 
 pub fn create_editor(
     params: Arc<Plugin303Params>,
@@ -38,20 +38,20 @@ pub fn create_editor(
                         .inner_margin(Margin::same(10)),
                 )
                 .show(egui_ctx, |ui| {
-                    ui.set_min_height(680.0);
+                    ui.set_min_height(600.0);
                     let mut gen_params = gen_params_state.lock().unwrap();
 
                     // 1. Header Bar
                     panels::header_bar::render_header(ui, &params, setter);
-                    ui.add_space(2.0);
+                    ui.add_space(0.5);
 
                     // 2. Classic 303 Control Panel (includes integrated WAVE selector)
                     panels::top_controls::render_top_controls(ui, &params, setter);
-                    ui.add_space(2.0);
+                    ui.add_space(0.5);
 
                     // 3. Souped-Up Engine Drawer Panel
                     panels::souped_panel::render_souped_panel(ui, &params, setter);
-                    ui.add_space(2.0);
+                    ui.add_space(0.5);
 
                     // 4. Output Clipper + Tweaks Panel
                     ui.horizontal(|ui| {
@@ -59,7 +59,7 @@ pub fn create_editor(
                         ui.add_space(3.0);
                         panels::tweaks_panel::render_tweaks_panel(ui, &params, setter);
                     });
-                    ui.add_space(2.0);
+                    ui.add_space(0.5);
 
                     // 5. Bottom Sequencer Grid & Transport Column
                     panels::sequencer_panel::render_sequencer_and_transport(

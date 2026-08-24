@@ -20,7 +20,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .inner_margin(Margin::same(6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height(110.0);
+            ui.set_min_height(95.0);
             ui.add_enabled_ui(!is_accurate, |ui| {
                 ui.vertical(|ui| {
                     ui.label(

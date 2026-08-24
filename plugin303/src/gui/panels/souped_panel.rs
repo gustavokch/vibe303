@@ -17,7 +17,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            const DRAWER_INNER_HEIGHT: f32 = 88.0;
+            const DRAWER_INNER_HEIGHT: f32 = 72.0;
             ui.set_min_height(DRAWER_INNER_HEIGHT);
 
             if is_accurate {

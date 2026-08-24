@@ -78,7 +78,7 @@ fn render_adsr_bank(
 }
 
 pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
-    let desired_size = vec2(ui.available_width(), 110.0);
+    let desired_size = vec2(ui.available_width(), 95.0);
     let (rect, _) = ui.allocate_exact_size(desired_size, nih_plug_egui::egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {

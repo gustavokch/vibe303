@@ -22,7 +22,7 @@ pub fn render_sequencer_and_transport(
     ui.horizontal(|ui| {
         super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
     });
-    ui.add_space(2.0);
+    ui.add_space(0.5);
 
     Frame::new()
         .fill(theme::PANEL_BG)
@@ -32,7 +32,7 @@ pub fn render_sequencer_and_transport(
             left: 8,
             right: 8,
             top: 4,
-            bottom: 6,
+            bottom: 0,
         })
         .show(ui, |ui| {
             ui.set_max_width(1048.0);

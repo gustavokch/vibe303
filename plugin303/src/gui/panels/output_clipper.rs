@@ -21,7 +21,7 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
         .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::same(6))
         .show(ui, |ui| {
-            ui.set_min_height(110.0);
+            ui.set_min_height(95.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
 
