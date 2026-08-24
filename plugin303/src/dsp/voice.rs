@@ -1249,14 +1249,12 @@ impl Voice {
                 };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
-                let hi = self.os.up(mix * self.drive);
+                let hi = self.os2.up(mix * self.drive);
                 let o = [
                     self.ladder.tick(hi[0]),
                     self.ladder.tick(hi[1]),
-                    self.ladder.tick(hi[2]),
-                    self.ladder.tick(hi[3]),
                 ];
-                self.comp_ultra.process(self.os.down(o) / self.drive)
+                self.comp_ultra.process(self.os2.down(o) / self.drive)
             }
             Tier::Ultra => {
                 let raw = self.vco.tick() * VCO_GAIN;
