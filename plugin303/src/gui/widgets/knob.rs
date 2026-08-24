@@ -87,7 +87,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             // 2. 270° Perimeter Track (135° to 405°)
             let start_angle = 135.0 * PI / 180.0;
             let end_angle = 405.0 * PI / 180.0;
-            let arc_r = self.radius - 2.5;
+            let arc_r = self.radius * 0.75;
 
             // Background inactive arc (24 segments, 0 heap allocations)
             const ARC_SEGMENTS: usize = 24;

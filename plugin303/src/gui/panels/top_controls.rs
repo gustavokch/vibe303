@@ -105,7 +105,8 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         "WAVE",
                         &["SAW", "SQR", "SWP"],
                     )
-                    .vertical(),
+                    .vertical()
+                    .with_thumb_color(theme::ACCENT_ORANGE),
                 );
                 ui.add_space(6.0);
                 ui.separator();
