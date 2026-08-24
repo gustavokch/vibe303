@@ -387,7 +387,7 @@ impl Voice {
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
         let ultra_factor = if sr == 44100.0 || sr == 48000.0 {
             2.0
-        } else if sr >= 88200.0 || sr >= 96000.0 {
+        } else if sr >= 88200.0 {
             1.0
         } else {
             ULTRA_OS_FACTOR
