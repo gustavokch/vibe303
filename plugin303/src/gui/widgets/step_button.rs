@@ -36,7 +36,7 @@ pub fn render_step_strip(
         ui.set_width(width);
         ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
         // Active column background glow (drawn behind all controls)
-        let (bg_rect, bg_resp) = ui.allocate_exact_size(vec2(width, ui.available_height()), Sense::hover());
+        let (bg_rect, _bg_resp) = ui.allocate_exact_size(vec2(width, ui.available_height()), Sense::hover());
         if ui.is_rect_visible(bg_rect) {
             ui.painter().rect_filled(bg_rect, CornerRadius::same(2), column_bg);
         }
