@@ -129,7 +129,8 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                     "QUALITY",
                                     &["LOW", "HIGH", "ULTRA"],
                                 )
-                                .with_active_text_color(theme::ACCENT_RUBY),
+                                .with_active_text_color(theme::ACCENT_ORANGE)
+                                .with_thumb_color(theme::ACCENT_ORANGE),
                             )
                         });
                         if is_accurate {
