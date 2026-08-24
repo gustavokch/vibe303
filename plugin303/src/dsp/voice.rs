@@ -385,7 +385,7 @@ impl Voice {
         let lat_high = Os2x::new().latency_samples();
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
-        let ultra_factor = if sr == 44100.0 || sr == 48000.0 {
+        let ultra_factor = if (sr - 44100.0).abs() < 0.5 || (sr - 48000.0).abs() < 0.5 {
             2.0
         } else if sr >= 88200.0 {
             1.0
@@ -995,6 +995,12 @@ impl Voice {
                 new_ladder.set_cal(ULTRA_BRIGHT);
                 new_ladder.set_poles(self.ladder.poles);
                 new_ladder.set_thermal(self.ladder_thermal_state);
+                new_ladder.set_analog_wear(
+                    self.tolerance_f64(),
+                    self.age,
+                    self.comp_seed as u32,
+                    self.recalibration_scale,
+                );
                 self.ladder = new_ladder;
             }
         }
