@@ -1,6 +1,6 @@
 # GUI Visual Audit Report — TECHNEO 303 (vibe303)
 
-Screenshots audited: `latest.png` (FUN stopped), `running.png` (FUN running), `accurate.png` (ACCURATE stopped + overlay), plus zone/crop images (`zone_bottom`, `zone_mid`, `zone_top`, `crop_classic`, `crop_sequencer`, `crop_clipper_tweaks`, `crop_souped`).
+Screenshots audited: `latest.png` (FUN stopped), `running.png` (FUN running), `accurate.png` (ACCURATE stopped + overlay), plus zone/crop images (`zone_bottom`, `zone_mid`, `zone_top`, `crop_classic`, `crop_sequencer`, `crop_clipper_tweaks`, `crop_souped`). The screenshot capture set lives outside the repository (local QA captures) and is not tracked here.
 
 Reference taxonomy: `fix-prompt.md` (16 issues) plus direct vision inspection.
 
@@ -72,8 +72,7 @@ Reference taxonomy: `fix-prompt.md` (16 issues) plus direct vision inspection.
 - What: In running state (`running.png`), step 01 shows NOTE highlight (cyan). Full 16-step playhead tracking impossible because only step 01 visible (see #1). Cannot confirm TIE highlight distinction without all steps visible.
 - Where: Region 7 (Sequencer steps).
 - Evidence: `running.png`, `running_zone_bottom.png`.
-- Status: Blocked by #1; cannot fully verify until sequencer unclipped.
-- Status: Resolved 2026-08-24 — unblocked by #1. Playhead = ruby number badge + cyan LED bar + elevated cell background; TIE = gold badge. Distinct at a glance and at 100% zoom; verified across the full grid in `running.png` (step 04 active, TIE on 02/06/10/14).
+- Status: Resolved 2026-08-24 — initially blocked by #1; unblocked once the sequencer grid was restored. Playhead = ruby number badge + cyan LED bar + elevated cell background; TIE = gold badge. Distinct at a glance and at 100% zoom; verified across the full grid in `running.png` (step 04 active, TIE on 02/06/10/14).
 
 ### 12. Mixed Decimal Precision / Formatting
 - What: `+0.0 ct` (1 decimal, spaced), `2.1 kHz` (1 decimal, spaced), `200 ms` (integer, spaced), `50 %` (integer, spaced), `3 ms` / `200 ms` / `0%` / `200 ms`. No consistent rule applied; some values use 2 dp (`+0.10 s`), others 1 dp (`+0.0 ct`), others integer.
