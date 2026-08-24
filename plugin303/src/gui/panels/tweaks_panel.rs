@@ -17,10 +17,10 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
         .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::symmetric(6, 6))
+        .inner_margin(Margin::same(6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height(96.0);
+            ui.set_min_height(102.0);
             ui.add_enabled_ui(!is_accurate, |ui| {
                 ui.vertical(|ui| {
                     ui.label(
@@ -30,7 +30,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .color(if is_accurate {
                                 theme::TEXT_MUTED
                             } else {
-                                theme::TEXT_PRIMARY
+                                theme::ACCENT_ORANGE
                             }),
                     );
 
@@ -110,13 +110,17 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         }
 
                         ui.label(
-                            nih_plug_egui::egui::RichText::new("DRIFT SEED:")
+                            nih_plug_egui::egui::RichText::new("COMP SEED:")
                                 .font(FontId::proportional(8.5))
                                 .color(label_color),
                         );
                         let mut seed_val = params.comp_seed.value();
                         if ui
-                            .add(DragValue::new(&mut seed_val).range(0..=9999))
+                            .add(
+                                DragValue::new(&mut seed_val)
+                                    .range(0..=9999)
+                                    .custom_formatter(|v, _| format!("{:04}", v as u32)),
+                            )
                             .changed()
                         {
                             setter.begin_set_parameter(&params.comp_seed);
@@ -127,13 +131,10 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                     ui.add_space(4.0);
 
-                    // Bottom row: Drift and Recal knobs distributed symmetrically
+                    // Bottom row: Drift and Recal knobs aligned under upper controls
                     ui.horizontal(|ui| {
-                        let total_w = ui.available_width();
-                        let knob_w = 40.0;
-                        let gap = ((total_w - 2.0 * knob_w) / 3.0).max(0.0);
-                        ui.spacing_mut().item_spacing = vec2(gap, 0.0);
-                        ui.add_space(gap);
+                        ui.spacing_mut().item_spacing = vec2(24.0, 0.0);
+                        ui.add_space(4.0);
                         ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.5));
                         ui.add(Knob303::new(
                             &params.recalibration_scale,

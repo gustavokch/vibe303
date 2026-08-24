@@ -8,13 +8,20 @@ use crate::params::Plugin303Params;
 /// The clipper is deliberately outside the topology-gated Souped-up drawer:
 /// it colours the final voice output for both Accurate and Fun engines.
 pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
+    let bypassed = params.clipper_bypass.value();
+    let frame_stroke = if bypassed {
+        nih_plug_egui::egui::Stroke::new(1.0_f32, theme::BORDER_SUBTLE)
+    } else {
+        theme::border_stroke()
+    };
+
     Frame::new()
         .fill(theme::PANEL_BG)
-        .stroke(theme::border_stroke())
+        .stroke(frame_stroke)
         .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::same(6))
         .show(ui, |ui| {
-            ui.set_min_height(96.0);
+            ui.set_min_height(102.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
 
@@ -24,10 +31,10 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                         nih_plug_egui::egui::RichText::new("OUTPUT CLIPPER")
                             .font(FontId::proportional(10.0))
                             .strong()
-                            .color(theme::ACCENT_ORANGE),
+                            .color(if bypassed { theme::TEXT_MUTED } else { theme::ACCENT_ORANGE }),
                     );
                     ui.add_space(2.0);
-                    let mut bypass = params.clipper_bypass.value();
+                    let mut bypass = bypassed;
                     let is_bypassed = bypass;
                     if ui
                         .checkbox(
@@ -46,7 +53,6 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
 
                 ui.add_space(2.0);
 
-                let bypassed = params.clipper_bypass.value();
                 ui.add_enabled_ui(!bypassed, |ui| {
                     ui.add(SlideSwitch::new(&params.clipper_os, setter, "OS", &["2X", "4X"]));
 
@@ -96,7 +102,7 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                     }
 
                     ui.vertical(|ui| {
-                        ui.add_space(4.0);
+                        ui.add_space(2.0);
                         let mut link = params.clipper_gain_link.value();
                         if ui
                             .checkbox(
@@ -121,7 +127,7 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                             }
                         }
 
-                        ui.add_space(4.0);
+                        ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
@@ -137,10 +143,10 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                                     nih_plug_egui::egui::RichText::new(label)
                                         .font(FontId::proportional(8.0))
                                         .strong()
-                                        .color(if is_selected { theme::ACCENT_ORANGE } else { theme::TEXT_MUTED }),
+                                        .color(if is_selected { theme::ACCENT_ORANGE } else { theme::TEXT_SECONDARY }),
                                 )
                                 .fill(if is_selected { theme::SURFACE_ELEVATED } else { theme::WELL_BG })
-                                .stroke(nih_plug_egui::egui::Stroke::new(1.0_f32, if is_selected { theme::ACCENT_ORANGE } else { theme::BORDER_SUBTLE }))
+                                .stroke(nih_plug_egui::egui::Stroke::new(1.0_f32, if is_selected { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
                                 .min_size(vec2(18.0, 14.0))
                                 .corner_radius(CornerRadius::same(2));
 
@@ -151,6 +157,7 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                                 }
                             }
                         });
+                        ui.add_space(3.0);
                     });
                 });
             });

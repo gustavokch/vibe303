@@ -231,3 +231,32 @@ Every optimization must satisfy the established quality gates before merging:
 
 **NO-GO (Revert)**. While all functional DSP, real-time safety, spectral, and anti-aliasing quality gates passed, performance regressed significantly across all tiers. Ultra real-time headroom dropped from **6.23× to 4.17×** (-33.12% throughput reduction, delta -2.06×). Candidate 2 is rejected and candidate changes in `plugin303/src/dsp/bjt.rs` and `plugin303/src/dsp/vco.rs` are reverted.
 
+---
+
+## 11. Optimization Iteration 3 — FMA Optimization in Static LU Solvers
+
+**Date:** 2026-08-23  
+**Candidate Tested:** Candidate 3 — FMA optimization (`mul_add`) in static LU solvers across [`plugin303/src/dsp/linalg_static.rs`](../../plugin303/src/dsp/linalg_static.rs), [`plugin303/src/dsp/ladder_wdf.rs`](../../plugin303/src/dsp/ladder_wdf.rs), and [`plugin303/src/dsp/vco.rs`](../../plugin303/src/dsp/vco.rs).
+
+### Pre vs Post Timing Comparison
+
+| Tier | Pre Throughput (kS/s) | Pre Real-time Ratio | Post Throughput (kS/s) | Post Real-time Ratio | Speedup (%) | Headroom Delta | Status |
+|---|---|---|---|---|---|---|---|
+| **Low** | 6,146.34 kS/s | 128.05× | 6,158.81 kS/s | **128.31×** | +0.20% | +0.26× | REALTIME |
+| **High** | 1,067.96 kS/s | 22.25× | 1,110.18 kS/s | **23.13×** | +3.95% | +0.88× | REALTIME |
+| **Ultra** | 313.06 kS/s | 6.52× | 308.27 kS/s | **6.42×** | **-1.53%** | **-0.10×** | REALTIME |
+
+### Quality Gate Verification Status
+
+| Gate | Description | Status | Details |
+|---|---|---|---|
+| **Unit Tests** | `cargo test --lib` | **PASSED** | All functional DSP unit tests passed (56 passed, 0 failed, 7 ignored). |
+| **No-Alloc Invariant** | `cargo test --test no_alloc` | **PASSED** | All 11 no_alloc integration tests passed (0 failed, 0 ignored). Zero heap allocation and real-time safety verified for oversampler, ladder VCF, voice hot paths, reset routines, and parameter sweeps. |
+| **Spectral Match** | `cargo test --test spectral_accuracy` | **PASSED** | All spectral tests passed successfully: high_voice_spectral_match ok (1 passed, 0 failed, 3 ignored), ultra_voice_spectral_match ok (1 passed, 0 failed, 1 ignored). Spectral LSD and correlation gates verified against SPICE gold. |
+| **Integration Tests** | Alias & Newton Convergence | **PASSED** | All tests passed without failure. ladder_alias: 1 passed, 0 failed. newton_iters: 0 passed, 0 failed, 1 ignored. vco_alias: 4 passed, 0 failed. Total: 5 passed, 0 failed, 1 ignored. |
+
+### Decision
+
+**NO-GO (Revert)**. All quality gates passed, but Ultra tier real-time performance regressed from **6.52× to 6.42×** (-1.53% speedup, delta -0.10×). Candidate 3 is rejected and changes in `plugin303/src/dsp/ladder_wdf.rs`, `plugin303/src/dsp/linalg_static.rs`, and `plugin303/src/dsp/vco.rs` are reverted.
+
+

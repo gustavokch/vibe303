@@ -640,11 +640,7 @@ impl Default for Plugin303Params {
             comp_drift: FloatParam::new(
                 "Comp Drift",
                 0.1,
-                FloatRange::Skewed {
-                    min: 0.0,
-                    max: 1.0,
-                    factor: FloatRange::skew_factor(-1.2),
-                },
+                FloatRange::Linear { min: 0.0, max: 1.0 },
             )
             .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
 
@@ -677,10 +673,14 @@ impl Default for Plugin303Params {
 
             clipper_bypass: BoolParam::new("Clipper Bypass", false),
             clipper_os: EnumParam::new("Clipper OS", ClipperOversampling::X2),
-            clipper_drive: FloatParam::new("Clipper Drive", 47_000.0, FloatRange::Skewed { min: 22_000.0, max: 100_000.0, factor: FloatRange::skew_factor(-1.5) }).with_unit(" ohm"),
-            clipper_threshold: FloatParam::new("Clipper Threshold", 4_700.0, FloatRange::Skewed { min: 2_200.0, max: 22_000.0, factor: FloatRange::skew_factor(-1.5) }).with_unit(" ohm"),
-            clipper_bass: FloatParam::new("Clipper Bass", 8_200.0, FloatRange::Skewed { min: 4_700.0, max: 22_000.0, factor: FloatRange::skew_factor(-1.5) }).with_unit(" ohm"),
-            clipper_tone: FloatParam::new("Clipper Tone", 1e-9, FloatRange::Skewed { min: 470e-12, max: 4.7e-9, factor: FloatRange::skew_factor(-1.5) }).with_value_to_string(std::sync::Arc::new(|v| format!("{:.2} nF", v * 1e9))),
+            clipper_drive: FloatParam::new("Clipper Drive", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_threshold: FloatParam::new("Clipper Threshold", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_bass: FloatParam::new("Clipper Bass", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_tone: FloatParam::new("Clipper Tone", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
             clipper_asym: BoolParam::new("Clipper Asym", false),
             clipper_mix: FloatParam::new("Clipper Mix", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),

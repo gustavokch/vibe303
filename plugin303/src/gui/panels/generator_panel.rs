@@ -161,14 +161,22 @@ pub fn render_generator_panel(
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
-                            ui.add(DragValue::new(&mut gen_params.rhythm_pulses).range(1..=16));
+                            ui.add(
+                                DragValue::new(&mut gen_params.rhythm_pulses)
+                                    .range(1..=16)
+                                    .custom_formatter(|v, _| format!("{:02}", v as u32)),
+                            );
 
                             ui.label(
                                 nih_plug_egui::egui::RichText::new("STEPS (n):")
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
-                            ui.add(DragValue::new(&mut gen_params.rhythm_length).range(1..=16));
+                            ui.add(
+                                DragValue::new(&mut gen_params.rhythm_length)
+                                    .range(1..=16)
+                                    .custom_formatter(|v, _| format!("{:02}", v as u32)),
+                            );
                         });
 
                         ui.add_space(2.0);
@@ -179,14 +187,22 @@ pub fn render_generator_panel(
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
-                            ui.add(DragValue::new(&mut gen_params.rhythm_shift).range(0..=15));
+                            ui.add(
+                                DragValue::new(&mut gen_params.rhythm_shift)
+                                    .range(0..=15)
+                                    .custom_formatter(|v, _| format!("{:02}", v as u32)),
+                            );
 
                             ui.label(
                                 nih_plug_egui::egui::RichText::new("PITCH LEN:")
                                     .font(FontId::proportional(8.5))
                                     .color(theme::TEXT_MUTED),
                             );
-                            ui.add(DragValue::new(&mut gen_params.pitch_length).range(1..=16));
+                            ui.add(
+                                DragValue::new(&mut gen_params.pitch_length)
+                                    .range(1..=16)
+                                    .custom_formatter(|v, _| format!("{:02}", v as u32)),
+                            );
                         });
                     });
 

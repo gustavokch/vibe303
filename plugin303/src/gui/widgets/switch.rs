@@ -120,20 +120,18 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 );
 
                 // Sliding active segmented pill
-                if is_enabled {
-                    let thumb_y = track_rect.top() + slot_height * current_idx as f32;
-                    let thumb_rect = Rect::from_min_size(
-                        pos2(track_rect.left() + 1.0, thumb_y + 1.0),
-                        vec2(track_rect.width() - 2.0, slot_height - 2.0),
-                    );
-                    painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
-                    painter.rect_stroke(
-                        thumb_rect,
-                        CornerRadius::same(2),
-                        Stroke::new(1.0_f32, switch_accent),
-                        StrokeKind::Inside,
-                    );
-                }
+                let thumb_y = track_rect.top() + slot_height * current_idx as f32;
+                let thumb_rect = Rect::from_min_size(
+                    pos2(track_rect.left() + 1.0, thumb_y + 1.0),
+                    vec2(track_rect.width() - 2.0, slot_height - 2.0),
+                );
+                painter.rect_filled(thumb_rect, CornerRadius::same(2), if is_enabled { theme::SURFACE_ELEVATED } else { theme::WELL_BG });
+                painter.rect_stroke(
+                    thumb_rect,
+                    CornerRadius::same(2),
+                    Stroke::new(1.0_f32, if is_enabled { switch_accent } else { theme::BORDER_DEFAULT }),
+                    StrokeKind::Inside,
+                );
 
                 // Options with integrated glyphs & labels
                 for (i, opt) in self.options.iter().enumerate() {
@@ -141,14 +139,22 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     let cy = row_y + slot_height * 0.5;
                     let is_selected = i == current_idx;
                     let text_color = if !is_enabled {
-                        theme::TEXT_MUTED
+                        if is_selected {
+                            theme::TEXT_SECONDARY
+                        } else {
+                            theme::TEXT_MUTED
+                        }
                     } else if is_selected {
                         theme::TEXT_PRIMARY
                     } else {
                         theme::TEXT_MUTED
                     };
                     let glyph_color = if !is_enabled {
-                        theme::TEXT_MUTED
+                        if is_selected {
+                            theme::TEXT_SECONDARY
+                        } else {
+                            theme::TEXT_MUTED
+                        }
                     } else if is_selected {
                         switch_accent
                     } else {
@@ -257,25 +263,27 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 StrokeKind::Inside,
             );
 
-            // Active segmented pill (only when enabled)
-            if is_enabled {
-                let thumb_x = track_rect.left() + slot_width * current_idx as f32;
-                let thumb_rect = Rect::from_min_size(pos2(thumb_x + 1.0, track_rect.top() + 1.0), vec2(slot_width - 2.0, track_rect.height() - 2.0));
-                painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
-                painter.rect_stroke(
-                    thumb_rect,
-                    CornerRadius::same(2),
-                    Stroke::new(1.0_f32, switch_accent),
-                    StrokeKind::Inside,
-                );
-            }
+            // Active segmented pill
+            let thumb_x = track_rect.left() + slot_width * current_idx as f32;
+            let thumb_rect = Rect::from_min_size(pos2(thumb_x + 1.0, track_rect.top() + 1.0), vec2(slot_width - 2.0, track_rect.height() - 2.0));
+            painter.rect_filled(thumb_rect, CornerRadius::same(2), if is_enabled { theme::SURFACE_ELEVATED } else { theme::WELL_BG });
+            painter.rect_stroke(
+                thumb_rect,
+                CornerRadius::same(2),
+                Stroke::new(1.0_f32, if is_enabled { switch_accent } else { theme::BORDER_DEFAULT }),
+                StrokeKind::Inside,
+            );
 
             // Option labels
             for (i, opt) in self.options.iter().enumerate() {
                 let opt_x = track_rect.left() + slot_width * (i as f32 + 0.5);
                 let is_selected = i == current_idx;
                 let text_color = if !is_enabled {
-                    theme::TEXT_MUTED
+                    if is_selected {
+                        theme::TEXT_SECONDARY
+                    } else {
+                        theme::TEXT_MUTED
+                    }
                 } else if is_selected {
                     theme::TEXT_PRIMARY
                 } else {

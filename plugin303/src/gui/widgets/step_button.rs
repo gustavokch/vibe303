@@ -28,21 +28,21 @@ pub fn render_step_strip(
         ui.set_width(width);
         ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
 
-        // 1. Playhead LED bar (4.0px flat bar at top, bright white distinct from Note/Tie/Acc)
+        // 1. Playhead LED bar (4.0px flat bar at top, ruby accent distinct from Note/Tie/Acc)
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, 4.0), Sense::hover());
         let _ = led_resp.on_hover_text("Playhead position indicator");
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             let led_color = if is_active {
-                nih_plug_egui::egui::Color32::WHITE
+                theme::ACCENT_RUBY
             } else {
-                theme::SURFACE_ELEVATED
+                theme::WELL_BG
             };
             p.rect_filled(led_rect, CornerRadius::same(1), led_color);
             p.rect_stroke(
                 led_rect,
                 CornerRadius::same(1),
-                Stroke::new(1.0_f32, if is_active { nih_plug_egui::egui::Color32::WHITE } else { theme::BORDER_DEFAULT }),
+                Stroke::new(1.0_f32, if is_active { theme::ACCENT_RUBY } else { theme::BORDER_SUBTLE }),
                 StrokeKind::Inside,
             );
         }
@@ -52,7 +52,7 @@ pub fn render_step_strip(
         if ui.is_rect_visible(step_num_rect) {
             let p = ui.painter();
             let (bg_color, text_color, stroke_color) = if is_active {
-                (nih_plug_egui::egui::Color32::WHITE, theme::TEXT_ON_ACCENT, nih_plug_egui::egui::Color32::WHITE)
+                (theme::SURFACE_ELEVATED, theme::ACCENT_RUBY, theme::ACCENT_RUBY)
             } else {
                 (theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT)
             };
@@ -228,7 +228,7 @@ pub fn render_step_strip(
             p.rect_stroke(
                 pitch_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, if is_active && !is_rest { nih_plug_egui::egui::Color32::WHITE } else { theme::BORDER_DEFAULT }),
+                Stroke::new(1.0_f32, if is_active && !is_rest { theme::ACCENT_RUBY } else { theme::BORDER_DEFAULT }),
                 StrokeKind::Inside,
             );
             p.text(

@@ -151,16 +151,21 @@ pub struct VoiceClipperParams {
 }
 
 fn clipper_params_map(p: VoiceClipperParams) -> ClipperParams {
+    let drive_norm = p.drive.clamp(0.0, 1.0);
+    let threshold_norm = p.threshold.clamp(0.0, 1.0);
+    let bass_norm = p.bass.clamp(0.0, 1.0);
+    let tone_norm = p.tone.clamp(0.0, 1.0);
+
     ClipperParams {
         bypass: p.bypass,
         os: match p.os {
             ClipperOversampling::X2 => ClipperOs::X2,
             ClipperOversampling::X4 => ClipperOs::X4,
         },
-        drive_ohms: p.drive,
-        threshold_ohms: p.threshold,
-        bass_ohms: p.bass,
-        tone_f: p.tone,
+        drive_ohms: 22_000.0 * (100_000.0 / 22_000.0_f32).powf(drive_norm),
+        threshold_ohms: 2_200.0 * (22_000.0 / 2_200.0_f32).powf(threshold_norm),
+        bass_ohms: 4_700.0 * (22_000.0 / 4_700.0_f32).powf(bass_norm),
+        tone_f: 470e-12 * (4.7e-9 / 470e-12_f32).powf(tone_norm),
         asym: p.asym,
         mix: p.mix,
         in_db: p.in_db,

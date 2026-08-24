@@ -45,7 +45,7 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                         Align2::CENTER_CENTER,
                         "BASS SYNTH",
                         FontId::new(8.0, FontFamily::Monospace),
-                        theme::ACCENT_ORANGE,
+                        theme::TEXT_SECONDARY,
                     );
 
                     ui.add_space(4.0);
@@ -122,12 +122,15 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                         // 2. Quality selector (disabled in Accurate mode)
                         let is_accurate = params.topology.value() == crate::params::CircuitTopology::Accurate;
                         let quality_resp = ui.add_enabled_ui(!is_accurate, |ui| {
-                            ui.add(SlideSwitch::new(
-                                &params.tier,
-                                setter,
-                                "QUALITY",
-                                &["LOW", "HIGH", "ULTRA"],
-                            ))
+                            ui.add(
+                                SlideSwitch::new(
+                                    &params.tier,
+                                    setter,
+                                    "QUALITY",
+                                    &["LOW", "HIGH", "ULTRA"],
+                                )
+                                .with_active_text_color(theme::ACCENT_RUBY),
+                            )
                         });
                         if is_accurate {
                             quality_resp.response.on_hover_text("Quality tier applies to FUN mode (ACCURATE uses fixed physical modeling)");

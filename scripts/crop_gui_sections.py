@@ -32,11 +32,11 @@ def get_crop_definitions(width: int, height: int):
     sections = {
         "crop_header": (0, int(52 * scale_y)),
         "crop_classic": (int(48 * scale_y), int(245 * scale_y)),
-        "crop_souped": (int(240 * scale_y), int(390 * scale_y)),
+        "crop_souped": (int(190 * scale_y), int(385 * scale_y)),
         "crop_clipper_tweaks": (int(385 * scale_y), int(520 * scale_y)),
         "crop_sequencer": (int(515 * scale_y), height),
         "zone_top": (0, int(245 * scale_y)),
-        "zone_mid": (int(240 * scale_y), int(520 * scale_y)),
+        "zone_mid": (int(190 * scale_y), int(520 * scale_y)),
         "zone_bottom": (int(515 * scale_y), height),
     }
     return sections
@@ -97,7 +97,7 @@ def generate_boundary_and_diff_crops(output_dir: Path, dims: dict):
         w, h = img_lat.size
         scale = w / float(dims["width"])
         titlebar_h = int(32 * scale) if h > int(dims["height"] * scale) else 0
-        y_mid_start = titlebar_h + int(240 * scale)
+        y_mid_start = titlebar_h + int(190 * scale)
         y_mid_end = titlebar_h + int(520 * scale)
 
         mid_lat = img_lat.crop((0, y_mid_start, w, y_mid_end))
