@@ -23,10 +23,23 @@ pub fn render_step_strip(
     let mut changed = false;
     let width = 56.0;
     let is_active = is_current && is_running;
+    // Enhanced playhead: column glow when active
+    let column_bg = if is_active {
+        theme::SURFACE_ELEVATED
+    } else if is_current {
+        theme::WELL_BG
+    } else {
+        theme::PANEL_BG
+    };
 
     ui.vertical(|ui| {
         ui.set_width(width);
         ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+        // Active column background glow (drawn behind all controls)
+        let (bg_rect, _bg_resp) = ui.allocate_exact_size(vec2(width, ui.available_height()), Sense::hover());
+        if ui.is_rect_visible(bg_rect) {
+            ui.painter().rect_filled(bg_rect, CornerRadius::same(2), column_bg);
+        }
 
         // 1. Playhead LED bar (4.0px flat bar at top, ruby accent distinct from Note/Tie/Acc)
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, 4.0), Sense::hover());
