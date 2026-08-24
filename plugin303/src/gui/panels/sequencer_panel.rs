@@ -199,7 +199,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(78.0, 24.0))
+                        .min_size(vec2(78.0, 18.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_left_btn).on_hover_text("Rotate pattern steps left (cyclic)").clicked() {
@@ -216,7 +216,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(78.0, 24.0))
+                        .min_size(vec2(78.0, 18.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_right_btn).on_hover_text("Rotate pattern steps right (cyclic)").clicked() {
@@ -239,7 +239,7 @@ pub fn render_sequencer_and_transport(
                         let dn_btn = Button::new("-")
                             .fill(theme::WELL_BG)
                             .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                            .min_size(vec2(28.0, 28.0))
+                            .min_size(vec2(24.0, 24.0))
                             .corner_radius(CornerRadius::same(2));
                         if ui.add(dn_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_tempo);
@@ -267,7 +267,7 @@ pub fn render_sequencer_and_transport(
                         let up_btn = Button::new("+")
                             .fill(theme::WELL_BG)
                             .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                            .min_size(vec2(28.0, 28.0))
+                            .min_size(vec2(24.0, 24.0))
                             .corner_radius(CornerRadius::same(2));
                         if ui.add(up_btn).clicked() {
                             setter.begin_set_parameter(&params.seq_tempo);
@@ -383,7 +383,7 @@ pub fn render_sequencer_and_transport(
                             });
 
                         let mut jitter_val = params.seq_jitter.value();
-                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(32.0, 28.0), Sense::click());
+                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
                         if jit_resp.clicked() {
                             jitter_val = !jitter_val;
                             setter.begin_set_parameter(&params.seq_jitter);
