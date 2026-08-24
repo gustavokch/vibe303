@@ -208,7 +208,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 } else if self.label.contains("DECAY") {
                     let ms = 200.0 + f.clamp(0.0, 1.0) * 1800.0;
                     if ms >= 1000.0 {
-                        format!("{:.2} s", ms / 1000.0)
+                        format!("{:.1} s", ms / 1000.0)
                     } else {
                         format!("{:.0} ms", ms)
                     }
