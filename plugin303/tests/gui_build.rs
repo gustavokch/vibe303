@@ -19,10 +19,10 @@ fn test_gui_initialization_build() {
 fn test_gui_panel_width_budget() {
     let window_width = plugin303::gui::GUI_WIDTH;
     let window_height = plugin303::gui::GUI_HEIGHT;
-    assert_eq!(window_width, 1280);
-    assert_eq!(window_height, 720);
+    assert_eq!(window_width, 1366);
+    assert_eq!(window_height, 960);
     let inner_content_width = window_width - 20; // 10px left/right margin
-    assert_eq!(inner_content_width, 1260);
+    assert_eq!(inner_content_width, 1346);
 }
 
 use std::sync::Mutex;
