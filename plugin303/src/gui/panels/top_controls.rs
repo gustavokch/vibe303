@@ -105,7 +105,8 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         "WAVE",
                         &["SAW", "SQR", "SWP"],
                     )
-                    .vertical(),
+                    .vertical()
+                    .with_thumb_color(theme::ACCENT_ORANGE),
                 );
                 ui.add_space(6.0);
                 ui.separator();
@@ -173,7 +174,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
                                 render_adsr_bank(
                                     ui,
-                                    "MEG ADSR",
+                                    "MEG ADSR (Mod Envelope)",
                                     &params.meg_attack,
                                     &params.meg_decay_adj,
                                     &params.meg_sustain,
@@ -184,7 +185,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                 render_adsr_bank(
                                     ui,
-                                    "VEG ADSR",
+                                    "VEG ADSR (Voice Envelope)",
                                     &params.veg_attack,
                                     &params.veg_decay_adj,
                                     &params.veg_sustain,

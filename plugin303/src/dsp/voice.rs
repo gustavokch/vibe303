@@ -355,12 +355,44 @@ pub struct Voice {
 }
 
 impl Voice {
+    fn decay_map(k: f32) -> f32 {
+        const P: [(f32, f32); 13] = [
+            (0.0, 100.0), (0.1, 150.0), (0.2, 200.0), (0.3, 250.0),
+            (0.4, 300.0), (0.5, 400.0), (0.6, 500.0), (0.7, 600.0),
+            (0.8, 700.0), (0.85, 1000.0), (0.9, 1400.0), (0.95, 1750.0), (1.0, 2100.0),
+        ];
+        let mut lo = 0usize;
+        let mut hi = P.len() - 1;
+        while lo + 1 < hi {
+            let mid = (lo + hi) / 2;
+            if P[mid].0 < k {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        let (x0, y0) = P[lo];
+        let (x1, y1) = P[hi];
+        if x1 - x0 < 1e-6 {
+            y0
+        } else {
+            y0 + (y1 - y0) * (k - x0) / (x1 - x0)
+        }
+    }
+
     pub fn new(sr: f32) -> Self {
         let lat_low = 0;
         let lat_high = Os2x::new().latency_samples();
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
-        let mut ladder = LadderVcf::new(sr * ULTRA_OS_FACTOR);
+        let ultra_factor = if (sr - 44100.0).abs() < 0.5 || (sr - 48000.0).abs() < 0.5 {
+            2.0
+        } else if sr >= 88200.0 {
+            1.0
+        } else {
+            ULTRA_OS_FACTOR
+        };
+        let mut ladder = LadderVcf::new(sr * ultra_factor);
         let _tuning_offset: f32;
         let _tuning_offset_int: i32;
         ladder.set_instance_id(3);
@@ -626,11 +658,11 @@ impl Voice {
             let is_fun_mode = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun_mode);
             self.vco2.set_fun(is_fun_mode);
-            self.ladder.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
-            self.ladder_hi.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
+            self.ladder.set_analog_wear(tol_f64, comp_age, comp_seed as u32, self.recalibration_scale);
+            self.ladder_hi.set_analog_wear(tol_f64, comp_age, comp_seed as u32, self.recalibration_scale);
 
-            if self.tier == Tier::Ultra
-                || self.pending_tier == Some(Tier::Ultra)
+            if self.tier == Tier::Ultra || self.tier == Tier::Ultra2x
+                || self.pending_tier == Some(Tier::Ultra) || self.pending_tier == Some(Tier::Ultra2x)
                 || self.xfade_from.is_some()
             {
                 let ok1 = self.vco.recalculate_luts_async(comp_age, tol_f64, comp_seed as u32, recalibration_scale);
@@ -793,21 +825,21 @@ impl Voice {
             self.meg.set_attack(3.0);
             self.veg.set_attack(3.0);
 
-            // VCF Decay Knob range: 200 ms to 2000 ms
-            let decay_ms = 200.0 + decay_knob * 1800.0;
+            // Decay knob: 100 ms (min) to 2100 ms (max) with finer granularity 200-700 ms
+            let decay_ms = Self::decay_map(decay_knob);
             self.meg.set_decay(decay_ms);
             self.meg.set_sustain(0.0);
             self.meg.set_release(200.0);
 
-            // VCA Decay maps to the same decay knob: 200 ms to 3000 ms
-            let vca_decay_ms = 200.0 + decay_knob * 2800.0;
+            // VCA Decay uses same scaled knob mapping
+            let vca_decay_ms = Self::decay_map(decay_knob);
             self.veg.set_decay(vca_decay_ms);
             self.veg.set_sustain(0.0);
             self.veg.set_release(200.0);
 
             // --- Classic RC-based settings (both topologies) ---
-            // MEG decay from knob: 30..3000 ms (Devil Fish extended range)
-            self.normal_decay_ms = 30.0 + decay_knob as f64 * 2970.0;
+            // MEG decay from knob: same scaled mapping (replaces 30..3000 linear)
+            self.normal_decay_ms = Self::decay_map(decay_knob) as f64;
             // On hardware TB-303, the 4066 switch shorts the DECAY pot on accented notes,
             // locking MEG decay to a fixed ~200 ms regardless of the panel Decay or Accent knob settings.
             self.accent_decay_ms = 200.0;
@@ -856,7 +888,7 @@ impl Voice {
         self.xfade_pos = 1.0;
         self.pending_tier = None;
 
-        if tier == Tier::Ultra && self.vco_dirty {
+        if (tier == Tier::Ultra || tier == Tier::Ultra2x) && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
             let ok1 = self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
             let ok2 = self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
@@ -946,12 +978,30 @@ impl Voice {
     /// and the incoming path starts cold, so a hard switch would pop. No
     /// allocation, RT-safe (plain field writes).
     pub fn set_tier(&mut self, tier: Tier) {
-        if tier == Tier::Ultra && self.vco_dirty {
+        if (tier == Tier::Ultra || tier == Tier::Ultra2x) && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
             let ok1 = self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
             let ok2 = self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
             if ok1 && ok2 {
                 self.vco_dirty = false;
+            }
+        }
+
+        if tier == Tier::Ultra || tier == Tier::Ultra2x {
+            if self.tier != tier {
+                let factor = if tier == Tier::Ultra2x { 2.0 } else { ULTRA_OS_FACTOR };
+                let mut new_ladder = LadderVcf::new(self.sr * factor);
+                new_ladder.set_instance_id(3);
+                new_ladder.set_cal(ULTRA_BRIGHT);
+                new_ladder.set_poles(self.ladder.poles);
+                new_ladder.set_thermal(self.ladder_thermal_state);
+                new_ladder.set_analog_wear(
+                    self.tolerance_f64(),
+                    self.age,
+                    self.comp_seed as u32,
+                    self.recalibration_scale,
+                );
+                self.ladder = new_ladder;
             }
         }
 
@@ -1183,6 +1233,35 @@ impl Voice {
             // from the smooth ramp (not the reset edge) is negligible relative to the
             // reset. Option A (full 4× VCO, future `Tier::UltraHd`) gives complete alias
             // freedom at ~4× the CPU cost.
+            Tier::Ultra2x => {
+                let raw = self.vco.tick() * VCO_GAIN;
+                let blep = match self.vco.wave {
+                    OscWave::Saw => self.vco.blep_now,
+                    OscWave::Sweep => self.vco.blep_now * (1.0 - self.vco.sweep_pos as f32),
+                    OscWave::Square => 0.0,
+                };
+                let osc1 = raw + blep;
+                let sub = self.sub_osc_hi.tick() * self.sub_vol;
+                let osc2 = if self.osc2_vol > 0.0 {
+                    let raw2 = self.vco2.tick() * VCO_GAIN;
+                    let blep2 = match self.vco2.wave {
+                        OscWave::Saw => self.vco2.blep_now,
+                        OscWave::Sweep => self.vco2.blep_now * (1.0 - self.vco2.sweep_pos as f32),
+                        OscWave::Square => 0.0,
+                    };
+                    raw2 + blep2
+                } else {
+                    0.0
+                };
+                let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
+
+                let hi = self.os2.up(mix * self.drive);
+                let o = [
+                    self.ladder.tick(hi[0]),
+                    self.ladder.tick(hi[1]),
+                ];
+                self.comp_ultra.process(self.os2.down(o) / self.drive)
+            }
             Tier::Ultra => {
                 let raw = self.vco.tick() * VCO_GAIN;
                 let blep = match self.vco.wave {
@@ -1332,8 +1411,8 @@ impl Voice {
         self.accent_acc *= acc_decay_coeff;
 
         let final_cutoff_hz = if self.advanced_env {
-            // Modulate filter decay
-            let decay_normal_ms = 200.0 + self.decay_knob * 1800.0;
+            // Modulate filter decay using same scaled knob mapping
+            let decay_normal_ms = Self::decay_map(self.decay_knob);
             let effective_decay_ms = decay_normal_ms
                 + (self.accent_knob_val * self.accent_acc).min(1.0) * (200.0 - decay_normal_ms);
             self.meg.set_decay(effective_decay_ms);

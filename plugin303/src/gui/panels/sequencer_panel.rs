@@ -27,11 +27,15 @@ pub fn render_sequencer_and_transport(
     Frame::new()
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
-        .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::symmetric(8, 8))
+        .corner_radius(CornerRadius::same(4))
+        .inner_margin(Margin {
+            left: 8,
+            right: 8,
+            top: 4,
+            bottom: 6,
+        })
         .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.set_min_height(ui.available_height());
+            ui.set_max_width(1048.0);
 
             ui.horizontal(|ui| {
                 // 1. LEFT / MAIN: 16-Step Pitch Key Columns (16 x 56px = 896px + spacing)

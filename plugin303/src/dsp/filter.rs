@@ -22,6 +22,8 @@ pub enum Tier {
     High,
     #[name = "Ultra (WDF)"]
     Ultra,
+    #[name = "Ultra 2x (WDF)"]
+    Ultra2x,
 }
 
 #[cfg(test)]

@@ -350,6 +350,9 @@ pub struct Plugin303Params {
     pub comp_drift: FloatParam,
     #[id = "recalibration_scale"]
     pub recalibration_scale: FloatParam,
+
+    #[id = "calibrate_sync"]
+    pub calibrate_sync: BoolParam,
     #[id = "tolerance"]
     pub tolerance: EnumParam<CompTolerance>,
     #[id = "thermal_noise"]
@@ -650,6 +653,7 @@ impl Default for Plugin303Params {
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
             .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            calibrate_sync: BoolParam::new("Calibrate Sync", false),
 
             tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),
 

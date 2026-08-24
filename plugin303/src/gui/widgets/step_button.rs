@@ -47,7 +47,7 @@ pub fn render_step_strip(
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             let led_color = if is_active {
-                theme::ACCENT_RUBY
+                theme::ACCENT_CYAN
             } else {
                 theme::WELL_BG
             };
