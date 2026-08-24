@@ -1,7 +1,7 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense, Stroke,
-    StrokeKind, Ui,
+    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense,
+    Stroke, StrokeKind, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -24,6 +24,8 @@ pub fn render_sequencer_and_transport(
     });
     ui.add_space(0.5);
 
+    let frame_avail_h = ui.available_height();
+
     Frame::new()
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
@@ -35,23 +37,34 @@ pub fn render_sequencer_and_transport(
             bottom: 0,
         })
         .show(ui, |ui| {
+            ui.set_min_height((frame_avail_h - 12.0).max(280.0));
             ui.set_max_width(1048.0);
 
+            // Grid geometry: 2 rows x 8 columns; transport column keeps ~232px on the right
+            let grid_avail_w = ui.available_width() - 232.0 - 8.0 - 8.0 - 2.0;
+            let cell_w = ((grid_avail_w - 7.0 * 4.0) / 8.0).max(72.0);
+            let cell_h = 140.0;
+
             ui.horizontal(|ui| {
-                // 1. LEFT / MAIN: 16-Step Pitch Key Columns (16 x 56px = 896px + spacing)
+                // 1. LEFT / MAIN: step pitch key columns in a 2x8 grid (steps 01-08 top, 09-16 bottom)
                 ui.vertical(|ui| {
                     if let Ok(mut pattern_guard) = params.pattern.write() {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                            let is_running = params.seq_run.value();
+                        let is_running = params.seq_run.value();
+                        ui.spacing_mut().item_spacing = vec2(4.0, 12.0);
 
-                            for step_idx in 0..16 {
-                                let is_current = active_step as usize == step_idx;
-                                let step = &mut pattern_guard.steps[step_idx];
+                        for row in 0..2 {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
 
-                                render_step_strip(ui, step_idx, step, is_current, is_running);
-                            }
-                        });
+                                for col in 0..8 {
+                                    let step_idx = row * 8 + col;
+                                    let is_current = active_step as usize == step_idx;
+                                    let step = &mut pattern_guard.steps[step_idx];
+
+                                    render_step_strip(ui, step_idx, step, is_current, is_running, cell_w, cell_h);
+                                }
+                            });
+                        }
 
                         render_piano_roll_popup(ui.ctx(), &mut pattern_guard);
                     }
@@ -64,7 +77,7 @@ pub fn render_sequencer_and_transport(
                 // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing = vec2(3.0, 1.5);
+                    ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
                     ui.spacing_mut().button_padding = vec2(3.0, 1.0);
 
                     ui.label(
@@ -89,7 +102,7 @@ pub fn render_sequencer_and_transport(
                             .color(theme::TEXT_ON_ACCENT),
                         )
                         .fill(theme::ACCENT_ORANGE)
-                        .min_size(vec2(72.0, 20.0))
+                        .min_size(vec2(72.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(run_btn).clicked() {
@@ -115,7 +128,7 @@ pub fn render_sequencer_and_transport(
                             theme::WELL_BG
                         })
                         .stroke(Stroke::new(1.0_f32, if sync_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                        .min_size(vec2(84.0, 20.0))
+                        .min_size(vec2(84.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(sync_btn).clicked() {
@@ -203,7 +216,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(78.0, 18.0))
+                        .min_size(vec2(78.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_left_btn).on_hover_text("Rotate pattern steps left (cyclic)").clicked() {
@@ -220,7 +233,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(78.0, 18.0))
+                        .min_size(vec2(78.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_right_btn).on_hover_text("Rotate pattern steps right (cyclic)").clicked() {
@@ -410,7 +423,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(36.0, 20.0))
+                        .min_size(vec2(36.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(clear_btn).on_hover_text("Reset all steps to default C3 notes").clicked() {
