@@ -21,7 +21,7 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
         .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::same(6))
         .show(ui, |ui| {
-            ui.set_min_height(102.0);
+            ui.set_min_height(110.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
 
@@ -31,7 +31,7 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                         nih_plug_egui::egui::RichText::new("OUTPUT CLIPPER")
                             .font(FontId::proportional(10.0))
                             .strong()
-                            .color(if bypassed { theme::TEXT_MUTED } else { theme::ACCENT_ORANGE }),
+                            .color(if bypassed { theme::TEXT_MUTED } else { theme::TEXT_PRIMARY }),
                     );
                     ui.add_space(2.0);
                     let mut bypass = bypassed;

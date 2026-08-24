@@ -129,7 +129,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 painter.rect_stroke(
                     thumb_rect,
                     CornerRadius::same(2),
-                    Stroke::new(1.0_f32, if is_enabled { switch_accent } else { theme::BORDER_DEFAULT }),
+                    Stroke::new(1.0_f32, if is_enabled { switch_accent } else { theme::BORDER_SUBTLE }),
                     StrokeKind::Inside,
                 );
 
@@ -139,22 +139,14 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     let cy = row_y + slot_height * 0.5;
                     let is_selected = i == current_idx;
                     let text_color = if !is_enabled {
-                        if is_selected {
-                            theme::TEXT_SECONDARY
-                        } else {
-                            theme::TEXT_MUTED
-                        }
+                        theme::TEXT_MUTED
                     } else if is_selected {
                         theme::TEXT_PRIMARY
                     } else {
                         theme::TEXT_MUTED
                     };
                     let glyph_color = if !is_enabled {
-                        if is_selected {
-                            theme::TEXT_SECONDARY
-                        } else {
-                            theme::TEXT_MUTED
-                        }
+                        theme::TEXT_MUTED
                     } else if is_selected {
                         switch_accent
                     } else {
@@ -270,7 +262,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             painter.rect_stroke(
                 thumb_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, if is_enabled { switch_accent } else { theme::BORDER_DEFAULT }),
+                Stroke::new(1.0_f32, if is_enabled { switch_accent } else { theme::BORDER_SUBTLE }),
                 StrokeKind::Inside,
             );
 
@@ -279,11 +271,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 let opt_x = track_rect.left() + slot_width * (i as f32 + 0.5);
                 let is_selected = i == current_idx;
                 let text_color = if !is_enabled {
-                    if is_selected {
-                        theme::TEXT_SECONDARY
-                    } else {
-                        theme::TEXT_MUTED
-                    }
+                    theme::TEXT_MUTED
                 } else if is_selected {
                     theme::TEXT_PRIMARY
                 } else {

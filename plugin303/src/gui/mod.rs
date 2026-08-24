@@ -38,6 +38,7 @@ pub fn create_editor(
                         .inner_margin(Margin::same(10)),
                 )
                 .show(egui_ctx, |ui| {
+                    ui.set_min_height(680.0);
                     let mut gen_params = gen_params_state.lock().unwrap();
 
                     // 1. Header Bar
@@ -55,7 +56,7 @@ pub fn create_editor(
                     // 4. Output Clipper + Tweaks Panel
                     ui.horizontal(|ui| {
                         panels::output_clipper::render_output_clipper(ui, &params, setter);
-                        ui.add_space(6.0);
+                        ui.add_space(3.0);
                         panels::tweaks_panel::render_tweaks_panel(ui, &params, setter);
                     });
                     ui.add_space(2.0);

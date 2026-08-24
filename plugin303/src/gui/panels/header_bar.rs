@@ -137,6 +137,22 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                             quality_resp.response.on_hover_text("Quality tier applies to FUN mode (ACCURATE uses fixed physical modeling)");
                         }
 
+                        // 2x OS button below Ultra tier
+                        ui.add_space(2.0);
+                        let is_2x = params.tier.value() == crate::dsp::filter::Tier::Ultra2x;
+                        let btn_resp = ui.add_enabled(
+                            !is_accurate,
+                            nih_plug_egui::egui::Button::new("2x").small(),
+                        );
+                        if btn_resp.clicked() && !is_accurate {
+                            setter.begin_set_parameter(&params.tier);
+                            setter.set_parameter(&params.tier, crate::dsp::filter::Tier::Ultra2x);
+                            setter.end_set_parameter(&params.tier);
+                        }
+                        if btn_resp.changed() || is_2x {
+                            btn_resp.highlight();
+                        }
+
                         // 3. Circuit Topology switch
                         let prev_topology = params.topology.value();
                         let switch_resp = ui.add(SlideSwitch::new(

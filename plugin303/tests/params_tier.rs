@@ -13,7 +13,7 @@ fn tier_param_defaults_low() {
 
 #[test]
 fn tier_enum_has_three_variants() {
-    assert_eq!(Tier::variants().len(), 3);
+    assert_eq!(Tier::variants().len(), 4);
 }
 
 #[test]

@@ -360,7 +360,14 @@ impl Voice {
         let lat_high = Os2x::new().latency_samples();
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
-        let mut ladder = LadderVcf::new(sr * ULTRA_OS_FACTOR);
+        let ultra_factor = if sr == 44100.0 || sr == 48000.0 {
+            2.0
+        } else if sr >= 88200.0 || sr >= 96000.0 {
+            1.0
+        } else {
+            ULTRA_OS_FACTOR
+        };
+        let mut ladder = LadderVcf::new(sr * ultra_factor);
         let _tuning_offset: f32;
         let _tuning_offset_int: i32;
         ladder.set_instance_id(3);
@@ -946,12 +953,24 @@ impl Voice {
     /// and the incoming path starts cold, so a hard switch would pop. No
     /// allocation, RT-safe (plain field writes).
     pub fn set_tier(&mut self, tier: Tier) {
-        if tier == Tier::Ultra && self.vco_dirty {
+        if (tier == Tier::Ultra || tier == Tier::Ultra2x) && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
             let ok1 = self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
             let ok2 = self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
             if ok1 && ok2 {
                 self.vco_dirty = false;
+            }
+        }
+
+        if tier == Tier::Ultra || tier == Tier::Ultra2x {
+            if self.tier != tier {
+                let factor = if tier == Tier::Ultra2x { 2.0 } else { ULTRA_OS_FACTOR };
+                let mut new_ladder = LadderVcf::new(self.sr * factor);
+                new_ladder.set_instance_id(3);
+                new_ladder.set_cal(ULTRA_BRIGHT);
+                new_ladder.set_poles(self.ladder.poles);
+                new_ladder.set_thermal(self.ladder_thermal_state);
+                self.ladder = new_ladder;
             }
         }
 
@@ -1183,6 +1202,37 @@ impl Voice {
             // from the smooth ramp (not the reset edge) is negligible relative to the
             // reset. Option A (full 4× VCO, future `Tier::UltraHd`) gives complete alias
             // freedom at ~4× the CPU cost.
+            Tier::Ultra2x => {
+                let raw = self.vco.tick() * VCO_GAIN;
+                let blep = match self.vco.wave {
+                    OscWave::Saw => self.vco.blep_now,
+                    OscWave::Sweep => self.vco.blep_now * (1.0 - self.vco.sweep_pos as f32),
+                    OscWave::Square => 0.0,
+                };
+                let osc1 = raw + blep;
+                let sub = self.sub_osc_hi.tick() * self.sub_vol;
+                let osc2 = if self.osc2_vol > 0.0 {
+                    let raw2 = self.vco2.tick() * VCO_GAIN;
+                    let blep2 = match self.vco2.wave {
+                        OscWave::Saw => self.vco2.blep_now,
+                        OscWave::Sweep => self.vco2.blep_now * (1.0 - self.vco2.sweep_pos as f32),
+                        OscWave::Square => 0.0,
+                    };
+                    raw2 + blep2
+                } else {
+                    0.0
+                };
+                let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
+
+                let hi = self.os.up(mix * self.drive);
+                let o = [
+                    self.ladder.tick(hi[0]),
+                    self.ladder.tick(hi[1]),
+                    self.ladder.tick(hi[2]),
+                    self.ladder.tick(hi[3]),
+                ];
+                self.comp_ultra.process(self.os.down(o) / self.drive)
+            }
             Tier::Ultra => {
                 let raw = self.vco.tick() * VCO_GAIN;
                 let blep = match self.vco.wave {

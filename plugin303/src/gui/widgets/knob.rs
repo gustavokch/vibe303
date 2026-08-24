@@ -181,7 +181,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     }
                 } else if self.label.contains("DRIFT") || self.label.contains("RECAL") {
                     let pct = if f <= 1.0 { f * 100.0 } else { f };
-                    format!("{:.0}%", pct)
+                    format!("{:.0} %", pct)
                 } else if self.label.contains("TONE")
                     || self.label.contains("THRESH")
                     || self.label.contains("BASS")
@@ -201,9 +201,9 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 {
                     // Parameters with .with_value_to_string using "%" format (e.g. Clipper Drive) pass f as raw percentage value (e.g. 50.0), so avoid double multiply.
                     if f > 2.0 {
-                        format!("{:.0}%", f)
+                        format!("{:.0} %", f)
                     } else {
-                        format!("{:.0}%", f * 100.0)
+                        format!("{:.0} %", f * 100.0)
                     }
                 } else if self.label.contains("DECAY") {
                     let ms = 200.0 + f.clamp(0.0, 1.0) * 1800.0;
@@ -235,10 +235,8 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     }
                 } else if self.label.contains("TEMPO") {
                     format!("{:.0} BPM", f)
-                } else if f.abs() >= 100.0 {
+                } else if f.abs() >= 1.0 {
                     format!("{:.0}", f)
-                } else if f.abs() >= 10.0 {
-                    format!("{:.1}", f)
                 } else {
                     format!("{:.2}", f)
                 }
