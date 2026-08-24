@@ -1,14 +1,41 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense, Stroke,
-    StrokeKind, Ui,
+    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense,
+    Stroke, StrokeKind, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::gui::theme;
 use crate::gui::widgets::piano_roll_popup::render_piano_roll_popup;
 use crate::gui::widgets::render_step_strip;
+use crate::gui::widgets::step_button::STRIP_HEIGHT;
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
+
+/// Width reserved for the transport/pattern column right of the step grid.
+const TRANSPORT_COLUMN_W: f32 = 232.0;
+/// Horizontal gap between adjacent step cells (and grid rows vertically).
+const GRID_GAP: f32 = 4.0;
+/// `add_space(8)` + separator (~2) + `add_space(8)` between grid and transport column.
+const SEPARATOR_CHROME_W: f32 = 18.0;
+/// Smallest usable step cell; below this the grid overflows instead of scrolling.
+const MIN_CELL_W: f32 = 72.0;
+/// Vertical chrome of the panel frame: inner_margin top (4) + border stroke
+/// (~2x1) + layout slack, subtracted from the pre-frame available height so
+/// the frame bottom reaches the window bottom.
+const FRAME_VERT_CHROME_PX: f32 = 12.0;
+
+/// Step cell width for a given inner available width.
+/// Returns `(cell_w, clamped)` — `clamped` is true when the window is too
+/// narrow and cells will overflow (surfaced by a debug assertion at call site).
+pub(crate) fn grid_cell_width(avail_w: f32) -> (f32, bool) {
+    let grid_avail_w = avail_w - TRANSPORT_COLUMN_W - SEPARATOR_CHROME_W;
+    let unclamped = (grid_avail_w - 7.0 * GRID_GAP) / 8.0;
+    if unclamped < MIN_CELL_W {
+        (MIN_CELL_W, true)
+    } else {
+        (unclamped, false)
+    }
+}
 
 pub fn render_sequencer_and_transport(
     ui: &mut Ui,
@@ -24,6 +51,8 @@ pub fn render_sequencer_and_transport(
     });
     ui.add_space(0.5);
 
+    let frame_avail_h = ui.available_height();
+
     Frame::new()
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
@@ -35,23 +64,37 @@ pub fn render_sequencer_and_transport(
             bottom: 0,
         })
         .show(ui, |ui| {
+            ui.set_min_height((frame_avail_h - FRAME_VERT_CHROME_PX).max(280.0));
             ui.set_max_width(1048.0);
 
+            // Grid geometry: 2 rows x 8 columns; transport column on the right
+            let (cell_w, clamped) = grid_cell_width(ui.available_width());
+            debug_assert!(
+                !clamped,
+                "sequencer grid overflows available width; cells clamp to {MIN_CELL_W}px and squeeze the transport column"
+            );
+            let cell_h = STRIP_HEIGHT;
+
             ui.horizontal(|ui| {
-                // 1. LEFT / MAIN: 16-Step Pitch Key Columns (16 x 56px = 896px + spacing)
+                // 1. LEFT / MAIN: step pitch key columns in a 2x8 grid (steps 01-08 top, 09-16 bottom)
                 ui.vertical(|ui| {
                     if let Ok(mut pattern_guard) = params.pattern.write() {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                            let is_running = params.seq_run.value();
+                        let is_running = params.seq_run.value();
+                        ui.spacing_mut().item_spacing = vec2(4.0, 12.0);
 
-                            for step_idx in 0..16 {
-                                let is_current = active_step as usize == step_idx;
-                                let step = &mut pattern_guard.steps[step_idx];
+                        for row in 0..2 {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
 
-                                render_step_strip(ui, step_idx, step, is_current, is_running);
-                            }
-                        });
+                                for col in 0..8 {
+                                    let step_idx = row * 8 + col;
+                                    let is_current = active_step as usize == step_idx;
+                                    let step = &mut pattern_guard.steps[step_idx];
+
+                                    render_step_strip(ui, step_idx, step, is_current, is_running, cell_w, cell_h);
+                                }
+                            });
+                        }
 
                         render_piano_roll_popup(ui.ctx(), &mut pattern_guard);
                     }
@@ -64,7 +107,7 @@ pub fn render_sequencer_and_transport(
                 // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing = vec2(3.0, 1.5);
+                    ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
                     ui.spacing_mut().button_padding = vec2(3.0, 1.0);
 
                     ui.label(
@@ -89,7 +132,7 @@ pub fn render_sequencer_and_transport(
                             .color(theme::TEXT_ON_ACCENT),
                         )
                         .fill(theme::ACCENT_ORANGE)
-                        .min_size(vec2(72.0, 20.0))
+                        .min_size(vec2(72.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(run_btn).clicked() {
@@ -115,7 +158,7 @@ pub fn render_sequencer_and_transport(
                             theme::WELL_BG
                         })
                         .stroke(Stroke::new(1.0_f32, if sync_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                        .min_size(vec2(84.0, 20.0))
+                        .min_size(vec2(84.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(sync_btn).clicked() {
@@ -203,7 +246,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(78.0, 18.0))
+                        .min_size(vec2(78.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_left_btn).on_hover_text("Rotate pattern steps left (cyclic)").clicked() {
@@ -220,7 +263,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(78.0, 18.0))
+                        .min_size(vec2(78.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_right_btn).on_hover_text("Rotate pattern steps right (cyclic)").clicked() {
@@ -410,7 +453,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(36.0, 20.0))
+                        .min_size(vec2(36.0, 24.0))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(clear_btn).on_hover_text("Reset all steps to default C3 notes").clicked() {
@@ -432,4 +475,31 @@ pub fn render_sequencer_and_transport(
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid_cells_fill_available_width_when_not_clamped() {
+        // avail exactly fits 8 cells of 90 px + 7 gaps after transport + separator chrome
+        let avail = TRANSPORT_COLUMN_W + SEPARATOR_CHROME_W + 8.0 * 90.0 + 7.0 * GRID_GAP;
+        let (cell_w, clamped) = grid_cell_width(avail);
+        assert!((cell_w - 90.0).abs() < 1e-4);
+        assert!(!clamped);
+    }
+
+    #[test]
+    fn grid_cell_width_clamps_to_minimum() {
+        let (cell_w, clamped) = grid_cell_width(100.0);
+        assert_eq!(cell_w, MIN_CELL_W);
+        assert!(clamped);
+    }
+
+    #[test]
+    fn frame_vertical_chrome_covers_margin_and_stroke() {
+        // inner_margin top (4) + border stroke (~2x1) + layout slack
+        assert_eq!(FRAME_VERT_CHROME_PX, 12.0);
+    }
 }

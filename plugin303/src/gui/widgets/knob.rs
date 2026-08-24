@@ -206,12 +206,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                         format!("{:.0} %", f * 100.0)
                     }
                 } else if self.label.contains("DECAY") {
-                    let ms = 200.0 + f.clamp(0.0, 1.0) * 1800.0;
-                    if ms >= 1000.0 {
-                        format!("{:.2} s", ms / 1000.0)
-                    } else {
-                        format!("{:.0} ms", ms)
-                    }
+                    format_decay_label(f)
                 } else if self.label.contains("GLIDE") {
                     let ms = f.clamp(0.0, 1.0) * 500.0;
                     format!("{:.0} ms", ms)
@@ -257,5 +252,47 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
         }
 
         response
+    }
+}
+
+/// DECAY badge label from normalized parameter value (0.0 = 200 ms, 1.0 = 2 s).
+///
+/// Threshold sits at 999.5 ms, not 1000.0: `{:.0}` rounds 999.6 up to "1000 ms",
+/// so a value below one second must switch to seconds at the rounding boundary.
+pub fn format_decay_label(normalized: f32) -> String {
+    let ms = 200.0 + normalized.clamp(0.0, 1.0) * 1800.0;
+    if ms >= 999.5 {
+        format!("{:.1} s", ms / 1000.0)
+    } else {
+        format!("{:.0} ms", ms)
+    }
+}
+
+#[cfg(test)]
+mod decay_tests {
+    use super::format_decay_label;
+
+    #[test]
+    fn decay_boundary_no_false_1000ms() {
+        // 999.6 ms is below 1 s but would round to "1000 ms" under a 1000.0 threshold
+        assert_eq!(format_decay_label((999.6 - 200.0) / 1800.0), "1.0 s");
+        assert_eq!(format_decay_label((999.4 - 200.0) / 1800.0), "999 ms");
+    }
+
+    #[test]
+    fn decay_range_endpoints() {
+        assert_eq!(format_decay_label(0.0), "200 ms");
+        assert_eq!(format_decay_label(1.0), "2.0 s");
+    }
+
+    #[test]
+    fn decay_mid_range_ms() {
+        assert_eq!(format_decay_label((800.0 - 200.0) / 1800.0), "800 ms");
+    }
+
+    #[test]
+    fn decay_clamps_out_of_range_input() {
+        assert_eq!(format_decay_label(-0.5), "200 ms");
+        assert_eq!(format_decay_label(1.5), "2.0 s");
     }
 }
