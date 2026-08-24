@@ -199,7 +199,12 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     || self.label.contains("DYN")
                     || self.label.contains("R-COMP")
                 {
-                    format!("{:.0}%", f * 100.0)
+                    // Parameters with .with_value_to_string using "%" format (e.g. Clipper Drive) pass f as raw percentage value (e.g. 50.0), so avoid double multiply.
+                    if f > 2.0 {
+                        format!("{:.0}%", f)
+                    } else {
+                        format!("{:.0}%", f * 100.0)
+                    }
                 } else if self.label.contains("DECAY") {
                     let ms = 200.0 + f.clamp(0.0, 1.0) * 1800.0;
                     if ms >= 1000.0 {
