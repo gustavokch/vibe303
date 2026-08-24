@@ -276,9 +276,8 @@ impl Plugin for Plugin303 {
     ) -> ProcessStatus {
         let synth_bypass = self.params.synth_bypass.value();
 
-        if !synth_bypass {
-            // Expose parameters block-rate only when synth audio is active
-            self.voice.update_params(
+        // Always keep voice params and tier updated so state doesn't desync on bypass toggle
+        self.voice.update_params(
                 self.params.tuning.value(),
                 self.params.osc1_pitch.value(),
                 self.params.osc2_pitch.value(),
@@ -332,7 +331,6 @@ impl Plugin for Plugin303 {
 
             // Block-rate read of the fidelity tier (starts a crossfade on change).
             self.voice.set_tier(self.params.tier.value());
-        }
 
         // Report PDC only when the tier's latency actually changes, so the host
         // isn't spammed with redundant restarts every block.
@@ -502,8 +500,15 @@ impl Plugin for Plugin303 {
                             } => {
                                 let note = seq_pitch_to_midi_note(key, octave);
                                 let velocity = if accent { 1.0 } else { 0.70 };
-                                if let Some((prev_ch, prev_note)) = self.active_seq_midi_note {
+                                if let Some((prev_ch, prev_note)) = self.active_seq_midi_note.take() {
                                     if prev_note != note || prev_ch != midi_channel {
+                                        context.send_event(NoteEvent::NoteOff {
+                                            timing,
+                                            voice_id: None,
+                                            channel: prev_ch,
+                                            note: prev_note,
+                                            velocity: 0.0,
+                                        });
                                         context.send_event(NoteEvent::NoteOn {
                                             timing,
                                             voice_id: None,
@@ -511,12 +516,22 @@ impl Plugin for Plugin303 {
                                             note,
                                             velocity,
                                         });
+                                        self.active_seq_midi_note = Some((midi_channel, note));
+                                    } else {
+                                        // Same note/channel — just send NoteOn (re-trigger) and NoteOff (clean)
                                         context.send_event(NoteEvent::NoteOff {
                                             timing,
                                             voice_id: None,
                                             channel: prev_ch,
                                             note: prev_note,
                                             velocity: 0.0,
+                                        });
+                                        context.send_event(NoteEvent::NoteOn {
+                                            timing,
+                                            voice_id: None,
+                                            channel: midi_channel,
+                                            note,
+                                            velocity,
                                         });
                                         self.active_seq_midi_note = Some((midi_channel, note));
                                     }
