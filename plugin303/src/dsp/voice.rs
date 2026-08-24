@@ -888,7 +888,7 @@ impl Voice {
         self.xfade_pos = 1.0;
         self.pending_tier = None;
 
-        if tier == Tier::Ultra && self.vco_dirty {
+        if (tier == Tier::Ultra || tier == Tier::Ultra2x) && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
             let ok1 = self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
             let ok2 = self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
