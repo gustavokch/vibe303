@@ -19,9 +19,9 @@ const GRID_GAP: f32 = 4.0;
 const SEPARATOR_CHROME_W: f32 = 18.0;
 /// Smallest usable step cell; below this the grid overflows instead of scrolling.
 const MIN_CELL_W: f32 = 72.0;
-/// Vertical chrome of the panel frame: inner_margin top (4) + border stroke
-/// (~2x1) + layout slack, subtracted from the pre-frame available height so
-/// the frame bottom reaches the window bottom.
+/// Vertical chrome subtracted from the pre-frame available height so the
+/// frame bottom reaches the window bottom. Value is empirical: calibrated
+/// against rendered captures, not derived from margin+stroke constants.
 const FRAME_VERT_CHROME_PX: f32 = 4.0;
 
 /// Step cell width for a given inner available width.
@@ -498,8 +498,9 @@ mod tests {
     }
 
     #[test]
-    fn frame_vertical_chrome_covers_margin_and_stroke() {
-        // inner_margin top (4) + border stroke (~2x1) + layout slack
+    fn frame_vertical_chrome_pinned() {
+        // Change-detector pin: value is empirically calibrated against
+        // rendered captures. A change here must be re-verified visually.
         assert_eq!(FRAME_VERT_CHROME_PX, 4.0);
     }
 }
