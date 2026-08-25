@@ -152,7 +152,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             let zero_snapped = if normalized.abs() < 0.001 {
                 true
             } else {
-                plain_value.map_or(false, |v| zero_center_branch && v.abs() < 0.05)
+                plain_value.is_some_and(|v| zero_center_branch && v.abs() < 0.05)
             };
             let current_angle = if zero_snapped {
                 start_angle
