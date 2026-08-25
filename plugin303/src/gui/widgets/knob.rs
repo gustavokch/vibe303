@@ -174,11 +174,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                         format!("{:.0} Hz", hz)
                     }
                 } else if self.label.contains("VOLUME") {
-                    if f.abs() < 0.05 {
-                        "+0.0 dB".to_string()
-                    } else {
-                        format!("{:+.1} dB", f)
-                    }
+                    format_zero_centered(f, |v| format!("{:+.1}", v), "dB")
                 } else if self.label.contains("DRIFT") || self.label.contains("RECAL") {
                     let pct = if f <= 1.0 { f * 100.0 } else { f };
                     format!("{:.0} %", pct)
@@ -211,25 +207,11 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     let ms = f.clamp(0.0, 1.0) * 500.0;
                     format!("{:.0} ms", ms)
                 } else if self.label.contains("TUNING") {
-                    if f.abs() < 0.05 {
-                        "+0.0 ct".to_string()
-                    } else {
-                        format!("{:+.1} ct", f)
-                    }
+                    format_zero_centered(f, |v| format!("{:+.1}", v), "ct")
                 } else if self.label.contains("PITCH") || self.label.contains("DET") {
-                    if f.abs() < 0.05 {
-                        "+0.0 st".to_string()
-                    } else {
-                        format!("{:+.1} st", f)
-                    }
+                    format_zero_centered(f, |v| format!("{:+.1}", v), "st")
                 } else if self.label.contains("IN") || self.label.contains("OUT") || self.label.contains("TILT") {
-                    // dB knobs: 0.0 dB is bipolar center; pointer should point 12:00 exactly.
-                    // Any ~10° CCW offset at center is an intentional mapping taper (documented).
-                    if f.abs() < 0.05 {
-                        "+0.0 dB".to_string()
-                    } else {
-                        format!("{:+.1} dB", f)
-                    }
+                    format_zero_centered(f, |v| format!("{:+.1}", v), "dB")
                 } else if self.label.contains("TEMPO") {
                     format!("{:.0} BPM", f)
                 } else if f.abs() >= 1.0 {
@@ -254,6 +236,18 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
         }
 
         response
+    }
+}
+
+/// Format a bipolar-center value: at |f| < 0.05 print `+0.0 {unit}`;
+/// otherwise apply `non_zero(f)` and append `unit`. Single source of truth
+/// for the three zero-center branches (TUNING / PITCH / dB), so the next
+/// audit only has to change one place.
+pub fn format_zero_centered<F: FnOnce(f32) -> String>(f: f32, non_zero: F, unit: &str) -> String {
+    if f.abs() < 0.05 {
+        format!("+0.0 {}", unit)
+    } else {
+        format!("{} {}", non_zero(f), unit)
     }
 }
 
