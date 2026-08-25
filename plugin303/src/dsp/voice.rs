@@ -385,14 +385,12 @@ impl Voice {
         let lat_high = Os2x::new().latency_samples();
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
-        let ultra_factor = if (sr - 44100.0).abs() < 0.5 || (sr - 48000.0).abs() < 0.5 {
-            2.0
-        } else if sr >= 88200.0 {
-            1.0
-        } else {
-            ULTRA_OS_FACTOR
-        };
-        let mut ladder = LadderVcf::new(sr * ultra_factor);
+        // The Tier::Ultra arm drives this ladder 4× per output sample through
+        // Os4x and the nodal solver tunes its capacitors from the constructor
+        // rate, so it must always be built at the oversampled clock (see the
+        // unit test pinning this below). Setter-side rebuilds
+        // (`rebuild_ultra_ladder_if_needed`) use the same rate.
+        let mut ladder = LadderVcf::new(sr * ULTRA_OS_FACTOR);
         let _tuning_offset: f32;
         let _tuning_offset_int: i32;
         ladder.set_instance_id(3);
@@ -883,6 +881,10 @@ impl Voice {
     /// construction or `initialize`, where there is no prior audio to fade from.
     /// Runtime changes go through [`set_tier`] (faded).
     pub fn set_tier_immediate(&mut self, tier: Tier) {
+        // Rebuild while `self.tier` still holds the previous tier — the helper
+        // skips work when nothing actually changes.
+        self.rebuild_ultra_ladder_if_needed(tier);
+
         self.tier = tier;
         self.xfade_from = None;
         self.xfade_pos = 1.0;
@@ -896,6 +898,30 @@ impl Voice {
                 self.vco_dirty = false;
             }
         }
+    }
+
+    /// The Ultra ladders run the nodal solver at the tier's oversampled rate and
+    /// tune their capacitors from the constructor SR (`dt = 1/self.sr`), so the
+    /// ladder must be rebuilt whenever the target tier's rate differs from the
+    /// built one. Shared by [`Self::set_tier`] and [`Self::set_tier_immediate`]
+    /// so both entry points establish an identical ladder for the same target.
+    fn rebuild_ultra_ladder_if_needed(&mut self, tier: Tier) {
+        if !matches!(tier, Tier::Ultra | Tier::Ultra2x) || self.tier == tier {
+            return;
+        }
+        let factor = if tier == Tier::Ultra2x { 2.0 } else { ULTRA_OS_FACTOR };
+        let mut new_ladder = LadderVcf::new(self.sr * factor);
+        new_ladder.set_instance_id(3);
+        new_ladder.set_cal(ULTRA_BRIGHT);
+        new_ladder.set_poles(self.ladder.poles);
+        new_ladder.set_thermal(self.ladder_thermal_state);
+        new_ladder.set_analog_wear(
+            self.tolerance_f64(),
+            self.age,
+            self.comp_seed as u32,
+            self.recalibration_scale,
+        );
+        self.ladder = new_ladder;
     }
 
     /// Clear all runtime state to silence, **in place** — the host reset path.
@@ -987,23 +1013,7 @@ impl Voice {
             }
         }
 
-        if tier == Tier::Ultra || tier == Tier::Ultra2x {
-            if self.tier != tier {
-                let factor = if tier == Tier::Ultra2x { 2.0 } else { ULTRA_OS_FACTOR };
-                let mut new_ladder = LadderVcf::new(self.sr * factor);
-                new_ladder.set_instance_id(3);
-                new_ladder.set_cal(ULTRA_BRIGHT);
-                new_ladder.set_poles(self.ladder.poles);
-                new_ladder.set_thermal(self.ladder_thermal_state);
-                new_ladder.set_analog_wear(
-                    self.tolerance_f64(),
-                    self.age,
-                    self.comp_seed as u32,
-                    self.recalibration_scale,
-                );
-                self.ladder = new_ladder;
-            }
-        }
+        self.rebuild_ultra_ladder_if_needed(tier);
 
         if self.xfade_from.is_some() {
             // If a fade is already in flight, queue the new target instead of
@@ -1629,3 +1639,29 @@ fn lin_to_exp(x: f64, min: f64, max: f64) -> f64 {
 fn exp_to_lin(y: f64, min: f64, max: f64) -> f64 {
     (y / min).ln() / (max / min).ln()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression pin for 21b7307: the shared Ultra ladder must be built at
+    /// the tier's oversampled clock (`sr * ULTRA_OS_FACTOR`) because the
+    /// Tier::Ultra arm drives it 4× per output sample through `Os4x` and the
+    /// nodal solver tunes its capacitors from the constructor rate. The
+    /// setter-side rebuild (`rebuild_ultra_ladder_if_needed`) assumes this too.
+    #[test]
+    fn voice_new_builds_ultra_ladder_at_oversampled_rate() {
+        for sr in [44_100.0f32, 48_000.0, 96_000.0] {
+            let v = Voice::new(sr);
+            let expected = sr as f64 * ULTRA_OS_FACTOR as f64;
+            assert!(
+                (v.ladder.sample_rate() - expected).abs() < 1e-6,
+                "sr {}: ladder built at {} Hz, expected {} Hz",
+                sr,
+                v.ladder.sample_rate(),
+                expected
+            );
+        }
+    }
+}
+
