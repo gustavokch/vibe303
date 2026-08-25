@@ -89,7 +89,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             painter.rect_stroke(
                 track_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.5_f32, if is_enabled { theme::BORDER_DEFAULT } else { theme::BORDER_DEFAULT }),
+                Stroke::new(1.5_f32, if is_enabled { theme::BORDER_DEFAULT } else { theme::BORDER_SUBTLE }),
                 StrokeKind::Inside,
             );
 
