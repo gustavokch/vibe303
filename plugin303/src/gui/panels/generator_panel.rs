@@ -228,12 +228,12 @@ pub fn render_generator_panel(
                             ui.add(
                                 DragValue::new(&mut gen_params.octave_min)
                                     .range(-1..=1)
-                                    .custom_formatter(|v, _| format!("{:+.0}", v as i32)),
+                                    .custom_formatter(|v, _| format!("{:+.0}", v)),
                             );
                             ui.add(
                                 DragValue::new(&mut gen_params.octave_max)
                                     .range(-1..=1)
-                                    .custom_formatter(|v, _| format!("{:+.0}", v as i32)),
+                                    .custom_formatter(|v, _| format!("{:+.0}", v)),
                             );
                         });
 
