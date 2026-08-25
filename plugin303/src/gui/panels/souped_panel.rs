@@ -23,8 +23,8 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
             if is_accurate {
                 // Centered overlay card when bypassed with zero ghost rendering
                 let total_w = ui.available_width();
-                let card_w = 320.0_f32.min(total_w - 20.0);
-                let card_h = 68.0_f32;
+                let card_w = 300.0_f32.min(total_w - 20.0);
+                let card_h = 52.0_f32;
                 let pad = ((DRAWER_INNER_HEIGHT - card_h) * 0.5).max(0.0);
 
                 ui.vertical(|ui| {
