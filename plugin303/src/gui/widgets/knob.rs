@@ -137,8 +137,28 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 }
             }
 
-            // 3. Pointer Needle
-            let current_angle = start_angle + normalized * (end_angle - start_angle);
+            // 3. Pointer Needle (snap to start_angle at zero — fix #17)
+            // Display string parsed once here and reused by the value badge
+            // below. Label dispatch uses contains() — the established idiom
+            // in this file; "IN" also covers "TUNING".
+            let raw_str = self.param.to_string();
+            let plain_value = parse_plain_value(&raw_str);
+            let zero_center_branch = self.label.contains("VOLUME")
+                || self.label.contains("PITCH")
+                || self.label.contains("DET")
+                || self.label.contains("IN")
+                || self.label.contains("OUT")
+                || self.label.contains("TILT");
+            let zero_snapped = if normalized.abs() < 0.001 {
+                true
+            } else {
+                plain_value.is_some_and(|v| zero_center_branch && v.abs() < 0.05)
+            };
+            let current_angle = if zero_snapped {
+                start_angle
+            } else {
+                start_angle + normalized * (end_angle - start_angle)
+            };
             let needle_inner = pos2(
                 center.x + current_angle.cos() * (self.radius * 0.2),
                 center.y + current_angle.sin() * (self.radius * 0.2),
@@ -163,9 +183,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
 
             // 5. Monospace Value Badge
             let value_y = label_y + 12.0;
-            let raw_str = self.param.to_string();
-            let clean_str = raw_str.split_whitespace().next().unwrap_or(&raw_str);
-            let value_str = if let Ok(f) = clean_str.parse::<f32>() {
+            let value_str = if let Some(f) = plain_value {
                 if self.label.contains("CUTOFF") {
                     let hz = 300.0 * (15000.0 / 300.0_f32).powf(f.clamp(0.0, 1.0));
                     if hz >= 1000.0 {
@@ -174,14 +192,10 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                         format!("{:.0} Hz", hz)
                     }
                 } else if self.label.contains("VOLUME") {
-                    if f.abs() < 0.05 {
-                        "+0.0 dB".to_string()
-                    } else {
-                        format!("{:+.1} dB", f)
-                    }
+                    format_zero_centered(f, |v| format!("{:+.1}", v), "dB")
                 } else if self.label.contains("DRIFT") || self.label.contains("RECAL") {
                     let pct = if f <= 1.0 { f * 100.0 } else { f };
-                    format!("{:.0} %", pct)
+                    format!("{:.0}%", pct)
                 } else if self.label.contains("TONE")
                     || self.label.contains("THRESH")
                     || self.label.contains("BASS")
@@ -201,9 +215,9 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 {
                     // Parameters with .with_value_to_string using "%" format (e.g. Clipper Drive) pass f as raw percentage value (e.g. 50.0), so avoid double multiply.
                     if f > 2.0 {
-                        format!("{:.0} %", f)
+                        format!("{:.0}%", f)
                     } else {
-                        format!("{:.0} %", f * 100.0)
+                        format!("{:.0}%", f * 100.0)
                     }
                 } else if self.label.contains("DECAY") {
                     format_decay_label(f)
@@ -211,23 +225,11 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     let ms = f.clamp(0.0, 1.0) * 500.0;
                     format!("{:.0} ms", ms)
                 } else if self.label.contains("TUNING") {
-                    if f.abs() < 0.05 {
-                        "+0.0 ct".to_string()
-                    } else {
-                        format!("{:+.1} ct", f)
-                    }
+                    format_zero_centered(f, |v| format!("{:+.1}", v), "ct")
                 } else if self.label.contains("PITCH") || self.label.contains("DET") {
-                    if f.abs() < 0.05 {
-                        "+0.0 st".to_string()
-                    } else {
-                        format!("{:+.1} st", f)
-                    }
+                    format_zero_centered(f, |v| format!("{:+.1}", v), "st")
                 } else if self.label.contains("IN") || self.label.contains("OUT") || self.label.contains("TILT") {
-                    if f.abs() < 0.05 {
-                        "+0.0 dB".to_string()
-                    } else {
-                        format!("{:+.1} dB", f)
-                    }
+                    format_zero_centered(f, |v| format!("{:+.1}", v), "dB")
                 } else if self.label.contains("TEMPO") {
                     format!("{:.0} BPM", f)
                 } else if f.abs() >= 1.0 {
@@ -255,6 +257,25 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
     }
 }
 
+/// Extract the plain numeric value from a param display string by parsing
+/// its first whitespace-separated token. Returns `None` when the token is
+/// not numeric (e.g. `"OFF"`, or a unit fused to the number like `"50%"`).
+pub fn parse_plain_value(display: &str) -> Option<f32> {
+    display.split_whitespace().next()?.parse::<f32>().ok()
+}
+
+/// Format a bipolar-center value: at |f| < 0.05 print `+0.0 {unit}`;
+/// otherwise apply `non_zero(f)` and append `unit`. Single source of truth
+/// for the three zero-center branches (TUNING / PITCH / dB), so the next
+/// audit only has to change one place.
+pub fn format_zero_centered<F: FnOnce(f32) -> String>(f: f32, non_zero: F, unit: &str) -> String {
+    if f.abs() < 0.05 {
+        format!("+0.0 {}", unit)
+    } else {
+        format!("{} {}", non_zero(f), unit)
+    }
+}
+
 /// DECAY badge label from normalized parameter value (0.0 = 200 ms, 1.0 = 2 s).
 ///
 /// Threshold sits at 999.5 ms, not 1000.0: `{:.0}` rounds 999.6 up to "1000 ms",
@@ -265,6 +286,27 @@ pub fn format_decay_label(normalized: f32) -> String {
         format!("{:.1} s", ms / 1000.0)
     } else {
         format!("{:.0} ms", ms)
+    }
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::parse_plain_value;
+
+    #[test]
+    fn parses_leading_numeric_token() {
+        assert_eq!(parse_plain_value("+0.0 dB"), Some(0.0));
+        assert_eq!(parse_plain_value("-3.5 dB"), Some(-3.5));
+        assert_eq!(parse_plain_value("50 %"), Some(50.0));
+        assert_eq!(parse_plain_value("0.75"), Some(0.75));
+    }
+
+    #[test]
+    fn rejects_non_numeric() {
+        assert_eq!(parse_plain_value("OFF"), None);
+        assert_eq!(parse_plain_value(""), None);
+        // No whitespace separator — trailing unit stays attached, parse fails.
+        assert_eq!(parse_plain_value("50%"), None);
     }
 }
 

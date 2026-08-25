@@ -148,19 +148,34 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             || params.tolerance.value() != crate::params::CompTolerance::Zero
                             || params.thermal_noise.value() != 0
                             || params.comp_drift.value() != 0.1;
-                        let btn_color = if params.calibrate_sync.value() {
+                        let calibrating = params.calibrate_sync.value();
+                        let btn_color = if calibrating {
                             theme::ACCENT_CYAN
                         } else if needs_rebuild {
                             theme::ACCENT_ORANGE
                         } else {
-                            theme::TEXT_MUTED
+                            theme::WELL_BG
                         };
-                        let btn_label = if params.calibrate_sync.value() {
-                            "CALIBRATING..."
-                        } else {
-                            "CALIBRATE"
+                        // Strikethrough marks the button as inert in the idle
+                        // state (audit #19): calibration is only meaningful
+                        // when needs_rebuild flags drifted params.
+                        let btn_text = {
+                            let text = nih_plug_egui::egui::RichText::new(if calibrating {
+                                "CALIBRATING..."
+                            } else {
+                                "CALIBRATE"
+                            })
+                            .font(FontId::proportional(8.0))
+                            .color(if calibrating {
+                                theme::TEXT_ON_ACCENT
+                            } else if needs_rebuild {
+                                theme::TEXT_PRIMARY
+                            } else {
+                                theme::TEXT_MUTED
+                            });
+                            if !calibrating { text.strikethrough() } else { text }
                         };
-                        if ui.add(nih_plug_egui::egui::Button::new(btn_label).fill(btn_color)).clicked() {
+                        if ui.add(nih_plug_egui::egui::Button::new(btn_text).fill(btn_color)).clicked() {
                             setter.begin_set_parameter(&params.calibrate_sync);
                             setter.set_parameter(&params.calibrate_sync, true);
                             setter.end_set_parameter(&params.calibrate_sync);

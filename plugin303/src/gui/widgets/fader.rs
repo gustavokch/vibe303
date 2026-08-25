@@ -76,7 +76,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 nih_plug_egui::egui::Align2::CENTER_TOP,
                 self.label,
                 FontId::new(8.5, FontFamily::Proportional),
-                if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
+                if is_enabled { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED },
             );
 
             // Recessed vertical track
@@ -89,7 +89,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             painter.rect_stroke(
                 track_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, if is_enabled { theme::BORDER_DEFAULT } else { theme::BORDER_SUBTLE }),
+                Stroke::new(1.5_f32, if is_enabled { theme::BORDER_DEFAULT } else { theme::BORDER_SUBTLE }),
                 StrokeKind::Inside,
             );
 
