@@ -54,13 +54,11 @@ pub fn create_editor(
                     ui.add_space(0.5);
 
                     // 4. Output Clipper + Tweaks Panel
-                    ui.horizontal(|ui| {
-                        // Clipper and tweaks stacked vertically to fill height and eliminate dead band
-                        ui.vertical(|ui| {
-                            panels::output_clipper::render_output_clipper(ui, &params, setter);
-                            ui.add_space(3.0);
-                            panels::tweaks_panel::render_tweaks_panel(ui, &params, setter);
-                        });
+                    // Clipper and tweaks stacked vertically to fill height and eliminate dead band
+                    ui.vertical(|ui| {
+                        panels::output_clipper::render_output_clipper(ui, &params, setter);
+                        ui.add_space(3.0);
+                        panels::tweaks_panel::render_tweaks_panel(ui, &params, setter);
                     });
                     ui.add_space(0.5);
 

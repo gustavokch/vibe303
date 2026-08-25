@@ -223,17 +223,23 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                         format!("{:+.1} st", f)
                     }
                 } else if self.label.contains("IN") || self.label.contains("OUT") || self.label.contains("TILT") {
+                    // dB knobs: 0.0 dB is bipolar center; pointer should point 12:00 exactly.
+                    // Any ~10° CCW offset at center is an intentional mapping taper (documented).
                     if f.abs() < 0.05 {
                         "+0.0 dB".to_string()
                     } else {
                         format!("{:+.1} dB", f)
                     }
                 } else if self.label.contains("TEMPO") {
-                    format!("{:.1} BPM", f)
+                    if f.abs() < 0.05 {
+                        "0.0 BPM".to_string()
+                    } else {
+                        format!("{:.1} BPM", f)
+                    }
                 } else if f.abs() >= 1.0 {
                     format!("{:.0}", f)
                 } else {
-                    format!("{:.1}", f)
+                    format!("{:.2}", f)
                 }
             } else {
                 raw_str
