@@ -12,7 +12,7 @@ use crate::gui::widgets::step_button::STRIP_HEIGHT;
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
 
 /// Width reserved for the transport/pattern column right of the step grid.
-const TRANSPORT_COLUMN_W: f32 = 232.0;
+const TRANSPORT_COLUMN_W: f32 = 280.0;
 /// Horizontal gap between adjacent step cells (and grid rows vertically).
 const GRID_GAP: f32 = 4.0;
 /// `add_space(8)` + separator (~2) + `add_space(8)` between grid and transport column.
@@ -22,7 +22,7 @@ const MIN_CELL_W: f32 = 72.0;
 /// Vertical chrome of the panel frame: inner_margin top (4) + border stroke
 /// (~2x1) + layout slack, subtracted from the pre-frame available height so
 /// the frame bottom reaches the window bottom.
-const FRAME_VERT_CHROME_PX: f32 = 12.0;
+const FRAME_VERT_CHROME_PX: f32 = 8.0;
 
 /// Step cell width for a given inner available width.
 /// Returns `(cell_w, clamped)` — `clamped` is true when the window is too
@@ -430,7 +430,7 @@ pub fn render_sequencer_and_transport(
                             });
 
                         let mut jitter_val = params.seq_jitter.value();
-                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
+                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(36.0, 28.0), Sense::click());
                         if jit_resp.clicked() {
                             jitter_val = !jitter_val;
                             setter.begin_set_parameter(&params.seq_jitter);
@@ -500,6 +500,6 @@ mod tests {
     #[test]
     fn frame_vertical_chrome_covers_margin_and_stroke() {
         // inner_margin top (4) + border stroke (~2x1) + layout slack
-        assert_eq!(FRAME_VERT_CHROME_PX, 12.0);
+        assert_eq!(FRAME_VERT_CHROME_PX, 8.0);
     }
 }

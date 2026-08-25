@@ -39,7 +39,7 @@ fn render_adsr_bank(
                         nih_plug_egui::egui::FontFamily::Proportional,
                     ))
                     .strong()
-                    .color(if is_active { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED }),
+                    .color(if is_active { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY }),
             );
             ui.add_space(1.0);
             ui.horizontal(|ui| {
