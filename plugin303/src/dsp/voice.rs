@@ -883,9 +883,7 @@ impl Voice {
     pub fn set_tier_immediate(&mut self, tier: Tier) {
         // Rebuild while `self.tier` still holds the previous tier — the helper
         // skips work when nothing actually changes.
-        if tier == Tier::Ultra || tier == Tier::Ultra2x {
-            self.rebuild_ultra_ladder_if_needed(tier);
-        }
+        self.rebuild_ultra_ladder_if_needed(tier);
 
         self.tier = tier;
         self.xfade_from = None;
@@ -908,8 +906,7 @@ impl Voice {
     /// built one. Shared by [`Self::set_tier`] and [`Self::set_tier_immediate`]
     /// so both entry points establish an identical ladder for the same target.
     fn rebuild_ultra_ladder_if_needed(&mut self, tier: Tier) {
-        debug_assert!(matches!(tier, Tier::Ultra | Tier::Ultra2x));
-        if self.tier == tier {
+        if !matches!(tier, Tier::Ultra | Tier::Ultra2x) || self.tier == tier {
             return;
         }
         let factor = if tier == Tier::Ultra2x { 2.0 } else { ULTRA_OS_FACTOR };
@@ -1016,9 +1013,7 @@ impl Voice {
             }
         }
 
-        if tier == Tier::Ultra || tier == Tier::Ultra2x {
-            self.rebuild_ultra_ladder_if_needed(tier);
-        }
+        self.rebuild_ultra_ladder_if_needed(tier);
 
         if self.xfade_from.is_some() {
             // If a fade is already in flight, queue the new target instead of
