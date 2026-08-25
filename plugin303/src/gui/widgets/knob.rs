@@ -231,11 +231,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                         format!("{:+.1} dB", f)
                     }
                 } else if self.label.contains("TEMPO") {
-                    if f.abs() < 0.05 {
-                        "0.0 BPM".to_string()
-                    } else {
-                        format!("{:.1} BPM", f)
-                    }
+                    format!("{:.0} BPM", f)
                 } else if f.abs() >= 1.0 {
                     format!("{:.0}", f)
                 } else {
