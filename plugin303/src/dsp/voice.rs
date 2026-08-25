@@ -883,6 +883,12 @@ impl Voice {
     /// construction or `initialize`, where there is no prior audio to fade from.
     /// Runtime changes go through [`set_tier`] (faded).
     pub fn set_tier_immediate(&mut self, tier: Tier) {
+        // Rebuild while `self.tier` still holds the previous tier — the helper
+        // skips work when nothing actually changes.
+        if tier == Tier::Ultra || tier == Tier::Ultra2x {
+            self.rebuild_ultra_ladder_if_needed(tier);
+        }
+
         self.tier = tier;
         self.xfade_from = None;
         self.xfade_pos = 1.0;
@@ -896,6 +902,31 @@ impl Voice {
                 self.vco_dirty = false;
             }
         }
+    }
+
+    /// The Ultra ladders run the nodal solver at the tier's oversampled rate and
+    /// tune their capacitors from the constructor SR (`dt = 1/self.sr`), so the
+    /// ladder must be rebuilt whenever the target tier's rate differs from the
+    /// built one. Shared by [`Self::set_tier`] and [`Self::set_tier_immediate`]
+    /// so both entry points establish an identical ladder for the same target.
+    fn rebuild_ultra_ladder_if_needed(&mut self, tier: Tier) {
+        debug_assert!(matches!(tier, Tier::Ultra | Tier::Ultra2x));
+        if self.tier == tier {
+            return;
+        }
+        let factor = if tier == Tier::Ultra2x { 2.0 } else { ULTRA_OS_FACTOR };
+        let mut new_ladder = LadderVcf::new(self.sr * factor);
+        new_ladder.set_instance_id(3);
+        new_ladder.set_cal(ULTRA_BRIGHT);
+        new_ladder.set_poles(self.ladder.poles);
+        new_ladder.set_thermal(self.ladder_thermal_state);
+        new_ladder.set_analog_wear(
+            self.tolerance_f64(),
+            self.age,
+            self.comp_seed as u32,
+            self.recalibration_scale,
+        );
+        self.ladder = new_ladder;
     }
 
     /// Clear all runtime state to silence, **in place** — the host reset path.
@@ -988,21 +1019,7 @@ impl Voice {
         }
 
         if tier == Tier::Ultra || tier == Tier::Ultra2x {
-            if self.tier != tier {
-                let factor = if tier == Tier::Ultra2x { 2.0 } else { ULTRA_OS_FACTOR };
-                let mut new_ladder = LadderVcf::new(self.sr * factor);
-                new_ladder.set_instance_id(3);
-                new_ladder.set_cal(ULTRA_BRIGHT);
-                new_ladder.set_poles(self.ladder.poles);
-                new_ladder.set_thermal(self.ladder_thermal_state);
-                new_ladder.set_analog_wear(
-                    self.tolerance_f64(),
-                    self.age,
-                    self.comp_seed as u32,
-                    self.recalibration_scale,
-                );
-                self.ladder = new_ladder;
-            }
+            self.rebuild_ultra_ladder_if_needed(tier);
         }
 
         if self.xfade_from.is_some() {
