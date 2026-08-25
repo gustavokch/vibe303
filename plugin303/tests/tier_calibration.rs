@@ -200,7 +200,9 @@ fn test_voicing_parity_sweeps() {
     //  at knob 0.5), which widens inter-tier spectral divergence, and the
     //  Ultra ladder now rebuilds at the Os4x rate in set_tier_immediate,
     //  restoring the pre-21b7307 filter response. Parity property intact:
-    //  corr 0.993 at the new operating point.)
+    //  corr 0.993 at the new operating point. Margin intentionally tight
+    //  (~1.4 dB over the measured operating point) to keep the parity
+    //  property under active drift watch.)
     assert!(
         lsd_high <= 17.0,
         "High vs Ultra LSD ({:.2} dB) exceeds budget",
