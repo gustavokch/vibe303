@@ -209,6 +209,13 @@ impl LadderVcf {
         self.i0 = self.diode.n_vt * TAU * self.fc * C_REF * self.cal;
     }
 
+    /// Diagnostic: sample rate the filter was constructed at (Hz). The nodal
+    /// solver tunes its capacitors from this value, so it must equal the
+    /// actual tick clock (tier OS factor × host SR) for correct tuning.
+    pub fn sample_rate(&self) -> f64 {
+        self.sr
+    }
+
     pub fn set_analog_wear(&mut self, tolerance: f64, age: i32, seed: u32, recalibration_scale: f64) {
         let mut rng_state = seed ^ (self.instance_id.wrapping_mul(0x9E3779B9) ^ 0x55AA55AA);
         let mut next_f64 = || {

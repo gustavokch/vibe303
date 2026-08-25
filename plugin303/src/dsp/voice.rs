@@ -385,14 +385,12 @@ impl Voice {
         let lat_high = Os2x::new().latency_samples();
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
-        let ultra_factor = if (sr - 44100.0).abs() < 0.5 || (sr - 48000.0).abs() < 0.5 {
-            2.0
-        } else if sr >= 88200.0 {
-            1.0
-        } else {
-            ULTRA_OS_FACTOR
-        };
-        let mut ladder = LadderVcf::new(sr * ultra_factor);
+        // The Tier::Ultra arm drives this ladder 4× per output sample through
+        // Os4x and the nodal solver tunes its capacitors from the constructor
+        // rate, so it must always be built at the oversampled clock (see the
+        // unit test pinning this below). Setter-side rebuilds
+        // (`rebuild_ultra_ladder_if_needed`) use the same rate.
+        let mut ladder = LadderVcf::new(sr * ULTRA_OS_FACTOR);
         let _tuning_offset: f32;
         let _tuning_offset_int: i32;
         ladder.set_instance_id(3);
@@ -1646,3 +1644,29 @@ fn lin_to_exp(x: f64, min: f64, max: f64) -> f64 {
 fn exp_to_lin(y: f64, min: f64, max: f64) -> f64 {
     (y / min).ln() / (max / min).ln()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression pin for 21b7307: the shared Ultra ladder must be built at
+    /// the tier's oversampled clock (`sr * ULTRA_OS_FACTOR`) because the
+    /// Tier::Ultra arm drives it 4× per output sample through `Os4x` and the
+    /// nodal solver tunes its capacitors from the constructor rate. The
+    /// setter-side rebuild (`rebuild_ultra_ladder_if_needed`) assumes this too.
+    #[test]
+    fn voice_new_builds_ultra_ladder_at_oversampled_rate() {
+        for sr in [44_100.0f32, 48_000.0, 96_000.0] {
+            let v = Voice::new(sr);
+            let expected = sr as f64 * ULTRA_OS_FACTOR as f64;
+            assert!(
+                (v.ladder.sample_rate() - expected).abs() < 1e-6,
+                "sr {}: ladder built at {} Hz, expected {} Hz",
+                sr,
+                v.ladder.sample_rate(),
+                expected
+            );
+        }
+    }
+}
+
