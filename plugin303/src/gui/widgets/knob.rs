@@ -137,8 +137,28 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 }
             }
 
-            // 3. Pointer Needle
-            let current_angle = start_angle + normalized * (end_angle - start_angle);
+            // 3. Pointer Needle (snap to start_angle at zero — fix #17)
+            let zero_center_branch = self.label.contains("VOLUME")
+                || self.label.contains("TUNING")
+                || self.label.contains("PITCH")
+                || self.label.contains("DET")
+                || self.label.contains("IN")
+                || self.label.contains("OUT")
+                || self.label.contains("TILT");
+            let f_for_snap = self.param.to_string();
+            let clean_f_str = f_for_snap.split_whitespace().next().unwrap_or(&f_for_snap);
+            let zero_snapped = if normalized.abs() < 0.001 {
+                true
+            } else {
+                clean_f_str.parse::<f32>().ok().map_or(false, |v| {
+                    zero_center_branch && v.abs() < 0.05
+                })
+            };
+            let current_angle = if zero_snapped {
+                start_angle
+            } else {
+                start_angle + normalized * (end_angle - start_angle)
+            };
             let needle_inner = pos2(
                 center.x + current_angle.cos() * (self.radius * 0.2),
                 center.y + current_angle.sin() * (self.radius * 0.2),
@@ -177,7 +197,7 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     format_zero_centered(f, |v| format!("{:+.1}", v), "dB")
                 } else if self.label.contains("DRIFT") || self.label.contains("RECAL") {
                     let pct = if f <= 1.0 { f * 100.0 } else { f };
-                    format!("{:.0} %", pct)
+                    format!("{:.0}%", pct)
                 } else if self.label.contains("TONE")
                     || self.label.contains("THRESH")
                     || self.label.contains("BASS")
@@ -197,9 +217,9 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 {
                     // Parameters with .with_value_to_string using "%" format (e.g. Clipper Drive) pass f as raw percentage value (e.g. 50.0), so avoid double multiply.
                     if f > 2.0 {
-                        format!("{:.0} %", f)
+                        format!("{:.0}%", f)
                     } else {
-                        format!("{:.0} %", f * 100.0)
+                        format!("{:.0}%", f * 100.0)
                     }
                 } else if self.label.contains("DECAY") {
                     format_decay_label(f)

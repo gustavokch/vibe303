@@ -22,7 +22,7 @@ const MIN_CELL_W: f32 = 72.0;
 /// Vertical chrome of the panel frame: inner_margin top (4) + border stroke
 /// (~2x1) + layout slack, subtracted from the pre-frame available height so
 /// the frame bottom reaches the window bottom.
-const FRAME_VERT_CHROME_PX: f32 = 8.0;
+const FRAME_VERT_CHROME_PX: f32 = 4.0;
 
 /// Step cell width for a given inner available width.
 /// Returns `(cell_w, clamped)` — `clamped` is true when the window is too
@@ -500,6 +500,6 @@ mod tests {
     #[test]
     fn frame_vertical_chrome_covers_margin_and_stroke() {
         // inner_margin top (4) + border stroke (~2x1) + layout slack
-        assert_eq!(FRAME_VERT_CHROME_PX, 8.0);
+        assert_eq!(FRAME_VERT_CHROME_PX, 4.0);
     }
 }

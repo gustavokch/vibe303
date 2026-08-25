@@ -249,7 +249,7 @@ pub fn render_generator_panel(
                                 DragValue::new(&mut gen_params.octave_up_prob)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
-                                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
 
@@ -265,7 +265,7 @@ pub fn render_generator_panel(
                                 DragValue::new(&mut gen_params.octave_down_prob)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
-                                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
                     });
@@ -293,7 +293,7 @@ pub fn render_generator_panel(
                                 DragValue::new(&mut gen_params.rest_probability)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
-                                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
 
                             ui.label(
@@ -305,7 +305,7 @@ pub fn render_generator_panel(
                                 DragValue::new(&mut gen_params.accent_probability)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
-                                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
 
@@ -321,7 +321,7 @@ pub fn render_generator_panel(
                                 DragValue::new(&mut gen_params.slide_probability)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
-                                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
 
                             ui.label(
@@ -333,7 +333,7 @@ pub fn render_generator_panel(
                                 DragValue::new(&mut gen_params.accent_pitch_bias)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
-                                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
 
@@ -365,7 +365,7 @@ pub fn render_generator_panel(
                                 DragValue::new(&mut gen_params.mutation_rate)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
-                                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
                         });
 
