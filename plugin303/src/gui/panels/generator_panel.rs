@@ -416,7 +416,11 @@ pub fn render_generator_panel(
                                 setter.end_set_parameter(&params.seq_length);
                             }
 
-                            // MUTATE Flat Button
+                            // MUTATE uses the cyan "pattern-content" accent
+                            // (NOTE/SLD cell color) to signal it modifies an
+                            // existing pattern, while GENERATE uses the orange
+                            // action accent for creating a new pattern. This
+                            // is an intentional visual convention.
                             let mutate_btn = Button::new(
                                 nih_plug_egui::egui::RichText::new("MUTATE")
                                     .font(FontId::proportional(9.5))

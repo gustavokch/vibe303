@@ -1,6 +1,6 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    vec2, Button, CornerRadius, FontId, Frame, Margin, Stroke, Ui,
+    vec2, Button, CornerRadius, FontId, Frame, Margin, Separator, Stroke, Ui,
 };
 
 use crate::gui::theme;
@@ -10,6 +10,10 @@ use crate::params::{CircuitTopology, Plugin303Params};
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
 
+    // Fixed content height for both FUN and ACCURATE states so regions below
+    // do not reflow when the topology changes.
+    const SOUPED_CONTENT_H: f32 = 104.0;
+
     Frame::new()
         .fill(theme::PANEL_BG_SOUPED)
         .stroke(theme::border_stroke())
@@ -17,8 +21,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            const DRAWER_INNER_HEIGHT: f32 = 72.0;
-            ui.set_min_height(DRAWER_INNER_HEIGHT);
+            ui.set_min_height(SOUPED_CONTENT_H);
 
             if is_accurate {
                 // Centered overlay card when bypassed with zero ghost rendering
@@ -27,8 +30,8 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 // card_w never underflows to 0 (which would collapse the Frame).
                 const MIN_CARD_W: f32 = 120.0;
                 let card_w = 300.0_f32.min((total_w - 20.0).max(MIN_CARD_W));
-                let card_h = (DRAWER_INNER_HEIGHT - 20.0).max(24.0);
-                let pad = ((DRAWER_INNER_HEIGHT - card_h) * 0.5).max(0.0);
+                let card_h = (SOUPED_CONTENT_H - 20.0).max(24.0);
+                let pad = ((SOUPED_CONTENT_H - card_h) * 0.5).max(0.0);
 
                 ui.vertical(|ui| {
                     ui.add_space(pad);
@@ -118,13 +121,15 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.separator();
                     ui.add_space(2.0);
 
-                    // Row 2: Engine Rotary Dials (9 equal columns across full width)
+                    // Row 2: Engine Rotary Dials (9 knobs across full width,
+                    // split into three visually separated groups).
+                    const KNOB_GROUP_SEP_W: f32 = 2.0;
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                         let total_w = ui.available_width();
-                        let col_w = total_w / 9.0;
+                        let col_w = (total_w - 2.0 * KNOB_GROUP_SEP_W) / 9.0;
 
-                        let mut render_knob = |knob: Knob303<'_, _>| {
+                        let render_one = |ui: &mut Ui, knob: Knob303<'_, _>| {
                             ui.allocate_ui_with_layout(
                                 vec2(col_w, 56.0),
                                 nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
@@ -134,15 +139,17 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             );
                         };
 
-                        render_knob(Knob303::new(&params.vcf_drive, setter, "DRIVE", 12.0));
-                        render_knob(Knob303::new(&params.sub_vol, setter, "SUB", 12.0));
-                        render_knob(Knob303::new(&params.glide, setter, "GLIDE", 12.0));
-                        render_knob(Knob303::new(&params.osc1_pitch, setter, "PITCH1", 12.0));
-                        render_knob(Knob303::new(&params.osc2_pitch, setter, "PITCH2", 12.0));
-                        render_knob(Knob303::new(&params.osc2_vol, setter, "MIX2", 12.0));
-                        render_knob(Knob303::new(&params.osc1_pw, setter, "PW", 12.0));
-                        render_knob(Knob303::new(&params.sweep_pos, setter, "SWEEP", 12.0));
-                        render_knob(Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));
+                        render_one(ui, Knob303::new(&params.vcf_drive, setter, "DRIVE", 12.0));
+                        render_one(ui, Knob303::new(&params.sub_vol, setter, "SUB", 12.0));
+                        ui.add(Separator::default().vertical());
+                        render_one(ui, Knob303::new(&params.glide, setter, "GLIDE", 12.0));
+                        render_one(ui, Knob303::new(&params.osc1_pitch, setter, "PITCH1", 12.0));
+                        render_one(ui, Knob303::new(&params.osc2_pitch, setter, "PITCH2", 12.0));
+                        render_one(ui, Knob303::new(&params.osc2_vol, setter, "MIX2", 12.0));
+                        ui.add(Separator::default().vertical());
+                        render_one(ui, Knob303::new(&params.osc1_pw, setter, "PW", 12.0));
+                        render_one(ui, Knob303::new(&params.sweep_pos, setter, "SWEEP", 12.0));
+                        render_one(ui, Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));
                     });
                 });
             }

@@ -65,7 +65,6 @@ pub fn render_sequencer_and_transport(
         })
         .show(ui, |ui| {
             ui.set_min_height((frame_avail_h - FRAME_VERT_CHROME_PX).max(280.0));
-            ui.set_max_width(1048.0);
 
             // Grid geometry: 2 rows x 8 columns; transport column on the right
             let (cell_w, clamped) = grid_cell_width(ui.available_width());
@@ -302,7 +301,7 @@ pub fn render_sequencer_and_transport(
                                 DragValue::new(&mut tempo_val)
                                     .range(40.0..=300.0)
                                     .speed(0.1)
-                                    .custom_formatter(|n, _| format!("{:.1}", n)),
+                                    .custom_formatter(|n, _| format!("{:.0}", n)),
                             )
                             .changed()
                         {
@@ -431,6 +430,7 @@ pub fn render_sequencer_and_transport(
 
                         let mut jitter_val = params.seq_jitter.value();
                         let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(36.0, 28.0), Sense::click());
+                        let jit_resp = jit_resp.on_hover_text("Add random timing jitter to sequencer steps");
                         if jit_resp.clicked() {
                             jitter_val = !jitter_val;
                             setter.begin_set_parameter(&params.seq_jitter);
@@ -442,7 +442,7 @@ pub fn render_sequencer_and_transport(
                             let box_rect = nih_plug_egui::egui::Rect::from_center_size(pos2(jit_hit_rect.left() + 6.0, jit_hit_rect.center().y), vec2(12.0, 12.0));
                             p.rect_filled(box_rect, CornerRadius::same(2), if jitter_val { theme::ACCENT_ORANGE } else { theme::WELL_BG });
                             p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.0_f32, if jitter_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }), StrokeKind::Inside);
-                            p.text(pos2(jit_hit_rect.left() + 15.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JIT", FontId::proportional(8.0), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED });
+                            p.text(pos2(jit_hit_rect.left() + 15.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JITTER", FontId::proportional(8.0), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED });
                         }
 
                         let clear_btn = Button::new(

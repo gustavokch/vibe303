@@ -128,30 +128,44 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                     setter,
                                     "QUALITY",
                                     &["LOW", "HIGH", "ULTRA"],
-                                )
-                                .with_active_text_color(theme::ACCENT_RUBY)
-                                .with_thumb_color(theme::ACCENT_RUBY),
+                                ),
                             )
                         });
                         if is_accurate {
                             quality_resp.response.on_hover_text("Quality tier applies to FUN mode (ACCURATE uses fixed physical modeling)");
                         }
 
-                        // 2x OS button below Ultra tier
-                        ui.add_space(2.0);
-                        let is_2x = params.tier.value() == crate::dsp::filter::Tier::Ultra2x;
-                        let btn_resp = ui.add_enabled(
-                            !is_accurate,
-                            nih_plug_egui::egui::Button::new("2x").small(),
-                        );
-                        if btn_resp.clicked() && !is_accurate {
-                            setter.begin_set_parameter(&params.tier);
-                            setter.set_parameter(&params.tier, crate::dsp::filter::Tier::Ultra2x);
-                            setter.end_set_parameter(&params.tier);
-                        }
-                        if btn_resp.changed() || is_2x {
-                            btn_resp.highlight();
-                        }
+                        // Ultra 2x toggle: grouped under an explicit header label
+                        // so it no longer reads as an orphan control.
+                        let ultra_label_color = if is_accurate {
+                            theme::TEXT_MUTED
+                        } else {
+                            theme::TEXT_SECONDARY
+                        };
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
+                            ui.add(
+                                nih_plug_egui::egui::Label::new(
+                                    nih_plug_egui::egui::RichText::new("ULTRA 2X")
+                                        .font(FontId::new(8.5, FontFamily::Proportional))
+                                        .color(ultra_label_color),
+                                )
+                                .wrap_mode(nih_plug_egui::egui::TextWrapMode::Extend),
+                            );
+                            let is_2x = params.tier.value() == crate::dsp::filter::Tier::Ultra2x;
+                            let btn_resp = ui.add_enabled(
+                                !is_accurate,
+                                nih_plug_egui::egui::Button::new("2x").small(),
+                            );
+                            if btn_resp.clicked() && !is_accurate {
+                                setter.begin_set_parameter(&params.tier);
+                                setter.set_parameter(&params.tier, crate::dsp::filter::Tier::Ultra2x);
+                                setter.end_set_parameter(&params.tier);
+                            }
+                            if is_2x {
+                                btn_resp.highlight();
+                            }
+                        });
 
                         // 3. Circuit Topology switch
                         let prev_topology = params.topology.value();
