@@ -25,6 +25,11 @@ const MIN_CELL_W: f32 = 72.0;
 /// item spacing (4). Pinned by the change-detector test below.
 const FRAME_VERT_CHROME_PX: f32 = 17.0;
 
+/// Hit-rect width for the JITTER toggle: 15 px text offset + ~27 px for
+/// "JITTER" at 8 pt + 4 px margin, so the painted label never overflows onto
+/// the CLEAR button (PR#53 review).
+const JIT_HIT_W: f32 = 46.0;
+
 /// Step cell width for a given inner available width.
 /// Returns `(cell_w, clamped)` — `clamped` is true when the window is too
 /// narrow and cells will overflow (surfaced by a debug assertion at call site).
@@ -440,7 +445,7 @@ pub fn render_sequencer_and_transport(
                             });
 
                         let mut jitter_val = params.seq_jitter.value();
-                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(36.0, 28.0), Sense::click());
+                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(JIT_HIT_W, 28.0), Sense::click());
                         let jit_resp = jit_resp.on_hover_text("Add random timing jitter to sequencer steps");
                         if jit_resp.clicked() {
                             jitter_val = !jitter_val;
@@ -513,5 +518,13 @@ mod tests {
         // Change-detector pin: value is empirically calibrated against
         // rendered captures. A change here must be re-verified visually.
         assert_eq!(FRAME_VERT_CHROME_PX, 17.0);
+    }
+
+    #[test]
+    fn jitter_hit_rect_fits_label() {
+        // "JITTER" at 8 pt proportional is ~27 px wide; painted from a 15 px
+        // offset. The hit rect must cover the full painted text plus margin so
+        // no glyph pixels land on the CLEAR button's hit zone.
+        assert!(JIT_HIT_W >= 15.0 + 27.0 + 2.0);
     }
 }
