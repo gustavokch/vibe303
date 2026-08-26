@@ -30,6 +30,12 @@ const FRAME_VERT_CHROME_PX: f32 = 17.0;
 /// the CLEAR button (PR#53 review).
 const JIT_HIT_W: f32 = 46.0;
 
+/// Snap a dragged BPM value to a whole number so the `{:.0}` display always
+/// matches the stored value (PR#53 review).
+fn snap_tempo(v: f32) -> f32 {
+    v.round()
+}
+
 /// Step cell width for a given inner available width.
 /// Returns `(cell_w, clamped)` — `clamped` is true when the window is too
 /// narrow and cells will overflow (surfaced by a debug assertion at call site).
@@ -322,7 +328,7 @@ pub fn render_sequencer_and_transport(
                             .changed()
                         {
                             setter.begin_set_parameter(&params.seq_tempo);
-                            setter.set_parameter(&params.seq_tempo, tempo_val);
+                            setter.set_parameter(&params.seq_tempo, snap_tempo(tempo_val));
                             setter.end_set_parameter(&params.seq_tempo);
                         }
 
@@ -526,5 +532,15 @@ mod tests {
         // offset. The hit rect must cover the full painted text plus margin so
         // no glyph pixels land on the CLEAR button's hit zone.
         assert!(JIT_HIT_W >= 15.0 + 27.0 + 2.0);
+    }
+
+    #[test]
+    fn tempo_snaps_to_integer() {
+        // The BPM field displays `{:.0}`; the stored value must match the
+        // display, so drags snap to whole BPM (PR#53 review).
+        assert_eq!(snap_tempo(120.4), 120.0);
+        assert_eq!(snap_tempo(120.5), 121.0);
+        assert_eq!(snap_tempo(40.0), 40.0);
+        assert_eq!(snap_tempo(299.9), 300.0);
     }
 }
