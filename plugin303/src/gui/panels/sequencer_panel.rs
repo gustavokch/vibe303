@@ -20,9 +20,10 @@ const SEPARATOR_CHROME_W: f32 = 18.0;
 /// Smallest usable step cell; below this the grid overflows instead of scrolling.
 const MIN_CELL_W: f32 = 72.0;
 /// Vertical chrome subtracted from the pre-frame available height so the
-/// frame bottom reaches the window bottom. Value is empirical: calibrated
-/// against rendered captures, not derived from margin+stroke constants.
-const FRAME_VERT_CHROME_PX: f32 = 4.0;
+/// frame bottom reaches the window bottom without overflowing it:
+/// frame inner margins (top 4 + bottom 8) + frame stroke (1) + trailing
+/// item spacing (4). Pinned by the change-detector test below.
+const FRAME_VERT_CHROME_PX: f32 = 17.0;
 
 /// Step cell width for a given inner available width.
 /// Returns `(cell_w, clamped)` — `clamped` is true when the window is too
@@ -61,7 +62,7 @@ pub fn render_sequencer_and_transport(
             left: 8,
             right: 8,
             top: 4,
-            bottom: 0,
+            bottom: 8,
         })
         .show(ui, |ui| {
             ui.set_min_height((frame_avail_h - FRAME_VERT_CHROME_PX).max(280.0));
@@ -79,7 +80,7 @@ pub fn render_sequencer_and_transport(
                 ui.vertical(|ui| {
                     if let Ok(mut pattern_guard) = params.pattern.write() {
                         let is_running = params.seq_run.value();
-                        ui.spacing_mut().item_spacing = vec2(4.0, 12.0);
+                        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
 
                         for row in 0..2 {
                             ui.horizontal(|ui| {
@@ -106,7 +107,17 @@ pub fn render_sequencer_and_transport(
                 // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
+                    // Distribute the six rows across the grid height so no
+                    // dead band remains below JITTER/CLEAR (fix #4) and the
+                    // column bottom aligns with the step grid. Sizing to the
+                    // grid height — NOT available_height — keeps the column
+                    // from stretching the frame when the window is taller.
+                    // Content height is empirical: title ~12 + four 24px rows + one 28px row.
+                    const TRANSPORT_CONTENT_H: f32 = 136.0;
+                    const GRID_H: f32 = 2.0 * STRIP_HEIGHT + 4.0;
+                    let row_gap =
+                        ((GRID_H - TRANSPORT_CONTENT_H) / 5.0).clamp(3.0, 40.0);
+                    ui.spacing_mut().item_spacing = vec2(3.0, row_gap);
                     ui.spacing_mut().button_padding = vec2(3.0, 1.0);
 
                     ui.label(
@@ -501,6 +512,6 @@ mod tests {
     fn frame_vertical_chrome_pinned() {
         // Change-detector pin: value is empirically calibrated against
         // rendered captures. A change here must be re-verified visually.
-        assert_eq!(FRAME_VERT_CHROME_PX, 4.0);
+        assert_eq!(FRAME_VERT_CHROME_PX, 17.0);
     }
 }

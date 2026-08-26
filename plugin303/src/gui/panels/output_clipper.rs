@@ -53,105 +53,104 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
 
                 ui.add_space(2.0);
 
-                // Right-hand controls split into three equal columns so the row
-                // fills the panel width instead of leaving a dead right half.
+                // Right-hand controls distributed across the full remaining
+                // width in fixed columns (same convention as the souped
+                // panel): OS | 9 knobs | LINK+DIODE, separated by thin
+                // vertical rules. No oversized inter-group gaps (fix #6).
                 ui.add_enabled_ui(!bypassed, |ui| {
-                    ui.columns(3, |cols| {
-                        // Column 1: OS switch
-                        cols[0].vertical_centered(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                    const GROUP_SEP_W: f32 = 2.0;
+                    const UNITS: f32 = 11.0; // 1 (OS) + 9 (knobs) + 1 (LINK/DIODE)
+                    let total_w = ui.available_width();
+                    let col_w = (total_w - 2.0 * GROUP_SEP_W) / UNITS;
+
+                    // Group rules are painted 2px columns, NOT egui Separators
+                    // (Separator::default() allocates ~6px and overflows the row).
+                    let paint_group_rule = |ui: &mut Ui| {
+                        let (rule_rect, _) = ui.allocate_exact_size(
+                            vec2(GROUP_SEP_W, 62.0),
+                            nih_plug_egui::egui::Sense::hover(),
+                        );
+                        if ui.is_rect_visible(rule_rect) {
+                            ui.painter().vline(
+                                rule_rect.center().x,
+                                rule_rect.y_range(),
+                                nih_plug_egui::egui::Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
+                            );
+                        }
+                    };
+
+                    let render_knob = |ui: &mut Ui, knob: Knob303<'_, _>| {
+                        ui.allocate_ui_with_layout(
+                            vec2(col_w, 62.0),
+                            nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
+                            |ui| ui.add(knob),
+                        )
+                        .inner
+                    };
+
+                    // Group 1: OS switch
+                    ui.allocate_ui_with_layout(
+                        vec2(col_w, 62.0),
+                        nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
+                        |ui| {
                             ui.add(SlideSwitch::new(
                                 &params.clipper_os,
                                 setter,
                                 "OS",
                                 &["2X", "4X"],
                             ));
-                        });
+                        },
+                    );
 
-                        // Column 2: all knobs in a centered row
-                        cols[1].vertical_centered(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
+                    paint_group_rule(ui);
 
-                                ui.add(Knob303::new(
-                                    &params.clipper_drive,
-                                    setter,
-                                    "DRIVE",
-                                    11.5,
-                                ));
-                                ui.add(Knob303::new(
-                                    &params.clipper_threshold,
-                                    setter,
-                                    "THRESH",
-                                    11.5,
-                                ));
-                                ui.add(Knob303::new(
-                                    &params.clipper_bass,
-                                    setter,
-                                    "BASS",
-                                    11.5,
-                                ));
-                                ui.add(Knob303::new(
-                                    &params.clipper_tone,
-                                    setter,
-                                    "TONE",
-                                    11.5,
-                                ));
+                    // Group 2: knob row
+                    render_knob(ui, Knob303::new(&params.clipper_drive, setter, "DRIVE", 11.5));
+                    render_knob(ui, Knob303::new(&params.clipper_threshold, setter, "THRESH", 11.5));
+                    render_knob(ui, Knob303::new(&params.clipper_bass, setter, "BASS", 11.5));
+                    render_knob(ui, Knob303::new(&params.clipper_tone, setter, "TONE", 11.5));
+                    let in_resp = render_knob(ui, Knob303::new(&params.clipper_in_gain, setter, "IN", 11.5));
+                    let out_resp = render_knob(ui, Knob303::new(&params.clipper_out_gain, setter, "OUT", 11.5));
+                    render_knob(ui, Knob303::new(&params.clipper_tilt, setter, "TILT", 11.5));
+                    render_knob(ui, Knob303::new(&params.clipper_dynamics, setter, "DYN", 11.5));
+                    render_knob(ui, Knob303::new(&params.clipper_mix, setter, "MIX", 11.5));
 
-                                let in_resp =
-                                    ui.add(Knob303::new(&params.clipper_in_gain, setter, "IN", 11.5));
-                                let out_resp =
-                                    ui.add(Knob303::new(&params.clipper_out_gain, setter, "OUT", 11.5));
-                                ui.add(Knob303::new(
-                                    &params.clipper_tilt,
-                                    setter,
-                                    "TILT",
-                                    11.5,
-                                ));
-                                ui.add(Knob303::new(
-                                    &params.clipper_dynamics,
-                                    setter,
-                                    "DYN",
-                                    11.5,
-                                ));
-                                ui.add(Knob303::new(
-                                    &params.clipper_mix,
-                                    setter,
-                                    "MIX",
-                                    11.5,
-                                ));
+                    // Gain link: mirror only on genuine user gestures (drag, double-click reset)
+                    if params.clipper_gain_link.value() {
+                        if in_resp.drag_started() || in_resp.double_clicked() {
+                            setter.begin_set_parameter(&params.clipper_out_gain);
+                        }
+                        if in_resp.dragged() || in_resp.double_clicked() {
+                            setter.set_parameter(
+                                &params.clipper_out_gain,
+                                -params.clipper_in_gain.value(),
+                            );
+                        }
+                        if in_resp.drag_stopped() || in_resp.double_clicked() {
+                            setter.end_set_parameter(&params.clipper_out_gain);
+                        }
+                        if out_resp.drag_started() || out_resp.double_clicked() {
+                            setter.begin_set_parameter(&params.clipper_in_gain);
+                        }
+                        if out_resp.dragged() || out_resp.double_clicked() {
+                            setter.set_parameter(
+                                &params.clipper_in_gain,
+                                -params.clipper_out_gain.value(),
+                            );
+                        }
+                        if out_resp.drag_stopped() || out_resp.double_clicked() {
+                            setter.end_set_parameter(&params.clipper_in_gain);
+                        }
+                    }
 
-                                // Gain link: mirror only on genuine user gestures (drag, double-click reset)
-                                if params.clipper_gain_link.value() {
-                                    if in_resp.drag_started() || in_resp.double_clicked() {
-                                        setter.begin_set_parameter(&params.clipper_out_gain);
-                                    }
-                                    if in_resp.dragged() || in_resp.double_clicked() {
-                                        setter.set_parameter(
-                                            &params.clipper_out_gain,
-                                            -params.clipper_in_gain.value(),
-                                        );
-                                    }
-                                    if in_resp.drag_stopped() || in_resp.double_clicked() {
-                                        setter.end_set_parameter(&params.clipper_out_gain);
-                                    }
-                                    if out_resp.drag_started() || out_resp.double_clicked() {
-                                        setter.begin_set_parameter(&params.clipper_in_gain);
-                                    }
-                                    if out_resp.dragged() || out_resp.double_clicked() {
-                                        setter.set_parameter(
-                                            &params.clipper_in_gain,
-                                            -params.clipper_out_gain.value(),
-                                        );
-                                    }
-                                    if out_resp.drag_stopped() || out_resp.double_clicked() {
-                                        setter.end_set_parameter(&params.clipper_in_gain);
-                                    }
-                                }
-                            });
-                        });
+                    paint_group_rule(ui);
 
-                        // Column 3: LINK + DIODE
-                        cols[2].vertical_centered(|ui| {
+                    // Group 3: LINK + DIODE
+                    ui.allocate_ui_with_layout(
+                        vec2(col_w, 62.0),
+                        nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
+                        |ui| {
                             ui.vertical(|ui| {
                                 ui.add_space(2.0);
                                 let mut link = params.clipper_gain_link.value();
@@ -210,8 +209,8 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                                 });
                                 ui.add_space(3.0);
                             });
-                        });
-                    });
+                        },
+                    );
                 });
             });
         });

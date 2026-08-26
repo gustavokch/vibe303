@@ -1,6 +1,6 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    vec2, Button, CornerRadius, FontId, Frame, Margin, Separator, Stroke, Ui,
+    vec2, Button, CornerRadius, FontId, Frame, Margin, Stroke, Ui,
 };
 
 use crate::gui::theme;
@@ -10,9 +10,9 @@ use crate::params::{CircuitTopology, Plugin303Params};
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
 
-    // Fixed content height for both FUN and ACCURATE states so regions below
-    // do not reflow when the topology changes.
-    const SOUPED_CONTENT_H: f32 = 104.0;
+    // Content height matching the FUN knob row so regions below do not
+    // reflow when the topology changes (FUN frame outer = 131 + 17 = 148).
+    const SOUPED_CONTENT_H: f32 = 131.0;
 
     Frame::new()
         .fill(theme::PANEL_BG_SOUPED)
@@ -24,64 +24,75 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
             ui.set_min_height(SOUPED_CONTENT_H);
 
             if is_accurate {
-                // Centered overlay card when bypassed with zero ghost rendering
+                // Overlay card fills the whole panel region (fix #5) and is
+                // hard-clipped to it (fix #2): the card can never paint over
+                // the tweaks panel below, even mid-switch.
                 let total_w = ui.available_width();
-                // Guard against narrow drawer: clamp the available width slice so
-                // card_w never underflows to 0 (which would collapse the Frame).
-                const MIN_CARD_W: f32 = 120.0;
-                let card_w = 300.0_f32.min((total_w - 20.0).max(MIN_CARD_W));
-                let card_h = (SOUPED_CONTENT_H - 20.0).max(24.0);
-                let pad = ((SOUPED_CONTENT_H - card_h) * 0.5).max(0.0);
-
-                ui.vertical(|ui| {
-                    ui.add_space(pad);
-                    ui.vertical_centered(|ui| {
+                let (region_rect, _) = ui.allocate_exact_size(
+                    vec2(total_w, SOUPED_CONTENT_H),
+                    nih_plug_egui::egui::Sense::hover(),
+                );
+                let clip = ui.clip_rect().intersect(region_rect);
+                // The card lives inside an 8px-inset rect: a Frame's outer
+                // rect is content + inner_margin + stroke, so forcing the
+                // card content to the FULL region width inflates the card
+                // (and, via allocate_new_ui, every panel below it) past the
+                // region edges (round-4 left-shift regression).
+                let card_rect = region_rect.shrink(8.0);
+                ui.allocate_new_ui(
+                    nih_plug_egui::egui::UiBuilder::new()
+                        .max_rect(card_rect)
+                        .layout(nih_plug_egui::egui::Layout::top_down(
+                            nih_plug_egui::egui::Align::Center,
+                        )),
+                    |ui| {
+                        ui.set_clip_rect(clip);
                         Frame::new()
-                            .fill(theme::SURFACE_ELEVATED)
-                            .stroke(Stroke::new(1.0_f32, theme::BORDER_FOCUS))
-                            .corner_radius(CornerRadius::same(3))
-                            .inner_margin(Margin::symmetric(16, 6))
-                            .show(ui, |ui| {
-                                ui.set_width(card_w);
-                                ui.set_min_height(card_h);
-                                ui.vertical_centered(|ui| {
-                                    ui.label(
-                                        nih_plug_egui::egui::RichText::new("ACCURATE MODE ACTIVE")
-                                            .font(FontId::new(10.5, nih_plug_egui::egui::FontFamily::Proportional))
-                                            .strong()
-                                            .color(theme::TEXT_PRIMARY),
-                                    );
-                                    ui.add_space(2.0);
-                                    ui.label(
-                                        nih_plug_egui::egui::RichText::new("Souped-up engine is bypassed")
-                                            .font(FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional))
-                                            .color(theme::TEXT_SECONDARY),
-                                    );
-                                    ui.add_space(6.0);
+                    .fill(theme::SURFACE_ELEVATED)
+                    .stroke(Stroke::new(1.0_f32, theme::BORDER_FOCUS))
+                    .corner_radius(CornerRadius::same(3))
+                    .inner_margin(Margin::symmetric(16, 6))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.set_min_height(ui.available_height());
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                nih_plug_egui::egui::RichText::new("ACCURATE MODE ACTIVE")
+                                    .font(FontId::new(10.5, nih_plug_egui::egui::FontFamily::Proportional))
+                                    .strong()
+                                    .color(theme::TEXT_PRIMARY),
+                            );
+                            ui.add_space(2.0);
+                            ui.label(
+                                nih_plug_egui::egui::RichText::new("Souped-up engine is bypassed")
+                                    .font(FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional))
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                            ui.add_space(6.0);
 
-                                    let btn = Button::new(
-                                        nih_plug_egui::egui::RichText::new("ENABLE FUN MODE")
-                                            .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
-                                            .strong()
-                                            .color(theme::TEXT_ON_ACCENT),
-                                    )
-                                    .fill(theme::ACCENT_ORANGE)
-                                    .min_size(vec2(130.0, 20.0))
-                                    .corner_radius(CornerRadius::same(2));
+                            let btn = Button::new(
+                                nih_plug_egui::egui::RichText::new("ENABLE FUN MODE")
+                                    .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
+                                    .strong()
+                                    .color(theme::TEXT_ON_ACCENT),
+                            )
+                            .fill(theme::ACCENT_ORANGE)
+                            .min_size(vec2(130.0, 20.0))
+                            .corner_radius(CornerRadius::same(2));
 
-                                    if ui.add(btn).clicked() {
-                                        setter.begin_set_parameter(&params.topology);
-                                        setter.set_parameter(&params.topology, CircuitTopology::Fun);
-                                        setter.end_set_parameter(&params.topology);
+                            if ui.add(btn).clicked() {
+                                setter.begin_set_parameter(&params.topology);
+                                setter.set_parameter(&params.topology, CircuitTopology::Fun);
+                                setter.end_set_parameter(&params.topology);
 
-                                        setter.begin_set_parameter(&params.reso_comp);
-                                        setter.set_parameter_normalized(&params.reso_comp, 0.5);
-                                        setter.end_set_parameter(&params.reso_comp);
-                                    }
-                                });
-                            });
+                                setter.begin_set_parameter(&params.reso_comp);
+                                setter.set_parameter_normalized(&params.reso_comp, 0.5);
+                                setter.end_set_parameter(&params.reso_comp);
+                            }
+                        });
                     });
-                });
+                    },
+                );
             } else {
                 ui.vertical(|ui| {
                     // Header Bar
@@ -118,12 +129,26 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     });
 
                     ui.add_space(2.0);
-                    ui.separator();
-                    ui.add_space(2.0);
 
                     // Row 2: Engine Rotary Dials (9 knobs across full width,
                     // split into three visually separated groups).
+                    // Group rules are painted 2px columns, NOT egui Separators:
+                    // Separator::default() allocates ~6px each and overflowed
+                    // the panel width by 8px (round-3 regression).
                     const KNOB_GROUP_SEP_W: f32 = 2.0;
+                    let paint_group_rule = |ui: &mut Ui| {
+                        let (rule_rect, _) = ui.allocate_exact_size(
+                            vec2(KNOB_GROUP_SEP_W, 56.0),
+                            nih_plug_egui::egui::Sense::hover(),
+                        );
+                        if ui.is_rect_visible(rule_rect) {
+                            ui.painter().vline(
+                                rule_rect.center().x,
+                                rule_rect.y_range(),
+                                Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
+                            );
+                        }
+                    };
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                         let total_w = ui.available_width();
@@ -141,12 +166,12 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         render_one(ui, Knob303::new(&params.vcf_drive, setter, "DRIVE", 12.0));
                         render_one(ui, Knob303::new(&params.sub_vol, setter, "SUB", 12.0));
-                        ui.add(Separator::default().vertical());
+                        paint_group_rule(ui);
                         render_one(ui, Knob303::new(&params.glide, setter, "GLIDE", 12.0));
                         render_one(ui, Knob303::new(&params.osc1_pitch, setter, "PITCH1", 12.0));
                         render_one(ui, Knob303::new(&params.osc2_pitch, setter, "PITCH2", 12.0));
                         render_one(ui, Knob303::new(&params.osc2_vol, setter, "MIX2", 12.0));
-                        ui.add(Separator::default().vertical());
+                        paint_group_rule(ui);
                         render_one(ui, Knob303::new(&params.osc1_pw, setter, "PW", 12.0));
                         render_one(ui, Knob303::new(&params.sweep_pos, setter, "SWEEP", 12.0));
                         render_one(ui, Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));

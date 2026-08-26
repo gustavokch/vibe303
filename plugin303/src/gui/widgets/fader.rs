@@ -40,7 +40,9 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
 
         let normalized = self.param.unmodulated_normalized_value();
         let track_top = rect.top() + 11.0;
-        let track_bottom = rect.bottom() - 18.0;
+        // Track ends 22px above the widget bottom so the value readout below
+        // clears the neighboring fader's track and thumb (fix #10).
+        let track_bottom = rect.bottom() - 22.0;
         let track_height = track_bottom - track_top;
 
         // Interaction

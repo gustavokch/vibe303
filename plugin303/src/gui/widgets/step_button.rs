@@ -10,10 +10,12 @@ use nih_plug_egui::egui::{
 /// same constants as the child allocations. Keep every allocation on these consts.
 pub const LED_H: f32 = 4.0;
 pub const HEADER_H: f32 = 16.0;
-pub const CONTROL_ROW_H: f32 = 30.0;
+/// 28 px hit rows (24 px pills) keep the 2x8 grid inside the 960 px window
+/// with bottom padding equal to the side margins (fix #1).
+pub const CONTROL_ROW_H: f32 = 28.0;
 pub const STRIP_HEIGHT: f32 = LED_H + HEADER_H + 4.0 * CONTROL_ROW_H;
 
-/// Drawn pill height inside each 30 px hit row (6 px breathing room).
+/// Drawn pill height inside each 28 px hit row (4 px breathing room).
 pub const PILL_H: f32 = CONTROL_ROW_H - 4.0;
 
 pub fn format_pitch(semitone: i8, octave: i8) -> String {
@@ -371,7 +373,7 @@ mod tests {
         // LED bar + step-number header + ACC/SLD row + gate + pitch + octave row
         assert_eq!(LED_H, 4.0);
         assert_eq!(HEADER_H, 16.0);
-        assert_eq!(CONTROL_ROW_H, 30.0);
+        assert_eq!(CONTROL_ROW_H, 28.0);
         let children_sum = LED_H + HEADER_H + 4.0 * CONTROL_ROW_H;
         assert_eq!(STRIP_HEIGHT, children_sum);
     }
