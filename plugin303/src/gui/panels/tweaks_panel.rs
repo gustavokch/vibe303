@@ -156,25 +156,19 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         } else {
                             theme::WELL_BG
                         };
-                        // Strikethrough marks the button as inert in the idle
-                        // state (audit #19): calibration is only meaningful
-                        // when needs_rebuild flags drifted params.
-                        let btn_text = {
-                            let text = nih_plug_egui::egui::RichText::new(if calibrating {
-                                "CALIBRATING..."
-                            } else {
-                                "CALIBRATE"
-                            })
-                            .font(FontId::proportional(8.0))
-                            .color(if calibrating {
-                                theme::TEXT_ON_ACCENT
-                            } else if needs_rebuild {
-                                theme::TEXT_PRIMARY
-                            } else {
-                                theme::TEXT_MUTED
-                            });
-                            if !calibrating { text.strikethrough() } else { text }
-                        };
+                        let btn_text = nih_plug_egui::egui::RichText::new(if calibrating {
+                            "CALIBRATING..."
+                        } else {
+                            "CALIBRATE"
+                        })
+                        .font(FontId::proportional(8.0))
+                        .color(if calibrating {
+                            theme::TEXT_ON_ACCENT
+                        } else if needs_rebuild {
+                            theme::TEXT_PRIMARY
+                        } else {
+                            theme::TEXT_MUTED
+                        });
                         if ui.add(nih_plug_egui::egui::Button::new(btn_text).fill(btn_color)).clicked() {
                             setter.begin_set_parameter(&params.calibrate_sync);
                             setter.set_parameter(&params.calibrate_sync, true);
