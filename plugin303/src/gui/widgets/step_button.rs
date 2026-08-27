@@ -267,7 +267,7 @@ pub fn render_step_strip(
                 pitch_rect.center(),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 pitch_str,
-                FontId::new(10.0, FontFamily::Monospace),
+                FontId::new(9.0, FontFamily::Monospace),
                 if is_rest { theme::TEXT_MUTED } else { theme::TEXT_PRIMARY },
             );
         }
