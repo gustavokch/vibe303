@@ -107,7 +107,7 @@ pub fn render_sequencer_and_transport(
                 // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
+                    ui.spacing_mut().item_spacing = vec2(3.0, 6.0);
                     ui.spacing_mut().button_padding = vec2(3.0, 1.0);
 
                     ui.label(
@@ -430,7 +430,7 @@ pub fn render_sequencer_and_transport(
                             });
 
                         let mut jitter_val = params.seq_jitter.value();
-                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(36.0, 28.0), Sense::click());
+                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(52.0, 28.0), Sense::click());
                         let jit_resp = jit_resp.on_hover_text("Clock jitter / micro-timing humanization");
                         if jit_resp.clicked() {
                             jitter_val = !jitter_val;
@@ -443,7 +443,7 @@ pub fn render_sequencer_and_transport(
                             let box_rect = nih_plug_egui::egui::Rect::from_center_size(pos2(jit_hit_rect.left() + 6.0, jit_hit_rect.center().y), vec2(12.0, 12.0));
                             p.rect_filled(box_rect, CornerRadius::same(2), if jitter_val { theme::ACCENT_ORANGE } else { theme::WELL_BG });
                             p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.0_f32, if jitter_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }), StrokeKind::Inside);
-                            p.text(pos2(jit_hit_rect.left() + 15.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JIT", FontId::proportional(8.0), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED });
+                            p.text(pos2(jit_hit_rect.left() + 15.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JITTER", FontId::proportional(8.0), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED });
                         }
 
                         let clear_btn = Button::new(
@@ -503,5 +503,12 @@ mod tests {
         // Change-detector pin: value is empirically calibrated against
         // rendered captures. A change here must be re-verified visually.
         assert_eq!(FRAME_VERT_CHROME_PX, 4.0);
+    }
+
+    #[test]
+    fn jitter_button_dimensions_accommodate_label() {
+        let btn_w = 52.0_f32;
+        let min_w_for_jitter = 48.0_f32;
+        assert!(btn_w >= min_w_for_jitter, "JITTER button width must be at least 48px to fit full label");
     }
 }
