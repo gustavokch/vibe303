@@ -18,6 +18,7 @@ capture_single_state() {
     echo "Capturing state '$state_name' to '$output_file'..."
 
     VIBE303_QA_STATE="$state_name" "$REPO_ROOT/target/release/standalone" -b dummy > "$LOG_FILE" 2>&1 &
+    sleep 5
     local app_pid=$!
 
     local win_id=""
@@ -64,7 +65,7 @@ if let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as
 EOF
         )
     fi
-
+    sleep 10
     if [[ -n "$win_id" && "$win_id" != "missing value" ]]; then
         osascript -e '
             tell application "System Events"
@@ -74,11 +75,11 @@ EOF
                 end if
             end tell
         ' 2>/dev/null || true
-        sleep 0.5
+        sleep 5
         screencapture -l "$win_id" -o "$output_file"
     else
         echo "Window ID not directly queryable; capturing screen to $output_file..."
-        sleep 0.5
+        sleep 5
         screencapture -x "$output_file"
     fi
 
@@ -96,7 +97,7 @@ EOF
 
 # Capture all required GUI states
 capture_single_state "default" "$OUTPUT_DIR/latest.png"
-capture_single_state "accurate" "$OUTPUT_DIR/accurate.png"
+capture_single_state "fun" "$OUTPUT_DIR/fun.png"
 capture_single_state "running" "$OUTPUT_DIR/running.png"
 
 echo "Extracting dynamic section crops, margins, and diff composites..."
@@ -104,7 +105,7 @@ python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
 
 REQUIRED_CROPS=(
     "latest.png"
-    "accurate.png"
+    "fun.png"
     "running.png"
     "crop_header.png"
     "crop_classic.png"
