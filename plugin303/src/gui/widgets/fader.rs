@@ -34,13 +34,13 @@ impl<'a, P: Param> MiniFader<'a, P> {
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
         let width = 24.0;
-        let total_height = self.height + 28.0;
+        let total_height = self.height + 30.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
         let normalized = self.param.unmodulated_normalized_value();
-        let track_top = rect.top() + 11.0;
-        let track_bottom = rect.bottom() - 14.0;
+        let track_top = rect.top() + 10.0;
+        let track_bottom = rect.bottom() - 15.0;
         let track_height = track_bottom - track_top;
 
         // Interaction
@@ -158,18 +158,19 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
 mod tests {
     #[test]
     fn mini_fader_geometry_bounds() {
-        let height = 48.0_f32;
-        let total_height = height + 28.0;
+        let height = 24.0_f32;
+        let total_height = height + 30.0;
         let top = 0.0_f32;
         let bottom = top + total_height;
-        let track_top = top + 11.0;
-        let track_bottom = bottom - 14.0;
+        let track_top = top + 10.0;
+        let track_bottom = bottom - 15.0;
         let track_height = track_bottom - track_top;
 
         assert!(track_top > top, "Track top must have top label clearance");
         assert!(track_bottom < bottom, "Track bottom must have bottom readout clearance");
+        assert!(bottom - track_bottom >= 15.0, "Readout text must have at least 15px clearance");
         assert!(track_height > 0.0, "Track height must be positive");
-        assert_eq!(track_height, height + 3.0);
+        assert_eq!(track_height, height + 5.0);
 
         for normalized in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
             let thumb_y = track_bottom - normalized * track_height;
