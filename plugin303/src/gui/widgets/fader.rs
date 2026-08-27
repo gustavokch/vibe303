@@ -34,13 +34,15 @@ impl<'a, P: Param> MiniFader<'a, P> {
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
         let width = 24.0;
-        let total_height = self.height + 26.0;
+        let total_height = self.height + 32.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
         let normalized = self.param.unmodulated_normalized_value();
         let track_top = rect.top() + 11.0;
-        let track_bottom = rect.bottom() - 13.0;
+        // Track ends 22px above the widget bottom so the value readout below
+        // clears the neighboring fader's track and thumb (fix #10).
+        let track_bottom = rect.bottom() - 22.0;
         let track_height = track_bottom - track_top;
 
         // Interaction
@@ -145,7 +147,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 pos2(rect.center().x, rect.bottom() - 1.0),
                 nih_plug_egui::egui::Align2::CENTER_BOTTOM,
                 formatted_val,
-                FontId::new(7.5, FontFamily::Monospace),
+                FontId::new(8.5, FontFamily::Monospace),
                 if is_enabled { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED },
             );
         }

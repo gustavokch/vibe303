@@ -20,9 +20,21 @@ const SEPARATOR_CHROME_W: f32 = 18.0;
 /// Smallest usable step cell; below this the grid overflows instead of scrolling.
 const MIN_CELL_W: f32 = 72.0;
 /// Vertical chrome subtracted from the pre-frame available height so the
-/// frame bottom reaches the window bottom. Value is empirical: calibrated
-/// against rendered captures, not derived from margin+stroke constants.
-const FRAME_VERT_CHROME_PX: f32 = 4.0;
+/// frame bottom reaches the window bottom without overflowing it:
+/// frame inner margins (top 4 + bottom 8) + frame stroke (1) + trailing
+/// item spacing (4). Pinned by the change-detector test below.
+const FRAME_VERT_CHROME_PX: f32 = 17.0;
+
+/// Hit-rect width for the JITTER toggle: 15 px text offset + ~27 px for
+/// "JITTER" at 8 pt + 4 px margin, so the painted label never overflows onto
+/// the CLEAR button (PR#53 review).
+const JIT_HIT_W: f32 = 46.0;
+
+/// Snap a dragged BPM value to a whole number so the `{:.0}` display always
+/// matches the stored value (PR#53 review).
+fn snap_tempo(v: f32) -> f32 {
+    v.round()
+}
 
 /// Step cell width for a given inner available width.
 /// Returns `(cell_w, clamped)` — `clamped` is true when the window is too
@@ -61,11 +73,10 @@ pub fn render_sequencer_and_transport(
             left: 8,
             right: 8,
             top: 4,
-            bottom: 0,
+            bottom: 8,
         })
         .show(ui, |ui| {
             ui.set_min_height((frame_avail_h - FRAME_VERT_CHROME_PX).max(280.0));
-            ui.set_max_width(1048.0);
 
             // Grid geometry: 2 rows x 8 columns; transport column on the right
             let (cell_w, clamped) = grid_cell_width(ui.available_width());
@@ -80,7 +91,7 @@ pub fn render_sequencer_and_transport(
                 ui.vertical(|ui| {
                     if let Ok(mut pattern_guard) = params.pattern.write() {
                         let is_running = params.seq_run.value();
-                        ui.spacing_mut().item_spacing = vec2(4.0, 12.0);
+                        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
 
                         for row in 0..2 {
                             ui.horizontal(|ui| {
@@ -107,7 +118,17 @@ pub fn render_sequencer_and_transport(
                 // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
+                    // Distribute the six rows across the grid height so no
+                    // dead band remains below JITTER/CLEAR (fix #4) and the
+                    // column bottom aligns with the step grid. Sizing to the
+                    // grid height — NOT available_height — keeps the column
+                    // from stretching the frame when the window is taller.
+                    // Content height is empirical: title ~12 + four 24px rows + one 28px row.
+                    const TRANSPORT_CONTENT_H: f32 = 136.0;
+                    const GRID_H: f32 = 2.0 * STRIP_HEIGHT + 4.0;
+                    let row_gap =
+                        ((GRID_H - TRANSPORT_CONTENT_H) / 5.0).clamp(3.0, 40.0);
+                    ui.spacing_mut().item_spacing = vec2(3.0, row_gap);
                     ui.spacing_mut().button_padding = vec2(3.0, 1.0);
 
                     ui.label(
@@ -302,12 +323,12 @@ pub fn render_sequencer_and_transport(
                                 DragValue::new(&mut tempo_val)
                                     .range(40.0..=300.0)
                                     .speed(0.1)
-                                    .custom_formatter(|n, _| format!("{:.1}", n)),
+                                    .custom_formatter(|n, _| format!("{:.0}", n)),
                             )
                             .changed()
                         {
                             setter.begin_set_parameter(&params.seq_tempo);
-                            setter.set_parameter(&params.seq_tempo, tempo_val);
+                            setter.set_parameter(&params.seq_tempo, snap_tempo(tempo_val));
                             setter.end_set_parameter(&params.seq_tempo);
                         }
 
@@ -430,7 +451,8 @@ pub fn render_sequencer_and_transport(
                             });
 
                         let mut jitter_val = params.seq_jitter.value();
-                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(36.0, 28.0), Sense::click());
+                        let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(JIT_HIT_W, 28.0), Sense::click());
+                        let jit_resp = jit_resp.on_hover_text("Add random timing jitter to sequencer steps");
                         if jit_resp.clicked() {
                             jitter_val = !jitter_val;
                             setter.begin_set_parameter(&params.seq_jitter);
@@ -442,7 +464,7 @@ pub fn render_sequencer_and_transport(
                             let box_rect = nih_plug_egui::egui::Rect::from_center_size(pos2(jit_hit_rect.left() + 6.0, jit_hit_rect.center().y), vec2(12.0, 12.0));
                             p.rect_filled(box_rect, CornerRadius::same(2), if jitter_val { theme::ACCENT_ORANGE } else { theme::WELL_BG });
                             p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.0_f32, if jitter_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }), StrokeKind::Inside);
-                            p.text(pos2(jit_hit_rect.left() + 15.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JIT", FontId::proportional(8.0), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED });
+                            p.text(pos2(jit_hit_rect.left() + 15.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JITTER", FontId::proportional(8.0), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED });
                         }
 
                         let clear_btn = Button::new(
@@ -501,6 +523,24 @@ mod tests {
     fn frame_vertical_chrome_pinned() {
         // Change-detector pin: value is empirically calibrated against
         // rendered captures. A change here must be re-verified visually.
-        assert_eq!(FRAME_VERT_CHROME_PX, 4.0);
+        assert_eq!(FRAME_VERT_CHROME_PX, 17.0);
+    }
+
+    #[test]
+    fn jitter_hit_rect_fits_label() {
+        // "JITTER" at 8 pt proportional is ~27 px wide; painted from a 15 px
+        // offset. The hit rect must cover the full painted text plus margin so
+        // no glyph pixels land on the CLEAR button's hit zone.
+        assert!(JIT_HIT_W >= 15.0 + 27.0 + 2.0);
+    }
+
+    #[test]
+    fn tempo_snaps_to_integer() {
+        // The BPM field displays `{:.0}`; the stored value must match the
+        // display, so drags snap to whole BPM (PR#53 review).
+        assert_eq!(snap_tempo(120.4), 120.0);
+        assert_eq!(snap_tempo(120.5), 121.0);
+        assert_eq!(snap_tempo(40.0), 40.0);
+        assert_eq!(snap_tempo(299.9), 300.0);
     }
 }

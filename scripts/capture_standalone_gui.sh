@@ -74,7 +74,7 @@ EOF
                 end if
             end tell
         ' 2>/dev/null || true
-        sleep 0.5
+        sleep 3.0
         screencapture -l "$win_id" -o "$output_file"
     else
         echo "Window ID not directly queryable; capturing screen to $output_file..."
