@@ -126,7 +126,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         let mut render_knob = |knob: Knob303<'_, _>| {
                             ui.allocate_ui_with_layout(
-                                vec2(col_w, 56.0),
+                                vec2(col_w, 64.0),
                                 nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
                                 |ui| {
                                     ui.add(knob);
