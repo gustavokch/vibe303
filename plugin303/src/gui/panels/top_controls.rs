@@ -8,6 +8,7 @@ use crate::params::Plugin303Params;
 /// Envelope Generators:
 /// - MEG ADSR: Modulation Envelope Generator (modulates VCF cutoff filter modulation)
 /// - VEG ADSR: Voice / Volume Envelope Generator (modulates VCA amplitude)
+#[allow(clippy::too_many_arguments)]
 fn render_adsr_bank(
     ui: &mut Ui,
     title: &str,
