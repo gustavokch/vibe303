@@ -50,6 +50,9 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             vec2(col_w, 64.0),
                             Layout::top_down(Align::Center),
                             |ui| {
+                                ui.set_min_width(col_w);
+                                ui.set_width(col_w);
+
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
                                     ui.label(
@@ -69,11 +72,11 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                         .width(52.0)
                                         .show_ui(ui, |ui| {
                                             for (variant, label) in [
-                                                (CompTolerance::Zero, "0%"),
-                                                (CompTolerance::PointFive, "0.5%"),
-                                                (CompTolerance::Two, "2%"),
-                                                (CompTolerance::Five, "5%"),
-                                                (CompTolerance::Ten, "10%"),
+                                                (CompTolerance::Zero, "0% (Ideal)"),
+                                                (CompTolerance::PointFive, "0.5% (Tight)"),
+                                                (CompTolerance::Two, "2% (Stock)"),
+                                                (CompTolerance::Five, "5% (Loose)"),
+                                                (CompTolerance::Ten, "10% (Wild)"),
                                             ] {
                                                 if ui.selectable_label(tol == variant, label).clicked() {
                                                     setter.begin_set_parameter(&params.tolerance);
@@ -84,7 +87,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                         });
                                 });
 
-                                ui.add_space(4.0);
+                                ui.add_space(2.0);
 
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
@@ -108,19 +111,9 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                         setter.set_parameter(&params.comp_age, age_val);
                                         setter.end_set_parameter(&params.comp_age);
                                     }
-                                });
-                            },
-                        );
 
-                        ui.separator();
+                                    ui.add_space(6.0);
 
-                        // Column 2: Noise & Drift
-                        ui.allocate_ui_with_layout(
-                            vec2(col_w, 64.0),
-                            Layout::top_down(Align::Center),
-                            |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
                                     ui.label(
                                         nih_plug_egui::egui::RichText::new("NOISE:")
                                             .font(FontId::proportional(8.5))
@@ -142,6 +135,18 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                         setter.end_set_parameter(&params.thermal_noise);
                                     }
                                 });
+                            },
+                        );
+
+                        ui.separator();
+
+                        // Column 2: Drift & Instability
+                        ui.allocate_ui_with_layout(
+                            vec2(col_w, 64.0),
+                            Layout::top_down(Align::Center),
+                            |ui| {
+                                ui.set_min_width(col_w);
+                                ui.set_width(col_w);
 
                                 ui.add_space(2.0);
 
@@ -156,6 +161,9 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             vec2(col_w, 64.0),
                             Layout::top_down(Align::Center),
                             |ui| {
+                                ui.set_min_width(col_w);
+                                ui.set_width(col_w);
+
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
                                     ui.label(
@@ -193,6 +201,9 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             vec2(col_w, 64.0),
                             Layout::top_down(Align::Center),
                             |ui| {
+                                ui.set_min_width(col_w);
+                                ui.set_width(col_w);
+
                                 let needs_rebuild = params.recalibration_scale.value() != 1.0
                                     || params.comp_age.value() != 0
                                     || params.tolerance.value() != crate::params::CompTolerance::Zero
@@ -221,12 +232,12 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     theme::TEXT_MUTED
                                 });
 
-                                ui.add_space(6.0);
+                                ui.add_space(4.0);
 
                                 let cal_btn = nih_plug_egui::egui::Button::new(btn_text)
                                     .fill(btn_color)
                                     .stroke(Stroke::new(1.0_f32, if needs_rebuild { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                                    .min_size(vec2(100.0, 22.0))
+                                    .min_size(vec2(120.0, 24.0))
                                     .corner_radius(CornerRadius::same(2));
 
                                 if ui.add(cal_btn).on_hover_text("Rebuild analog model with current component tolerances").clicked() {
