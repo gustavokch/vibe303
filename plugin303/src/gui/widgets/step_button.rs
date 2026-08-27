@@ -59,6 +59,14 @@ pub fn render_step_strip(
         if ui.is_rect_visible(strip_rect) {
             ui.painter()
                 .rect_filled(strip_rect, CornerRadius::same(2), column_bg);
+            if is_active {
+                ui.painter().rect_stroke(
+                    strip_rect,
+                    CornerRadius::same(2),
+                    Stroke::new(1.0_f32, theme::ACCENT_RUBY.gamma_multiply(0.7)),
+                    StrokeKind::Inside,
+                );
+            }
         }
         // 1. Playhead LED bar (4.0px flat bar at top, ruby accent distinct from Note/Tie/Acc)
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, LED_H), Sense::hover());
@@ -66,7 +74,7 @@ pub fn render_step_strip(
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             let led_color = if is_active {
-                theme::ACCENT_CYAN
+                theme::ACCENT_RUBY
             } else {
                 theme::WELL_BG
             };
