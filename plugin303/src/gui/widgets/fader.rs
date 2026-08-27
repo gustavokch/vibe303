@@ -34,13 +34,13 @@ impl<'a, P: Param> MiniFader<'a, P> {
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
         let width = 24.0;
-        let total_height = self.height + 26.0;
+        let total_height = self.height + 28.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
         let normalized = self.param.unmodulated_normalized_value();
         let track_top = rect.top() + 11.0;
-        let track_bottom = rect.bottom() - 13.0;
+        let track_bottom = rect.bottom() - 14.0;
         let track_height = track_bottom - track_top;
 
         // Interaction

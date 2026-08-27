@@ -113,7 +113,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add_space(6.0);
 
                 // Classic 303 Parameter Gauges (7 Knobs)
-                ui.spacing_mut().item_spacing = vec2(24.0, 0.0);
+                ui.spacing_mut().item_spacing = vec2(28.0, 0.0);
                 ui.add(Knob303::new(&params.tuning, setter, "TUNING", 20.0));
                 ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
                 ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 20.0));
@@ -122,16 +122,16 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add(Knob303::new(&params.accent, setter, "ACCENT", 20.0));
                 ui.add(Knob303::new(&params.volume, setter, "VOLUME", 20.0));
 
-                ui.add_space(16.0);
+                ui.add_space(20.0);
                 ui.separator();
-                ui.add_space(16.0);
+                ui.add_space(20.0);
 
                 // Envelopes Module Frame: contains ADV ENV toggle in header + MEG ADSR + VEG ADSR
                 let env_frame = Frame::new()
                     .fill(theme::WELL_BG)
                     .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
                     .corner_radius(CornerRadius::same(3))
-                    .inner_margin(Margin::symmetric(6, 4));
+                    .inner_margin(Margin::symmetric(8, 4));
 
                 env_frame.show(ui, |ui| {
                     ui.vertical(|ui| {
@@ -171,7 +171,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         let is_adv = params.advanced_env.value();
                         ui.add_enabled_ui(is_adv, |ui| {
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                                ui.spacing_mut().item_spacing = vec2(12.0, 0.0);
                                 render_adsr_bank(
                                     ui,
                                     "MEG ADSR (Mod Envelope)",
