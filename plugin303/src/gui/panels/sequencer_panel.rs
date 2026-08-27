@@ -37,6 +37,15 @@ pub(crate) fn grid_cell_width(avail_w: f32) -> (f32, bool) {
     }
 }
 
+/// Filler space that pins transport Row D to the panel bottom, closing the
+/// bottom-right transport void (ISSUE-04). Unconstrained layouts get no filler.
+fn transport_bottom_filler(available: f32, last_row_h: f32) -> f32 {
+    if !available.is_finite() {
+        return 0.0;
+    }
+    (available - last_row_h).max(0.0)
+}
+
 pub fn render_sequencer_and_transport(
     ui: &mut Ui,
     params: &Plugin303Params,
@@ -347,6 +356,11 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
+                    // Pin Row D to the panel bottom (closes bottom-right transport void)
+                    let row_d_h = 28.0_f32; // enlarged hit areas + row padding
+                    let fill = transport_bottom_filler(ui.available_height(), row_d_h + 6.0);
+                    ui.add_space(fill);
+
                     // Row D: Timebase + Mode + Jitter + Clear (enlarged hit areas >= 24px)
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
@@ -510,5 +524,19 @@ mod tests {
         let btn_w = 52.0_f32;
         let min_w_for_jitter = 48.0_f32;
         assert!(btn_w >= min_w_for_jitter, "JITTER button width must be at least 48px to fit full label");
+    }
+
+    #[test]
+    fn transport_bottom_filler_closes_bottom_void() {
+        fn transport_bottom_filler(available: f32, last_row_h: f32) -> f32 {
+            if !available.is_finite() {
+                return 0.0;
+            }
+            (available - last_row_h).max(0.0)
+        }
+        // At 1366x992 the sequencer grid leaves ~90px below transport Row D.
+        assert_eq!(transport_bottom_filler(90.0, 28.0), 62.0);
+        assert_eq!(transport_bottom_filler(20.0, 28.0), 0.0, "Filler never negative");
+        assert_eq!(transport_bottom_filler(f32::INFINITY, 28.0), 0.0, "Unconstrained layout gets no filler");
     }
 }

@@ -65,6 +65,9 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                     let right_fixed_w = 110.0_f32;
                     let remaining_w = (ui.available_width() - right_fixed_w).max(9.0 * 40.0);
                     let col_w = remaining_w / 9.0;
+                    // Cells are exact-width slots; zero inter-cell spacing so the
+                    // row consumes exactly remaining_w and LINK/DIODE never clip.
+                    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
 
                     let mut render_knob = |knob: Knob303<'_, _>| {
                         ui.allocate_ui_with_layout(
@@ -191,5 +194,21 @@ mod tests {
         let knobs_avail_w = avail_w - header_w - right_controls_w;
         let col_w = knobs_avail_w / 9.0;
         assert!(col_w >= 100.0, "Knob column width must provide generous spacing (>=100px), got {col_w}");
+    }
+
+    #[test]
+    fn output_clipper_knob_row_fits_reserved_band() {
+        let avail_w = 1366.0 - 20.0 - 12.0; // 1334.0
+        let header_w = 120.0_f32;
+        let right_fixed_w = 110.0_f32;
+        let knob_count = 9.0_f32;
+        let inter_cell_spacing = 0.0_f32; // cells sized exactly; no inter-cell spacing or right group clips
+        let knobs_avail_w = avail_w - header_w - right_fixed_w;
+        let col_w = knobs_avail_w / knob_count;
+        let consumed = knob_count * col_w + (knob_count - 1.0) * inter_cell_spacing;
+        assert!(
+            consumed <= knobs_avail_w + 0.01,
+            "Knob row ({consumed}px) must fit its reserved band ({knobs_avail_w}px) or LINK/DIODE clip at panel edge"
+        );
     }
 }
