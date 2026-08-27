@@ -7,6 +7,8 @@ use crate::gui::theme;
 use crate::gui::widgets::{Knob303, SlideSwitch};
 use crate::params::{CircuitTopology, Plugin303Params};
 
+pub const SOUPED_INNER_HEIGHT: f32 = 131.0;
+
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
 
@@ -17,7 +19,6 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            const SOUPED_INNER_HEIGHT: f32 = 131.0;
             ui.set_min_height(SOUPED_INNER_HEIGHT);
 
             if is_accurate {
@@ -147,4 +148,28 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 });
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn souped_panel_height_pinned() {
+        assert_eq!(SOUPED_INNER_HEIGHT, 131.0);
+    }
+
+    #[test]
+    fn accurate_card_centering_geometry() {
+        let card_h = 72.0_f32;
+        let pad = ((SOUPED_INNER_HEIGHT - card_h) * 0.5).max(0.0);
+        assert_eq!(pad, 29.5);
+        assert_eq!(pad * 2.0 + card_h, SOUPED_INNER_HEIGHT);
+
+        const MIN_CARD_W: f32 = 120.0;
+        for total_w in [50.0_f32, 100.0, 200.0, 300.0, 600.0, 1346.0] {
+            let card_w = 300.0_f32.min((total_w - 20.0).max(MIN_CARD_W));
+            assert!(card_w >= MIN_CARD_W && card_w <= 300.0);
+        }
+    }
 }
