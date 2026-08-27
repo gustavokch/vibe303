@@ -423,7 +423,7 @@ pub fn render_generator_panel(
                                     .strong()
                                     .color(theme::TEXT_ON_ACCENT),
                             )
-                            .fill(theme::ACCENT_CYAN)
+                            .fill(theme::ACCENT_ORANGE)
                             .min_size(vec2(col_w * 0.48, 22.0))
                             .corner_radius(CornerRadius::same(2));
 
