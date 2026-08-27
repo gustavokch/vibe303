@@ -17,8 +17,8 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            const DRAWER_INNER_HEIGHT: f32 = 72.0;
-            ui.set_min_height(DRAWER_INNER_HEIGHT);
+            const SOUPED_INNER_HEIGHT: f32 = 131.0;
+            ui.set_min_height(SOUPED_INNER_HEIGHT);
 
             if is_accurate {
                 // Centered overlay card when bypassed with zero ghost rendering
@@ -27,8 +27,8 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 // card_w never underflows to 0 (which would collapse the Frame).
                 const MIN_CARD_W: f32 = 120.0;
                 let card_w = 300.0_f32.min((total_w - 20.0).max(MIN_CARD_W));
-                let card_h = (DRAWER_INNER_HEIGHT - 20.0).max(24.0);
-                let pad = ((DRAWER_INNER_HEIGHT - card_h) * 0.5).max(0.0);
+                let card_h = 72.0_f32;
+                let pad = ((SOUPED_INNER_HEIGHT - card_h) * 0.5).max(0.0);
 
                 ui.vertical(|ui| {
                     ui.add_space(pad);
