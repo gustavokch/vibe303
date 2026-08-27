@@ -64,8 +64,8 @@ pub fn render_sequencer_and_transport(
             bottom: 0,
         })
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.set_min_height((frame_avail_h - FRAME_VERT_CHROME_PX).max(280.0));
-            ui.set_max_width(1048.0);
 
             // Grid geometry: 2 rows x 8 columns; transport column on the right
             let (cell_w, clamped) = grid_cell_width(ui.available_width());
@@ -302,7 +302,7 @@ pub fn render_sequencer_and_transport(
                                 DragValue::new(&mut tempo_val)
                                     .range(40.0..=300.0)
                                     .speed(0.1)
-                                    .custom_formatter(|n, _| format!("{:.1}", n)),
+                                    .custom_formatter(|n, _| format!("{:.0}", n)),
                             )
                             .changed()
                         {
@@ -431,6 +431,7 @@ pub fn render_sequencer_and_transport(
 
                         let mut jitter_val = params.seq_jitter.value();
                         let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(36.0, 28.0), Sense::click());
+                        let jit_resp = jit_resp.on_hover_text("Clock jitter / micro-timing humanization");
                         if jit_resp.clicked() {
                             jitter_val = !jitter_val;
                             setter.begin_set_parameter(&params.seq_jitter);
