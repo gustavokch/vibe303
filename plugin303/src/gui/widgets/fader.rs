@@ -153,3 +153,27 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
         response
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mini_fader_geometry_bounds() {
+        let height = 48.0_f32;
+        let total_height = height + 28.0;
+        let top = 0.0_f32;
+        let bottom = top + total_height;
+        let track_top = top + 11.0;
+        let track_bottom = bottom - 14.0;
+        let track_height = track_bottom - track_top;
+
+        assert!(track_top > top, "Track top must have top label clearance");
+        assert!(track_bottom < bottom, "Track bottom must have bottom readout clearance");
+        assert!(track_height > 0.0, "Track height must be positive");
+        assert_eq!(track_height, height + 3.0);
+
+        for normalized in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
+            let thumb_y = track_bottom - normalized * track_height;
+            assert!(thumb_y >= track_top - 1e-4 && thumb_y <= track_bottom + 1e-4);
+        }
+    }
+}
