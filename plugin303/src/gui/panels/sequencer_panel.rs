@@ -1,14 +1,14 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    epaint::Shape, pos2, style::WidgetVisuals, vec2, AboveOrBelow, Button, ComboBox, CornerRadius,
-    DragValue, FontId, Frame, Margin, Rect, Sense, Stroke, StrokeKind, Ui,
+    epaint::Shape, pos2, style::WidgetVisuals, vec2, AboveOrBelow, Align, Button, ComboBox,
+    CornerRadius, DragValue, FontId, Frame, Layout, Margin, Rect, Sense, Stroke, StrokeKind, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::gui::theme;
 use crate::gui::widgets::piano_roll_popup::render_piano_roll_popup;
 use crate::gui::widgets::render_step_strip;
-use crate::gui::widgets::step_button::STRIP_HEIGHT;
+use crate::gui::widgets::step_button::{CONTROL_ROW_H, STRIP_HEIGHT};
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
 
 /// Custom ComboBox icon painter that always paints a downward-pointing triangle (▼).
@@ -39,6 +39,8 @@ const TRANSPORT_COLUMN_W: f32 = 280.0;
 const GRID_GAP: f32 = 4.0;
 /// Total vertical height of the 2-row step grid (2 * STRIP_HEIGHT + GRID_GAP = 268.0).
 const GRID_TOTAL_H: f32 = 2.0 * STRIP_HEIGHT + GRID_GAP;
+/// Height allocated to transport Row D, matching the step grid's control rows.
+const ROW_D_H: f32 = CONTROL_ROW_H;
 /// `add_space(8)` + separator (~2) + `add_space(8)` between grid and transport column.
 const SEPARATOR_CHROME_W: f32 = 18.0;
 /// Smallest usable step cell; below this the grid overflows instead of scrolling.
@@ -384,15 +386,17 @@ pub fn render_sequencer_and_transport(
                     });
 
                     // Pin Row D so its bottom matches the step grid bottom (GRID_TOTAL_H = 268.0)
-                    let row_d_h = 28.0_f32; // enlarged hit areas + row padding
                     let current_transport_y = ui.cursor().top() - transport_start_y;
-                    let fill = transport_bottom_filler(GRID_TOTAL_H - current_transport_y, row_d_h);
+                    let fill = transport_bottom_filler(GRID_TOTAL_H - current_transport_y, ROW_D_H);
                     ui.add_space(fill);
 
                     // Row D: Timebase + Mode + Jitter + Clear (enlarged hit areas >= 24px)
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-                        ui.spacing_mut().button_padding = vec2(4.0, 3.0);
+                    ui.allocate_ui_with_layout(
+                        vec2(ui.available_width(), ROW_D_H),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+                            ui.spacing_mut().button_padding = vec2(4.0, 3.0);
 
                         let tb_val = params.seq_timebase.value();
                         ComboBox::from_id_salt("seq_tb_combo")
@@ -588,7 +592,6 @@ mod tests {
 
     #[test]
     fn sequencer_and_transport_bottom_rows_aligned() {
-        use crate::gui::widgets::step_button::CONTROL_ROW_H;
         // Step grid bottom row (octave arrows in row 1) starts at:
         // row 0 strip + gap + row 1 (strip - control_row)
         let octave_row_top = STRIP_HEIGHT + GRID_GAP + (STRIP_HEIGHT - CONTROL_ROW_H);
@@ -596,9 +599,21 @@ mod tests {
         let octave_row_bottom = octave_row_top + CONTROL_ROW_H;
         assert_eq!(octave_row_bottom, GRID_TOTAL_H);
 
-        // Transport Row D top and bottom match exactly
-        let row_d_top = GRID_TOTAL_H - 28.0;
-        assert_eq!(row_d_top, octave_row_top);
-        assert_eq!(row_d_top + 28.0, octave_row_bottom);
+        // Verify transport_bottom_filler places Row D so its bottom aligns with GRID_TOTAL_H
+        for consumed in [0.0, 50.0, 100.0, 150.0, 200.0, 240.0] {
+            let available = GRID_TOTAL_H - consumed;
+            let filler = transport_bottom_filler(available, ROW_D_H);
+            let row_d_top = consumed + filler;
+            let row_d_bottom = row_d_top + ROW_D_H;
+            assert_eq!(row_d_bottom, GRID_TOTAL_H);
+            assert!(row_d_top >= consumed);
+        }
+
+        // Saturating case: consumed exceeds grid -> filler is 0.0, row is placed immediately
+        let saturating_consumed = GRID_TOTAL_H + 50.0;
+        let available_sat = GRID_TOTAL_H - saturating_consumed;
+        let filler_sat = transport_bottom_filler(available_sat, ROW_D_H);
+        assert_eq!(filler_sat, 0.0);
+        assert_eq!(saturating_consumed + filler_sat, saturating_consumed);
     }
 }
