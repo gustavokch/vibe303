@@ -8,6 +8,16 @@ use crate::gui::theme;
 use crate::gui::widgets::SlideSwitch;
 use crate::params::Plugin303Params;
 
+pub(crate) const LEFT_GROUP_W: f32 = 280.0;
+pub(crate) const RIGHT_GROUP_W: f32 = 480.0;
+
+/// Compute the left offset for the right control group relative to the header bar origin.
+/// Clamps to `left_width` so that at narrow widths (e.g. at 200% zoom) the right group
+/// never overlaps the left brand block.
+pub(crate) fn right_group_left(bar_width: f32, left_width: f32, desired: f32) -> f32 {
+    (bar_width - desired).max(left_width)
+}
+
 pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let header_frame = Frame::new()
         .fill(theme::PANEL_BG)
@@ -19,7 +29,7 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
         let bar_rect = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 34.0));
 
         // 1. Left side: Brand Logotype and Badges in dedicated container
-        let left_rect = Rect::from_min_size(bar_rect.min, vec2(280.0, 34.0));
+        let left_rect = Rect::from_min_size(bar_rect.min, vec2(LEFT_GROUP_W, 34.0));
         ui.allocate_new_ui(
             nih_plug_egui::egui::UiBuilder::new().max_rect(left_rect),
             |ui| {
@@ -73,8 +83,10 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
         );
 
         // 2. Right control group in dedicated right-aligned container
+        let right_left = bar_rect.left()
+            + right_group_left(bar_rect.width(), LEFT_GROUP_W, RIGHT_GROUP_W);
         let right_rect = Rect::from_min_max(
-            pos2(bar_rect.right() - 480.0, bar_rect.top()),
+            pos2(right_left, bar_rect.top()),
             bar_rect.right_bottom(),
         );
         ui.allocate_new_ui(
@@ -162,4 +174,33 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
 
         ui.advance_cursor_after_rect(bar_rect);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn right_group_left_wide_case_no_clamp() {
+        // Wide window: 1346 px available width, left=280, desired=480
+        // Expected left offset = 1346 - 480 = 866 >= 280
+        let left = right_group_left(1346.0, LEFT_GROUP_W, RIGHT_GROUP_W);
+        assert_eq!(left, 1346.0 - RIGHT_GROUP_W);
+        assert!(left > LEFT_GROUP_W);
+    }
+
+    #[test]
+    fn right_group_left_exact_boundary() {
+        // Exact boundary: bar_width = left_width + desired = 760.0
+        let left = right_group_left(LEFT_GROUP_W + RIGHT_GROUP_W, LEFT_GROUP_W, RIGHT_GROUP_W);
+        assert_eq!(left, LEFT_GROUP_W);
+    }
+
+    #[test]
+    fn right_group_left_narrow_zoomed_clamped_no_overlap() {
+        // 200% zoom: logical width ~640 pt, desired 480 pt -> would be 160 without clamp.
+        // Clamps to left_width (280.0) so it never overlaps left brand block.
+        let left = right_group_left(640.0, LEFT_GROUP_W, RIGHT_GROUP_W);
+        assert_eq!(left, LEFT_GROUP_W);
+    }
 }
