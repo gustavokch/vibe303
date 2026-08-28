@@ -14,12 +14,16 @@ cargo build --release --manifest-path "$REPO_ROOT/Cargo.toml" -p plugin303 --bin
 capture_single_state() {
     local state_name="$1"
     local output_file="$2"
-
     echo "Capturing state '$state_name' to '$output_file'..."
 
     VIBE303_QA_STATE="$state_name" "$REPO_ROOT/target/release/standalone" -b dummy > "$LOG_FILE" 2>&1 &
-    sleep 5
     local app_pid=$!
+    if [[ "$state_name" != "default" ]]; then
+        sleep 5
+    else
+        echo "First run: sleeping 20s..."
+    	sleep 20
+    fi
 
     local win_id=""
     for i in {1..30}; do
@@ -65,7 +69,7 @@ if let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as
 EOF
         )
     fi
-    sleep 10
+    sleep 3
     if [[ -n "$win_id" && "$win_id" != "missing value" ]]; then
         osascript -e '
             tell application "System Events"
@@ -75,11 +79,11 @@ EOF
                 end if
             end tell
         ' 2>/dev/null || true
-        sleep 5
+        sleep 1
         screencapture -l "$win_id" -o "$output_file"
     else
         echo "Window ID not directly queryable; capturing screen to $output_file..."
-        sleep 5
+        sleep 1
         screencapture -x "$output_file"
     fi
 
