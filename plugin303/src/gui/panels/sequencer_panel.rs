@@ -1,7 +1,7 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense, Stroke,
-    StrokeKind, Ui,
+    epaint::Shape, pos2, style::WidgetVisuals, vec2, AboveOrBelow, Button, ComboBox, CornerRadius,
+    DragValue, FontId, Frame, Margin, Rect, Sense, Stroke, StrokeKind, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -11,20 +11,22 @@ use crate::gui::widgets::render_step_strip;
 use crate::gui::widgets::step_button::STRIP_HEIGHT;
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
 
-/// Custom ComboBox icon painter that always paints a downward-pointing triangle (▼),
-/// matching the app-wide dropdown visual convention regardless of popup opening direction.
-pub fn paint_combobox_down_arrow(
+/// Custom ComboBox icon painter that always paints a downward-pointing triangle (▼).
+/// These two bottom-row dropdowns sit low enough in the window that egui flips the glyph
+/// when the popup opens upward; this painter keeps the glyph downward-pointing to match
+/// the app-wide dropdown convention.
+fn paint_combobox_down_arrow(
     ui: &Ui,
-    rect: nih_plug_egui::egui::Rect,
-    visuals: &nih_plug_egui::egui::style::WidgetVisuals,
+    rect: Rect,
+    visuals: &WidgetVisuals,
     _is_open: bool,
-    _above_or_below: nih_plug_egui::egui::AboveOrBelow,
+    _above_or_below: AboveOrBelow,
 ) {
-    let rect = nih_plug_egui::egui::Rect::from_center_size(
+    let rect = Rect::from_center_size(
         rect.center(),
         vec2(rect.width() * 0.7, rect.height() * 0.45),
     );
-    ui.painter().add(nih_plug_egui::egui::epaint::Shape::convex_polygon(
+    ui.painter().add(Shape::convex_polygon(
         vec![rect.left_top(), rect.right_top(), rect.center_bottom()],
         visuals.fg_stroke.color,
         Stroke::NONE,
@@ -36,7 +38,7 @@ const TRANSPORT_COLUMN_W: f32 = 280.0;
 /// Horizontal gap between adjacent step cells (and grid rows vertically).
 const GRID_GAP: f32 = 4.0;
 /// Total vertical height of the 2-row step grid (2 * STRIP_HEIGHT + GRID_GAP = 268.0).
-pub const GRID_TOTAL_H: f32 = 2.0 * STRIP_HEIGHT + GRID_GAP;
+const GRID_TOTAL_H: f32 = 2.0 * STRIP_HEIGHT + GRID_GAP;
 /// `add_space(8)` + separator (~2) + `add_space(8)` between grid and transport column.
 const SEPARATOR_CHROME_W: f32 = 18.0;
 /// Smallest usable step cell; below this the grid overflows instead of scrolling.
@@ -67,7 +69,7 @@ pub(crate) fn grid_cell_width(avail_w: f32) -> (f32, bool) {
 }
 
 /// Filler space that aligns transport Row D with the step grid's bottom row baseline.
-pub fn transport_bottom_filler(available: f32, last_row_h: f32) -> f32 {
+fn transport_bottom_filler(available: f32, last_row_h: f32) -> f32 {
     if !available.is_finite() {
         return 0.0;
     }
@@ -570,7 +572,7 @@ mod tests {
 
     #[test]
     fn transport_bottom_filler_closes_bottom_void() {
-        // At 1366x992 the sequencer grid leaves ~90px below transport Row D.
+        // When remaining space in transport column exceeds row D height, filler consumes the delta.
         assert_eq!(transport_bottom_filler(90.0, 28.0), 62.0);
         assert_eq!(
             transport_bottom_filler(20.0, 28.0),
