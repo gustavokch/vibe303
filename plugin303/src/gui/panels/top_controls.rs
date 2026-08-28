@@ -111,8 +111,9 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     .inner_margin(Margin::symmetric(6, 4));
 
                 env_frame.show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
                     ui.vertical(|ui| {
-                        let is_adv = params.advanced_env.value();
+                        let mut is_adv = params.advanced_env.value();
                         ui.horizontal(|ui| {
                             ui.label(
                                 nih_plug_egui::egui::RichText::new("ENVELOPES")
@@ -126,15 +127,14 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                             ui.add_space(10.0);
 
-                            let mut adv_env = params.advanced_env.value();
-                            let adv_color = if adv_env {
+                            let adv_color = if is_adv {
                                 theme::ACCENT_ORANGE
                             } else {
                                 theme::TEXT_SECONDARY
                             };
                             if ui
                                 .checkbox(
-                                    &mut adv_env,
+                                    &mut is_adv,
                                     nih_plug_egui::egui::RichText::new("ADV ENV")
                                         .font(FontId::proportional(8.5))
                                         .color(adv_color),
@@ -142,7 +142,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 .changed()
                             {
                                 setter.begin_set_parameter(&params.advanced_env);
-                                setter.set_parameter(&params.advanced_env, adv_env);
+                                setter.set_parameter(&params.advanced_env, is_adv);
                                 setter.end_set_parameter(&params.advanced_env);
                             }
                         });
@@ -150,7 +150,11 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(10.0, 0.0);
+                            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                            let avail = ui.available_width();
+                            let approx_bank_w = 115.0_f32;
+                            let spacer_w = (avail - 2.0 * approx_bank_w).max(6.0);
+
                             ui.add_enabled_ui(is_adv, |ui| {
                                 render_adsr_bank(
                                     ui,
@@ -163,6 +167,8 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     is_adv,
                                 );
                             });
+
+                            ui.add_space(spacer_w);
 
                             ui.add_enabled_ui(is_adv, |ui| {
                                 render_adsr_bank(
