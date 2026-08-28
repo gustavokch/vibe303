@@ -152,7 +152,12 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 ui.set_min_width(col_w);
                                 ui.set_width(col_w);
 
-                                ui.add_space(2.0);
+                                // Match SEED row vertical space from column 3 so DRIFT and RECAL share a baseline
+                                ui.add_space(
+                                    ui.spacing().interact_size.y
+                                        + ui.spacing().item_spacing.y
+                                        + 2.0,
+                                );
 
                                 ui.add(Knob303::new(&params.comp_drift, setter, "DRIFT", 11.0));
                             },

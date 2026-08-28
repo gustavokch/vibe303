@@ -74,7 +74,7 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
 
         // 2. Right control group in dedicated right-aligned container
         let right_rect = Rect::from_min_max(
-            pos2(bar_rect.right() - 400.0, bar_rect.top()),
+            pos2(bar_rect.right() - 480.0, bar_rect.top()),
             bar_rect.right_bottom(),
         );
         ui.allocate_new_ui(
@@ -128,7 +128,7 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                     &params.tier,
                                     setter,
                                     "QUALITY",
-                                    &["LOW", "HIGH", "ULTRA", "2X"],
+                                    &["LOW", "HIGH", "ULTRA", "ULTRA 2X"],
                                 ),
                             )
                         });
