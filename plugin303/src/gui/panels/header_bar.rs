@@ -1,6 +1,7 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Align2, ComboBox, CornerRadius, FontFamily, FontId, Frame, Margin, Rect, Stroke, StrokeKind, Ui,
+    pos2, vec2, Align2, ComboBox, CornerRadius, FontFamily, FontId, Frame, Margin, Rect, Stroke,
+    StrokeKind, Ui,
 };
 
 use crate::gui::theme;
@@ -134,7 +135,6 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                         if is_accurate {
                             quality_resp.response.on_hover_text("Quality tier applies to FUN mode (ACCURATE uses fixed physical modeling)");
                         }
-
                         // 3. Circuit Topology switch
                         let prev_topology = params.topology.value();
                         let switch_resp = ui.add(SlideSwitch::new(

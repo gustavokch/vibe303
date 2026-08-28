@@ -18,7 +18,6 @@ fn render_adsr_bank(
     release: &FloatParam,
     setter: &ParamSetter,
     is_active: bool,
-    target_width: f32,
 ) {
     let accent = if is_active {
         theme::ACCENT_ORANGE
@@ -30,10 +29,9 @@ fn render_adsr_bank(
         .fill(theme::WELL_BG)
         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
         .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::symmetric(6, 2));
+        .inner_margin(Margin::symmetric(4, 2));
 
     bank_frame.show(ui, |ui| {
-        ui.set_width(target_width);
         ui.vertical(|ui| {
             ui.label(
                 nih_plug_egui::egui::RichText::new(title)
@@ -42,50 +40,19 @@ fn render_adsr_bank(
                         nih_plug_egui::egui::FontFamily::Proportional,
                     ))
                     .strong()
-                    .color(if is_active { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY }),
+                    .color(if is_active {
+                        theme::TEXT_PRIMARY
+                    } else {
+                        theme::TEXT_SECONDARY
+                    }),
             );
             ui.add_space(1.0);
             ui.horizontal(|ui| {
-                let inner_w = ui.available_width();
-                let fader_col_w = inner_w / 4.0;
-                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-
-                let mut render_fader = |fader: MiniFader<'_, _>| {
-                    ui.allocate_ui_with_layout(
-                        vec2(fader_col_w, 54.0),
-                        nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
-                        |ui| ui.add(fader),
-                    );
-                };
-
-                render_fader(MiniFader::new(
-                    attack,
-                    setter,
-                    "A",
-                    24.0,
-                    accent,
-                ));
-                render_fader(MiniFader::new(
-                    decay,
-                    setter,
-                    "D",
-                    24.0,
-                    accent,
-                ));
-                render_fader(MiniFader::new(
-                    sustain,
-                    setter,
-                    "S",
-                    24.0,
-                    accent,
-                ));
-                render_fader(MiniFader::new(
-                    release,
-                    setter,
-                    "R",
-                    24.0,
-                    accent,
-                ));
+                ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+                ui.add(MiniFader::new(attack, setter, "A", 24.0, accent));
+                ui.add(MiniFader::new(decay, setter, "D", 24.0, accent));
+                ui.add(MiniFader::new(sustain, setter, "S", 24.0, accent));
+                ui.add(MiniFader::new(release, setter, "R", 24.0, accent));
             });
         });
     });
@@ -113,21 +80,16 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 // Waveform Selector integrated inside main panel
                 ui.add_space(4.0);
                 ui.add(
-                    SlideSwitch::new(
-                        &params.waveform,
-                        setter,
-                        "WAVE",
-                        &["SAW", "SQR", "SWP"],
-                    )
-                    .vertical()
-                    .with_thumb_color(theme::ACCENT_ORANGE),
+                    SlideSwitch::new(&params.waveform, setter, "WAVE", &["SAW", "SQR", "SWP"])
+                        .vertical()
+                        .with_thumb_color(theme::ACCENT_ORANGE),
                 );
                 ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(6.0);
 
                 // Classic 303 Parameter Gauges (7 Knobs)
-                ui.spacing_mut().item_spacing = vec2(32.0, 0.0);
+                ui.spacing_mut().item_spacing = vec2(24.0, 0.0);
                 ui.add(Knob303::new(&params.tuning, setter, "TUNING", 20.0));
                 ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
                 ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 20.0));
@@ -136,39 +98,79 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add(Knob303::new(&params.accent, setter, "ACCENT", 20.0));
                 ui.add(Knob303::new(&params.volume, setter, "VOLUME", 20.0));
 
-                ui.add_space(8.0);
+                ui.add_space(16.0);
                 ui.separator();
-                ui.add_space(8.0);
+                ui.add_space(16.0);
 
-                // Envelopes Module Frame: contains ADV ENV toggle in header + MEG ADSR + VEG ADSR
+                // Envelopes Module Frame: MEG/VEG/ADV ENV distributed evenly
+                // across the full remaining width so there is no dead band.
                 let env_frame = Frame::new()
                     .fill(theme::WELL_BG)
                     .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
                     .corner_radius(CornerRadius::same(3))
-                    .inner_margin(Margin::symmetric(8, 4));
+                    .inner_margin(Margin::symmetric(6, 4));
 
                 env_frame.show(ui, |ui| {
-                    ui.set_width(ui.available_width());
+                    ui.set_min_width(ui.available_width());
                     ui.vertical(|ui| {
-                        // Header with Title and right-aligned ADV ENV checkbox
+                        ui.label(
+                            nih_plug_egui::egui::RichText::new("ENVELOPES")
+                                .font(FontId::new(
+                                    9.0,
+                                    nih_plug_egui::egui::FontFamily::Proportional,
+                                ))
+                                .strong()
+                                .color(theme::TEXT_PRIMARY),
+                        );
+
+                        ui.add_space(2.0);
+
+                        let is_adv = params.advanced_env.value();
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("ENVELOPES")
-                                    .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
-                                    .strong()
-                                    .color(theme::TEXT_PRIMARY),
-                            );
-                            ui.with_layout(
-                                nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
-                                |ui| {
+                            ui.columns(3, |cols| {
+                                cols[0].vertical_centered(|ui| {
+                                    ui.add_enabled_ui(is_adv, |ui| {
+                                        render_adsr_bank(
+                                            ui,
+                                            "MEG ADSR (Mod Envelope)",
+                                            &params.meg_attack,
+                                            &params.meg_decay_adj,
+                                            &params.meg_sustain,
+                                            &params.meg_release,
+                                            setter,
+                                            is_adv,
+                                        );
+                                    });
+                                });
+
+                                cols[1].vertical_centered(|ui| {
+                                    ui.add_enabled_ui(is_adv, |ui| {
+                                        render_adsr_bank(
+                                            ui,
+                                            "VEG ADSR (Voice Envelope)",
+                                            &params.veg_attack,
+                                            &params.veg_decay_adj,
+                                            &params.veg_sustain,
+                                            &params.veg_release,
+                                            setter,
+                                            is_adv,
+                                        );
+                                    });
+                                });
+
+                                cols[2].vertical_centered(|ui| {
                                     let mut adv_env = params.advanced_env.value();
-                                    let is_adv_checked = adv_env;
+                                    let adv_color = if adv_env {
+                                        theme::ACCENT_ORANGE
+                                    } else {
+                                        theme::TEXT_SECONDARY
+                                    };
                                     if ui
                                         .checkbox(
                                             &mut adv_env,
                                             nih_plug_egui::egui::RichText::new("ADV ENV")
                                                 .font(FontId::proportional(8.5))
-                                                .color(if is_adv_checked { theme::ACCENT_ORANGE } else { theme::TEXT_SECONDARY }),
+                                                .color(adv_color),
                                         )
                                         .changed()
                                     {
@@ -176,44 +178,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                         setter.set_parameter(&params.advanced_env, adv_env);
                                         setter.end_set_parameter(&params.advanced_env);
                                     }
-                                },
-                            );
-                        });
-
-                        ui.add_space(2.0);
-
-                        // ADSR banks row
-                        let is_adv = params.advanced_env.value();
-                        ui.add_enabled_ui(is_adv, |ui| {
-                            ui.horizontal(|ui| {
-                                let total_w = ui.available_width();
-                                let bank_spacing = 8.0_f32;
-                                let bank_w = ((total_w - bank_spacing) * 0.5).max(120.0);
-                                ui.spacing_mut().item_spacing = vec2(bank_spacing, 0.0);
-
-                                render_adsr_bank(
-                                    ui,
-                                    "MEG ADSR (Mod Envelope)",
-                                    &params.meg_attack,
-                                    &params.meg_decay_adj,
-                                    &params.meg_sustain,
-                                    &params.meg_release,
-                                    setter,
-                                    is_adv,
-                                    bank_w,
-                                );
-
-                                render_adsr_bank(
-                                    ui,
-                                    "VEG ADSR (Voice Envelope)",
-                                    &params.veg_attack,
-                                    &params.veg_decay_adj,
-                                    &params.veg_sustain,
-                                    &params.veg_release,
-                                    setter,
-                                    is_adv,
-                                    bank_w,
-                                );
+                                });
                             });
                         });
                     });

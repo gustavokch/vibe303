@@ -98,7 +98,11 @@ pub fn render_generator_panel(
                                 .width(36.0)
                                 .show_ui(ui, |ui| {
                                     for (idx, name) in NOTE_NAMES.iter().enumerate() {
-                                        ui.selectable_value(&mut gen_params.root_note, idx as u8, *name);
+                                        ui.selectable_value(
+                                            &mut gen_params.root_note,
+                                            idx as u8,
+                                            *name,
+                                        );
                                     }
                                 });
 
@@ -392,9 +396,13 @@ pub fn render_generator_panel(
                                         let accent = pat.pitches[i].accent;
                                         let slide = pat.pitches[i].slide;
                                         let gate = match pat.timing[i] {
-                                            crate::dsp::sequencer::TimeEntry::Note => StepGate::Note,
+                                            crate::dsp::sequencer::TimeEntry::Note => {
+                                                StepGate::Note
+                                            }
                                             crate::dsp::sequencer::TimeEntry::Tie => StepGate::Tie,
-                                            crate::dsp::sequencer::TimeEntry::Rest => StepGate::Rest,
+                                            crate::dsp::sequencer::TimeEntry::Rest => {
+                                                StepGate::Rest
+                                            }
                                         };
 
                                         seq_pat.steps[i] = SequencerStep {
@@ -410,11 +418,18 @@ pub fn render_generator_panel(
                                 }
 
                                 setter.begin_set_parameter(&params.seq_length);
-                                setter.set_parameter(&params.seq_length, gen_params.rhythm_length as i32);
+                                setter.set_parameter(
+                                    &params.seq_length,
+                                    gen_params.rhythm_length as i32,
+                                );
                                 setter.end_set_parameter(&params.seq_length);
                             }
 
-                            // MUTATE Flat Button
+                            // MUTATE uses the cyan "pattern-content" accent
+                            // (NOTE/SLD cell color) to signal it modifies an
+                            // existing pattern, while GENERATE uses the orange
+                            // action accent for creating a new pattern. This
+                            // is an intentional visual convention.
                             let mutate_btn = Button::new(
                                 nih_plug_egui::egui::RichText::new("MUTATE")
                                     .font(FontId::proportional(9.5))
@@ -431,7 +446,8 @@ pub fn render_generator_panel(
                                     let num_steps = params.seq_length.value() as u8;
                                     let mut pat = seq_pat.compile(num_steps, mode);
                                     // Independent Weyl sequence constant for mutation stream (distinct from NEW SEED)
-                                    gen_params.seed = gen_params.seed.wrapping_add(0x517C_C1B7_2722_0A95);
+                                    gen_params.seed =
+                                        gen_params.seed.wrapping_add(0x517C_C1B7_2722_0A95);
                                     AcidGenerator::mutate(&mut pat, gen_params, gen_params.seed);
 
                                     for i in 0..16 {
@@ -440,9 +456,13 @@ pub fn render_generator_panel(
                                         seq_pat.steps[i].semitone = pat.pitches[i].key;
                                         seq_pat.steps[i].octave = pat.pitches[i].octave;
                                         seq_pat.steps[i].gate = match pat.timing[i] {
-                                            crate::dsp::sequencer::TimeEntry::Note => StepGate::Note,
+                                            crate::dsp::sequencer::TimeEntry::Note => {
+                                                StepGate::Note
+                                            }
                                             crate::dsp::sequencer::TimeEntry::Tie => StepGate::Tie,
-                                            crate::dsp::sequencer::TimeEntry::Rest => StepGate::Rest,
+                                            crate::dsp::sequencer::TimeEntry::Rest => {
+                                                StepGate::Rest
+                                            }
                                         };
                                     }
                                 }

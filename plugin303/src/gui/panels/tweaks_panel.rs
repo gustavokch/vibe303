@@ -78,9 +78,13 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 (CompTolerance::Five, "5% (Loose)"),
                                                 (CompTolerance::Ten, "10% (Wild)"),
                                             ] {
-                                                if ui.selectable_label(tol == variant, label).clicked() {
+                                                if ui
+                                                    .selectable_label(tol == variant, label)
+                                                    .clicked()
+                                                {
                                                     setter.begin_set_parameter(&params.tolerance);
-                                                    setter.set_parameter(&params.tolerance, variant);
+                                                    setter
+                                                        .set_parameter(&params.tolerance, variant);
                                                     setter.end_set_parameter(&params.tolerance);
                                                 }
                                             }
@@ -177,7 +181,9 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                             DragValue::new(&mut seed_val)
                                                 .range(0..=9999)
                                                 .speed(1.0)
-                                                .custom_formatter(|v, _| format!("{:04}", v as u32)),
+                                                .custom_formatter(|v, _| {
+                                                    format!("{:04}", v as u32)
+                                                }),
                                         )
                                         .on_hover_text("Component Variation Seed (0000-9999 drag)")
                                         .changed()
@@ -190,7 +196,12 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                 ui.add_space(2.0);
 
-                                ui.add(Knob303::new(&params.recalibration_scale, setter, "RECAL", 11.0));
+                                ui.add(Knob303::new(
+                                    &params.recalibration_scale,
+                                    setter,
+                                    "RECAL",
+                                    11.0,
+                                ));
                             },
                         );
 
@@ -206,7 +217,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                 let needs_rebuild = params.recalibration_scale.value() != 1.0
                                     || params.comp_age.value() != 0
-                                    || params.tolerance.value() != crate::params::CompTolerance::Zero
+                                    || params.tolerance.value()
+                                        != crate::params::CompTolerance::Zero
                                     || params.thermal_noise.value() != 0
                                     || params.comp_drift.value() != 0.1;
                                 let calibrating = params.calibrate_sync.value();
@@ -236,11 +248,24 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                 let cal_btn = nih_plug_egui::egui::Button::new(btn_text)
                                     .fill(btn_color)
-                                    .stroke(Stroke::new(1.0_f32, if needs_rebuild { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
+                                    .stroke(Stroke::new(
+                                        1.0_f32,
+                                        if needs_rebuild {
+                                            theme::ACCENT_ORANGE
+                                        } else {
+                                            theme::BORDER_DEFAULT
+                                        },
+                                    ))
                                     .min_size(vec2(120.0, 24.0))
                                     .corner_radius(CornerRadius::same(2));
 
-                                if ui.add(cal_btn).on_hover_text("Rebuild analog model with current component tolerances").clicked() {
+                                if ui
+                                    .add(cal_btn)
+                                    .on_hover_text(
+                                        "Rebuild analog model with current component tolerances",
+                                    )
+                                    .clicked()
+                                {
                                     setter.begin_set_parameter(&params.calibrate_sync);
                                     setter.set_parameter(&params.calibrate_sync, true);
                                     setter.end_set_parameter(&params.calibrate_sync);
@@ -248,9 +273,17 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                 ui.add_space(4.0);
                                 ui.label(
-                                    nih_plug_egui::egui::RichText::new(if needs_rebuild { "SYNC PENDING" } else { "CALIBRATED" })
-                                        .font(FontId::proportional(7.5))
-                                        .color(if needs_rebuild { theme::ACCENT_ORANGE } else { theme::TEXT_MUTED }),
+                                    nih_plug_egui::egui::RichText::new(if needs_rebuild {
+                                        "SYNC PENDING"
+                                    } else {
+                                        "CALIBRATED"
+                                    })
+                                    .font(FontId::proportional(7.5))
+                                    .color(if needs_rebuild {
+                                        theme::ACCENT_ORANGE
+                                    } else {
+                                        theme::TEXT_MUTED
+                                    }),
                                 );
                             },
                         );
@@ -267,6 +300,9 @@ mod tests {
         let avail_w = 1366.0 - 20.0 - 12.0; // 1334.0
         let col_w = avail_w / 4.0;
         assert_eq!(col_w, 333.5);
-        assert!(col_w > 250.0, "Each of the 4 tweak groups has adequate horizontal space");
+        assert!(
+            col_w > 250.0,
+            "Each of the 4 tweak groups has adequate horizontal space"
+        );
     }
 }

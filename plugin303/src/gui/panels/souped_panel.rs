@@ -1,7 +1,5 @@
 use nih_plug::prelude::ParamSetter;
-use nih_plug_egui::egui::{
-    vec2, Button, CornerRadius, FontId, Frame, Margin, Stroke, Ui,
-};
+use nih_plug_egui::egui::{vec2, Button, CornerRadius, FontId, Frame, Margin, Stroke, Ui};
 
 use crate::gui::theme;
 use crate::gui::widgets::{Knob303, SlideSwitch};
@@ -45,21 +43,32 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 ui.vertical_centered(|ui| {
                                     ui.label(
                                         nih_plug_egui::egui::RichText::new("ACCURATE MODE ACTIVE")
-                                            .font(FontId::new(10.5, nih_plug_egui::egui::FontFamily::Proportional))
+                                            .font(FontId::new(
+                                                10.5,
+                                                nih_plug_egui::egui::FontFamily::Proportional,
+                                            ))
                                             .strong()
                                             .color(theme::TEXT_PRIMARY),
                                     );
                                     ui.add_space(2.0);
                                     ui.label(
-                                        nih_plug_egui::egui::RichText::new("Souped-up engine is bypassed")
-                                            .font(FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional))
-                                            .color(theme::TEXT_SECONDARY),
+                                        nih_plug_egui::egui::RichText::new(
+                                            "Souped-up engine is bypassed",
+                                        )
+                                        .font(FontId::new(
+                                            8.5,
+                                            nih_plug_egui::egui::FontFamily::Proportional,
+                                        ))
+                                        .color(theme::TEXT_SECONDARY),
                                     );
                                     ui.add_space(6.0);
 
                                     let btn = Button::new(
                                         nih_plug_egui::egui::RichText::new("ENABLE FUN MODE")
-                                            .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
+                                            .font(FontId::new(
+                                                9.0,
+                                                nih_plug_egui::egui::FontFamily::Proportional,
+                                            ))
                                             .strong()
                                             .color(theme::TEXT_ON_ACCENT),
                                     )
@@ -69,7 +78,8 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                     if ui.add(btn).clicked() {
                                         setter.begin_set_parameter(&params.topology);
-                                        setter.set_parameter(&params.topology, CircuitTopology::Fun);
+                                        setter
+                                            .set_parameter(&params.topology, CircuitTopology::Fun);
                                         setter.end_set_parameter(&params.topology);
 
                                         setter.begin_set_parameter(&params.reso_comp);
@@ -86,7 +96,10 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.horizontal(|ui| {
                         ui.label(
                             nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE & ANALOG DRAWER")
-                                .font(FontId::new(10.0, nih_plug_egui::egui::FontFamily::Proportional))
+                                .font(FontId::new(
+                                    10.0,
+                                    nih_plug_egui::egui::FontFamily::Proportional,
+                                ))
                                 .strong()
                                 .color(theme::ACCENT_ORANGE),
                         );
@@ -128,7 +141,9 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         let mut render_knob = |knob: Knob303<'_, _>| {
                             ui.allocate_ui_with_layout(
                                 vec2(col_w, 64.0),
-                                nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
+                                nih_plug_egui::egui::Layout::top_down(
+                                    nih_plug_egui::egui::Align::Center,
+                                ),
                                 |ui| {
                                     ui.add(knob);
                                 },

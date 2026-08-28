@@ -1,6 +1,7 @@
 use nih_plug::prelude::{Param, ParamSetter};
 use nih_plug_egui::egui::{
-    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke, StrokeKind, Ui, Widget,
+    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke,
+    StrokeKind, Ui, Widget,
 };
 
 use crate::gui::theme;
@@ -68,7 +69,11 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
             let is_enabled = ui.is_enabled();
-            let accent = if is_enabled { self.accent_color } else { theme::TEXT_MUTED };
+            let accent = if is_enabled {
+                self.accent_color
+            } else {
+                theme::TEXT_MUTED
+            };
 
             // Label above (A, D, S, R)
             painter.text(
@@ -76,7 +81,11 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 nih_plug_egui::egui::Align2::CENTER_TOP,
                 self.label,
                 FontId::new(8.5, FontFamily::Proportional),
-                if is_enabled { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY },
+                if is_enabled {
+                    theme::TEXT_PRIMARY
+                } else {
+                    theme::TEXT_SECONDARY
+                },
             );
 
             // Recessed vertical track
@@ -89,7 +98,14 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             painter.rect_stroke(
                 track_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.5_f32, if is_enabled { theme::BORDER_FOCUS } else { theme::BORDER_DEFAULT }),
+                Stroke::new(
+                    1.5_f32,
+                    if is_enabled {
+                        theme::BORDER_FOCUS
+                    } else {
+                        theme::BORDER_DEFAULT
+                    },
+                ),
                 StrokeKind::Inside,
             );
 
@@ -116,7 +132,14 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             painter.rect_stroke(
                 thumb_rect,
                 CornerRadius::same(1),
-                Stroke::new(1.0_f32, if is_enabled { theme::BORDER_FOCUS } else { theme::BORDER_DEFAULT }),
+                Stroke::new(
+                    1.0_f32,
+                    if is_enabled {
+                        theme::BORDER_FOCUS
+                    } else {
+                        theme::BORDER_DEFAULT
+                    },
+                ),
                 StrokeKind::Inside,
             );
             painter.line_segment(
@@ -129,7 +152,10 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
 
             // Readout / value below (compact monospace)
             let val_str = self.param.to_string();
-            let val_clean = val_str.trim_end_matches(" ms").trim_end_matches(" s").trim_end_matches('%');
+            let val_clean = val_str
+                .trim_end_matches(" ms")
+                .trim_end_matches(" s")
+                .trim_end_matches('%');
             let formatted_val = if let Ok(f) = val_clean.parse::<f32>() {
                 if self.label == "S" {
                     format!("{:.0}%", f * 100.0)
@@ -146,7 +172,11 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 nih_plug_egui::egui::Align2::CENTER_BOTTOM,
                 formatted_val,
                 FontId::new(7.5, FontFamily::Monospace),
-                if is_enabled { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY },
+                if is_enabled {
+                    theme::TEXT_PRIMARY
+                } else {
+                    theme::TEXT_SECONDARY
+                },
             );
         }
 
@@ -167,8 +197,14 @@ mod tests {
         let track_height = track_bottom - track_top;
 
         assert!(track_top > top, "Track top must have top label clearance");
-        assert!(track_bottom < bottom, "Track bottom must have bottom readout clearance");
-        assert!(bottom - track_bottom >= 15.0, "Readout text must have at least 15px clearance");
+        assert!(
+            track_bottom < bottom,
+            "Track bottom must have bottom readout clearance"
+        );
+        assert!(
+            bottom - track_bottom >= 15.0,
+            "Readout text must have at least 15px clearance"
+        );
         assert!(track_height > 0.0, "Track height must be positive");
         assert_eq!(track_height, height + 5.0);
 

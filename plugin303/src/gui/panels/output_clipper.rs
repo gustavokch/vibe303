@@ -32,7 +32,11 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                         nih_plug_egui::egui::RichText::new("OUTPUT CLIPPER")
                             .font(FontId::proportional(10.0))
                             .strong()
-                            .color(if bypassed { theme::TEXT_MUTED } else { theme::TEXT_PRIMARY }),
+                            .color(if bypassed {
+                                theme::TEXT_MUTED
+                            } else {
+                                theme::TEXT_PRIMARY
+                            }),
                     );
                     ui.add_space(2.0);
                     let mut bypass = bypassed;
@@ -42,7 +46,11 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                             &mut bypass,
                             nih_plug_egui::egui::RichText::new("BYPASS")
                                 .font(FontId::proportional(8.5))
-                                .color(if is_bypassed { theme::ACCENT_ORANGE } else { theme::TEXT_SECONDARY }),
+                                .color(if is_bypassed {
+                                    theme::ACCENT_ORANGE
+                                } else {
+                                    theme::TEXT_SECONDARY
+                                }),
                         )
                         .changed()
                     {
@@ -55,7 +63,12 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                 ui.add_space(2.0);
 
                 ui.add_enabled_ui(!bypassed, |ui| {
-                    ui.add(SlideSwitch::new(&params.clipper_os, setter, "OS", &["2X", "4X"]));
+                    ui.add(SlideSwitch::new(
+                        &params.clipper_os,
+                        setter,
+                        "OS",
+                        &["2X", "4X"],
+                    ));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -72,18 +85,28 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                     let mut render_knob = |knob: Knob303<'_, _>| {
                         ui.allocate_ui_with_layout(
                             vec2(col_w, 64.0),
-                            nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
+                            nih_plug_egui::egui::Layout::top_down(
+                                nih_plug_egui::egui::Align::Center,
+                            ),
                             |ui| ui.add(knob),
-                        ).inner
+                        )
+                        .inner
                     };
 
                     render_knob(Knob303::new(&params.clipper_drive, setter, "DRIVE", 11.5));
-                    render_knob(Knob303::new(&params.clipper_threshold, setter, "THRESH", 11.5));
+                    render_knob(Knob303::new(
+                        &params.clipper_threshold,
+                        setter,
+                        "THRESH",
+                        11.5,
+                    ));
                     render_knob(Knob303::new(&params.clipper_bass, setter, "BASS", 11.5));
                     render_knob(Knob303::new(&params.clipper_tone, setter, "TONE", 11.5));
 
-                    let in_resp = render_knob(Knob303::new(&params.clipper_in_gain, setter, "IN", 11.5));
-                    let out_resp = render_knob(Knob303::new(&params.clipper_out_gain, setter, "OUT", 11.5));
+                    let in_resp =
+                        render_knob(Knob303::new(&params.clipper_in_gain, setter, "IN", 11.5));
+                    let out_resp =
+                        render_knob(Knob303::new(&params.clipper_out_gain, setter, "OUT", 11.5));
                     render_knob(Knob303::new(&params.clipper_tilt, setter, "TILT", 11.5));
                     render_knob(Knob303::new(&params.clipper_dynamics, setter, "DYN", 11.5));
                     render_knob(Knob303::new(&params.clipper_mix, setter, "MIX", 11.5));
@@ -162,14 +185,41 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                                     nih_plug_egui::egui::RichText::new(label)
                                         .font(FontId::proportional(8.0))
                                         .strong()
-                                        .color(if is_selected { theme::ACCENT_ORANGE } else { theme::TEXT_SECONDARY }),
+                                        .color(if is_selected {
+                                            theme::ACCENT_ORANGE
+                                        } else {
+                                            theme::TEXT_SECONDARY
+                                        }),
                                 )
-                                .fill(if is_selected { theme::SURFACE_ELEVATED } else { theme::WELL_BG })
-                                .stroke(nih_plug_egui::egui::Stroke::new(1.0_f32, if is_selected { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
+                                .fill(if is_selected {
+                                    theme::SURFACE_ELEVATED
+                                } else {
+                                    theme::WELL_BG
+                                })
+                                .stroke(nih_plug_egui::egui::Stroke::new(
+                                    1.0_f32,
+                                    if is_selected {
+                                        theme::ACCENT_ORANGE
+                                    } else {
+                                        theme::BORDER_DEFAULT
+                                    },
+                                ))
                                 .min_size(vec2(18.0, 14.0))
                                 .corner_radius(CornerRadius::same(2));
 
-                                if ui.add(btn).on_hover_text(format!("Diode Model: {}", if is_ge { "Germanium (Asymmetric)" } else { "Silicon (Symmetric)" })).clicked() && asym != is_ge {
+                                if ui
+                                    .add(btn)
+                                    .on_hover_text(format!(
+                                        "Diode Model: {}",
+                                        if is_ge {
+                                            "Germanium (Asymmetric)"
+                                        } else {
+                                            "Silicon (Symmetric)"
+                                        }
+                                    ))
+                                    .clicked()
+                                    && asym != is_ge
+                                {
                                     setter.begin_set_parameter(&params.clipper_asym);
                                     setter.set_parameter(&params.clipper_asym, is_ge);
                                     setter.end_set_parameter(&params.clipper_asym);
@@ -193,7 +243,10 @@ mod tests {
         let right_controls_w = 110.0;
         let knobs_avail_w = avail_w - header_w - right_controls_w;
         let col_w = knobs_avail_w / 9.0;
-        assert!(col_w >= 100.0, "Knob column width must provide generous spacing (>=100px), got {col_w}");
+        assert!(
+            col_w >= 100.0,
+            "Knob column width must provide generous spacing (>=100px), got {col_w}"
+        );
     }
 
     #[test]
