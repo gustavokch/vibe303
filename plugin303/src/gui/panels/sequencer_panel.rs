@@ -41,6 +41,11 @@ const GRID_GAP: f32 = 4.0;
 const GRID_TOTAL_H: f32 = 2.0 * STRIP_HEIGHT + GRID_GAP;
 /// Height allocated to transport Row D, matching the step grid's control rows.
 const ROW_D_H: f32 = CONTROL_ROW_H;
+/// Vertical chrome subtracted from the pre-frame available height so the
+/// frame bottom reaches the window bottom without overflowing it:
+/// frame inner margins (top 4 + bottom 8 = 12) + frame stroke (1) + trailing
+/// item spacing (4) = 17.0.
+const FRAME_VERT_CHROME_PX: f32 = 17.0;
 /// `add_space(8)` + separator (~2) + `add_space(8)` between grid and transport column.
 const SEPARATOR_CHROME_W: f32 = 18.0;
 /// Smallest usable step cell; below this the grid overflows instead of scrolling.
@@ -50,6 +55,11 @@ const MIN_CELL_W: f32 = 72.0;
 /// "JITTER" at 8 pt + 4 px margin, so the painted label never overflows onto
 /// the CLEAR button (PR#53 review).
 const JIT_HIT_W: f32 = 52.0;
+
+/// Compute the adaptive minimum height for the sequencer frame.
+fn frame_min_height(avail_h: f32) -> f32 {
+    (avail_h - FRAME_VERT_CHROME_PX).max(GRID_TOTAL_H + 12.0)
+}
 
 /// Snap a dragged BPM value to a whole number so the `{:.0}` display always
 /// matches the stored value (PR#53 review).
@@ -90,6 +100,8 @@ pub fn render_sequencer_and_transport(
     super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
     ui.add_space(0.5);
 
+    let frame_avail_h = ui.available_height();
+
     Frame::new()
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
@@ -102,7 +114,7 @@ pub fn render_sequencer_and_transport(
         })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height(280.0);
+            ui.set_min_height(frame_min_height(frame_avail_h));
 
             // Grid geometry: 2 rows x 8 columns; transport column on the right
             let (cell_w, clamped) = grid_cell_width(ui.available_width());
@@ -615,5 +627,22 @@ mod tests {
         let filler_sat = transport_bottom_filler(available_sat, ROW_D_H);
         assert_eq!(filler_sat, 0.0);
         assert_eq!(saturating_consumed + filler_sat, saturating_consumed);
+    }
+
+    #[test]
+    fn frame_min_height_adapts_and_clamps_to_floor() {
+        let min_floor = GRID_TOTAL_H + 12.0; // 280.0
+        assert_eq!(min_floor, 280.0);
+
+        // When available height is smaller than floor + chrome, floor wins
+        assert_eq!(frame_min_height(0.0), 280.0);
+        assert_eq!(frame_min_height(100.0), 280.0);
+        assert_eq!(frame_min_height(280.0), 280.0);
+        assert_eq!(frame_min_height(280.0 + FRAME_VERT_CHROME_PX), 280.0);
+
+        // When available height exceeds floor + chrome, chrome is subtracted
+        let extra = 50.0;
+        let avail = 280.0 + FRAME_VERT_CHROME_PX + extra;
+        assert_eq!(frame_min_height(avail), 280.0 + extra);
     }
 }
