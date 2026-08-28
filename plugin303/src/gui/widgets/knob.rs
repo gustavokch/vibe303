@@ -241,15 +241,10 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
     }
 }
 
-/// Compute the pointer needle angle for a knob from normalized position (0.0..=1.0).
-/// At normalized near zero (< 0.001), returns start_angle. For all other positions,
-/// returns the linearly interpolated angle along the arc.
+/// Compute the pointer needle angle for a knob from normalized position (0.0..=1.0)
+/// by linearly interpolating between `start_angle` and `end_angle`.
 pub fn compute_needle_angle(normalized: f32, start_angle: f32, end_angle: f32) -> f32 {
-    if normalized.abs() < 0.001 {
-        start_angle
-    } else {
-        start_angle + normalized * (end_angle - start_angle)
-    }
+    start_angle + normalized * (end_angle - start_angle)
 }
 
 /// Extract the plain numeric value from a param display string by parsing
@@ -344,17 +339,20 @@ mod needle_tests {
         let start = 0.75 * PI;
         let end = 2.25 * PI;
 
-        // Zero/minimum
+        // Exact endpoints
         assert_eq!(compute_needle_angle(0.0, start, end), start);
-        assert_eq!(compute_needle_angle(0.0005, start, end), start);
+        assert!((compute_needle_angle(1.0, start, end) - end).abs() < 1e-5);
 
         // Center / 12 o'clock for bipolar (normalized = 0.5)
         let mid = compute_needle_angle(0.5, start, end);
         assert!((mid - 1.5 * PI).abs() < 1e-5);
 
-        // Full / maximum (normalized = 1.0)
-        let max = compute_needle_angle(1.0, start, end);
-        assert!((max - end).abs() < 1e-5);
+        // Monotonic lerp across quarter steps
+        let q1 = compute_needle_angle(0.25, start, end);
+        let q3 = compute_needle_angle(0.75, start, end);
+        assert!(start < q1 && q1 < mid && mid < q3 && q3 < end);
+        assert!((q1 - (start + 0.25 * (end - start))).abs() < 1e-5);
+        assert!((q3 - (start + 0.75 * (end - start))).abs() < 1e-5);
     }
 }
 
