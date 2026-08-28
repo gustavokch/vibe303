@@ -1,6 +1,7 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Align2, ComboBox, CornerRadius, FontFamily, FontId, Frame, Margin, Rect, Stroke, StrokeKind, Ui,
+    pos2, vec2, Align2, ComboBox, CornerRadius, FontFamily, FontId, Frame, Margin, Rect, Stroke,
+    StrokeKind, Ui,
 };
 
 use crate::gui::theme;
@@ -73,7 +74,7 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
 
         // 2. Right control group in dedicated right-aligned container
         let right_rect = Rect::from_min_max(
-            pos2(bar_rect.right() - 360.0, bar_rect.top()),
+            pos2(bar_rect.right() - 400.0, bar_rect.top()),
             bar_rect.right_bottom(),
         );
         ui.allocate_new_ui(
@@ -127,46 +128,13 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                     &params.tier,
                                     setter,
                                     "QUALITY",
-                                    &["LOW", "HIGH", "ULTRA"],
+                                    &["LOW", "HIGH", "ULTRA", "2X"],
                                 ),
                             )
                         });
                         if is_accurate {
                             quality_resp.response.on_hover_text("Quality tier applies to FUN mode (ACCURATE uses fixed physical modeling)");
                         }
-
-                        // Ultra 2x toggle: grouped under an explicit header label
-                        // so it no longer reads as an orphan control.
-                        let ultra_label_color = if is_accurate {
-                            theme::TEXT_MUTED
-                        } else {
-                            theme::TEXT_SECONDARY
-                        };
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
-                            ui.add(
-                                nih_plug_egui::egui::Label::new(
-                                    nih_plug_egui::egui::RichText::new("ULTRA 2X")
-                                        .font(FontId::new(8.5, FontFamily::Proportional))
-                                        .color(ultra_label_color),
-                                )
-                                .wrap_mode(nih_plug_egui::egui::TextWrapMode::Extend),
-                            );
-                            let is_2x = params.tier.value() == crate::dsp::filter::Tier::Ultra2x;
-                            let btn_resp = ui.add_enabled(
-                                !is_accurate,
-                                nih_plug_egui::egui::Button::new("2x").small(),
-                            );
-                            if btn_resp.clicked() && !is_accurate {
-                                setter.begin_set_parameter(&params.tier);
-                                setter.set_parameter(&params.tier, crate::dsp::filter::Tier::Ultra2x);
-                                setter.end_set_parameter(&params.tier);
-                            }
-                            if is_2x {
-                                btn_resp.highlight();
-                            }
-                        });
-
                         // 3. Circuit Topology switch
                         let prev_topology = params.topology.value();
                         let switch_resp = ui.add(SlideSwitch::new(

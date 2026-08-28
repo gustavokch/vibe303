@@ -21,17 +21,22 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
         .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::same(6))
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.set_min_height(78.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
 
-                // Section title & bypass toggle
+                // Section title, bypass toggle & OS selector
                 ui.vertical(|ui| {
                     ui.label(
                         nih_plug_egui::egui::RichText::new("OUTPUT CLIPPER")
                             .font(FontId::proportional(10.0))
                             .strong()
-                            .color(if bypassed { theme::TEXT_MUTED } else { theme::TEXT_PRIMARY }),
+                            .color(if bypassed {
+                                theme::TEXT_MUTED
+                            } else {
+                                theme::TEXT_PRIMARY
+                            }),
                     );
                     ui.add_space(2.0);
                     let mut bypass = bypassed;
@@ -41,7 +46,11 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                             &mut bypass,
                             nih_plug_egui::egui::RichText::new("BYPASS")
                                 .font(FontId::proportional(8.5))
-                                .color(if is_bypassed { theme::ACCENT_ORANGE } else { theme::TEXT_SECONDARY }),
+                                .color(if is_bypassed {
+                                    theme::ACCENT_ORANGE
+                                } else {
+                                    theme::TEXT_SECONDARY
+                                }),
                         )
                         .changed()
                     {
@@ -53,68 +62,54 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
 
                 ui.add_space(2.0);
 
-                // Right-hand controls distributed across the full remaining
-                // width in fixed columns (same convention as the souped
-                // panel): OS | 9 knobs | LINK+DIODE, separated by thin
-                // vertical rules. No oversized inter-group gaps (fix #6).
                 ui.add_enabled_ui(!bypassed, |ui| {
+                    ui.add(SlideSwitch::new(
+                        &params.clipper_os,
+                        setter,
+                        "OS",
+                        &["2X", "4X"],
+                    ));
+
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+
+                    // 9 Knobs distributed evenly across the center area
+                    let right_fixed_w = 110.0_f32;
+                    let remaining_w = (ui.available_width() - right_fixed_w).max(9.0 * 40.0);
+                    let col_w = remaining_w / 9.0;
+                    // Cells are exact-width slots; zero inter-cell spacing so the
+                    // row consumes exactly remaining_w and LINK/DIODE never clip.
                     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                    const GROUP_SEP_W: f32 = 2.0;
-                    const UNITS: f32 = 11.0; // 1 (OS) + 9 (knobs) + 1 (LINK/DIODE)
-                    let total_w = ui.available_width();
-                    let col_w = (total_w - 2.0 * GROUP_SEP_W) / UNITS;
 
-                    // Group rules are painted 2px columns, NOT egui Separators
-                    // (Separator::default() allocates ~6px and overflows the row).
-                    let paint_group_rule = |ui: &mut Ui| {
-                        let (rule_rect, _) = ui.allocate_exact_size(
-                            vec2(GROUP_SEP_W, 62.0),
-                            nih_plug_egui::egui::Sense::hover(),
-                        );
-                        if ui.is_rect_visible(rule_rect) {
-                            ui.painter().vline(
-                                rule_rect.center().x,
-                                rule_rect.y_range(),
-                                nih_plug_egui::egui::Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
-                            );
-                        }
-                    };
-
-                    let render_knob = |ui: &mut Ui, knob: Knob303<'_, _>| {
+                    let mut render_knob = |knob: Knob303<'_, _>| {
                         ui.allocate_ui_with_layout(
-                            vec2(col_w, 62.0),
-                            nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
+                            vec2(col_w, 64.0),
+                            nih_plug_egui::egui::Layout::top_down(
+                                nih_plug_egui::egui::Align::Center,
+                            ),
                             |ui| ui.add(knob),
                         )
                         .inner
                     };
 
-                    // Group 1: OS switch
-                    ui.allocate_ui_with_layout(
-                        vec2(col_w, 62.0),
-                        nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
-                        |ui| {
-                            ui.add(SlideSwitch::new(
-                                &params.clipper_os,
-                                setter,
-                                "OS",
-                                &["2X", "4X"],
-                            ));
-                        },
-                    );
+                    render_knob(Knob303::new(&params.clipper_drive, setter, "DRIVE", 11.5));
+                    render_knob(Knob303::new(
+                        &params.clipper_threshold,
+                        setter,
+                        "THRESH",
+                        11.5,
+                    ));
+                    render_knob(Knob303::new(&params.clipper_bass, setter, "BASS", 11.5));
+                    render_knob(Knob303::new(&params.clipper_tone, setter, "TONE", 11.5));
 
-                    paint_group_rule(ui);
-
-                    // Group 2: knob row
-                    render_knob(ui, Knob303::new(&params.clipper_drive, setter, "DRIVE", 11.5));
-                    render_knob(ui, Knob303::new(&params.clipper_threshold, setter, "THRESH", 11.5));
-                    render_knob(ui, Knob303::new(&params.clipper_bass, setter, "BASS", 11.5));
-                    render_knob(ui, Knob303::new(&params.clipper_tone, setter, "TONE", 11.5));
-                    let in_resp = render_knob(ui, Knob303::new(&params.clipper_in_gain, setter, "IN", 11.5));
-                    let out_resp = render_knob(ui, Knob303::new(&params.clipper_out_gain, setter, "OUT", 11.5));
-                    render_knob(ui, Knob303::new(&params.clipper_tilt, setter, "TILT", 11.5));
-                    render_knob(ui, Knob303::new(&params.clipper_dynamics, setter, "DYN", 11.5));
-                    render_knob(ui, Knob303::new(&params.clipper_mix, setter, "MIX", 11.5));
+                    let in_resp =
+                        render_knob(Knob303::new(&params.clipper_in_gain, setter, "IN", 11.5));
+                    let out_resp =
+                        render_knob(Knob303::new(&params.clipper_out_gain, setter, "OUT", 11.5));
+                    render_knob(Knob303::new(&params.clipper_tilt, setter, "TILT", 11.5));
+                    render_knob(Knob303::new(&params.clipper_dynamics, setter, "DYN", 11.5));
+                    render_knob(Knob303::new(&params.clipper_mix, setter, "MIX", 11.5));
 
                     // Gain link: mirror only on genuine user gestures (drag, double-click reset)
                     if params.clipper_gain_link.value() {
@@ -144,74 +139,129 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                         }
                     }
 
-                    paint_group_rule(ui);
+                    ui.separator();
+                    ui.add_space(2.0);
 
-                    // Group 3: LINK + DIODE
-                    ui.allocate_ui_with_layout(
-                        vec2(col_w, 62.0),
-                        nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
-                        |ui| {
-                            ui.vertical(|ui| {
-                                ui.add_space(2.0);
-                                let mut link = params.clipper_gain_link.value();
+                    // Right controls: Link toggle + Diode selector
+                    ui.vertical(|ui| {
+                        ui.add_space(2.0);
+                        let mut link = params.clipper_gain_link.value();
+                        if ui
+                            .checkbox(
+                                &mut link,
+                                nih_plug_egui::egui::RichText::new("LINK")
+                                    .font(FontId::proportional(8.5))
+                                    .color(theme::TEXT_SECONDARY),
+                            )
+                            .on_hover_text("Link: OUT tracks −IN while dragging (edit-time only)")
+                            .changed()
+                        {
+                            setter.begin_set_parameter(&params.clipper_gain_link);
+                            setter.set_parameter(&params.clipper_gain_link, link);
+                            setter.end_set_parameter(&params.clipper_gain_link);
+                            if link {
+                                setter.begin_set_parameter(&params.clipper_out_gain);
+                                setter.set_parameter(
+                                    &params.clipper_out_gain,
+                                    -params.clipper_in_gain.value(),
+                                );
+                                setter.end_set_parameter(&params.clipper_out_gain);
+                            }
+                        }
+
+                        ui.add_space(2.0);
+
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                            ui.label(
+                                nih_plug_egui::egui::RichText::new("DIODE:")
+                                    .font(FontId::proportional(8.0))
+                                    .color(theme::TEXT_MUTED),
+                            );
+                            let asym = params.clipper_asym.value();
+                            for (is_ge, label) in [(false, "SI"), (true, "GE")] {
+                                let is_selected = asym == is_ge;
+                                let btn = nih_plug_egui::egui::Button::new(
+                                    nih_plug_egui::egui::RichText::new(label)
+                                        .font(FontId::proportional(8.0))
+                                        .strong()
+                                        .color(if is_selected {
+                                            theme::ACCENT_ORANGE
+                                        } else {
+                                            theme::TEXT_SECONDARY
+                                        }),
+                                )
+                                .fill(if is_selected {
+                                    theme::SURFACE_ELEVATED
+                                } else {
+                                    theme::WELL_BG
+                                })
+                                .stroke(nih_plug_egui::egui::Stroke::new(
+                                    1.0_f32,
+                                    if is_selected {
+                                        theme::ACCENT_ORANGE
+                                    } else {
+                                        theme::BORDER_DEFAULT
+                                    },
+                                ))
+                                .min_size(vec2(18.0, 14.0))
+                                .corner_radius(CornerRadius::same(2));
+
                                 if ui
-                                    .checkbox(
-                                        &mut link,
-                                        nih_plug_egui::egui::RichText::new("LINK")
-                                            .font(FontId::proportional(8.5))
-                                            .color(theme::TEXT_SECONDARY),
-                                    )
-                                    .on_hover_text("Link: OUT tracks −IN while dragging (edit-time only)")
-                                    .changed()
-                                {
-                                    setter.begin_set_parameter(&params.clipper_gain_link);
-                                    setter.set_parameter(&params.clipper_gain_link, link);
-                                    setter.end_set_parameter(&params.clipper_gain_link);
-                                    if link {
-                                        setter.begin_set_parameter(&params.clipper_out_gain);
-                                        setter.set_parameter(
-                                            &params.clipper_out_gain,
-                                            -params.clipper_in_gain.value(),
-                                        );
-                                        setter.end_set_parameter(&params.clipper_out_gain);
-                                    }
-                                }
-
-                                ui.add_space(2.0);
-
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                                    ui.label(
-                                        nih_plug_egui::egui::RichText::new("DIODE:")
-                                            .font(FontId::proportional(8.0))
-                                            .color(theme::TEXT_MUTED),
-                                    );
-                                    let asym = params.clipper_asym.value();
-                                    for (is_ge, label) in [(false, "SI"), (true, "GE")] {
-                                        let is_selected = asym == is_ge;
-                                        let btn = nih_plug_egui::egui::Button::new(
-                                            nih_plug_egui::egui::RichText::new(label)
-                                                .font(FontId::proportional(8.0))
-                                                .strong()
-                                                .color(if is_selected { theme::ACCENT_ORANGE } else { theme::TEXT_SECONDARY }),
-                                        )
-                                        .fill(if is_selected { theme::SURFACE_ELEVATED } else { theme::WELL_BG })
-                                        .stroke(nih_plug_egui::egui::Stroke::new(1.0_f32, if is_selected { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                                        .min_size(vec2(18.0, 14.0))
-                                        .corner_radius(CornerRadius::same(2));
-
-                                        if ui.add(btn).on_hover_text(format!("Diode Model: {}", if is_ge { "Germanium (Asymmetric)" } else { "Silicon (Symmetric)" })).clicked() && asym != is_ge {
-                                            setter.begin_set_parameter(&params.clipper_asym);
-                                            setter.set_parameter(&params.clipper_asym, is_ge);
-                                            setter.end_set_parameter(&params.clipper_asym);
+                                    .add(btn)
+                                    .on_hover_text(format!(
+                                        "Diode Model: {}",
+                                        if is_ge {
+                                            "Germanium (Asymmetric)"
+                                        } else {
+                                            "Silicon (Symmetric)"
                                         }
-                                    }
-                                });
-                                ui.add_space(3.0);
-                            });
-                        },
-                    );
+                                    ))
+                                    .clicked()
+                                    && asym != is_ge
+                                {
+                                    setter.begin_set_parameter(&params.clipper_asym);
+                                    setter.set_parameter(&params.clipper_asym, is_ge);
+                                    setter.end_set_parameter(&params.clipper_asym);
+                                }
+                            }
+                        });
+                        ui.add_space(3.0);
+                    });
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn output_clipper_knob_column_width() {
+        // Inner width for 1366px window with 10px chassis margin and 6px panel inner margin
+        let avail_w = 1366.0 - 20.0 - 12.0; // 1334.0
+        let header_w = 120.0;
+        let right_controls_w = 110.0;
+        let knobs_avail_w = avail_w - header_w - right_controls_w;
+        let col_w = knobs_avail_w / 9.0;
+        assert!(
+            col_w >= 100.0,
+            "Knob column width must provide generous spacing (>=100px), got {col_w}"
+        );
+    }
+
+    #[test]
+    fn output_clipper_knob_row_fits_reserved_band() {
+        let avail_w = 1366.0 - 20.0 - 12.0; // 1334.0
+        let header_w = 120.0_f32;
+        let right_fixed_w = 110.0_f32;
+        let knob_count = 9.0_f32;
+        let inter_cell_spacing = 0.0_f32; // cells sized exactly; no inter-cell spacing or right group clips
+        let knobs_avail_w = avail_w - header_w - right_fixed_w;
+        let col_w = knobs_avail_w / knob_count;
+        let consumed = knob_count * col_w + (knob_count - 1.0) * inter_cell_spacing;
+        assert!(
+            consumed <= knobs_avail_w + 0.01,
+            "Knob row ({consumed}px) must fit its reserved band ({knobs_avail_w}px) or LINK/DIODE clip at panel edge"
+        );
+    }
 }

@@ -274,8 +274,6 @@ impl Plugin for Plugin303 {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        let synth_bypass = self.params.synth_bypass.value();
-
         // Always keep voice params and tier updated so state doesn't desync on bypass toggle
         self.voice.update_params(
                 self.params.tuning.value(),

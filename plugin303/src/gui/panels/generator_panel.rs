@@ -19,6 +19,7 @@ pub fn render_generator_panel(
         .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.vertical(|ui| {
                 // Header Bar
                 ui.horizontal(|ui| {
@@ -29,38 +30,35 @@ pub fn render_generator_panel(
                             .color(theme::ACCENT_ORANGE),
                     );
 
-                    ui.with_layout(
-                        nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
-                        |ui| {
-                            ui.add_space(4.0);
+                    let right_group_w = 195.0;
+                    let space_w = (ui.available_width() - right_group_w).max(0.0);
+                    ui.add_space(space_w);
 
-                            // New Seed Button
-                            let new_seed_btn = Button::new(
-                                nih_plug_egui::egui::RichText::new("NEW SEED")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_PRIMARY),
-                            )
-                            .fill(theme::SURFACE_ELEVATED)
-                            .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                            .corner_radius(CornerRadius::same(2));
-
-                            if ui.add(new_seed_btn).clicked() {
-                                gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-                            }
-
-                            ui.add_space(6.0);
-
-                            // Seed Display Badge
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new(format!(
-                                    "GEN SEED: {:04}",
-                                    gen_params.seed % 10000
-                                ))
-                                .font(FontId::monospace(8.5))
-                                .color(theme::TEXT_MUTED),
-                            );
-                        },
+                    // Seed Display Badge
+                    ui.label(
+                        nih_plug_egui::egui::RichText::new(format!(
+                            "GEN SEED: {:04}",
+                            gen_params.seed % 10000
+                        ))
+                        .font(FontId::monospace(8.5))
+                        .color(theme::TEXT_MUTED),
                     );
+
+                    ui.add_space(6.0);
+
+                    // New Seed Button
+                    let new_seed_btn = Button::new(
+                        nih_plug_egui::egui::RichText::new("NEW SEED")
+                            .font(FontId::proportional(8.5))
+                            .color(theme::TEXT_PRIMARY),
+                    )
+                    .fill(theme::SURFACE_ELEVATED)
+                    .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
+                    .corner_radius(CornerRadius::same(2));
+
+                    if ui.add(new_seed_btn).clicked() {
+                        gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                    }
                 });
 
                 ui.add_space(2.0);
@@ -100,7 +98,11 @@ pub fn render_generator_panel(
                                 .width(36.0)
                                 .show_ui(ui, |ui| {
                                     for (idx, name) in NOTE_NAMES.iter().enumerate() {
-                                        ui.selectable_value(&mut gen_params.root_note, idx as u8, *name);
+                                        ui.selectable_value(
+                                            &mut gen_params.root_note,
+                                            idx as u8,
+                                            *name,
+                                        );
                                     }
                                 });
 
@@ -394,9 +396,13 @@ pub fn render_generator_panel(
                                         let accent = pat.pitches[i].accent;
                                         let slide = pat.pitches[i].slide;
                                         let gate = match pat.timing[i] {
-                                            crate::dsp::sequencer::TimeEntry::Note => StepGate::Note,
+                                            crate::dsp::sequencer::TimeEntry::Note => {
+                                                StepGate::Note
+                                            }
                                             crate::dsp::sequencer::TimeEntry::Tie => StepGate::Tie,
-                                            crate::dsp::sequencer::TimeEntry::Rest => StepGate::Rest,
+                                            crate::dsp::sequencer::TimeEntry::Rest => {
+                                                StepGate::Rest
+                                            }
                                         };
 
                                         seq_pat.steps[i] = SequencerStep {
@@ -412,7 +418,10 @@ pub fn render_generator_panel(
                                 }
 
                                 setter.begin_set_parameter(&params.seq_length);
-                                setter.set_parameter(&params.seq_length, gen_params.rhythm_length as i32);
+                                setter.set_parameter(
+                                    &params.seq_length,
+                                    gen_params.rhythm_length as i32,
+                                );
                                 setter.end_set_parameter(&params.seq_length);
                             }
 
@@ -427,7 +436,7 @@ pub fn render_generator_panel(
                                     .strong()
                                     .color(theme::TEXT_ON_ACCENT),
                             )
-                            .fill(theme::ACCENT_CYAN)
+                            .fill(theme::ACCENT_ORANGE)
                             .min_size(vec2(col_w * 0.48, 22.0))
                             .corner_radius(CornerRadius::same(2));
 
@@ -437,7 +446,8 @@ pub fn render_generator_panel(
                                     let num_steps = params.seq_length.value() as u8;
                                     let mut pat = seq_pat.compile(num_steps, mode);
                                     // Independent Weyl sequence constant for mutation stream (distinct from NEW SEED)
-                                    gen_params.seed = gen_params.seed.wrapping_add(0x517C_C1B7_2722_0A95);
+                                    gen_params.seed =
+                                        gen_params.seed.wrapping_add(0x517C_C1B7_2722_0A95);
                                     AcidGenerator::mutate(&mut pat, gen_params, gen_params.seed);
 
                                     for i in 0..16 {
@@ -446,9 +456,13 @@ pub fn render_generator_panel(
                                         seq_pat.steps[i].semitone = pat.pitches[i].key;
                                         seq_pat.steps[i].octave = pat.pitches[i].octave;
                                         seq_pat.steps[i].gate = match pat.timing[i] {
-                                            crate::dsp::sequencer::TimeEntry::Note => StepGate::Note,
+                                            crate::dsp::sequencer::TimeEntry::Note => {
+                                                StepGate::Note
+                                            }
                                             crate::dsp::sequencer::TimeEntry::Tie => StepGate::Tie,
-                                            crate::dsp::sequencer::TimeEntry::Rest => StepGate::Rest,
+                                            crate::dsp::sequencer::TimeEntry::Rest => {
+                                                StepGate::Rest
+                                            }
                                         };
                                     }
                                 }

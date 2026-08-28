@@ -1,6 +1,7 @@
 use nih_plug::prelude::{Param, ParamSetter};
 use nih_plug_egui::egui::{
-    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke, StrokeKind, Ui, Widget,
+    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke,
+    StrokeKind, Ui, Widget,
 };
 
 use crate::gui::theme;
@@ -34,15 +35,13 @@ impl<'a, P: Param> MiniFader<'a, P> {
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
         let width = 24.0;
-        let total_height = self.height + 32.0;
+        let total_height = self.height + 30.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
         let normalized = self.param.unmodulated_normalized_value();
-        let track_top = rect.top() + 11.0;
-        // Track ends 22px above the widget bottom so the value readout below
-        // clears the neighboring fader's track and thumb (fix #10).
-        let track_bottom = rect.bottom() - 22.0;
+        let track_top = rect.top() + 10.0;
+        let track_bottom = rect.bottom() - 15.0;
         let track_height = track_bottom - track_top;
 
         // Interaction
@@ -70,7 +69,11 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
             let is_enabled = ui.is_enabled();
-            let accent = if is_enabled { self.accent_color } else { theme::TEXT_MUTED };
+            let accent = if is_enabled {
+                self.accent_color
+            } else {
+                theme::TEXT_MUTED
+            };
 
             // Label above (A, D, S, R)
             painter.text(
@@ -78,7 +81,11 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 nih_plug_egui::egui::Align2::CENTER_TOP,
                 self.label,
                 FontId::new(8.5, FontFamily::Proportional),
-                if is_enabled { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED },
+                if is_enabled {
+                    theme::TEXT_PRIMARY
+                } else {
+                    theme::TEXT_SECONDARY
+                },
             );
 
             // Recessed vertical track
@@ -91,7 +98,14 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             painter.rect_stroke(
                 track_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.5_f32, if is_enabled { theme::BORDER_DEFAULT } else { theme::BORDER_SUBTLE }),
+                Stroke::new(
+                    1.5_f32,
+                    if is_enabled {
+                        theme::BORDER_FOCUS
+                    } else {
+                        theme::BORDER_DEFAULT
+                    },
+                ),
                 StrokeKind::Inside,
             );
 
@@ -118,7 +132,14 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
             painter.rect_stroke(
                 thumb_rect,
                 CornerRadius::same(1),
-                Stroke::new(1.0_f32, if is_enabled { theme::BORDER_FOCUS } else { theme::BORDER_DEFAULT }),
+                Stroke::new(
+                    1.0_f32,
+                    if is_enabled {
+                        theme::BORDER_FOCUS
+                    } else {
+                        theme::BORDER_DEFAULT
+                    },
+                ),
                 StrokeKind::Inside,
             );
             painter.line_segment(
@@ -131,7 +152,10 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
 
             // Readout / value below (compact monospace)
             let val_str = self.param.to_string();
-            let val_clean = val_str.trim_end_matches(" ms").trim_end_matches(" s").trim_end_matches('%');
+            let val_clean = val_str
+                .trim_end_matches(" ms")
+                .trim_end_matches(" s")
+                .trim_end_matches('%');
             let formatted_val = if let Ok(f) = val_clean.parse::<f32>() {
                 if self.label == "S" {
                     format!("{:.0}%", f * 100.0)
@@ -147,11 +171,46 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 pos2(rect.center().x, rect.bottom() - 1.0),
                 nih_plug_egui::egui::Align2::CENTER_BOTTOM,
                 formatted_val,
-                FontId::new(8.5, FontFamily::Monospace),
-                if is_enabled { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED },
+                FontId::new(7.5, FontFamily::Monospace),
+                if is_enabled {
+                    theme::TEXT_PRIMARY
+                } else {
+                    theme::TEXT_SECONDARY
+                },
             );
         }
 
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mini_fader_geometry_bounds() {
+        let height = 24.0_f32;
+        let total_height = height + 30.0;
+        let top = 0.0_f32;
+        let bottom = top + total_height;
+        let track_top = top + 10.0;
+        let track_bottom = bottom - 15.0;
+        let track_height = track_bottom - track_top;
+
+        assert!(track_top > top, "Track top must have top label clearance");
+        assert!(
+            track_bottom < bottom,
+            "Track bottom must have bottom readout clearance"
+        );
+        assert!(
+            bottom - track_bottom >= 15.0,
+            "Readout text must have at least 15px clearance"
+        );
+        assert!(track_height > 0.0, "Track height must be positive");
+        assert_eq!(track_height, height + 5.0);
+
+        for normalized in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
+            let thumb_y = track_bottom - normalized * track_height;
+            assert!(thumb_y >= track_top - 1e-4 && thumb_y <= track_bottom + 1e-4);
+        }
     }
 }

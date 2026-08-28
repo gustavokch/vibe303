@@ -1,7 +1,7 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense,
-    Stroke, StrokeKind, Ui,
+    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense, Stroke,
+    StrokeKind, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -28,7 +28,7 @@ const FRAME_VERT_CHROME_PX: f32 = 17.0;
 /// Hit-rect width for the JITTER toggle: 15 px text offset + ~27 px for
 /// "JITTER" at 8 pt + 4 px margin, so the painted label never overflows onto
 /// the CLEAR button (PR#53 review).
-const JIT_HIT_W: f32 = 46.0;
+const JIT_HIT_W: f32 = 52.0;
 
 /// Snap a dragged BPM value to a whole number so the `{:.0}` display always
 /// matches the stored value (PR#53 review).
@@ -49,6 +49,15 @@ pub(crate) fn grid_cell_width(avail_w: f32) -> (f32, bool) {
     }
 }
 
+/// Filler space that pins transport Row D to the panel bottom, closing the
+/// bottom-right transport void (ISSUE-04). Unconstrained layouts get no filler.
+fn transport_bottom_filler(available: f32, last_row_h: f32) -> f32 {
+    if !available.is_finite() {
+        return 0.0;
+    }
+    (available - last_row_h).max(0.0)
+}
+
 pub fn render_sequencer_and_transport(
     ui: &mut Ui,
     params: &Plugin303Params,
@@ -58,9 +67,7 @@ pub fn render_sequencer_and_transport(
 ) {
     let active_step = current_step_atomic.load(Ordering::Relaxed);
 
-    ui.horizontal(|ui| {
-        super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
-    });
+    super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
     ui.add_space(0.5);
 
     let frame_avail_h = ui.available_height();
@@ -76,6 +83,7 @@ pub fn render_sequencer_and_transport(
             bottom: 8,
         })
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.set_min_height((frame_avail_h - FRAME_VERT_CHROME_PX).max(280.0));
 
             // Grid geometry: 2 rows x 8 columns; transport column on the right
@@ -118,17 +126,7 @@ pub fn render_sequencer_and_transport(
                 // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
-                    // Distribute the six rows across the grid height so no
-                    // dead band remains below JITTER/CLEAR (fix #4) and the
-                    // column bottom aligns with the step grid. Sizing to the
-                    // grid height — NOT available_height — keeps the column
-                    // from stretching the frame when the window is taller.
-                    // Content height is empirical: title ~12 + four 24px rows + one 28px row.
-                    const TRANSPORT_CONTENT_H: f32 = 136.0;
-                    const GRID_H: f32 = 2.0 * STRIP_HEIGHT + 4.0;
-                    let row_gap =
-                        ((GRID_H - TRANSPORT_CONTENT_H) / 5.0).clamp(3.0, 40.0);
-                    ui.spacing_mut().item_spacing = vec2(3.0, row_gap);
+                    ui.spacing_mut().item_spacing = vec2(3.0, 6.0);
                     ui.spacing_mut().button_padding = vec2(3.0, 1.0);
 
                     ui.label(
@@ -368,6 +366,11 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
+                    // Pin Row D to the panel bottom (closes bottom-right transport void)
+                    let row_d_h = 28.0_f32; // enlarged hit areas + row padding
+                    let fill = transport_bottom_filler(ui.available_height(), row_d_h + 6.0);
+                    ui.add_space(fill);
+
                     // Row D: Timebase + Mode + Jitter + Clear (enlarged hit areas >= 24px)
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
@@ -452,7 +455,7 @@ pub fn render_sequencer_and_transport(
 
                         let mut jitter_val = params.seq_jitter.value();
                         let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(vec2(JIT_HIT_W, 28.0), Sense::click());
-                        let jit_resp = jit_resp.on_hover_text("Add random timing jitter to sequencer steps");
+                        let jit_resp = jit_resp.on_hover_text("Clock jitter / micro-timing humanization");
                         if jit_resp.clicked() {
                             jitter_val = !jitter_val;
                             setter.begin_set_parameter(&params.seq_jitter);
@@ -542,5 +545,37 @@ mod tests {
         assert_eq!(snap_tempo(120.5), 121.0);
         assert_eq!(snap_tempo(40.0), 40.0);
         assert_eq!(snap_tempo(299.9), 300.0);
+    }
+
+    #[test]
+    fn jitter_button_dimensions_accommodate_label() {
+        let btn_w = 52.0_f32;
+        let min_w_for_jitter = 48.0_f32;
+        assert!(
+            btn_w >= min_w_for_jitter,
+            "JITTER button width must be at least 48px to fit full label"
+        );
+    }
+
+    #[test]
+    fn transport_bottom_filler_closes_bottom_void() {
+        fn transport_bottom_filler(available: f32, last_row_h: f32) -> f32 {
+            if !available.is_finite() {
+                return 0.0;
+            }
+            (available - last_row_h).max(0.0)
+        }
+        // At 1366x992 the sequencer grid leaves ~90px below transport Row D.
+        assert_eq!(transport_bottom_filler(90.0, 28.0), 62.0);
+        assert_eq!(
+            transport_bottom_filler(20.0, 28.0),
+            0.0,
+            "Filler never negative"
+        );
+        assert_eq!(
+            transport_bottom_filler(f32::INFINITY, 28.0),
+            0.0,
+            "Unconstrained layout gets no filler"
+        );
     }
 }

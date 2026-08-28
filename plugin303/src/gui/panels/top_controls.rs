@@ -8,6 +8,7 @@ use crate::params::Plugin303Params;
 /// Envelope Generators:
 /// - MEG ADSR: Modulation Envelope Generator (modulates VCF cutoff filter modulation)
 /// - VEG ADSR: Voice / Volume Envelope Generator (modulates VCA amplitude)
+#[allow(clippy::too_many_arguments)]
 fn render_adsr_bank(
     ui: &mut Ui,
     title: &str,
@@ -39,39 +40,19 @@ fn render_adsr_bank(
                         nih_plug_egui::egui::FontFamily::Proportional,
                     ))
                     .strong()
-                    .color(if is_active { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY }),
+                    .color(if is_active {
+                        theme::TEXT_PRIMARY
+                    } else {
+                        theme::TEXT_SECONDARY
+                    }),
             );
             ui.add_space(1.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-                ui.add(MiniFader::new(
-                    attack,
-                    setter,
-                    "A",
-                    24.0,
-                    accent,
-                ));
-                ui.add(MiniFader::new(
-                    decay,
-                    setter,
-                    "D",
-                    24.0,
-                    accent,
-                ));
-                ui.add(MiniFader::new(
-                    sustain,
-                    setter,
-                    "S",
-                    24.0,
-                    accent,
-                ));
-                ui.add(MiniFader::new(
-                    release,
-                    setter,
-                    "R",
-                    24.0,
-                    accent,
-                ));
+                ui.add(MiniFader::new(attack, setter, "A", 24.0, accent));
+                ui.add(MiniFader::new(decay, setter, "D", 24.0, accent));
+                ui.add(MiniFader::new(sustain, setter, "S", 24.0, accent));
+                ui.add(MiniFader::new(release, setter, "R", 24.0, accent));
             });
         });
     });
@@ -99,14 +80,9 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 // Waveform Selector integrated inside main panel
                 ui.add_space(4.0);
                 ui.add(
-                    SlideSwitch::new(
-                        &params.waveform,
-                        setter,
-                        "WAVE",
-                        &["SAW", "SQR", "SWP"],
-                    )
-                    .vertical()
-                    .with_thumb_color(theme::ACCENT_ORANGE),
+                    SlideSwitch::new(&params.waveform, setter, "WAVE", &["SAW", "SQR", "SWP"])
+                        .vertical()
+                        .with_thumb_color(theme::ACCENT_ORANGE),
                 );
                 ui.add_space(6.0);
                 ui.separator();
@@ -139,7 +115,10 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.vertical(|ui| {
                         ui.label(
                             nih_plug_egui::egui::RichText::new("ENVELOPES")
-                                .font(FontId::new(9.0, nih_plug_egui::egui::FontFamily::Proportional))
+                                .font(FontId::new(
+                                    9.0,
+                                    nih_plug_egui::egui::FontFamily::Proportional,
+                                ))
                                 .strong()
                                 .color(theme::TEXT_PRIMARY),
                         );

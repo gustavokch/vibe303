@@ -61,6 +61,14 @@ pub fn render_step_strip(
         if ui.is_rect_visible(strip_rect) {
             ui.painter()
                 .rect_filled(strip_rect, CornerRadius::same(2), column_bg);
+            if is_active {
+                ui.painter().rect_stroke(
+                    strip_rect,
+                    CornerRadius::same(2),
+                    Stroke::new(1.0_f32, theme::ACCENT_RUBY.gamma_multiply(0.7)),
+                    StrokeKind::Inside,
+                );
+            }
         }
         // 1. Playhead LED bar (4.0px flat bar at top, ruby accent distinct from Note/Tie/Acc)
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, LED_H), Sense::hover());
@@ -68,7 +76,7 @@ pub fn render_step_strip(
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             let led_color = if is_active {
-                theme::ACCENT_CYAN
+                theme::ACCENT_RUBY
             } else {
                 theme::WELL_BG
             };
@@ -76,7 +84,14 @@ pub fn render_step_strip(
             p.rect_stroke(
                 led_rect,
                 CornerRadius::same(1),
-                Stroke::new(1.0_f32, if is_active { theme::ACCENT_RUBY } else { theme::BORDER_SUBTLE }),
+                Stroke::new(
+                    1.0_f32,
+                    if is_active {
+                        theme::ACCENT_RUBY
+                    } else {
+                        theme::BORDER_SUBTLE
+                    },
+                ),
                 StrokeKind::Inside,
             );
         }
@@ -86,7 +101,11 @@ pub fn render_step_strip(
         if ui.is_rect_visible(step_num_rect) {
             let p = ui.painter();
             let (bg_color, text_color, stroke_color) = if is_active {
-                (theme::SURFACE_ELEVATED, theme::ACCENT_RUBY, theme::ACCENT_RUBY)
+                (
+                    theme::SURFACE_ELEVATED,
+                    theme::ACCENT_RUBY,
+                    theme::ACCENT_RUBY,
+                )
             } else {
                 (theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT)
             };
@@ -112,7 +131,8 @@ pub fn render_step_strip(
             let btn_w = (width - 2.0) * 0.5;
 
             // ACC Button (30px hit target)
-            let (acc_hit_rect, acc_resp) = ui.allocate_exact_size(vec2(btn_w, CONTROL_ROW_H), Sense::click());
+            let (acc_hit_rect, acc_resp) =
+                ui.allocate_exact_size(vec2(btn_w, CONTROL_ROW_H), Sense::click());
             let acc_resp = acc_resp.on_hover_text("Toggle Accent (A)");
             if acc_resp.clicked() {
                 step.accent = !step.accent;
@@ -120,7 +140,10 @@ pub fn render_step_strip(
             }
             if ui.is_rect_visible(acc_hit_rect) {
                 let p = ui.painter();
-                let acc_rect = nih_plug_egui::egui::Rect::from_center_size(acc_hit_rect.center(), vec2(btn_w, PILL_H));
+                let acc_rect = nih_plug_egui::egui::Rect::from_center_size(
+                    acc_hit_rect.center(),
+                    vec2(btn_w, PILL_H),
+                );
                 let (bg, text_col) = if step.accent {
                     (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
                 } else if acc_resp.hovered() {
@@ -132,7 +155,14 @@ pub fn render_step_strip(
                 p.rect_stroke(
                     acc_rect,
                     CornerRadius::same(2),
-                    Stroke::new(1.0_f32, if step.accent { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }),
+                    Stroke::new(
+                        1.0_f32,
+                        if step.accent {
+                            theme::ACCENT_ORANGE
+                        } else {
+                            theme::BORDER_DEFAULT
+                        },
+                    ),
                     StrokeKind::Inside,
                 );
                 p.text(
@@ -145,7 +175,8 @@ pub fn render_step_strip(
             }
 
             // SLD Button (30px hit target)
-            let (sld_hit_rect, sld_resp) = ui.allocate_exact_size(vec2(btn_w, CONTROL_ROW_H), Sense::click());
+            let (sld_hit_rect, sld_resp) =
+                ui.allocate_exact_size(vec2(btn_w, CONTROL_ROW_H), Sense::click());
             let sld_resp = sld_resp.on_hover_text("Toggle Slide (S)");
             if sld_resp.clicked() {
                 step.slide = !step.slide;
@@ -153,7 +184,10 @@ pub fn render_step_strip(
             }
             if ui.is_rect_visible(sld_hit_rect) {
                 let p = ui.painter();
-                let sld_rect = nih_plug_egui::egui::Rect::from_center_size(sld_hit_rect.center(), vec2(btn_w, PILL_H));
+                let sld_rect = nih_plug_egui::egui::Rect::from_center_size(
+                    sld_hit_rect.center(),
+                    vec2(btn_w, PILL_H),
+                );
                 let (bg, text_col) = if step.slide {
                     (theme::ACCENT_CYAN, theme::TEXT_ON_ACCENT)
                 } else if sld_resp.hovered() {
@@ -165,7 +199,14 @@ pub fn render_step_strip(
                 p.rect_stroke(
                     sld_rect,
                     CornerRadius::same(2),
-                    Stroke::new(1.0_f32, if step.slide { theme::ACCENT_CYAN } else { theme::BORDER_DEFAULT }),
+                    Stroke::new(
+                        1.0_f32,
+                        if step.slide {
+                            theme::ACCENT_CYAN
+                        } else {
+                            theme::BORDER_DEFAULT
+                        },
+                    ),
                     StrokeKind::Inside,
                 );
                 p.text(
@@ -180,11 +221,27 @@ pub fn render_step_strip(
 
         // 4. Gate Pill: NOTE / TIE / REST (30px hit target)
         let (gate_str, gate_bg, gate_text, gate_border) = match step.gate {
-            StepGate::Note => ("NOTE", theme::ACCENT_CYAN, theme::TEXT_ON_ACCENT, theme::ACCENT_CYAN),
-            StepGate::Tie => ("TIE", theme::ACCENT_GOLD, theme::TEXT_ON_ACCENT, theme::ACCENT_GOLD),
-            StepGate::Rest => ("REST", theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT),
+            StepGate::Note => (
+                "NOTE",
+                theme::ACCENT_CYAN,
+                theme::TEXT_ON_ACCENT,
+                theme::ACCENT_CYAN,
+            ),
+            StepGate::Tie => (
+                "TIE",
+                theme::ACCENT_GOLD,
+                theme::TEXT_ON_ACCENT,
+                theme::ACCENT_GOLD,
+            ),
+            StepGate::Rest => (
+                "REST",
+                theme::WELL_BG,
+                theme::TEXT_MUTED,
+                theme::BORDER_DEFAULT,
+            ),
         };
-        let (gate_hit_rect, gate_resp) = ui.allocate_exact_size(vec2(width, CONTROL_ROW_H), Sense::click());
+        let (gate_hit_rect, gate_resp) =
+            ui.allocate_exact_size(vec2(width, CONTROL_ROW_H), Sense::click());
         if gate_resp.clicked() {
             step.gate = match step.gate {
                 StepGate::Note => StepGate::Tie,
@@ -195,7 +252,10 @@ pub fn render_step_strip(
         }
         if ui.is_rect_visible(gate_hit_rect) {
             let p = ui.painter();
-            let gate_rect = nih_plug_egui::egui::Rect::from_center_size(gate_hit_rect.center(), vec2(width, PILL_H));
+            let gate_rect = nih_plug_egui::egui::Rect::from_center_size(
+                gate_hit_rect.center(),
+                vec2(width, PILL_H),
+            );
             p.rect_filled(gate_rect, CornerRadius::same(2), gate_bg);
             p.rect_stroke(
                 gate_rect,
@@ -215,7 +275,8 @@ pub fn render_step_strip(
         // 5. Pitch Monospace Pill (30px hit target)
         let is_rest = step.gate == StepGate::Rest;
         let pitch_str = format_pitch(step.semitone, step.octave);
-        let (pitch_hit_rect, pitch_resp) = ui.allocate_exact_size(vec2(width, CONTROL_ROW_H), Sense::click_and_drag());
+        let (pitch_hit_rect, pitch_resp) =
+            ui.allocate_exact_size(vec2(width, CONTROL_ROW_H), Sense::click_and_drag());
         let pitch_resp = pitch_resp.on_hover_text("Click: piano roll | Drag/R-Click: nudge pitch");
 
         let drag_id = ui.make_persistent_id(format!("step_drag_{}", step_idx));
@@ -227,7 +288,11 @@ pub fn render_step_strip(
                 pitch_resp.rect,
             );
         } else if pitch_resp.secondary_clicked() {
-            step.semitone = if step.semitone <= 0 { 12 } else { step.semitone - 1 };
+            step.semitone = if step.semitone <= 0 {
+                12
+            } else {
+                step.semitone - 1
+            };
             changed = true;
         } else if pitch_resp.dragged() {
             let dy = -pitch_resp.drag_delta().y;
@@ -252,7 +317,10 @@ pub fn render_step_strip(
 
         if ui.is_rect_visible(pitch_hit_rect) {
             let p = ui.painter();
-            let pitch_rect = nih_plug_egui::egui::Rect::from_center_size(pitch_hit_rect.center(), vec2(width, PILL_H));
+            let pitch_rect = nih_plug_egui::egui::Rect::from_center_size(
+                pitch_hit_rect.center(),
+                vec2(width, PILL_H),
+            );
             let bg = if pitch_resp.hovered() {
                 theme::SURFACE_HOVER
             } else {
@@ -262,15 +330,26 @@ pub fn render_step_strip(
             p.rect_stroke(
                 pitch_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, if is_active && !is_rest { theme::ACCENT_RUBY } else { theme::BORDER_DEFAULT }),
+                Stroke::new(
+                    1.0_f32,
+                    if is_active && !is_rest {
+                        theme::ACCENT_RUBY
+                    } else {
+                        theme::BORDER_DEFAULT
+                    },
+                ),
                 StrokeKind::Inside,
             );
             p.text(
                 pitch_rect.center(),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 pitch_str,
-                FontId::new(10.0, FontFamily::Monospace),
-                if is_rest { theme::TEXT_MUTED } else { theme::TEXT_PRIMARY },
+                FontId::new(9.0, FontFamily::Monospace),
+                if is_rest {
+                    theme::TEXT_MUTED
+                } else {
+                    theme::TEXT_PRIMARY
+                },
             );
         }
 
@@ -280,7 +359,8 @@ pub fn render_step_strip(
             let oct_w = (width - 2.0) * 0.5;
 
             // Octave Up Button
-            let (up_hit_rect, up_resp) = ui.allocate_exact_size(vec2(oct_w, CONTROL_ROW_H), Sense::click());
+            let (up_hit_rect, up_resp) =
+                ui.allocate_exact_size(vec2(oct_w, CONTROL_ROW_H), Sense::click());
             let up_resp = up_resp.on_hover_text("Octave up (+1)");
             if up_resp.clicked() && step.octave < 2 {
                 step.octave += 1;
@@ -288,7 +368,10 @@ pub fn render_step_strip(
             }
             if ui.is_rect_visible(up_hit_rect) {
                 let p = ui.painter();
-                let up_rect = nih_plug_egui::egui::Rect::from_center_size(up_hit_rect.center(), vec2(oct_w, PILL_H));
+                let up_rect = nih_plug_egui::egui::Rect::from_center_size(
+                    up_hit_rect.center(),
+                    vec2(oct_w, PILL_H),
+                );
                 let bg = if up_resp.hovered() && step.octave < 2 {
                     theme::SURFACE_HOVER
                 } else {
@@ -320,7 +403,8 @@ pub fn render_step_strip(
             }
 
             // Octave Down Button
-            let (dn_hit_rect, dn_resp) = ui.allocate_exact_size(vec2(oct_w, CONTROL_ROW_H), Sense::click());
+            let (dn_hit_rect, dn_resp) =
+                ui.allocate_exact_size(vec2(oct_w, CONTROL_ROW_H), Sense::click());
             let dn_resp = dn_resp.on_hover_text("Octave down (-1)");
             if dn_resp.clicked() && step.octave > -2 {
                 step.octave -= 1;
@@ -328,7 +412,10 @@ pub fn render_step_strip(
             }
             if ui.is_rect_visible(dn_hit_rect) {
                 let p = ui.painter();
-                let dn_rect = nih_plug_egui::egui::Rect::from_center_size(dn_hit_rect.center(), vec2(oct_w, PILL_H));
+                let dn_rect = nih_plug_egui::egui::Rect::from_center_size(
+                    dn_hit_rect.center(),
+                    vec2(oct_w, PILL_H),
+                );
                 let bg = if dn_resp.hovered() && step.octave > -2 {
                     theme::SURFACE_HOVER
                 } else {
