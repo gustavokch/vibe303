@@ -55,9 +55,7 @@ pub fn render_sequencer_and_transport(
 ) {
     let active_step = current_step_atomic.load(Ordering::Relaxed);
 
-    ui.horizontal(|ui| {
-        super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
-    });
+    super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
     ui.add_space(0.5);
 
     let frame_avail_h = ui.available_height();

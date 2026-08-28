@@ -19,6 +19,7 @@ pub fn render_generator_panel(
         .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.vertical(|ui| {
                 // Header Bar
                 ui.horizontal(|ui| {
@@ -29,38 +30,35 @@ pub fn render_generator_panel(
                             .color(theme::ACCENT_ORANGE),
                     );
 
-                    ui.with_layout(
-                        nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center),
-                        |ui| {
-                            ui.add_space(4.0);
+                    let right_group_w = 195.0;
+                    let space_w = (ui.available_width() - right_group_w).max(0.0);
+                    ui.add_space(space_w);
 
-                            // New Seed Button
-                            let new_seed_btn = Button::new(
-                                nih_plug_egui::egui::RichText::new("NEW SEED")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_PRIMARY),
-                            )
-                            .fill(theme::SURFACE_ELEVATED)
-                            .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                            .corner_radius(CornerRadius::same(2));
-
-                            if ui.add(new_seed_btn).clicked() {
-                                gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-                            }
-
-                            ui.add_space(6.0);
-
-                            // Seed Display Badge
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new(format!(
-                                    "GEN SEED: {:04}",
-                                    gen_params.seed % 10000
-                                ))
-                                .font(FontId::monospace(8.5))
-                                .color(theme::TEXT_MUTED),
-                            );
-                        },
+                    // Seed Display Badge
+                    ui.label(
+                        nih_plug_egui::egui::RichText::new(format!(
+                            "GEN SEED: {:04}",
+                            gen_params.seed % 10000
+                        ))
+                        .font(FontId::monospace(8.5))
+                        .color(theme::TEXT_MUTED),
                     );
+
+                    ui.add_space(6.0);
+
+                    // New Seed Button
+                    let new_seed_btn = Button::new(
+                        nih_plug_egui::egui::RichText::new("NEW SEED")
+                            .font(FontId::proportional(8.5))
+                            .color(theme::TEXT_PRIMARY),
+                    )
+                    .fill(theme::SURFACE_ELEVATED)
+                    .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
+                    .corner_radius(CornerRadius::same(2));
+
+                    if ui.add(new_seed_btn).clicked() {
+                        gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                    }
                 });
 
                 ui.add_space(2.0);
