@@ -102,8 +102,8 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.separator();
                 ui.add_space(16.0);
 
-                // Envelopes Module Frame: MEG/VEG/ADV ENV distributed evenly
-                // across the full remaining width so there is no dead band.
+                // Envelopes Module Frame: MEG/VEG/ADV ENV distributed cleanly
+                // without isolated controls or dead gaps.
                 let env_frame = Frame::new()
                     .fill(theme::WELL_BG)
                     .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
@@ -113,72 +113,74 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 env_frame.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.vertical(|ui| {
-                        ui.label(
-                            nih_plug_egui::egui::RichText::new("ENVELOPES")
-                                .font(FontId::new(
-                                    9.0,
-                                    nih_plug_egui::egui::FontFamily::Proportional,
-                                ))
-                                .strong()
-                                .color(theme::TEXT_PRIMARY),
-                        );
+                        let mut is_adv = params.advanced_env.value();
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                nih_plug_egui::egui::RichText::new("ENVELOPES")
+                                    .font(FontId::new(
+                                        9.0,
+                                        nih_plug_egui::egui::FontFamily::Proportional,
+                                    ))
+                                    .strong()
+                                    .color(theme::TEXT_PRIMARY),
+                            );
+
+                            ui.add_space(10.0);
+
+                            let adv_color = if is_adv {
+                                theme::ACCENT_ORANGE
+                            } else {
+                                theme::TEXT_SECONDARY
+                            };
+                            if ui
+                                .checkbox(
+                                    &mut is_adv,
+                                    nih_plug_egui::egui::RichText::new("ADV ENV")
+                                        .font(FontId::proportional(8.5))
+                                        .color(adv_color),
+                                )
+                                .changed()
+                            {
+                                setter.begin_set_parameter(&params.advanced_env);
+                                setter.set_parameter(&params.advanced_env, is_adv);
+                                setter.end_set_parameter(&params.advanced_env);
+                            }
+                        });
 
                         ui.add_space(2.0);
 
-                        let is_adv = params.advanced_env.value();
                         ui.horizontal(|ui| {
-                            ui.columns(3, |cols| {
-                                cols[0].vertical_centered(|ui| {
-                                    ui.add_enabled_ui(is_adv, |ui| {
-                                        render_adsr_bank(
-                                            ui,
-                                            "MEG ADSR (Mod Envelope)",
-                                            &params.meg_attack,
-                                            &params.meg_decay_adj,
-                                            &params.meg_sustain,
-                                            &params.meg_release,
-                                            setter,
-                                            is_adv,
-                                        );
-                                    });
-                                });
+                            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                            let avail = ui.available_width();
+                            let approx_bank_w = 115.0_f32;
+                            let spacer_w = (avail - 2.0 * approx_bank_w).max(6.0);
 
-                                cols[1].vertical_centered(|ui| {
-                                    ui.add_enabled_ui(is_adv, |ui| {
-                                        render_adsr_bank(
-                                            ui,
-                                            "VEG ADSR (Voice Envelope)",
-                                            &params.veg_attack,
-                                            &params.veg_decay_adj,
-                                            &params.veg_sustain,
-                                            &params.veg_release,
-                                            setter,
-                                            is_adv,
-                                        );
-                                    });
-                                });
+                            ui.add_enabled_ui(is_adv, |ui| {
+                                render_adsr_bank(
+                                    ui,
+                                    "MEG ADSR (Mod Envelope)",
+                                    &params.meg_attack,
+                                    &params.meg_decay_adj,
+                                    &params.meg_sustain,
+                                    &params.meg_release,
+                                    setter,
+                                    is_adv,
+                                );
+                            });
 
-                                cols[2].vertical_centered(|ui| {
-                                    let mut adv_env = params.advanced_env.value();
-                                    let adv_color = if adv_env {
-                                        theme::ACCENT_ORANGE
-                                    } else {
-                                        theme::TEXT_SECONDARY
-                                    };
-                                    if ui
-                                        .checkbox(
-                                            &mut adv_env,
-                                            nih_plug_egui::egui::RichText::new("ADV ENV")
-                                                .font(FontId::proportional(8.5))
-                                                .color(adv_color),
-                                        )
-                                        .changed()
-                                    {
-                                        setter.begin_set_parameter(&params.advanced_env);
-                                        setter.set_parameter(&params.advanced_env, adv_env);
-                                        setter.end_set_parameter(&params.advanced_env);
-                                    }
-                                });
+                            ui.add_space(spacer_w);
+
+                            ui.add_enabled_ui(is_adv, |ui| {
+                                render_adsr_bank(
+                                    ui,
+                                    "VEG ADSR (Voice Envelope)",
+                                    &params.veg_attack,
+                                    &params.veg_decay_adj,
+                                    &params.veg_sustain,
+                                    &params.veg_release,
+                                    setter,
+                                    is_adv,
+                                );
                             });
                         });
                     });

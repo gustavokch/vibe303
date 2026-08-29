@@ -137,28 +137,12 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 }
             }
 
-            // 3. Pointer Needle (snap to start_angle at zero — fix #17)
+            // 3. Pointer Needle
             // Display string parsed once here and reused by the value badge
-            // below. Label dispatch uses contains() — the established idiom
-            // in this file; "IN" also covers "TUNING".
+            // below.
             let raw_str = self.param.to_string();
             let plain_value = parse_plain_value(&raw_str);
-            let zero_center_branch = self.label.contains("VOLUME")
-                || self.label.contains("PITCH")
-                || self.label.contains("DET")
-                || self.label.contains("IN")
-                || self.label.contains("OUT")
-                || self.label.contains("TILT");
-            let zero_snapped = if normalized.abs() < 0.001 {
-                true
-            } else {
-                plain_value.is_some_and(|v| zero_center_branch && v.abs() < 0.05)
-            };
-            let current_angle = if zero_snapped {
-                start_angle
-            } else {
-                start_angle + normalized * (end_angle - start_angle)
-            };
+            let current_angle = compute_needle_angle(normalized, start_angle, end_angle);
             let needle_inner = pos2(
                 center.x + current_angle.cos() * (self.radius * 0.2),
                 center.y + current_angle.sin() * (self.radius * 0.2),
@@ -257,6 +241,12 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
     }
 }
 
+/// Compute the pointer needle angle for a knob from normalized position (0.0..=1.0)
+/// by linearly interpolating between `start_angle` and `end_angle`.
+pub fn compute_needle_angle(normalized: f32, start_angle: f32, end_angle: f32) -> f32 {
+    start_angle + normalized * (end_angle - start_angle)
+}
+
 /// Extract the plain numeric value from a param display string by parsing
 /// its first whitespace-separated token. Returns `None` when the token is
 /// not numeric (e.g. `"OFF"`, or a unit fused to the number like `"50%"`).
@@ -338,3 +328,31 @@ mod decay_tests {
         assert_eq!(format_decay_label(1.5), "2.0 s");
     }
 }
+
+#[cfg(test)]
+mod needle_tests {
+    use super::compute_needle_angle;
+    use std::f32::consts::PI;
+
+    #[test]
+    fn needle_angle_positions() {
+        let start = 0.75 * PI;
+        let end = 2.25 * PI;
+
+        // Exact endpoints
+        assert_eq!(compute_needle_angle(0.0, start, end), start);
+        assert!((compute_needle_angle(1.0, start, end) - end).abs() < 1e-5);
+
+        // Center / 12 o'clock for bipolar (normalized = 0.5)
+        let mid = compute_needle_angle(0.5, start, end);
+        assert!((mid - 1.5 * PI).abs() < 1e-5);
+
+        // Monotonic lerp across quarter steps
+        let q1 = compute_needle_angle(0.25, start, end);
+        let q3 = compute_needle_angle(0.75, start, end);
+        assert!(start < q1 && q1 < mid && mid < q3 && q3 < end);
+        assert!((q1 - (start + 0.25 * (end - start))).abs() < 1e-5);
+        assert!((q3 - (start + 0.75 * (end - start))).abs() < 1e-5);
+    }
+}
+

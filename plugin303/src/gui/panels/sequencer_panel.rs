@@ -1,34 +1,65 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense, Stroke,
-    StrokeKind, Ui,
+    epaint::Shape, pos2, style::WidgetVisuals, vec2, AboveOrBelow, Align, Button, ComboBox,
+    CornerRadius, DragValue, FontId, Frame, Layout, Margin, Rect, Sense, Stroke, StrokeKind, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::gui::theme;
 use crate::gui::widgets::piano_roll_popup::render_piano_roll_popup;
 use crate::gui::widgets::render_step_strip;
-use crate::gui::widgets::step_button::STRIP_HEIGHT;
+use crate::gui::widgets::step_button::{CONTROL_ROW_H, STRIP_HEIGHT};
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
+
+/// Custom ComboBox icon painter that always paints a downward-pointing triangle (▼).
+/// These two bottom-row dropdowns sit low enough in the window that egui flips the glyph
+/// when the popup opens upward; this painter keeps the glyph downward-pointing to match
+/// the app-wide dropdown convention.
+fn paint_combobox_down_arrow(
+    ui: &Ui,
+    rect: Rect,
+    visuals: &WidgetVisuals,
+    _is_open: bool,
+    _above_or_below: AboveOrBelow,
+) {
+    let rect = Rect::from_center_size(
+        rect.center(),
+        vec2(rect.width() * 0.7, rect.height() * 0.45),
+    );
+    ui.painter().add(Shape::convex_polygon(
+        vec![rect.left_top(), rect.right_top(), rect.center_bottom()],
+        visuals.fg_stroke.color,
+        Stroke::NONE,
+    ));
+}
 
 /// Width reserved for the transport/pattern column right of the step grid.
 const TRANSPORT_COLUMN_W: f32 = 280.0;
 /// Horizontal gap between adjacent step cells (and grid rows vertically).
 const GRID_GAP: f32 = 4.0;
+/// Total vertical height of the 2-row step grid (2 * STRIP_HEIGHT + GRID_GAP = 268.0).
+const GRID_TOTAL_H: f32 = 2.0 * STRIP_HEIGHT + GRID_GAP;
+/// Height allocated to transport Row D, matching the step grid's control rows.
+const ROW_D_H: f32 = CONTROL_ROW_H;
+/// Vertical chrome subtracted from the pre-frame available height so the
+/// frame bottom reaches the window bottom without overflowing it:
+/// frame inner margins (top 4 + bottom 8 = 12) + frame stroke (1) + trailing
+/// item spacing (4) = 17.0.
+const FRAME_VERT_CHROME_PX: f32 = 17.0;
 /// `add_space(8)` + separator (~2) + `add_space(8)` between grid and transport column.
 const SEPARATOR_CHROME_W: f32 = 18.0;
 /// Smallest usable step cell; below this the grid overflows instead of scrolling.
 const MIN_CELL_W: f32 = 72.0;
-/// Vertical chrome subtracted from the pre-frame available height so the
-/// frame bottom reaches the window bottom without overflowing it:
-/// frame inner margins (top 4 + bottom 8) + frame stroke (1) + trailing
-/// item spacing (4). Pinned by the change-detector test below.
-const FRAME_VERT_CHROME_PX: f32 = 17.0;
 
 /// Hit-rect width for the JITTER toggle: 15 px text offset + ~27 px for
 /// "JITTER" at 8 pt + 4 px margin, so the painted label never overflows onto
 /// the CLEAR button (PR#53 review).
 const JIT_HIT_W: f32 = 52.0;
+
+/// Compute the adaptive minimum height for the sequencer frame.
+fn frame_min_height(avail_h: f32) -> f32 {
+    (avail_h - FRAME_VERT_CHROME_PX).max(GRID_TOTAL_H + 12.0)
+}
 
 /// Snap a dragged BPM value to a whole number so the `{:.0}` display always
 /// matches the stored value (PR#53 review).
@@ -49,8 +80,7 @@ pub(crate) fn grid_cell_width(avail_w: f32) -> (f32, bool) {
     }
 }
 
-/// Filler space that pins transport Row D to the panel bottom, closing the
-/// bottom-right transport void (ISSUE-04). Unconstrained layouts get no filler.
+/// Filler space that aligns transport Row D with the step grid's bottom row baseline.
 fn transport_bottom_filler(available: f32, last_row_h: f32) -> f32 {
     if !available.is_finite() {
         return 0.0;
@@ -84,7 +114,7 @@ pub fn render_sequencer_and_transport(
         })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height((frame_avail_h - FRAME_VERT_CHROME_PX).max(280.0));
+            ui.set_min_height(frame_min_height(frame_avail_h));
 
             // Grid geometry: 2 rows x 8 columns; transport column on the right
             let (cell_w, clamped) = grid_cell_width(ui.available_width());
@@ -125,6 +155,7 @@ pub fn render_sequencer_and_transport(
 
                 // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
                 ui.vertical(|ui| {
+                    let transport_start_y = ui.cursor().top();
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing = vec2(3.0, 6.0);
                     ui.spacing_mut().button_padding = vec2(3.0, 1.0);
@@ -366,18 +397,22 @@ pub fn render_sequencer_and_transport(
                         }
                     });
 
-                    // Pin Row D to the panel bottom (closes bottom-right transport void)
-                    let row_d_h = 28.0_f32; // enlarged hit areas + row padding
-                    let fill = transport_bottom_filler(ui.available_height(), row_d_h + 6.0);
+                    // Pin Row D so its bottom matches the step grid bottom (GRID_TOTAL_H = 268.0)
+                    let current_transport_y = ui.cursor().top() - transport_start_y;
+                    let fill = transport_bottom_filler(GRID_TOTAL_H - current_transport_y, ROW_D_H);
                     ui.add_space(fill);
 
                     // Row D: Timebase + Mode + Jitter + Clear (enlarged hit areas >= 24px)
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-                        ui.spacing_mut().button_padding = vec2(4.0, 3.0);
+                    ui.allocate_ui_with_layout(
+                        vec2(ui.available_width(), ROW_D_H),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+                            ui.spacing_mut().button_padding = vec2(4.0, 3.0);
 
                         let tb_val = params.seq_timebase.value();
                         ComboBox::from_id_salt("seq_tb_combo")
+                            .icon(paint_combobox_down_arrow)
                             .selected_text(match tb_val {
                                 crate::params::Timebase::Straight => "16th",
                                 crate::params::Timebase::Triplet => "12th",
@@ -416,6 +451,7 @@ pub fn render_sequencer_and_transport(
 
                         let mode_val = params.seq_mode.value();
                         ComboBox::from_id_salt("seq_mode_combo")
+                            .icon(paint_combobox_down_arrow)
                             .selected_text(match mode_val {
                                 crate::params::SequencerMode::DirectGrid => "Direct",
                                 crate::params::SequencerMode::DecoupledHardware => "Decoupled",
@@ -523,13 +559,6 @@ mod tests {
     }
 
     #[test]
-    fn frame_vertical_chrome_pinned() {
-        // Change-detector pin: value is empirically calibrated against
-        // rendered captures. A change here must be re-verified visually.
-        assert_eq!(FRAME_VERT_CHROME_PX, 17.0);
-    }
-
-    #[test]
     fn jitter_hit_rect_fits_label() {
         // "JITTER" at 8 pt proportional is ~27 px wide; painted from a 15 px
         // offset. The hit rect must cover the full painted text plus margin so
@@ -559,13 +588,7 @@ mod tests {
 
     #[test]
     fn transport_bottom_filler_closes_bottom_void() {
-        fn transport_bottom_filler(available: f32, last_row_h: f32) -> f32 {
-            if !available.is_finite() {
-                return 0.0;
-            }
-            (available - last_row_h).max(0.0)
-        }
-        // At 1366x992 the sequencer grid leaves ~90px below transport Row D.
+        // When remaining space in transport column exceeds row D height, filler consumes the delta.
         assert_eq!(transport_bottom_filler(90.0, 28.0), 62.0);
         assert_eq!(
             transport_bottom_filler(20.0, 28.0),
@@ -577,5 +600,49 @@ mod tests {
             0.0,
             "Unconstrained layout gets no filler"
         );
+    }
+
+    #[test]
+    fn sequencer_and_transport_bottom_rows_aligned() {
+        // Step grid bottom row (octave arrows in row 1) starts at:
+        // row 0 strip + gap + row 1 (strip - control_row)
+        let octave_row_top = STRIP_HEIGHT + GRID_GAP + (STRIP_HEIGHT - CONTROL_ROW_H);
+        assert_eq!(octave_row_top, 240.0);
+        let octave_row_bottom = octave_row_top + CONTROL_ROW_H;
+        assert_eq!(octave_row_bottom, GRID_TOTAL_H);
+
+        // Verify transport_bottom_filler places Row D so its bottom aligns with GRID_TOTAL_H
+        for consumed in [0.0, 50.0, 100.0, 150.0, 200.0, 240.0] {
+            let available = GRID_TOTAL_H - consumed;
+            let filler = transport_bottom_filler(available, ROW_D_H);
+            let row_d_top = consumed + filler;
+            let row_d_bottom = row_d_top + ROW_D_H;
+            assert_eq!(row_d_bottom, GRID_TOTAL_H);
+            assert!(row_d_top >= consumed);
+        }
+
+        // Saturating case: consumed exceeds grid -> filler is 0.0, row is placed immediately
+        let saturating_consumed = GRID_TOTAL_H + 50.0;
+        let available_sat = GRID_TOTAL_H - saturating_consumed;
+        let filler_sat = transport_bottom_filler(available_sat, ROW_D_H);
+        assert_eq!(filler_sat, 0.0);
+        assert_eq!(saturating_consumed + filler_sat, saturating_consumed);
+    }
+
+    #[test]
+    fn frame_min_height_adapts_and_clamps_to_floor() {
+        let min_floor = GRID_TOTAL_H + 12.0; // 280.0
+        assert_eq!(min_floor, 280.0);
+
+        // When available height is smaller than floor + chrome, floor wins
+        assert_eq!(frame_min_height(0.0), 280.0);
+        assert_eq!(frame_min_height(100.0), 280.0);
+        assert_eq!(frame_min_height(280.0), 280.0);
+        assert_eq!(frame_min_height(280.0 + FRAME_VERT_CHROME_PX), 280.0);
+
+        // When available height exceeds floor + chrome, chrome is subtracted
+        let extra = 50.0;
+        let avail = 280.0 + FRAME_VERT_CHROME_PX + extra;
+        assert_eq!(frame_min_height(avail), 280.0 + extra);
     }
 }
