@@ -7,6 +7,14 @@ use crate::gui::theme;
 use crate::gui::widgets::Knob303;
 use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
 
+/// Horizontal geometry of the 4-column tweaks row.
+/// Each vertical `Separator` allocates 6px with 8px item_spacing on both sides.
+const NUM_COLS: f32 = 4.0;
+const SEPARATOR_WIDTH: f32 = 6.0;
+const ITEM_SPACING_X: f32 = 8.0;
+const SEPARATOR_OVERHEAD: f32 =
+    (NUM_COLS - 1.0) * (SEPARATOR_WIDTH + 2.0 * ITEM_SPACING_X); // 66.0 px total
+
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
     let label_color = if is_accurate {
@@ -39,14 +47,6 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.add_space(3.0);
 
                     // 4 Balanced Columns across full available width
-                    const NUM_COLS: f32 = 4.0;
-                    const NUM_SEPARATORS: f32 = NUM_COLS - 1.0;
-                    const SEPARATOR_WIDTH: f32 = 6.0;
-                    const ITEM_SPACING_X: f32 = 8.0;
-                    // Each vertical separator allocates 6px and has 8px item_spacing on both sides
-                    const SEPARATOR_OVERHEAD: f32 =
-                        NUM_SEPARATORS * (SEPARATOR_WIDTH + 2.0 * ITEM_SPACING_X); // 66.0 px total
-
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(ITEM_SPACING_X, 0.0);
                         let total_w = ui.available_width();
@@ -313,11 +313,13 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn tweaks_panel_column_geometry() {
-        let avail_w = 1366.0 - 20.0 - 12.0; // 1334.0
-        let sep_overhead = 3.0 * (6.0 + 2.0 * 8.0); // 66.0
-        let col_w = (avail_w - sep_overhead) / 4.0;
+        // CentralPanel inner margin (10) + tweaks frame inner margin (6), both sides
+        let avail_w = 1366.0 - 2.0 * 10.0 - 2.0 * 6.0; // 1334.0
+        let col_w = (avail_w - SEPARATOR_OVERHEAD) / NUM_COLS;
         assert_eq!(col_w, 317.0);
         assert!(
             col_w > 250.0,
