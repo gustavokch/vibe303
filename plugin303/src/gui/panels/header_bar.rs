@@ -99,12 +99,9 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
 
                         // 1. Zoom factor dropdown
                         let current_zoom = ui.ctx().zoom_factor();
-                        const ZOOM_PRESETS: [(f32, &str); 5] = [
+                        const ZOOM_PRESETS: [(f32, &str); 2] = [
                             (0.75, "75%"),
                             (1.0, "100%"),
-                            (1.25, "125%"),
-                            (1.5, "150%"),
-                            (2.0, "200%"),
                         ];
                         let zoom_label = ZOOM_PRESETS
                             .iter()
@@ -112,25 +109,29 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                             .map(|(_, l)| *l)
                             .unwrap_or("100%");
 
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("ZOOM")
-                                    .font(FontId::new(8.5, FontFamily::Proportional))
-                                    .color(theme::TEXT_SECONDARY),
-                            );
-                            ComboBox::from_id_salt("header_zoom_selector")
-                                .selected_text(zoom_label)
-                                .width(54.0)
-                                .show_ui(ui, |ui| {
-                                    for &(preset, label) in &ZOOM_PRESETS {
-                                        let is_selected = (current_zoom - preset).abs() < 0.01;
-                                        if ui.selectable_label(is_selected, label).clicked() {
-                                            ui.ctx().set_zoom_factor(preset);
+                        ui.allocate_ui_with_layout(
+                            vec2(70.0, 34.0),
+                            nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Min),
+                            |ui| {
+                                ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
+                                ui.label(
+                                    nih_plug_egui::egui::RichText::new("ZOOM")
+                                        .font(FontId::new(8.5, FontFamily::Proportional))
+                                        .color(theme::TEXT_SECONDARY),
+                                );
+                                ComboBox::from_id_salt("header_zoom_selector")
+                                    .selected_text(zoom_label)
+                                    .width(54.0)
+                                    .show_ui(ui, |ui| {
+                                        for &(preset, label) in &ZOOM_PRESETS {
+                                            let is_selected = (current_zoom - preset).abs() < 0.01;
+                                            if ui.selectable_label(is_selected, label).clicked() {
+                                                ui.ctx().set_zoom_factor(preset);
+                                            }
                                         }
-                                    }
-                                });
-                        });
+                                    });
+                            },
+                        );
 
                         // 2. Quality selector (disabled in Accurate mode)
                         let is_accurate = params.topology.value() == crate::params::CircuitTopology::Accurate;
@@ -198,7 +199,7 @@ mod tests {
 
     #[test]
     fn right_group_left_narrow_zoomed_clamped_no_overlap() {
-        // 200% zoom: logical width ~640 pt, desired 480 pt -> would be 160 without clamp.
+        // Constrained logical width ~640 pt, desired 480 pt -> would be 160 without clamp.
         // Clamps to left_width (280.0) so it never overlaps left brand block.
         let left = right_group_left(640.0, LEFT_GROUP_W, RIGHT_GROUP_W);
         assert_eq!(left, LEFT_GROUP_W);

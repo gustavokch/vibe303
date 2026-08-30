@@ -77,6 +77,11 @@ fn test_all_panels_sequential_full_ui() {
                 // 1. Header Bar
                 panels::header_bar::render_header(ui, &params, &setter);
                 assert_fits_width(ui, content_right, "Header");
+                assert!(
+                    ui.min_rect().max.x >= 1340.0,
+                    "Header right control group not flush right: max.x = {}",
+                    ui.min_rect().max.x
+                );
                 ui.add_space(0.5);
 
                 // 2. Classic 303 Control Panel

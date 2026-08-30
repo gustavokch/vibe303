@@ -99,7 +99,10 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 let t = i as f32 / ARC_SEGMENTS as f32;
                 let a = start_angle + t * (end_angle - start_angle);
                 let cur_pt = pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r);
-                painter.line_segment([prev_bg_pt, cur_pt], Stroke::new(2.0_f32, theme::SURFACE_ELEVATED));
+                painter.line_segment(
+                    [prev_bg_pt, cur_pt],
+                    Stroke::new(2.0_f32, theme::SURFACE_ELEVATED),
+                );
                 prev_bg_pt = cur_pt;
             }
 
@@ -108,12 +111,22 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
             const NUM_TICKS: usize = 7;
             let tick_r_inner = self.radius - 1.0;
             let tick_r_outer = self.radius + 1.5;
-            let tick_color = if is_enabled { theme::BORDER_DEFAULT } else { theme::WELL_BG };
+            let tick_color = if is_enabled {
+                theme::BORDER_DEFAULT
+            } else {
+                theme::WELL_BG
+            };
             for i in 0..NUM_TICKS {
                 let t = i as f32 / (NUM_TICKS - 1) as f32;
                 let a = start_angle + t * (end_angle - start_angle);
-                let p1 = pos2(center.x + a.cos() * tick_r_inner, center.y + a.sin() * tick_r_inner);
-                let p2 = pos2(center.x + a.cos() * tick_r_outer, center.y + a.sin() * tick_r_outer);
+                let p1 = pos2(
+                    center.x + a.cos() * tick_r_inner,
+                    center.y + a.sin() * tick_r_inner,
+                );
+                let p2 = pos2(
+                    center.x + a.cos() * tick_r_outer,
+                    center.y + a.sin() * tick_r_outer,
+                );
                 painter.line_segment([p1, p2], Stroke::new(1.0_f32, tick_color));
             }
 
@@ -151,12 +164,23 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 center.x + current_angle.cos() * (self.radius * 0.75),
                 center.y + current_angle.sin() * (self.radius * 0.75),
             );
-            let needle_color = if is_enabled { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED };
-            painter.line_segment([needle_inner, needle_outer], Stroke::new(1.5_f32, needle_color));
+            let needle_color = if is_enabled {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_MUTED
+            };
+            painter.line_segment(
+                [needle_inner, needle_outer],
+                Stroke::new(1.5_f32, needle_color),
+            );
 
             // 4. Parameter Label
             let label_y = center.y + self.radius + 6.0;
-            let label_color = if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED };
+            let label_color = if is_enabled {
+                theme::TEXT_SECONDARY
+            } else {
+                theme::TEXT_MUTED
+            };
             painter.text(
                 pos2(rect.center().x, label_y),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
@@ -212,7 +236,10 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                     format_zero_centered(f, |v| format!("{:+.1}", v), "ct")
                 } else if self.label.contains("PITCH") || self.label.contains("DET") {
                     format_zero_centered(f, |v| format!("{:+.1}", v), "st")
-                } else if self.label.contains("IN") || self.label.contains("OUT") || self.label.contains("TILT") {
+                } else if self.label.contains("IN")
+                    || self.label.contains("OUT")
+                    || self.label.contains("TILT")
+                {
                     format_zero_centered(f, |v| format!("{:+.1}", v), "dB")
                 } else if self.label.contains("TEMPO") {
                     format!("{:.0} BPM", f)
@@ -225,9 +252,17 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 raw_str
             };
 
-            let pill_rect = Rect::from_center_size(pos2(rect.center().x, value_y), vec2(desired_size.x - 4.0, 12.0));
+            let pill_rect = Rect::from_center_size(
+                pos2(rect.center().x, value_y),
+                vec2(desired_size.x - 4.0, 12.0),
+            );
             painter.rect_filled(pill_rect, CornerRadius::same(2), theme::WELL_BG);
-            painter.rect_stroke(pill_rect, CornerRadius::same(2), Stroke::new(1.0_f32, theme::BORDER_SUBTLE), nih_plug_egui::egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                pill_rect,
+                CornerRadius::same(2),
+                Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
+                nih_plug_egui::egui::StrokeKind::Inside,
+            );
             painter.text(
                 pos2(rect.center().x, value_y),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
@@ -355,4 +390,3 @@ mod needle_tests {
         assert!((q3 - (start + 0.75 * (end - start))).abs() < 1e-5);
     }
 }
-
