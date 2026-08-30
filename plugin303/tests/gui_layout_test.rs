@@ -1,3 +1,5 @@
+#![cfg(feature = "gui")]
+
 use nih_plug::prelude::{GuiContext, PluginApi};
 use nih_plug_egui::egui::{self, Frame, Margin};
 use plugin303::gui::{panels, theme, GUI_HEIGHT, GUI_WIDTH};

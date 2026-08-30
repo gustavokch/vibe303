@@ -39,12 +39,18 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.add_space(3.0);
 
                     // 4 Balanced Columns across full available width
+                    const NUM_COLS: f32 = 4.0;
+                    const NUM_SEPARATORS: f32 = NUM_COLS - 1.0;
+                    const SEPARATOR_WIDTH: f32 = 6.0;
+                    const ITEM_SPACING_X: f32 = 8.0;
+                    // Each vertical separator allocates 6px and has 8px item_spacing on both sides
+                    const SEPARATOR_OVERHEAD: f32 =
+                        NUM_SEPARATORS * (SEPARATOR_WIDTH + 2.0 * ITEM_SPACING_X); // 66.0 px total
+
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                        ui.spacing_mut().item_spacing = vec2(ITEM_SPACING_X, 0.0);
                         let total_w = ui.available_width();
-                        // 3 vertical separators (6px allocation each) with 8px item_spacing on each side
-                        let sep_w = 3.0 * (6.0 + 2.0 * 8.0); // 66.0 px total separator + spacing overhead
-                        let col_w = (total_w - sep_w) / 4.0;
+                        let col_w = (total_w - SEPARATOR_OVERHEAD) / NUM_COLS;
 
                         // Column 1: Component Tolerance & Aging
                         ui.allocate_ui_with_layout(
