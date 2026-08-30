@@ -165,6 +165,7 @@ is ever poisoned. Prefer recovering from the poison and rendering the last-known
 
 ## Working-tree note
 
-`plugin303/src/gui/panels/tweaks_panel.rs` carries an uncommitted separator-width correction
-(3 x (6 + 2 x 8) = 66 px overhead, column width 317 px), and `plugin303/tests/gui_layout_test.rs`
-is still untracked. Both should land before the next round so the audit baseline matches HEAD.
+Resolved: the `plugin303/src/gui/panels/tweaks_panel.rs` separator-width correction
+(3 x (6 + 2 x 8) = 66 px overhead, column width 317 px) and
+`plugin303/tests/gui_layout_test.rs` are both committed on `fix/gui-visual-remediation-r8`
+(PR #57, commits aba73a0 and bb1c7ba). The audit baseline matches HEAD.
