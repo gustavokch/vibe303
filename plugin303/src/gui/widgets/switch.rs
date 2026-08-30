@@ -1,6 +1,7 @@
 use nih_plug::prelude::{EnumParam, ParamSetter};
 use nih_plug_egui::egui::{
-    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke, StrokeKind, Ui, Widget,
+    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke,
+    StrokeKind, Ui, Widget,
 };
 
 use crate::gui::theme;
@@ -82,7 +83,8 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
 
             if response.clicked() || response.dragged() {
                 if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rel_y = (mouse_pos.y - track_rect.top()).clamp(0.0, track_rect.height() - 0.001);
+                    let rel_y =
+                        (mouse_pos.y - track_rect.top()).clamp(0.0, track_rect.height() - 0.001);
                     let target_idx = ((rel_y / slot_height).floor() as usize).min(num_opts - 1);
                     if target_idx != current_idx || response.clicked() {
                         self.setter.begin_set_parameter(self.param);
@@ -99,7 +101,11 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             if ui.is_rect_visible(rect) {
                 let painter = ui.painter();
                 let is_enabled = ui.is_enabled();
-                let switch_accent = if is_enabled { accent } else { theme::TEXT_MUTED };
+                let switch_accent = if is_enabled {
+                    accent
+                } else {
+                    theme::TEXT_MUTED
+                };
 
                 // Main parameter title
                 painter.text(
@@ -107,7 +113,11 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     nih_plug_egui::egui::Align2::CENTER_TOP,
                     self.label,
                     FontId::new(8.5, FontFamily::Proportional),
-                    if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
+                    if is_enabled {
+                        theme::TEXT_SECONDARY
+                    } else {
+                        theme::TEXT_MUTED
+                    },
                 );
 
                 // Recessed full-width vertical container
@@ -125,11 +135,26 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     pos2(track_rect.left() + 1.0, thumb_y + 1.0),
                     vec2(track_rect.width() - 2.0, slot_height - 2.0),
                 );
-                painter.rect_filled(thumb_rect, CornerRadius::same(2), if is_enabled { theme::SURFACE_ELEVATED } else { theme::WELL_BG });
+                painter.rect_filled(
+                    thumb_rect,
+                    CornerRadius::same(2),
+                    if is_enabled {
+                        theme::SURFACE_ELEVATED
+                    } else {
+                        theme::WELL_BG
+                    },
+                );
                 painter.rect_stroke(
                     thumb_rect,
                     CornerRadius::same(2),
-                    Stroke::new(1.0_f32, if is_enabled { switch_accent } else { theme::BORDER_SUBTLE }),
+                    Stroke::new(
+                        1.0_f32,
+                        if is_enabled {
+                            switch_accent
+                        } else {
+                            theme::BORDER_SUBTLE
+                        },
+                    ),
                     StrokeKind::Inside,
                 );
 
@@ -159,21 +184,45 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     match i {
                         0 => {
                             // Saw
-                            painter.line_segment([pos2(gx - 4.0, cy + 3.0), pos2(gx + 3.0, cy - 3.0)], stroke);
-                            painter.line_segment([pos2(gx + 3.0, cy - 3.0), pos2(gx + 3.0, cy + 3.0)], stroke);
+                            painter.line_segment(
+                                [pos2(gx - 4.0, cy + 3.0), pos2(gx + 3.0, cy - 3.0)],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [pos2(gx + 3.0, cy - 3.0), pos2(gx + 3.0, cy + 3.0)],
+                                stroke,
+                            );
                         }
                         1 => {
                             // Square
-                            painter.line_segment([pos2(gx - 4.0, cy + 3.0), pos2(gx - 4.0, cy - 3.0)], stroke);
-                            painter.line_segment([pos2(gx - 4.0, cy - 3.0), pos2(gx, cy - 3.0)], stroke);
+                            painter.line_segment(
+                                [pos2(gx - 4.0, cy + 3.0), pos2(gx - 4.0, cy - 3.0)],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [pos2(gx - 4.0, cy - 3.0), pos2(gx, cy - 3.0)],
+                                stroke,
+                            );
                             painter.line_segment([pos2(gx, cy - 3.0), pos2(gx, cy + 3.0)], stroke);
-                            painter.line_segment([pos2(gx, cy + 3.0), pos2(gx + 4.0, cy + 3.0)], stroke);
+                            painter.line_segment(
+                                [pos2(gx, cy + 3.0), pos2(gx + 4.0, cy + 3.0)],
+                                stroke,
+                            );
                         }
                         2 => {
                             // Sweep
-                            painter.line_segment([pos2(gx - 4.0, cy + 3.0), pos2(gx - 2.0, cy - 3.0)], stroke);
-                            painter.line_segment([pos2(gx - 2.0, cy - 3.0), pos2(gx + 2.0, cy + 3.0)], stroke);
-                            painter.line_segment([pos2(gx + 2.0, cy + 3.0), pos2(gx + 4.0, cy - 3.0)], stroke);
+                            painter.line_segment(
+                                [pos2(gx - 4.0, cy + 3.0), pos2(gx - 2.0, cy - 3.0)],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [pos2(gx - 2.0, cy - 3.0), pos2(gx + 2.0, cy + 3.0)],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [pos2(gx + 2.0, cy + 3.0), pos2(gx + 4.0, cy - 3.0)],
+                                stroke,
+                            );
                         }
                         _ => {}
                     }
@@ -235,7 +284,11 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
             let is_enabled = ui.is_enabled();
-            let switch_accent = if is_enabled { accent } else { theme::TEXT_MUTED };
+            let switch_accent = if is_enabled {
+                accent
+            } else {
+                theme::TEXT_MUTED
+            };
 
             // Main parameter title
             painter.text(
@@ -243,7 +296,11 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 nih_plug_egui::egui::Align2::CENTER_TOP,
                 self.label,
                 FontId::new(8.5, FontFamily::Proportional),
-                if is_enabled { theme::TEXT_SECONDARY } else { theme::TEXT_MUTED },
+                if is_enabled {
+                    theme::TEXT_SECONDARY
+                } else {
+                    theme::TEXT_MUTED
+                },
             );
 
             // Recessed track container
@@ -257,12 +314,30 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
 
             // Active segmented pill
             let thumb_x = track_rect.left() + slot_width * current_idx as f32;
-            let thumb_rect = Rect::from_min_size(pos2(thumb_x + 1.0, track_rect.top() + 1.0), vec2(slot_width - 2.0, track_rect.height() - 2.0));
-            painter.rect_filled(thumb_rect, CornerRadius::same(2), if is_enabled { theme::SURFACE_ELEVATED } else { theme::WELL_BG });
+            let thumb_rect = Rect::from_min_size(
+                pos2(thumb_x + 1.0, track_rect.top() + 1.0),
+                vec2(slot_width - 2.0, track_rect.height() - 2.0),
+            );
+            painter.rect_filled(
+                thumb_rect,
+                CornerRadius::same(2),
+                if is_enabled {
+                    theme::SURFACE_ELEVATED
+                } else {
+                    theme::WELL_BG
+                },
+            );
             painter.rect_stroke(
                 thumb_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, if is_enabled { switch_accent } else { theme::BORDER_SUBTLE }),
+                Stroke::new(
+                    1.0_f32,
+                    if is_enabled {
+                        switch_accent
+                    } else {
+                        theme::BORDER_SUBTLE
+                    },
+                ),
                 StrokeKind::Inside,
             );
 

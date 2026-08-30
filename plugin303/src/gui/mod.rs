@@ -25,12 +25,13 @@ pub fn create_editor(
     create_egui_editor(
         editor_state,
         (),
-        |_, _| {},
-        move |egui_ctx, setter, _state| {
+        |egui_ctx, _| {
             egui_ctx.send_viewport_cmd(nih_plug_egui::egui::ViewportCommand::Title(
                 "TECHNEO 303".into(),
             ));
             egui_ctx.set_visuals(nih_plug_egui::egui::Visuals::dark());
+        },
+        move |egui_ctx, setter, _state| {
             nih_plug_egui::egui::CentralPanel::default()
                 .frame(
                     Frame::new()

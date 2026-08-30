@@ -279,7 +279,7 @@ pub fn render_step_strip(
             ui.allocate_exact_size(vec2(width, CONTROL_ROW_H), Sense::click_and_drag());
         let pitch_resp = pitch_resp.on_hover_text("Click: piano roll | Drag/R-Click: nudge pitch");
 
-        let drag_id = ui.make_persistent_id(format!("step_drag_{}", step_idx));
+        let drag_id = ui.make_persistent_id(nih_plug_egui::egui::Id::new(("step_drag", step_idx)));
 
         if pitch_resp.clicked() {
             crate::gui::widgets::piano_roll_popup::toggle_open_state(

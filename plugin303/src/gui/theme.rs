@@ -14,7 +14,7 @@ pub const BORDER_ACCENT: Color32 = Color32::from_rgb(0xff, 0x7a, 0x00);
 
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
 pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xc4, 0xc4, 0xd0);
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x6e, 0x6e, 0x80);
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x8f, 0x8f, 0xa4);
 pub const TEXT_ON_ACCENT: Color32 = Color32::from_rgb(0x0b, 0x0b, 0x0d);
 
 pub const ACCENT_ORANGE: Color32 = Color32::from_rgb(0xff, 0x7a, 0x00);
