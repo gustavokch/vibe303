@@ -42,7 +42,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
                         let total_w = ui.available_width();
-                        let sep_w = 3.0 * (8.0 + 2.0); // 3 separators + spacing
+                        // 3 vertical separators (6px allocation each) with 8px item_spacing on each side
+                        let sep_w = 3.0 * (6.0 + 2.0 * 8.0); // 66.0 px total separator + spacing overhead
                         let col_w = (total_w - sep_w) / 4.0;
 
                         // Column 1: Component Tolerance & Aging
@@ -309,8 +310,9 @@ mod tests {
     #[test]
     fn tweaks_panel_column_geometry() {
         let avail_w = 1366.0 - 20.0 - 12.0; // 1334.0
-        let col_w = avail_w / 4.0;
-        assert_eq!(col_w, 333.5);
+        let sep_overhead = 3.0 * (6.0 + 2.0 * 8.0); // 66.0
+        let col_w = (avail_w - sep_overhead) / 4.0;
+        assert_eq!(col_w, 317.0);
         assert!(
             col_w > 250.0,
             "Each of the 4 tweak groups has adequate horizontal space"
