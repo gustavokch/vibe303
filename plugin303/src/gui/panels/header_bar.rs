@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn right_group_left_narrow_zoomed_clamped_no_overlap() {
-        // 200% zoom: logical width ~640 pt, desired 480 pt -> would be 160 without clamp.
+        // Constrained logical width ~640 pt, desired 480 pt -> would be 160 without clamp.
         // Clamps to left_width (280.0) so it never overlaps left brand block.
         let left = right_group_left(640.0, LEFT_GROUP_W, RIGHT_GROUP_W);
         assert_eq!(left, LEFT_GROUP_W);
