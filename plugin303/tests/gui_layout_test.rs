@@ -19,9 +19,20 @@ impl GuiContext for DummyGuiContext {
     unsafe fn raw_set_parameter_normalized(&self, _param: nih_plug::prelude::ParamPtr, _normalized: f32) {}
     unsafe fn raw_end_set_parameter(&self, _param: nih_plug::prelude::ParamPtr) {}
     fn get_state(&self) -> nih_plug::prelude::PluginState {
-        unimplemented!()
+        unimplemented!("state query not exercised by layout tests")
     }
     fn set_state(&self, _state: nih_plug::prelude::PluginState) {}
+}
+
+/// Assert the panel stack stays inside the CentralPanel content area.
+/// Content right edge = GUI_WIDTH - 10 (CentralPanel inner margin), +0.5 slack.
+fn assert_fits_width(ui: &egui::Ui, content_right: f32, panel: &str) {
+    assert!(
+        ui.min_rect().max.x <= content_right,
+        "{} overflow: max.x = {}",
+        panel,
+        ui.min_rect().max.x
+    );
 }
 
 #[test]
@@ -56,31 +67,31 @@ fn test_all_panels_sequential_full_ui() {
             .show(ctx, |ui| {
                 ui.set_min_height(600.0);
                 let mut gen_params = gen_params_state.lock().unwrap();
+                let content_right = GUI_WIDTH as f32 - 10.0 + 0.5;
 
                 // 1. Header Bar
                 panels::header_bar::render_header(ui, &params, &setter);
-                assert!(ui.min_rect().max.x <= 1356.5, "Header overflow: max.x = {}", ui.min_rect().max.x);
+                assert_fits_width(ui, content_right, "Header");
                 ui.add_space(0.5);
 
                 // 2. Classic 303 Control Panel
                 panels::top_controls::render_top_controls(ui, &params, &setter);
-                assert!(ui.min_rect().max.x <= 1356.5, "Top controls overflow: max.x = {}", ui.min_rect().max.x);
+                assert_fits_width(ui, content_right, "Top controls");
                 ui.add_space(0.5);
 
                 // 3. Souped-Up Engine Drawer Panel
                 panels::souped_panel::render_souped_panel(ui, &params, &setter);
-                assert!(ui.min_rect().max.x <= 1356.5, "Souped panel overflow: max.x = {}", ui.min_rect().max.x);
+                assert_fits_width(ui, content_right, "Souped panel");
                 ui.add_space(0.5);
 
                 // 4. Output Clipper + Tweaks Panel
                 ui.vertical(|ui| {
                     panels::output_clipper::render_output_clipper(ui, &params, &setter);
-                    assert!(ui.min_rect().max.x <= 1356.5, "Clipper overflow: max.x = {}", ui.min_rect().max.x);
+                    assert_fits_width(ui, content_right, "Clipper");
                     ui.add_space(3.0);
                     panels::tweaks_panel::render_tweaks_panel(ui, &params, &setter);
-                    assert!(ui.min_rect().max.x <= 1356.5, "Tweaks overflow: max.x = {}", ui.min_rect().max.x);
+                    assert_fits_width(ui, content_right, "Tweaks");
                 });
-                assert!(ui.min_rect().max.x <= 1356.5, "Post-clipper/tweaks overflow: max.x = {}", ui.min_rect().max.x);
                 ui.add_space(0.5);
 
                 // 5. Bottom Sequencer Grid & Transport Column
@@ -91,7 +102,7 @@ fn test_all_panels_sequential_full_ui() {
                     &setter,
                     &current_playing_step,
                 );
-                assert!(ui.min_rect().max.x <= 1356.5, "Sequencer overflow: max.x = {}", ui.min_rect().max.x);
+                assert_fits_width(ui, content_right, "Sequencer");
             });
     });
 }
