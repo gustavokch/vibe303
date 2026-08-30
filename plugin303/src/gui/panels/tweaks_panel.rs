@@ -12,8 +12,7 @@ use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
 const NUM_COLS: f32 = 4.0;
 const SEPARATOR_WIDTH: f32 = 6.0;
 const ITEM_SPACING_X: f32 = 8.0;
-const SEPARATOR_OVERHEAD: f32 =
-    (NUM_COLS - 1.0) * (SEPARATOR_WIDTH + 2.0 * ITEM_SPACING_X); // 66.0 px total
+const SEPARATOR_OVERHEAD: f32 = (NUM_COLS - 1.0) * (SEPARATOR_WIDTH + 2.0 * ITEM_SPACING_X); // 66.0 px total
 
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;

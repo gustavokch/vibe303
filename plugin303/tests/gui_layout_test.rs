@@ -16,7 +16,12 @@ impl GuiContext for DummyGuiContext {
         false
     }
     unsafe fn raw_begin_set_parameter(&self, _param: nih_plug::prelude::ParamPtr) {}
-    unsafe fn raw_set_parameter_normalized(&self, _param: nih_plug::prelude::ParamPtr, _normalized: f32) {}
+    unsafe fn raw_set_parameter_normalized(
+        &self,
+        _param: nih_plug::prelude::ParamPtr,
+        _normalized: f32,
+    ) {
+    }
     unsafe fn raw_end_set_parameter(&self, _param: nih_plug::prelude::ParamPtr) {}
     fn get_state(&self) -> nih_plug::prelude::PluginState {
         unimplemented!("state query not exercised by layout tests")
