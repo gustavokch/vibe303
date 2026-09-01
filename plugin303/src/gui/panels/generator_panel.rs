@@ -1,11 +1,40 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    vec2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Stroke, Ui,
+    pos2, vec2, Align2, Button, ComboBox, CornerRadius, DragValue, FontId, Frame, Margin, Sense,
+    Stroke, Ui,
 };
 
 use crate::dsp::generator::{AcidGenerator, GeneratorParams, MusicalScale};
 use crate::gui::theme;
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
+
+/// Label/field grid geometry for the four numbered sub-sections (round-11
+/// item 11): every label sits in a fixed-width slot and every numeric field
+/// gets the same width, so columns of the same kind share a left edge and a
+/// width across all rows.
+const G_LBL_W: f32 = 58.0;
+const G_LBL2_W: f32 = 52.0;
+const G_FIELD_W: f32 = 44.0;
+const G_COMBO_W: f32 = 60.0;
+const G_ROW_H: f32 = 20.0;
+
+/// Fixed-width label cell, baseline-aligned with the field row.
+fn grid_label(ui: &mut Ui, text: &str, w: f32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(w, G_ROW_H), Sense::hover());
+    ui.painter().text(
+        pos2(rect.left(), rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        FontId::proportional(8.5),
+        theme::TEXT_MUTED,
+    );
+}
+
+/// Fixed-width numeric field cell (font comes from the global
+/// `drag_value_text_style` rule = monospace).
+fn grid_drag<'a>(ui: &mut Ui, drag: DragValue<'a>) {
+    ui.add_sized(vec2(G_FIELD_W, G_ROW_H), drag);
+}
 
 pub fn render_generator_panel(
     ui: &mut Ui,
@@ -85,17 +114,13 @@ pub fn render_generator_panel(
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("ROOT:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
+                            grid_label(ui, "ROOT:", G_LBL_W);
                             const NOTE_NAMES: [&str; 12] = [
                                 "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
                             ];
                             ComboBox::from_id_salt("gen_root_key")
                                 .selected_text(NOTE_NAMES[(gen_params.root_note % 12) as usize])
-                                .width(36.0)
+                                .width(G_COMBO_W)
                                 .show_ui(ui, |ui| {
                                     for (idx, name) in NOTE_NAMES.iter().enumerate() {
                                         ui.selectable_value(
@@ -106,11 +131,7 @@ pub fn render_generator_panel(
                                     }
                                 });
 
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("SCALE:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
+                            grid_label(ui, "SCALE:", G_LBL2_W);
                             ComboBox::from_id_salt("gen_scale")
                                 .selected_text(match gen_params.scale {
                                     MusicalScale::MinorPentatonic => "Pentatonic",
@@ -120,7 +141,7 @@ pub fn render_generator_panel(
                                     MusicalScale::HarmonicMinor => "Harmonic",
                                     MusicalScale::Chromatic => "Chromatic",
                                 })
-                                .width(60.0)
+                                .width(G_COMBO_W)
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(
                                         &mut gen_params.scale,
@@ -158,23 +179,17 @@ pub fn render_generator_panel(
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("PULSES (k):")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "PULSES (k):", G_LBL_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.rhythm_pulses)
                                     .range(1..=16)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
                             );
 
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("STEPS (n):")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "STEPS (n):", G_LBL2_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.rhythm_length)
                                     .range(1..=16)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
@@ -184,23 +199,17 @@ pub fn render_generator_panel(
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("SHIFT:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "SHIFT:", G_LBL_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.rhythm_shift)
                                     .range(0..=15)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
                             );
 
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("PITCH LEN:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "PITCH LEN:", G_LBL2_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.pitch_length)
                                     .range(1..=16)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
@@ -222,19 +231,19 @@ pub fn render_generator_panel(
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("OCT MIN/MAX:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "OCT RANGE:", G_LBL_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.octave_min)
                                     .range(-1..=1)
+                                    .prefix("MIN ")
                                     .custom_formatter(|v, _| format!("{:+.0}", v)),
                             );
-                            ui.add(
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.octave_max)
                                     .range(-1..=1)
+                                    .prefix("MAX ")
                                     .custom_formatter(|v, _| format!("{:+.0}", v)),
                             );
                         });
@@ -242,12 +251,9 @@ pub fn render_generator_panel(
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("OCT UP:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "OCT UP:", G_LBL_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.octave_up_prob)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
@@ -258,12 +264,9 @@ pub fn render_generator_panel(
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("OCT DN:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "OCT DN:", G_LBL_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.octave_down_prob)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
@@ -286,24 +289,18 @@ pub fn render_generator_panel(
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("REST:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "REST:", G_LBL_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.rest_probability)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
                                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
 
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("ACCENT:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "ACCENT:", G_LBL2_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.accent_probability)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
@@ -314,24 +311,18 @@ pub fn render_generator_panel(
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("SLIDE:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "SLIDE:", G_LBL_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.slide_probability)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
                                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                             );
 
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("ACC BIAS:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "ACC BIAS:", G_LBL2_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.accent_pitch_bias)
                                     .speed(0.01)
                                     .range(0.0..=1.0)
@@ -358,12 +349,9 @@ pub fn render_generator_panel(
                         ui.add_space(2.0);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("MUTATION:")
-                                    .font(FontId::proportional(8.5))
-                                    .color(theme::TEXT_MUTED),
-                            );
-                            ui.add(
+                            grid_label(ui, "MUTATION:", G_LBL_W);
+                            grid_drag(
+                                ui,
                                 DragValue::new(&mut gen_params.mutation_rate)
                                     .speed(0.01)
                                     .range(0.0..=1.0)

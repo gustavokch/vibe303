@@ -68,14 +68,21 @@ struct Delay48 {
 }
 
 impl Delay48 {
-    fn new() -> Self { Self { buf: [0.0; CLIPPER_LATENCY], pos: 0 } }
+    fn new() -> Self {
+        Self {
+            buf: [0.0; CLIPPER_LATENCY],
+            pos: 0,
+        }
+    }
     fn tick(&mut self, x: f32) -> f32 {
         let y = self.buf[self.pos];
         self.buf[self.pos] = x;
         self.pos = (self.pos + 1) % CLIPPER_LATENCY;
         y
     }
-    fn reset(&mut self) { *self = Self::new(); }
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -85,14 +92,21 @@ struct Delay16 {
 }
 
 impl Delay16 {
-    fn new() -> Self { Self { buf: [0.0; 16], pos: 0 } }
+    fn new() -> Self {
+        Self {
+            buf: [0.0; 16],
+            pos: 0,
+        }
+    }
     fn tick(&mut self, x: f32) -> f32 {
         let y = self.buf[self.pos];
         self.buf[self.pos] = x;
         self.pos = (self.pos + 1) % 16;
         y
     }
-    fn reset(&mut self) { *self = Self::new(); }
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
 }
 
 /// A compact state-space implementation of stages A--D in `warm_clipper.cir`.
@@ -149,16 +163,33 @@ impl StagedEngine {
             sr,
             drive_state: 0.0,
             drive_alpha,
-            hp_x1: 0.0, hp_y1: 0.0, hp_x2: 0.0, hp_y2: 0.0,
+            hp_x1: 0.0,
+            hp_y1: 0.0,
+            hp_x2: 0.0,
+            hp_y2: 0.0,
             hp_a,
             env_attack,
             env_release,
-            env: GB, gate: GB, tone: 0.0, tone_alpha: 0.0, bass1: 0.0, bass2: 0.0,
+            env: GB,
+            gate: GB,
+            tone: 0.0,
+            tone_alpha: 0.0,
+            bass1: 0.0,
+            bass2: 0.0,
             bass_alpha,
-            tilt_pre_x1: 0.0, tilt_pre_y1: 0.0, tilt_post_x1: 0.0, tilt_post_y1: 0.0,
-            tilt_a1: 0.0, tilt_b0: 1.0, tilt_b1: 0.0, tilt_post_k: 1.0, tilt_post_b: 0.0,
+            tilt_pre_x1: 0.0,
+            tilt_pre_y1: 0.0,
+            tilt_post_x1: 0.0,
+            tilt_post_y1: 0.0,
+            tilt_a1: 0.0,
+            tilt_b0: 1.0,
+            tilt_b1: 0.0,
+            tilt_post_k: 1.0,
+            tilt_post_b: 0.0,
             tilt_active: false,
-            peak_env: 0.0, dyn_attack, dyn_release,
+            peak_env: 0.0,
+            dyn_attack,
+            dyn_release,
             params: ClipperParams::default(),
         };
         engine.update_tone_alpha();
@@ -167,8 +198,9 @@ impl StagedEngine {
     }
 
     fn update_tone_alpha(&mut self) {
-        let tone_hz = (1.0 / (2.0 * core::f32::consts::PI * 22_000.0 * self.params.tone_f.clamp(470e-12, 4.7e-9)))
-            .clamp(1_500.0, 16_000.0);
+        let tone_hz = (1.0
+            / (2.0 * core::f32::consts::PI * 22_000.0 * self.params.tone_f.clamp(470e-12, 4.7e-9)))
+        .clamp(1_500.0, 16_000.0);
         self.tone_alpha = 1.0 - (-2.0 * core::f32::consts::PI * tone_hz / self.sr).exp();
     }
 
@@ -210,12 +242,17 @@ impl StagedEngine {
     /// coupling uses the previous stage-C state implicitly (the documented
     /// one-sweep-free policy; Ratk dominates in the operating region).
     fn tick(&mut self, input: f32) -> f32 {
-        let x = if input.is_finite() { input.clamp(-16.0, 16.0) } else { 0.0 };
+        let x = if input.is_finite() {
+            input.clamp(-16.0, 16.0)
+        } else {
+            0.0
+        };
         let p = self.params;
 
         // Pre-tilt: first-order high shelf boosting highs into the clipper.
         let x = if self.tilt_active {
-            let y = self.tilt_b0 * x + self.tilt_b1 * self.tilt_pre_x1 - self.tilt_a1 * self.tilt_pre_y1;
+            let y = self.tilt_b0 * x + self.tilt_b1 * self.tilt_pre_x1
+                - self.tilt_a1 * self.tilt_pre_y1;
             self.tilt_pre_x1 = x;
             self.tilt_pre_y1 = y;
             y
@@ -229,7 +266,11 @@ impl StagedEngine {
         // transient attacks through before the Ge/JFET stage saturates.
         let drive_ohms = if p.dynamics > 0.0 {
             let ax = x.abs();
-            let a = if ax > self.peak_env { self.dyn_attack } else { self.dyn_release };
+            let a = if ax > self.peak_env {
+                self.dyn_attack
+            } else {
+                self.dyn_release
+            };
             self.peak_env += a * (ax - self.peak_env);
             if !self.peak_env.is_finite() {
                 self.peak_env = 0.0;
@@ -250,17 +291,27 @@ impl StagedEngine {
         // D4/Ratk/Cg. Detector caps are deliberately separate so their rest
         // voltage remains GB, not ground.
         let h1 = self.hp_a * (self.hp_y1 + drv - self.hp_x1);
-        self.hp_x1 = drv; self.hp_y1 = h1;
+        self.hp_x1 = drv;
+        self.hp_y1 = h1;
         let h2 = self.hp_a * (self.hp_y2 + h1 - self.hp_x2);
-        self.hp_x2 = h1; self.hp_y2 = h2;
+        self.hp_x2 = h1;
+        self.hp_y2 = h2;
         let sens_gain = (p.threshold_ohms.clamp(2_200.0, 22_000.0) / 4_700.0).recip();
         let rectified = (h2 * 0.18 * sens_gain - 0.50).max(0.0);
         let env_target = GB + rectified.min(12.0);
-        let env_a = if env_target > self.env { self.env_attack } else { self.env_release };
+        let env_a = if env_target > self.env {
+            self.env_attack
+        } else {
+            self.env_release
+        };
         self.env += env_a * (env_target - self.env);
         // D4/Ratk attack and Rg1 release into Cg. The envelope cannot exceed
         // the U5 rail, preventing release time from growing with overdrive.
-        let gate_a = if self.env > self.gate { self.env_attack } else { self.env_release };
+        let gate_a = if self.env > self.gate {
+            self.env_attack
+        } else {
+            self.env_release
+        };
         self.gate += gate_a * (self.env.clamp(GB, 0.0) - self.gate);
 
         // C: Rs/Rpad and 2N5457 shunt. Gate moves from GB (off) to 0 (on),
@@ -272,7 +323,11 @@ impl StagedEngine {
         let clipped = if p.asym {
             // Large equivalent series resistance on D2b: retain the topology
             // but make the negative feedback branch intentionally weak.
-            if vca >= 0.0 { ge_knee * (vca / ge_knee).tanh() } else { vca * 0.55 }
+            if vca >= 0.0 {
+                ge_knee * (vca / ge_knee).tanh()
+            } else {
+                vca * 0.55
+            }
         } else {
             ge_knee * (vca / ge_knee).tanh()
         };
@@ -295,7 +350,11 @@ impl StagedEngine {
         } else {
             out
         };
-        if out.is_finite() { out } else { 0.0 }
+        if out.is_finite() {
+            out
+        } else {
+            0.0
+        }
     }
 }
 
@@ -318,27 +377,46 @@ pub struct WarmClipper {
     fade_step: f32,
     // Base-rate smoothed scalars for the new control dimensions.
     smooth_k: f32,
-    in_t: f32, in_s: f32,
-    out_t: f32, out_s: f32,
-    dry_t: f32, dry_s: f32,
-    wet_t: f32, wet_s: f32,
+    in_t: f32,
+    in_s: f32,
+    out_t: f32,
+    out_s: f32,
+    dry_t: f32,
+    dry_s: f32,
+    wet_t: f32,
+    wet_s: f32,
 }
 
 impl WarmClipper {
     pub fn new(sr: f32) -> Self {
         Self {
-            os2: Os2x::new(), os4: Os4x::new(), e2: StagedEngine::new(sr * 2.0), e4: StagedEngine::new(sr * 4.0),
-            pad2: Delay16::new(), dry: Delay48::new(), params: ClipperParams::default(),
-            active_bypass: false, active_os: ClipperOs::X2, fade_from_bypass: false,
-            fade_from_os: ClipperOs::X2, fade: 1.0, fade_step: 1.0 / (sr * XFADE_SECONDS).max(1.0),
+            os2: Os2x::new(),
+            os4: Os4x::new(),
+            e2: StagedEngine::new(sr * 2.0),
+            e4: StagedEngine::new(sr * 4.0),
+            pad2: Delay16::new(),
+            dry: Delay48::new(),
+            params: ClipperParams::default(),
+            active_bypass: false,
+            active_os: ClipperOs::X2,
+            fade_from_bypass: false,
+            fade_from_os: ClipperOs::X2,
+            fade: 1.0,
+            fade_step: 1.0 / (sr * XFADE_SECONDS).max(1.0),
             smooth_k: 1.0 - (-1.0 / (0.010 * sr)).exp(),
-            in_t: 1.0, in_s: 1.0,
-            out_t: 1.0, out_s: 1.0,
-            dry_t: 0.0, dry_s: 0.0,
-            wet_t: 1.0, wet_s: 1.0,
+            in_t: 1.0,
+            in_s: 1.0,
+            out_t: 1.0,
+            out_s: 1.0,
+            dry_t: 0.0,
+            dry_s: 0.0,
+            wet_t: 1.0,
+            wet_s: 1.0,
         }
     }
-    pub fn latency_samples(&self) -> usize { CLIPPER_LATENCY }
+    pub fn latency_samples(&self) -> usize {
+        CLIPPER_LATENCY
+    }
     fn set_targets(&mut self, p: &ClipperParams) {
         self.in_t = 10f32.powf(p.in_db.clamp(-18.0, 18.0) / 20.0);
         self.out_t = 10f32.powf(p.out_db.clamp(-18.0, 18.0) / 20.0);
@@ -353,7 +431,8 @@ impl WarmClipper {
         self.wet_s = self.wet_t;
     }
     pub fn set_params(&mut self, params: ClipperParams) {
-        self.e2.set_params(params); self.e4.set_params(params);
+        self.e2.set_params(params);
+        self.e4.set_params(params);
         if params.bypass != self.active_bypass || params.os != self.active_os {
             self.fade_from_bypass = self.active_bypass;
             self.fade_from_os = self.active_os;
@@ -365,7 +444,8 @@ impl WarmClipper {
         self.params = params;
     }
     pub fn set_params_immediate(&mut self, params: ClipperParams) {
-        self.e2.set_params(params); self.e4.set_params(params);
+        self.e2.set_params(params);
+        self.e4.set_params(params);
         self.active_bypass = params.bypass;
         self.active_os = params.os;
         self.fade_from_bypass = params.bypass;
@@ -378,11 +458,17 @@ impl WarmClipper {
     fn wet2(&mut self, x: f32) -> f32 {
         let hi = self.os2.up(x);
         // 2× round-trip is 32 samples. Pad 16 samples to the 4× 48-sample path.
-        self.pad2.tick(self.os2.down([self.e2.tick(hi[0]), self.e2.tick(hi[1])]))
+        self.pad2
+            .tick(self.os2.down([self.e2.tick(hi[0]), self.e2.tick(hi[1])]))
     }
     fn wet4(&mut self, x: f32) -> f32 {
         let hi = self.os4.up(x);
-        self.os4.down([self.e4.tick(hi[0]), self.e4.tick(hi[1]), self.e4.tick(hi[2]), self.e4.tick(hi[3])])
+        self.os4.down([
+            self.e4.tick(hi[0]),
+            self.e4.tick(hi[1]),
+            self.e4.tick(hi[2]),
+            self.e4.tick(hi[3]),
+        ])
     }
     fn branch(&mut self, bypass: bool, os: ClipperOs, x: f32, d: f32) -> f32 {
         if bypass {
@@ -409,7 +495,9 @@ impl WarmClipper {
         // Both paths are only rendered during a transition. A bypassed steady
         // engine therefore incurs no nonlinear solve.
         let to = self.branch(self.active_bypass, self.active_os, x, d);
-        if self.fade >= 1.0 { return to; }
+        if self.fade >= 1.0 {
+            return to;
+        }
         let from = self.branch(self.fade_from_bypass, self.fade_from_os, x, d);
         let theta = self.fade * core::f32::consts::FRAC_PI_2;
         let y = from * theta.cos() + to * theta.sin();
@@ -417,8 +505,13 @@ impl WarmClipper {
         y
     }
     pub fn reset(&mut self) {
-        self.os2 = Os2x::new(); self.os4 = Os4x::new(); self.e2.reset(); self.e4.reset();
-        self.pad2.reset(); self.dry.reset(); self.fade = 1.0;
+        self.os2 = Os2x::new();
+        self.os4 = Os4x::new();
+        self.e2.reset();
+        self.e4.reset();
+        self.pad2.reset();
+        self.dry.reset();
+        self.fade = 1.0;
         self.snap_smoothers();
         self.active_bypass = self.params.bypass;
         self.active_os = self.params.os;
@@ -433,23 +526,34 @@ mod tests {
     #[test]
     fn rest_is_finite_and_silent() {
         let mut c = WarmClipper::new(48_000.0);
-        for _ in 0..512 { assert!(c.tick(0.0).abs() < 1e-6); }
+        for _ in 0..512 {
+            assert!(c.tick(0.0).abs() < 1e-6);
+        }
     }
     #[test]
     fn bypass_is_delay_matched() {
         let mut c = WarmClipper::new(48_000.0);
-        let mut p = ClipperParams::default(); p.bypass = true; c.set_params(p);
+        let mut p = ClipperParams::default();
+        p.bypass = true;
+        c.set_params(p);
         // Runtime bypass changes are deliberately click-free. Finish the 10 ms
         // transition before asserting the steady bypass transfer function.
-        for _ in 0..512 { c.tick(0.0); }
-        for i in 0..CLIPPER_LATENCY { assert_eq!(c.tick(if i == 0 { 1.0 } else { 0.0 }), 0.0); }
+        for _ in 0..512 {
+            c.tick(0.0);
+        }
+        for i in 0..CLIPPER_LATENCY {
+            assert_eq!(c.tick(if i == 0 { 1.0 } else { 0.0 }), 0.0);
+        }
         assert_eq!(c.tick(0.0), 1.0);
     }
     #[test]
     fn hot_and_nonfinite_input_stay_bounded() {
         let mut c = WarmClipper::new(48_000.0);
         for &x in &[f32::NAN, f32::INFINITY, -f32::INFINITY, 1000.0] {
-            for _ in 0..128 { let y = c.tick(x); assert!(y.is_finite() && y.abs() < 8.0); }
+            for _ in 0..128 {
+                let y = c.tick(x);
+                assert!(y.is_finite() && y.abs() < 8.0);
+            }
         }
     }
     #[test]

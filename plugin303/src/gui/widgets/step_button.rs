@@ -41,7 +41,9 @@ pub fn render_step_strip(
     let mut changed = false;
     let width = cell_width;
     let is_active = is_current && is_running;
-    // Enhanced playhead: column glow when active
+    // Playhead highlight: neutral high-value tint + white outline (round-11
+    // item 6 — red read as an error and sat outside the orange/cyan/amber
+    // palette; white is in the palette and distinct from ACC/NOTE/SLD fills).
     let column_bg = if is_active {
         theme::SURFACE_ELEVATED
     } else if is_current {
@@ -49,6 +51,7 @@ pub fn render_step_strip(
     } else {
         theme::PANEL_BG
     };
+    let playhead_color = theme::TEXT_PRIMARY;
 
     ui.vertical(|ui| {
         ui.set_width(width);
@@ -61,22 +64,15 @@ pub fn render_step_strip(
         if ui.is_rect_visible(strip_rect) {
             ui.painter()
                 .rect_filled(strip_rect, CornerRadius::same(2), column_bg);
-            if is_active {
-                ui.painter().rect_stroke(
-                    strip_rect,
-                    CornerRadius::same(2),
-                    Stroke::new(1.0_f32, theme::ACCENT_RUBY.gamma_multiply(0.7)),
-                    StrokeKind::Inside,
-                );
-            }
         }
-        // 1. Playhead LED bar (4.0px flat bar at top, ruby accent distinct from Note/Tie/Acc)
+        // 1. Playhead LED bar (4.0px flat bar at top, white when the step is
+        // current — same neutral highlight as the column outline)
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, LED_H), Sense::hover());
         let _ = led_resp.on_hover_text("Playhead position indicator");
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             let led_color = if is_active {
-                theme::ACCENT_RUBY
+                playhead_color
             } else {
                 theme::WELL_BG
             };
@@ -87,7 +83,7 @@ pub fn render_step_strip(
                 Stroke::new(
                     1.0_f32,
                     if is_active {
-                        theme::ACCENT_RUBY
+                        playhead_color
                     } else {
                         theme::BORDER_SUBTLE
                     },
@@ -101,11 +97,7 @@ pub fn render_step_strip(
         if ui.is_rect_visible(step_num_rect) {
             let p = ui.painter();
             let (bg_color, text_color, stroke_color) = if is_active {
-                (
-                    theme::SURFACE_ELEVATED,
-                    theme::ACCENT_RUBY,
-                    theme::ACCENT_RUBY,
-                )
+                (theme::SURFACE_ELEVATED, playhead_color, playhead_color)
             } else {
                 (theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT)
             };
@@ -333,7 +325,7 @@ pub fn render_step_strip(
                 Stroke::new(
                     1.0_f32,
                     if is_active && !is_rest {
-                        theme::ACCENT_RUBY
+                        playhead_color
                     } else {
                         theme::BORDER_DEFAULT
                     },
@@ -446,6 +438,19 @@ pub fn render_step_strip(
                 ));
             }
         });
+
+        // Playhead outline: painted after every child so child pill backgrounds
+        // and strokes cannot interrupt it (round-11 item 5). It reuses the
+        // exact background rect, so the highlighted column's bounding box
+        // matches its neighbours to the pixel.
+        if is_active && ui.is_rect_visible(strip_rect) {
+            ui.painter().rect_stroke(
+                strip_rect,
+                CornerRadius::same(2),
+                Stroke::new(1.0_f32, playhead_color),
+                StrokeKind::Inside,
+            );
+        }
     });
 
     changed

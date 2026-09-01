@@ -11,7 +11,9 @@ use super::rc_env::{AccentSweep, DecayEnv, LeakyIntegrator, RcEnv};
 use super::sequencer::SeqEvent;
 use super::vco::Vco303;
 use super::warm_clipper::{ClipperOs, ClipperParams, WarmClipper};
-use crate::params::{CircuitTopology, ClipperOversampling, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
+use crate::params::{
+    CircuitTopology, ClipperOversampling, CompTolerance, OscWave, VcaEnvMode, VcfTaps,
+};
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
 pub fn midi_to_freq(note: u8) -> f32 {
@@ -357,9 +359,19 @@ pub struct Voice {
 impl Voice {
     fn decay_map(k: f32) -> f32 {
         const P: [(f32, f32); 13] = [
-            (0.0, 100.0), (0.1, 150.0), (0.2, 200.0), (0.3, 250.0),
-            (0.4, 300.0), (0.5, 400.0), (0.6, 500.0), (0.7, 600.0),
-            (0.8, 700.0), (0.85, 1000.0), (0.9, 1400.0), (0.95, 1750.0), (1.0, 2100.0),
+            (0.0, 100.0),
+            (0.1, 150.0),
+            (0.2, 200.0),
+            (0.3, 250.0),
+            (0.4, 300.0),
+            (0.5, 400.0),
+            (0.6, 500.0),
+            (0.7, 600.0),
+            (0.8, 700.0),
+            (0.85, 1000.0),
+            (0.9, 1400.0),
+            (0.95, 1750.0),
+            (1.0, 2100.0),
         ];
         let mut lo = 0usize;
         let mut hi = P.len() - 1;
@@ -540,8 +552,18 @@ impl Voice {
 
     pub fn recalculate_luts_sync(&mut self) {
         let tol_f64 = self.tolerance_f64();
-        self.vco.recalculate_luts_sync_with_recal(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
-        self.vco2.recalculate_luts_sync_with_recal(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+        self.vco.recalculate_luts_sync_with_recal(
+            self.age,
+            tol_f64,
+            self.comp_seed as u32,
+            self.recalibration_scale,
+        );
+        self.vco2.recalculate_luts_sync_with_recal(
+            self.age,
+            tol_f64,
+            self.comp_seed as u32,
+            self.recalibration_scale,
+        );
         self.vco_dirty = false;
     }
 
@@ -656,21 +678,45 @@ impl Voice {
             let is_fun_mode = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun_mode);
             self.vco2.set_fun(is_fun_mode);
-            self.ladder.set_analog_wear(tol_f64, comp_age, comp_seed as u32, self.recalibration_scale);
-            self.ladder_hi.set_analog_wear(tol_f64, comp_age, comp_seed as u32, self.recalibration_scale);
+            self.ladder.set_analog_wear(
+                tol_f64,
+                comp_age,
+                comp_seed as u32,
+                self.recalibration_scale,
+            );
+            self.ladder_hi.set_analog_wear(
+                tol_f64,
+                comp_age,
+                comp_seed as u32,
+                self.recalibration_scale,
+            );
 
-            if self.tier == Tier::Ultra || self.tier == Tier::Ultra2x
-                || self.pending_tier == Some(Tier::Ultra) || self.pending_tier == Some(Tier::Ultra2x)
+            if self.tier == Tier::Ultra
+                || self.tier == Tier::Ultra2x
+                || self.pending_tier == Some(Tier::Ultra)
+                || self.pending_tier == Some(Tier::Ultra2x)
                 || self.xfade_from.is_some()
             {
-                let ok1 = self.vco.recalculate_luts_async(comp_age, tol_f64, comp_seed as u32, recalibration_scale);
-                let ok2 = self.vco2.recalculate_luts_async(comp_age, tol_f64, comp_seed as u32, recalibration_scale);
+                let ok1 = self.vco.recalculate_luts_async(
+                    comp_age,
+                    tol_f64,
+                    comp_seed as u32,
+                    recalibration_scale,
+                );
+                let ok2 = self.vco2.recalculate_luts_async(
+                    comp_age,
+                    tol_f64,
+                    comp_seed as u32,
+                    recalibration_scale,
+                );
                 if ok1 && ok2 {
                     self.vco_dirty = false;
                 }
             } else {
-                self.vco.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
-                self.vco2.set_analog_wear(tol_f64, comp_age, comp_seed as u32);
+                self.vco
+                    .set_analog_wear(tol_f64, comp_age, comp_seed as u32);
+                self.vco2
+                    .set_analog_wear(tol_f64, comp_age, comp_seed as u32);
                 self.vco_dirty = true;
             }
         }
@@ -892,8 +938,18 @@ impl Voice {
 
         if (tier == Tier::Ultra || tier == Tier::Ultra2x) && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
-            let ok1 = self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
-            let ok2 = self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+            let ok1 = self.vco.recalculate_luts_async(
+                self.age,
+                tol_f64,
+                self.comp_seed as u32,
+                self.recalibration_scale,
+            );
+            let ok2 = self.vco2.recalculate_luts_async(
+                self.age,
+                tol_f64,
+                self.comp_seed as u32,
+                self.recalibration_scale,
+            );
             if ok1 && ok2 {
                 self.vco_dirty = false;
             }
@@ -909,7 +965,11 @@ impl Voice {
         if !matches!(tier, Tier::Ultra | Tier::Ultra2x) || self.tier == tier {
             return;
         }
-        let factor = if tier == Tier::Ultra2x { 2.0 } else { ULTRA_OS_FACTOR };
+        let factor = if tier == Tier::Ultra2x {
+            2.0
+        } else {
+            ULTRA_OS_FACTOR
+        };
         let mut new_ladder = LadderVcf::new(self.sr * factor);
         new_ladder.set_instance_id(3);
         new_ladder.set_cal(ULTRA_BRIGHT);
@@ -1006,8 +1066,18 @@ impl Voice {
     pub fn set_tier(&mut self, tier: Tier) {
         if (tier == Tier::Ultra || tier == Tier::Ultra2x) && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
-            let ok1 = self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
-            let ok2 = self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+            let ok1 = self.vco.recalculate_luts_async(
+                self.age,
+                tol_f64,
+                self.comp_seed as u32,
+                self.recalibration_scale,
+            );
+            let ok2 = self.vco2.recalculate_luts_async(
+                self.age,
+                tol_f64,
+                self.comp_seed as u32,
+                self.recalibration_scale,
+            );
             if ok1 && ok2 {
                 self.vco_dirty = false;
             }
@@ -1266,10 +1336,7 @@ impl Voice {
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
                 let hi = self.os2.up(mix * self.drive);
-                let o = [
-                    self.ladder.tick(hi[0]),
-                    self.ladder.tick(hi[1]),
-                ];
+                let o = [self.ladder.tick(hi[0]), self.ladder.tick(hi[1])];
                 self.comp_ultra.process(self.os2.down(o) / self.drive)
             }
             Tier::Ultra => {
@@ -1314,7 +1381,11 @@ impl Voice {
 
         // Update operating temperature
         let ambient_temp = 20.0 + 20.0 * (self.thermal_noise as f32 / 100.0);
-        let target_temp = if self.gate { ambient_temp + 3.0 } else { ambient_temp };
+        let target_temp = if self.gate {
+            ambient_temp + 3.0
+        } else {
+            ambient_temp
+        };
         let tau = if self.gate { 15.0 } else { 30.0 };
         let alpha = 1.0 - (-1.0 / (tau * self.sr)).exp();
         self.temperature += alpha * (target_temp - self.temperature);
@@ -1363,10 +1434,7 @@ impl Voice {
 
         let vco1_f = 440.0
             * 2.0f32.powf(
-                (self.current_pitch_st - 69.0
-                    + self.osc1_pitch_st
-                    + tuning_st
-                    + pitch_drift_st)
+                (self.current_pitch_st - 69.0 + self.osc1_pitch_st + tuning_st + pitch_drift_st)
                     / 12.0,
             );
         let osc1_f = 440.0
@@ -1389,10 +1457,7 @@ impl Voice {
         if self.osc2_vol > 0.0 {
             let vco2_f = 440.0
                 * 2.0f32.powf(
-                    (self.current_pitch_st - 69.0
-                        + self.osc2_pitch_st
-                        + tuning_st
-                        + osc2_drift_st)
+                    (self.current_pitch_st - 69.0 + self.osc2_pitch_st + tuning_st + osc2_drift_st)
                         / 12.0,
                 );
             let osc2_f = 440.0
@@ -1460,9 +1525,7 @@ impl Voice {
             // Adding sweep_out (memory trace) to the octave sum (G4, G5, G6)
             let mod_cutoff_hz = base_cutoff_hz * 2.0_f64.powf(env_mod_term + sweep_out);
 
-            let cutoff_hz = mod_cutoff_hz as f32
-                * cutoff_drift_factor
-                * cutoff_thermal_factor;
+            let cutoff_hz = mod_cutoff_hz as f32 * cutoff_drift_factor * cutoff_thermal_factor;
             cutoff_hz.clamp(20.0, self.sr * 0.45)
         };
 
@@ -1473,9 +1536,7 @@ impl Voice {
         let x = (final_cutoff_hz as f64).log2();
         let y = final_reso as f64;
 
-        let low_fc = (2.0f64
-            .powf(eval_poly3(x, y, &LOW_FC_POLY))
-            * self.low_cutoff_mult)
+        let low_fc = (2.0f64.powf(eval_poly3(x, y, &LOW_FC_POLY)) * self.low_cutoff_mult)
             .clamp(20.0, (self.sr * 0.45) as f64);
         let low_reso = (eval_poly3(x, y, &LOW_RESO_POLY) * self.low_reso_mult).clamp(0.0, 1.0);
 
@@ -1612,8 +1673,18 @@ impl Voice {
             self.vco.set_fun(is_fun);
             self.vco2.set_fun(is_fun);
             let tol_f64 = self.tolerance_f64();
-            self.vco.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
-            self.vco2.recalculate_luts_async(self.age, tol_f64, self.comp_seed as u32, self.recalibration_scale);
+            self.vco.recalculate_luts_async(
+                self.age,
+                tol_f64,
+                self.comp_seed as u32,
+                self.recalibration_scale,
+            );
+            self.vco2.recalculate_luts_async(
+                self.age,
+                tol_f64,
+                self.comp_seed as u32,
+                self.recalibration_scale,
+            );
             self.vco.set_thermal(self.thermal_noise_state);
             self.vco2.set_thermal(self.thermal_noise_state);
         }
@@ -1664,4 +1735,3 @@ mod tests {
         }
     }
 }
-

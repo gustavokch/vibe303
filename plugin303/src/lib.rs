@@ -227,7 +227,8 @@ impl Plugin for Plugin303 {
         self.sequencer.set_sample_rate(self.sample_rate as f64);
         self.sequencer.reset();
         if let Some(step) = self.qa_playhead_step {
-            self.current_playing_step.store(step, std::sync::atomic::Ordering::Relaxed);
+            self.current_playing_step
+                .store(step, std::sync::atomic::Ordering::Relaxed);
         }
         self.active_midi_note = None;
         self.active_seq_midi_note = None;
@@ -256,7 +257,8 @@ impl Plugin for Plugin303 {
         self.voice.reset();
         self.sequencer.reset();
         if let Some(step) = self.qa_playhead_step {
-            self.current_playing_step.store(step, std::sync::atomic::Ordering::Relaxed);
+            self.current_playing_step
+                .store(step, std::sync::atomic::Ordering::Relaxed);
         }
         self.active_midi_note = None;
         self.active_seq_midi_note = None;
@@ -276,66 +278,66 @@ impl Plugin for Plugin303 {
     ) -> ProcessStatus {
         // Always keep voice params and tier updated so state doesn't desync on bypass toggle
         self.voice.update_params(
-                self.params.tuning.value(),
-                self.params.osc1_pitch.value(),
-                self.params.osc2_pitch.value(),
-                self.params.osc2_vol.value(),
-                self.params.waveform.value(),
-                self.params.osc1_pw.value(),
-                self.params.sub_vol.value(),
-                self.params.cutoff.value(),
-                self.params.resonance.value(),
-                self.params.env_mod.value(),
-                self.params.decay.value(),
-                self.params.accent.value(),
-                self.params.volume.value(),
-                self.params.vcf_taps.value(),
-                self.params.vcf_drive.value(),
-                self.params.advanced_env.value(),
-                self.params.meg_attack.value(),
-                self.params.meg_decay_adj.value(),
-                self.params.meg_sustain.value(),
-                self.params.meg_release.value(),
-                self.params.veg_attack.value(),
-                self.params.veg_decay_adj.value(),
-                self.params.veg_sustain.value(),
-                self.params.veg_release.value(),
-                self.params.vca_env_mode.value(),
-                self.params.comp_age.value(),
-                self.params.comp_drift.value(),
-                self.params.tolerance.value(),
-                self.params.thermal_noise.value(),
-                self.params.topology.value(),
-                self.params.sweep_pos.value(),
-                self.params.comp_seed.value(),
-                self.params.glide.value(),
-                self.params.reso_comp.value(),
-                self.params.recalibration_scale.value() as f64,
-            );
-            self.voice.update_clipper_params(VoiceClipperParams {
-                bypass: self.params.clipper_bypass.value(),
-                os: self.params.clipper_os.value(),
-                drive: self.params.clipper_drive.value(),
-                threshold: self.params.clipper_threshold.value(),
-                bass: self.params.clipper_bass.value(),
-                tone: self.params.clipper_tone.value(),
-                asym: self.params.clipper_asym.value(),
-                mix: self.params.clipper_mix.value(),
-                in_db: self.params.clipper_in_gain.value(),
-                out_db: self.params.clipper_out_gain.value(),
-                tilt_db: self.params.clipper_tilt.value(),
-                dynamics: self.params.clipper_dynamics.value(),
-            });
+            self.params.tuning.value(),
+            self.params.osc1_pitch.value(),
+            self.params.osc2_pitch.value(),
+            self.params.osc2_vol.value(),
+            self.params.waveform.value(),
+            self.params.osc1_pw.value(),
+            self.params.sub_vol.value(),
+            self.params.cutoff.value(),
+            self.params.resonance.value(),
+            self.params.env_mod.value(),
+            self.params.decay.value(),
+            self.params.accent.value(),
+            self.params.volume.value(),
+            self.params.vcf_taps.value(),
+            self.params.vcf_drive.value(),
+            self.params.advanced_env.value(),
+            self.params.meg_attack.value(),
+            self.params.meg_decay_adj.value(),
+            self.params.meg_sustain.value(),
+            self.params.meg_release.value(),
+            self.params.veg_attack.value(),
+            self.params.veg_decay_adj.value(),
+            self.params.veg_sustain.value(),
+            self.params.veg_release.value(),
+            self.params.vca_env_mode.value(),
+            self.params.comp_age.value(),
+            self.params.comp_drift.value(),
+            self.params.tolerance.value(),
+            self.params.thermal_noise.value(),
+            self.params.topology.value(),
+            self.params.sweep_pos.value(),
+            self.params.comp_seed.value(),
+            self.params.glide.value(),
+            self.params.reso_comp.value(),
+            self.params.recalibration_scale.value() as f64,
+        );
+        self.voice.update_clipper_params(VoiceClipperParams {
+            bypass: self.params.clipper_bypass.value(),
+            os: self.params.clipper_os.value(),
+            drive: self.params.clipper_drive.value(),
+            threshold: self.params.clipper_threshold.value(),
+            bass: self.params.clipper_bass.value(),
+            tone: self.params.clipper_tone.value(),
+            asym: self.params.clipper_asym.value(),
+            mix: self.params.clipper_mix.value(),
+            in_db: self.params.clipper_in_gain.value(),
+            out_db: self.params.clipper_out_gain.value(),
+            tilt_db: self.params.clipper_tilt.value(),
+            dynamics: self.params.clipper_dynamics.value(),
+        });
 
-            // Synchronous LUT recalibration trigger (Calibrate button)
-            if self.params.calibrate_sync.value() {
-                self.voice.recalculate_luts_sync();
-                // Reset trigger: ParamMut is internal (pub(crate)), not public; skip audio-thread reset
-                // and rely on GUI toggle off / single-shot behavior.
-            }
+        // Synchronous LUT recalibration trigger (Calibrate button)
+        if self.params.calibrate_sync.value() {
+            self.voice.recalculate_luts_sync();
+            // Reset trigger: ParamMut is internal (pub(crate)), not public; skip audio-thread reset
+            // and rely on GUI toggle off / single-shot behavior.
+        }
 
-            // Block-rate read of the fidelity tier (starts a crossfade on change).
-            self.voice.set_tier(self.params.tier.value());
+        // Block-rate read of the fidelity tier (starts a crossfade on change).
+        self.voice.set_tier(self.params.tier.value());
 
         // Report PDC only when the tier's latency actually changes, so the host
         // isn't spammed with redundant restarts every block.
@@ -478,7 +480,8 @@ impl Plugin for Plugin303 {
                                 octave,
                                 accent,
                             } => {
-                                if let Some((prev_ch, prev_note)) = self.active_seq_midi_note.take() {
+                                if let Some((prev_ch, prev_note)) = self.active_seq_midi_note.take()
+                                {
                                     context.send_event(NoteEvent::NoteOff {
                                         timing,
                                         voice_id: None,
@@ -505,7 +508,8 @@ impl Plugin for Plugin303 {
                             } => {
                                 let note = seq_pitch_to_midi_note(key, octave);
                                 let velocity = if accent { 1.0 } else { 0.70 };
-                                if let Some((prev_ch, prev_note)) = self.active_seq_midi_note.take() {
+                                if let Some((prev_ch, prev_note)) = self.active_seq_midi_note.take()
+                                {
                                     if prev_note != note || prev_ch != midi_channel {
                                         context.send_event(NoteEvent::NoteOff {
                                             timing,
@@ -552,7 +556,8 @@ impl Plugin for Plugin303 {
                                 }
                             }
                             SeqEvent::GateOff => {
-                                if let Some((prev_ch, prev_note)) = self.active_seq_midi_note.take() {
+                                if let Some((prev_ch, prev_note)) = self.active_seq_midi_note.take()
+                                {
                                     context.send_event(NoteEvent::NoteOff {
                                         timing,
                                         voice_id: None,
@@ -582,6 +587,16 @@ impl Plugin for Plugin303 {
 
         // Advance monotonic sample counter
         self.current_sample_pos += buffer.samples() as u64;
+
+        // QA captures only: pin the playhead to the requested step every block
+        // so `VIBE303_QA_STATE=running` screenshots always show a deterministic
+        // middle step (the init-time pin is overwritten as soon as the
+        // sequencer ticks). Audio path is untouched — this only freezes the
+        // shared UI counter.
+        if let Some(step) = self.qa_playhead_step {
+            self.current_playing_step
+                .store(step, std::sync::atomic::Ordering::Relaxed);
+        }
 
         ProcessStatus::Normal
     }

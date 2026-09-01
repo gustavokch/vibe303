@@ -464,7 +464,8 @@ impl Vco303 {
             if denom.abs() < 1e-9 {
                 break;
             }
-            let cv2 = (cv1 - (f1 - target) * (cv1 - cv0) / denom).clamp(cv_seed - 2.0, cv_seed + 2.0);
+            let cv2 =
+                (cv1 - (f1 - target) * (cv1 - cv0) / denom).clamp(cv_seed - 2.0, cv_seed + 2.0);
             cv0 = cv1;
             f0 = f1;
             cv1 = cv2;
@@ -651,7 +652,11 @@ impl Vco303 {
                 lut[i] = cv_for_freq(f_nom);
             } else if recal_scale >= 1.0 || nominal_lut.is_none() {
                 let cv_sol = self.secant_cv_with_hint(f_nom, None);
-                lut[i] = if cv_sol.is_finite() { cv_sol } else { cv_for_freq(f_nom) };
+                lut[i] = if cv_sol.is_finite() {
+                    cv_sol
+                } else {
+                    cv_for_freq(f_nom)
+                };
             } else {
                 let cv_nom = nominal_lut.unwrap()[i];
                 let f_raw = self.measure_freq(cv_nom);
@@ -670,7 +675,9 @@ impl Vco303 {
             let f_nom = midi_hz(lut_midi(i));
             if !lut[i].is_finite() {
                 let prev = (0..i).rev().find(|&j| lut[j].is_finite()).unwrap_or(0);
-                let next = (i + 1..LUT_K).find(|&j| lut[j].is_finite()).unwrap_or(LUT_K - 1);
+                let next = (i + 1..LUT_K)
+                    .find(|&j| lut[j].is_finite())
+                    .unwrap_or(LUT_K - 1);
                 let denom = (next - prev) as f64;
                 if denom > 0.0 {
                     let t = (i - prev) as f64 / denom;
@@ -702,7 +709,13 @@ impl Vco303 {
         lut
     }
 
-    pub fn recalculate_luts_async(&self, age: i32, tolerance: f64, seed: u32, recal_scale: f64) -> bool {
+    pub fn recalculate_luts_async(
+        &self,
+        age: i32,
+        tolerance: f64,
+        seed: u32,
+        recal_scale: f64,
+    ) -> bool {
         let is_fun = self.is_fun;
         if age == 0 && tolerance == 0.0 && recal_scale == 1.0 {
             let sr = self.sr as f32;
@@ -720,7 +733,9 @@ impl Vco303 {
                     local_luts[noise_step as usize] = lut;
                 }
             }
-            self.lut_buffer.sequence.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.lut_buffer
+                .sequence
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.lut_buffer.store(local_luts, 0, 0.0, seed);
             return true;
         }

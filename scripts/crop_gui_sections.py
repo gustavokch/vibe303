@@ -69,7 +69,7 @@ def process_image(image_path: Path, output_dir: Path, dims: dict):
 
 def generate_boundary_and_diff_crops(output_dir: Path, dims: dict):
     latest_p = output_dir / "latest.png"
-    fun_p = output_dir / "fun.png"
+    fun_p = output_dir / "accurate.png"
     running_p = output_dir / "running.png"
 
     if latest_p.exists():
@@ -114,7 +114,7 @@ def generate_boundary_and_diff_crops(output_dir: Path, dims: dict):
 
 def process_all_states(qa_dir: Path):
     dims = parse_gui_dimensions()
-    for stem in ["latest", "fun", "running"]:
+    for stem in ["latest", "accurate", "advanced", "running"]:
         p = qa_dir / f"{stem}.png"
         if p.exists():
             process_image(p, qa_dir, dims)

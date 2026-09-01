@@ -414,13 +414,26 @@ impl Plugin303Params {
 impl Default for Plugin303Params {
     fn default() -> Self {
         let default_topology = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-            if s == "accurate" { CircuitTopology::Accurate } else { CircuitTopology::Fun }
+            if s == "accurate" {
+                CircuitTopology::Accurate
+            } else {
+                CircuitTopology::Fun
+            }
         } else {
             CircuitTopology::Fun
         };
 
         let default_seq_run = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
             s == "running"
+        } else {
+            false
+        };
+
+        // QA capture state only: `advanced` starts with the ADV ENV tier
+        // engaged so the MEG/VEG ADSR banks render enabled for screenshots.
+        // Shipped default stays false.
+        let default_advanced_env = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
+            s == "advanced"
         } else {
             false
         };
@@ -482,11 +495,7 @@ impl Default for Plugin303Params {
             seq_timebase: EnumParam::new("Seq Timebase", Timebase::Straight),
             seq_jitter: BoolParam::new("Seq Jitter", false),
             midi_out: BoolParam::new("MIDI Out", false),
-            midi_out_channel: IntParam::new(
-                "MIDI Out Ch",
-                1,
-                IntRange::Linear { min: 1, max: 16 },
-            ),
+            midi_out_channel: IntParam::new("MIDI Out Ch", 1, IntRange::Linear { min: 1, max: 16 }),
             synth_bypass: BoolParam::new("Synth Bypass", false),
 
             osc1_pitch: FloatParam::new(
@@ -540,15 +549,12 @@ impl Default for Plugin303Params {
             reso_comp: FloatParam::new(
                 "Reso Gain Comp",
                 0.0,
-                FloatRange::Linear {
-                    min: 0.0,
-                    max: 1.0,
-                },
+                FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
 
             glide: FloatParam::new("Glide", 0.4, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
-            advanced_env: BoolParam::new("Advanced Env", false),
+            advanced_env: BoolParam::new("Advanced Env", default_advanced_env),
 
             meg_attack: FloatParam::new(
                 "MEG Attack",
@@ -638,7 +644,9 @@ impl Default for Plugin303Params {
                     max: (100),
                 },
             )
-            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.1} yrs", v as f32 * 0.45))),
+            .with_value_to_string(std::sync::Arc::new(|v| {
+                format!("{:.1} yrs", v as f32 * 0.45)
+            })),
 
             comp_drift: FloatParam::new(
                 "Comp Drift",
@@ -677,26 +685,71 @@ impl Default for Plugin303Params {
 
             clipper_bypass: BoolParam::new("Clipper Bypass", false),
             clipper_os: EnumParam::new("Clipper OS", ClipperOversampling::X2),
-            clipper_drive: FloatParam::new("Clipper Drive", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
-            clipper_threshold: FloatParam::new("Clipper Threshold", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
-            clipper_bass: FloatParam::new("Clipper Bass", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
-            clipper_tone: FloatParam::new("Clipper Tone", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_drive: FloatParam::new(
+                "Clipper Drive",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_threshold: FloatParam::new(
+                "Clipper Threshold",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_bass: FloatParam::new(
+                "Clipper Bass",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_tone: FloatParam::new(
+                "Clipper Tone",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
             clipper_asym: BoolParam::new("Clipper Asym", false),
-            clipper_mix: FloatParam::new("Clipper Mix", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
-            clipper_in_gain: FloatParam::new("Clipper In", 0.0, FloatRange::Linear { min: -18.0, max: 18.0 })
-                .with_unit(" dB"),
-            clipper_out_gain: FloatParam::new("Clipper Out", 0.0, FloatRange::Linear { min: -18.0, max: 18.0 })
-                .with_unit(" dB"),
+            clipper_mix: FloatParam::new(
+                "Clipper Mix",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_in_gain: FloatParam::new(
+                "Clipper In",
+                0.0,
+                FloatRange::Linear {
+                    min: -18.0,
+                    max: 18.0,
+                },
+            )
+            .with_unit(" dB"),
+            clipper_out_gain: FloatParam::new(
+                "Clipper Out",
+                0.0,
+                FloatRange::Linear {
+                    min: -18.0,
+                    max: 18.0,
+                },
+            )
+            .with_unit(" dB"),
             clipper_gain_link: BoolParam::new("Clipper Gain Link", true),
-            clipper_tilt: FloatParam::new("Clipper Tilt", 0.0, FloatRange::Linear { min: -6.0, max: 6.0 })
-                .with_unit(" dB"),
-            clipper_dynamics: FloatParam::new("Clipper Dynamics", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            clipper_tilt: FloatParam::new(
+                "Clipper Tilt",
+                0.0,
+                FloatRange::Linear {
+                    min: -6.0,
+                    max: 6.0,
+                },
+            )
+            .with_unit(" dB"),
+            clipper_dynamics: FloatParam::new(
+                "Clipper Dynamics",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
 
             pattern: std::sync::RwLock::new(SequencerPattern::default()),
         }

@@ -35,7 +35,9 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                             .color(if bypassed {
                                 theme::TEXT_MUTED
                             } else {
-                                theme::TEXT_PRIMARY
+                                // Every panel title shares the accent colour
+                                // (round-11 item 8); muted only when disabled.
+                                theme::ACCENT_ORANGE
                             }),
                     );
                     ui.add_space(2.0);

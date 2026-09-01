@@ -99,9 +99,12 @@ EOF
     fi
 }
 
-# Capture all required GUI states
+# Capture all required GUI states. `default` and `fun` used to render
+# byte-identical windows (both meant TOPOLOGY=FUN + stopped) — the second
+# capture is now the genuine ACCURATE topology state (round-11 item 25).
 capture_single_state "default" "$OUTPUT_DIR/latest.png"
-capture_single_state "fun" "$OUTPUT_DIR/fun.png"
+capture_single_state "accurate" "$OUTPUT_DIR/accurate.png"
+capture_single_state "advanced" "$OUTPUT_DIR/advanced.png"
 capture_single_state "running" "$OUTPUT_DIR/running.png"
 
 echo "Extracting dynamic section crops, margins, and diff composites..."
@@ -109,7 +112,8 @@ python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
 
 REQUIRED_CROPS=(
     "latest.png"
-    "fun.png"
+    "accurate.png"
+    "advanced.png"
     "running.png"
     "crop_header.png"
     "crop_classic.png"

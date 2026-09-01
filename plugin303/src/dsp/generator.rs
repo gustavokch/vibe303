@@ -100,7 +100,11 @@ pub struct SimpleRng {
 
 impl SimpleRng {
     pub fn new(seed: u64) -> Self {
-        let state = if seed == 0 { 0x853c_49e6_748f_ea9b } else { seed };
+        let state = if seed == 0 {
+            0x853c_49e6_748f_ea9b
+        } else {
+            seed
+        };
         Self { state }
     }
 
@@ -177,7 +181,11 @@ impl AcidGenerator {
     /// Generate a 16-step 303 `Pattern` deterministically from `GeneratorParams`.
     pub fn generate(params: &GeneratorParams) -> Pattern {
         let mut rng = SimpleRng::new(params.seed);
-        let pulse_mask = Self::bjorklund(params.rhythm_pulses, params.rhythm_length, params.rhythm_shift);
+        let pulse_mask = Self::bjorklund(
+            params.rhythm_pulses,
+            params.rhythm_length,
+            params.rhythm_shift,
+        );
 
         let intervals = params.scale.intervals();
         let num_degrees = intervals.len();
@@ -225,7 +233,10 @@ impl AcidGenerator {
             };
 
             // Scale degree selection with optional accent pitch bias
-            let degree_idx = if accent && params.accent_pitch_bias > 0.0 && rng.next_f32() < params.accent_pitch_bias {
+            let degree_idx = if accent
+                && params.accent_pitch_bias > 0.0
+                && rng.next_f32() < params.accent_pitch_bias
+            {
                 // Favor upper half of scale degrees
                 let upper_min = num_degrees / 2;
                 rng.range_usize(upper_min, num_degrees - 1)
@@ -273,7 +284,9 @@ impl AcidGenerator {
             return;
         }
         // Deterministic PRNG seed derived from base seed + loop_count
-        let seed = params.seed.wrapping_add(loop_count.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let seed = params
+            .seed
+            .wrapping_add(loop_count.wrapping_mul(0x9E37_79B9_7F4A_7C15));
         let mut rng = SimpleRng::new(seed);
 
         let intervals = params.scale.intervals();
@@ -294,11 +307,18 @@ impl AcidGenerator {
                         let current_key = pattern.pitches[i].key;
                         let degree = intervals
                             .iter()
-                            .position(|&interval| (params.root_note as i8 + interval).rem_euclid(12) == current_key)
+                            .position(|&interval| {
+                                (params.root_note as i8 + interval).rem_euclid(12) == current_key
+                            })
                             .unwrap_or(0);
-                        let shift = if rng.next_f32() < 0.5 { 1 } else { num_degrees - 1 };
+                        let shift = if rng.next_f32() < 0.5 {
+                            1
+                        } else {
+                            num_degrees - 1
+                        };
                         let new_degree = (degree + shift) % num_degrees;
-                        pattern.pitches[i].key = (params.root_note as i8 + intervals[new_degree]).rem_euclid(12);
+                        pattern.pitches[i].key =
+                            (params.root_note as i8 + intervals[new_degree]).rem_euclid(12);
                     }
                     2 => {
                         // Flip note vs rest state (preserving slide ties)

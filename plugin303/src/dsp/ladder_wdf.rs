@@ -216,7 +216,13 @@ impl LadderVcf {
         self.sr
     }
 
-    pub fn set_analog_wear(&mut self, tolerance: f64, age: i32, seed: u32, recalibration_scale: f64) {
+    pub fn set_analog_wear(
+        &mut self,
+        tolerance: f64,
+        age: i32,
+        seed: u32,
+        recalibration_scale: f64,
+    ) {
         let mut rng_state = seed ^ (self.instance_id.wrapping_mul(0x9E3779B9) ^ 0x55AA55AA);
         let mut next_f64 = || {
             rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
