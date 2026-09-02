@@ -46,6 +46,7 @@ runs/
 scratch/
 .claude/*
 !.claude/workflows
+!.claude/skills
 .jc303-ref/
 worktree-*/
 /test_*
