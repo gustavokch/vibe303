@@ -130,20 +130,30 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 painter.line_segment([p1, p2], Stroke::new(1.0_f32, tick_color));
             }
 
-            // Active value arc
+            // Active value arc. Bipolar knobs (default at 12 o'clock, e.g.
+            // TUNING / PITCH / dB trims) fill outward from the centre detent;
+            // unipolar knobs fill from the minimum (round-11 item 16).
             let accent = if is_enabled {
                 self.accent_color.unwrap_or(theme::ACCENT_ORANGE)
             } else {
                 theme::TEXT_MUTED
             };
-            if normalized > 0.001 {
+            let default_norm = self.param.default_normalized_value();
+            let is_bipolar = (default_norm - 0.5).abs() < 0.01;
+            let (fill_from, fill_to) = if is_bipolar {
+                (0.5_f32.min(normalized), 0.5_f32.max(normalized))
+            } else {
+                (0.0_f32, normalized)
+            };
+            let fill_span = fill_to - fill_from;
+            if fill_span > 0.001 {
                 let mut prev_active_pt = pos2(
-                    center.x + start_angle.cos() * arc_r,
-                    center.y + start_angle.sin() * arc_r,
+                    center.x + (start_angle + fill_from * (end_angle - start_angle)).cos() * arc_r,
+                    center.y + (start_angle + fill_from * (end_angle - start_angle)).sin() * arc_r,
                 );
                 for i in 1..=ARC_SEGMENTS {
                     let t = i as f32 / ARC_SEGMENTS as f32;
-                    let a = start_angle + t * normalized * (end_angle - start_angle);
+                    let a = start_angle + (fill_from + t * fill_span) * (end_angle - start_angle);
                     let cur_pt = pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r);
                     painter.line_segment([prev_active_pt, cur_pt], Stroke::new(2.5_f32, accent));
                     prev_active_pt = cur_pt;

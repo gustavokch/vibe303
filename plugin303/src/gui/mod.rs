@@ -30,6 +30,16 @@ pub fn create_editor(
                 "TECHNEO 303".into(),
             ));
             egui_ctx.set_visuals(nih_plug_egui::egui::Visuals::dark());
+            // One font rule (round-11 item 12): every numeric readout — every
+            // DragValue — renders in the monospace face at the compact size;
+            // word-valued controls keep the proportional face.
+            egui_ctx.style_mut(|style| {
+                style.text_styles.insert(
+                    nih_plug_egui::egui::TextStyle::Monospace,
+                    nih_plug_egui::egui::FontId::monospace(9.0),
+                );
+                style.drag_value_text_style = nih_plug_egui::egui::TextStyle::Monospace;
+            });
         },
         move |egui_ctx, setter, _state| {
             nih_plug_egui::egui::CentralPanel::default()

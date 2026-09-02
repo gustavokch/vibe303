@@ -53,4 +53,4 @@ available for polish work. Do NOT exceed the frame; no ScrollArea (spec deviatio
 - Capture + visually inspect after each task; keep everything inside 1080x640.
 - `cargo test -p plugin303 --release` must exit 0 (GUI-only changes; exit code is the gate).
 - Exit criteria: weighted score ≥95, zero critical/major findings. Re-run the
-  `gui-visual-qa-loop` workflow when phases 3–4 are done.
+  `/gui-visual-audit` skill when phases 3–4 are done.

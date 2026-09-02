@@ -35,13 +35,15 @@ impl<'a, P: Param> MiniFader<'a, P> {
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
         let width = 24.0;
-        let total_height = self.height + 30.0;
+        // 21 px of chrome: 9 above the track for the letter label, 12 below
+        // for the value readout. The track itself is `height` tall.
+        let total_height = self.height + 21.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
         let normalized = self.param.unmodulated_normalized_value();
-        let track_top = rect.top() + 10.0;
-        let track_bottom = rect.bottom() - 15.0;
+        let track_top = rect.top() + 9.0;
+        let track_bottom = rect.bottom() - 12.0;
         let track_height = track_bottom - track_top;
 
         // Interaction
@@ -120,10 +122,14 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 painter.rect_filled(fill_rect, CornerRadius::same(1), accent);
             }
 
-            // Flat thumb handle
+            // Flat thumb handle. Travel is inset by half the thumb height so
+            // the handle renders identically at both extremes — clamped fully
+            // inside the track instead of overhanging the caps (round-11
+            // item 22).
             let thumb_width = 14.0;
             let thumb_height = 5.0;
-            let thumb_y = track_bottom - normalized * track_height;
+            let thumb_y =
+                track_bottom - thumb_height * 0.5 - normalized * (track_height - thumb_height);
             let thumb_rect = Rect::from_center_size(
                 pos2(rect.center().x, thumb_y),
                 vec2(thumb_width, thumb_height),
@@ -188,12 +194,12 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
 mod tests {
     #[test]
     fn mini_fader_geometry_bounds() {
-        let height = 24.0_f32;
-        let total_height = height + 30.0;
+        let height = 20.0_f32;
+        let total_height = height + 21.0;
         let top = 0.0_f32;
         let bottom = top + total_height;
-        let track_top = top + 10.0;
-        let track_bottom = bottom - 15.0;
+        let track_top = top + 9.0;
+        let track_bottom = bottom - 12.0;
         let track_height = track_bottom - track_top;
 
         assert!(track_top > top, "Track top must have top label clearance");
@@ -202,11 +208,11 @@ mod tests {
             "Track bottom must have bottom readout clearance"
         );
         assert!(
-            bottom - track_bottom >= 15.0,
-            "Readout text must have at least 15px clearance"
+            bottom - track_bottom >= 12.0,
+            "Readout text must have at least 12px clearance"
         );
         assert!(track_height > 0.0, "Track height must be positive");
-        assert_eq!(track_height, height + 5.0);
+        assert_eq!(track_height, height);
 
         for normalized in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
             let thumb_y = track_bottom - normalized * track_height;

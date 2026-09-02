@@ -46,6 +46,7 @@ runs/
 scratch/
 .claude/*
 !.claude/workflows
+!.claude/skills
 .jc303-ref/
 worktree-*/
 /test_*
@@ -55,3 +56,5 @@ sweep_output*
 # step-4 ACME VCF parity render scratch (binaries)
 eval/303/_acme_vcf_work/
 
+
+.claude-config

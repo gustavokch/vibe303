@@ -110,8 +110,14 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                             .unwrap_or("100%");
 
                         ui.allocate_ui_with_layout(
-                            vec2(70.0, 34.0),
-                            nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Min),
+                            // 68 = the combo's real width (text + arrow +
+                            // button padding). The allocation must hug the
+                            // control: a smaller box centring-overflowed past
+                            // the bar's right content edge, a larger one left
+                            // a dead gap (round-11 item 9).
+                            vec2(68.0, 34.0),
+                            // Centred like TOPOLOGY/QUALITY (round-11 item 17).
+                            nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
                             |ui| {
                                 ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
                                 ui.label(
