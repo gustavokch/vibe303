@@ -1,5 +1,7 @@
 use nih_plug::prelude::{FloatParam, ParamSetter};
-use nih_plug_egui::egui::{vec2, CornerRadius, FontId, Frame, Margin, Stroke, Ui};
+use nih_plug_egui::egui::{
+    pos2, vec2, Align, CornerRadius, FontId, Frame, Layout, Margin, Rect, Stroke, Ui,
+};
 
 use crate::gui::theme;
 use crate::gui::widgets::{Knob303, MiniFader, SlideSwitch};
@@ -93,6 +95,23 @@ fn render_adsr_bank(
     });
 }
 
+/// Width reserved at the right of the top-controls row for the ENVELOPES
+/// module, its separator and the spaces around it. The module itself hugs its
+/// content (~251 logical); the remainder is the separator run.
+pub(crate) const ENV_GROUP_W: f32 = 290.0;
+
+/// Minimum width the WAVE switch, its divider and the 7-knob strip need before
+/// the ENVELOPES group may take any more room.
+pub(crate) const LEFT_MIN_W: f32 = 460.0;
+
+/// Left edge of the ENVELOPES group relative to the row origin. Clamped to
+/// `left_min` so a narrow row (75 % zoom) never pushes the group over the WAVE
+/// switch and the knob strip. Same shape as `header_bar::right_group_left`
+/// (round-10 item 1).
+pub(crate) fn env_group_left(row_width: f32, left_min: f32, desired: f32) -> f32 {
+    (row_width - desired).max(left_min)
+}
+
 pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     // 103 logical: knobs need 78; the ENVELOPES module (title row + two ADSR
     // banks of 41-px faders) needs ~84 and must fit inside this panel with
@@ -111,8 +130,16 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         );
     }
 
+    let inner = rect.shrink(6.0);
+    // The ENVELOPES module is anchored to the row's right edge and the knob
+    // strip expands into everything left of it, so no dead run remains beside
+    // the module (round-14 issue 1).
+    let env_left = inner.left() + env_group_left(inner.width(), LEFT_MIN_W, ENV_GROUP_W);
+    let left_rect = Rect::from_min_max(inner.min, pos2(env_left, inner.bottom()));
+    let env_rect = Rect::from_min_max(pos2(env_left, inner.top()), inner.max);
+
     ui.allocate_new_ui(
-        nih_plug_egui::egui::UiBuilder::new().max_rect(rect.shrink(6.0)),
+        nih_plug_egui::egui::UiBuilder::new().max_rect(left_rect),
         |ui| {
             ui.horizontal(|ui| {
                 // Waveform Selector integrated inside main panel
@@ -126,20 +153,37 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.separator();
                 ui.add_space(6.0);
 
-                // Classic 303 Parameter Gauges (7 Knobs)
-                ui.spacing_mut().item_spacing = vec2(24.0, 0.0);
-                ui.add(Knob303::new(&params.tuning, setter, "TUNING", 20.0));
-                ui.add(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
-                ui.add(Knob303::new(&params.resonance, setter, "RESONANCE", 20.0));
-                ui.add(Knob303::new(&params.env_mod, setter, "ENV MOD", 20.0));
-                ui.add(Knob303::new(&params.decay, setter, "DECAY", 20.0));
-                ui.add(Knob303::new(&params.accent, setter, "ACCENT", 20.0));
-                ui.add(Knob303::new(&params.volume, setter, "VOLUME", 20.0));
+                // Classic 303 Parameter Gauges: 7 equal columns filling the
+                // strip, the same distribution the souped knob row uses, so the
+                // width freed by the right-anchored ENVELOPES module is spent
+                // on knob spacing instead of dead space (round-14 issue 1).
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                let col_w = ui.available_width() / 7.0;
+                let col_h = ui.available_height();
+                let mut render_knob = |knob: Knob303<'_, _>| {
+                    ui.allocate_ui_with_layout(
+                        vec2(col_w, col_h),
+                        Layout::top_down(Align::Center),
+                        |ui| {
+                            ui.add(knob);
+                        },
+                    );
+                };
+                render_knob(Knob303::new(&params.tuning, setter, "TUNING", 20.0));
+                render_knob(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
+                render_knob(Knob303::new(&params.resonance, setter, "RESONANCE", 20.0));
+                render_knob(Knob303::new(&params.env_mod, setter, "ENV MOD", 20.0));
+                render_knob(Knob303::new(&params.decay, setter, "DECAY", 20.0));
+                render_knob(Knob303::new(&params.accent, setter, "ACCENT", 20.0));
+                render_knob(Knob303::new(&params.volume, setter, "VOLUME", 20.0));
+            });
+        },
+    );
 
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(16.0);
-
+    ui.allocate_new_ui(
+        nih_plug_egui::egui::UiBuilder::new().max_rect(env_rect),
+        |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 // Envelopes Module Frame: MEG/VEG/ADV ENV distributed cleanly
                 // without isolated controls or dead gaps.
                 let env_frame = Frame::new()
@@ -233,7 +277,49 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         });
                     });
                 });
+
+                // Right-to-left layout: this lands immediately left of the
+                // module, matching the divider the flow layout used to draw.
+                ui.add_space(16.0);
+                ui.separator();
             });
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Full-window case: 1346 logical row width minus the panel's 6-px inner
+    /// padding on each side.
+    const ROW_W: f32 = 1334.0;
+
+    #[test]
+    fn env_group_is_flush_right_at_full_width() {
+        let left = env_group_left(ROW_W, LEFT_MIN_W, ENV_GROUP_W);
+        assert_eq!(left, ROW_W - ENV_GROUP_W);
+        // The group ends exactly on the row's right edge: no dead run beside it.
+        assert_eq!(left + ENV_GROUP_W, ROW_W);
+    }
+
+    #[test]
+    fn knob_strip_keeps_a_workable_column_width() {
+        let left = env_group_left(ROW_W, LEFT_MIN_W, ENV_GROUP_W);
+        // WAVE switch (52) + space/divider/space (13) precede the strip.
+        let strip_w = left - 65.0;
+        let col_w = strip_w / 7.0;
+        assert!(
+            (56.0..=160.0).contains(&col_w),
+            "column must fit a radius-20 knob without going airy, got {col_w}"
+        );
+    }
+
+    #[test]
+    fn env_group_clamps_before_overlapping_the_knob_strip() {
+        // Narrow row (75 % zoom): the group would start at 460 - 290 without
+        // the clamp and slide over the knobs.
+        let left = env_group_left(600.0, LEFT_MIN_W, ENV_GROUP_W);
+        assert_eq!(left, LEFT_MIN_W);
+    }
 }
