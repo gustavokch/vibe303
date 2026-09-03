@@ -41,9 +41,10 @@ pub fn render_step_strip(
     let mut changed = false;
     let width = cell_width;
     let is_active = is_current && is_running;
-    // Playhead highlight: neutral high-value tint + white outline (round-11
-    // item 6 — red read as an error and sat outside the orange/cyan/amber
-    // palette; white is in the palette and distinct from ACC/NOTE/SLD fills).
+    // Playhead highlight: one mark, one colour, one weight (round-13 issue 2).
+    // The column background tint plus a single 1 px ACCENT_RUBY outline carry
+    // the active step; the LED bar, step-number pill and pitch pill render in
+    // their non-active treatments.
     let column_bg = if is_active {
         theme::SURFACE_ELEVATED
     } else if is_current {
@@ -51,7 +52,7 @@ pub fn render_step_strip(
     } else {
         theme::PANEL_BG
     };
-    let playhead_color = theme::TEXT_PRIMARY;
+    let playhead_color = theme::ACCENT_RUBY;
 
     ui.vertical(|ui| {
         ui.set_width(width);
@@ -65,42 +66,28 @@ pub fn render_step_strip(
             ui.painter()
                 .rect_filled(strip_rect, CornerRadius::same(2), column_bg);
         }
-        // 1. Playhead LED bar (4.0px flat bar at top, white when the step is
-        // current — same neutral highlight as the column outline)
+        // 1. Playhead LED bar (4.0px flat bar at top — uniform across steps;
+        // the playhead mark is the column outline, not this bar)
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, LED_H), Sense::hover());
         let _ = led_resp.on_hover_text("Playhead position indicator");
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
-            let led_color = if is_active {
-                playhead_color
-            } else {
-                theme::WELL_BG
-            };
-            p.rect_filled(led_rect, CornerRadius::same(1), led_color);
+            p.rect_filled(led_rect, CornerRadius::same(1), theme::WELL_BG);
             p.rect_stroke(
                 led_rect,
                 CornerRadius::same(1),
-                Stroke::new(
-                    1.0_f32,
-                    if is_active {
-                        playhead_color
-                    } else {
-                        theme::BORDER_SUBTLE
-                    },
-                ),
+                Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
                 StrokeKind::Inside,
             );
         }
 
-        // 2. Step number header pill
+        // 2. Step number header pill (uniform across steps — playhead mark is
+        // the column outline)
         let (step_num_rect, _) = ui.allocate_exact_size(vec2(width, HEADER_H), Sense::hover());
         if ui.is_rect_visible(step_num_rect) {
             let p = ui.painter();
-            let (bg_color, text_color, stroke_color) = if is_active {
-                (theme::SURFACE_ELEVATED, playhead_color, playhead_color)
-            } else {
-                (theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT)
-            };
+            let (bg_color, text_color, stroke_color) =
+                (theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT);
             p.rect_filled(step_num_rect, CornerRadius::same(2), bg_color);
             p.rect_stroke(
                 step_num_rect,
@@ -322,14 +309,7 @@ pub fn render_step_strip(
             p.rect_stroke(
                 pitch_rect,
                 CornerRadius::same(2),
-                Stroke::new(
-                    1.0_f32,
-                    if is_active && !is_rest {
-                        playhead_color
-                    } else {
-                        theme::BORDER_DEFAULT
-                    },
-                ),
+                Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
                 StrokeKind::Inside,
             );
             p.text(

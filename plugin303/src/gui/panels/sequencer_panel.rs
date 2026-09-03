@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use crate::gui::theme;
 use crate::gui::widgets::piano_roll_popup::render_piano_roll_popup;
 use crate::gui::widgets::render_step_strip;
-use crate::gui::widgets::step_button::{CONTROL_ROW_H, STRIP_HEIGHT};
+use crate::gui::widgets::step_button::STRIP_HEIGHT;
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
 
 /// Custom ComboBox icon painter that always paints a downward-pointing triangle (▼).
@@ -39,8 +39,14 @@ const TRANSPORT_COLUMN_W: f32 = 280.0;
 const GRID_GAP: f32 = 4.0;
 /// Total vertical height of the 2-row step grid (2 * STRIP_HEIGHT + GRID_GAP = 268.0).
 const GRID_TOTAL_H: f32 = 2.0 * STRIP_HEIGHT + GRID_GAP;
-/// Height allocated to transport Row D, matching the step grid's control rows.
-const ROW_D_H: f32 = CONTROL_ROW_H;
+/// Approximate painted height of the transport column title row, subtracted
+/// before the remaining column height is split across the transport rows
+/// (round-13 issue 4).
+const TRANSPORT_TITLE_H: f32 = 13.0;
+/// Number of transport rows sharing the column's vertical extent.
+const TRANSPORT_ROW_COUNT: f32 = 5.0;
+/// Minimum transport row height; below this the rows would look cramped.
+const TRANSPORT_ROW_MIN_H: f32 = 24.0;
 /// Half of the transport column's inner width: every transport row is laid out
 /// on a two-slot grid (slot, gap, slot) so all rows share left/right edges and
 /// reach the panel's right inner margin (round-11 items 4 and 21).
@@ -97,7 +103,9 @@ pub fn render_sequencer_and_transport(
     let active_step = current_step_atomic.load(Ordering::Relaxed);
 
     super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
-    ui.add_space(0.5);
+    // Same uniform gutter as the other five panel gaps (round-13 issue 11);
+    // the parent stack zeroes item_spacing.y, so this spacer is the whole gap.
+    ui.add_space(crate::gui::PANEL_GAP);
 
     let frame_avail_h = ui.available_height();
 
@@ -165,6 +173,17 @@ pub fn render_sequencer_and_transport(
                     ui.spacing_mut().item_spacing = vec2(3.0, 6.0);
                     ui.spacing_mut().button_padding = vec2(3.0, 1.0);
 
+                    // Stretch the five transport rows across the column's full
+                    // height so no dead band remains below the last row
+                    // (round-13 issue 4). The frame's min height reaches the
+                    // window bottom, so available_height is the whole column.
+                    // Five rows plus five 6-px gaps (title→A … C→D) share it.
+                    let row_h = ((ui.available_height()
+                        - TRANSPORT_TITLE_H
+                        - TRANSPORT_ROW_COUNT * 6.0)
+                        / TRANSPORT_ROW_COUNT)
+                        .max(TRANSPORT_ROW_MIN_H);
+
                     ui.label(
                         nih_plug_egui::egui::RichText::new("TRANSPORT & PATTERN")
                             .font(FontId::proportional(9.0))
@@ -200,7 +219,7 @@ pub fn render_sequencer_and_transport(
                             theme::WELL_BG
                         })
                         .stroke(Stroke::new(1.0_f32, if run_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                        .min_size(vec2(TRANSPORT_SLOT_W, 24.0))
+                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(run_btn).clicked() {
@@ -230,7 +249,7 @@ pub fn render_sequencer_and_transport(
                             theme::WELL_BG
                         })
                         .stroke(Stroke::new(1.0_f32, if sync_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                        .min_size(vec2(TRANSPORT_SLOT_W, 24.0))
+                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(sync_btn).clicked() {
@@ -247,7 +266,7 @@ pub fn render_sequencer_and_transport(
                         ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
 
                         ui.allocate_ui_with_layout(
-                            vec2(TRANSPORT_SLOT_W, 24.0),
+                            vec2(TRANSPORT_SLOT_W, row_h),
                             Layout::left_to_right(Align::Center),
                             |ui| {
                                 ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
@@ -262,7 +281,7 @@ pub fn render_sequencer_and_transport(
                                 )
                                 .fill(if midi_val { theme::ACCENT_ORANGE } else { theme::WELL_BG })
                                 .stroke(Stroke::new(1.0_f32, if midi_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                                .min_size(vec2(70.0, 24.0))
+                                .min_size(vec2(70.0, row_h))
                                 .corner_radius(CornerRadius::same(2));
 
                                 if ui.add(midi_btn).on_hover_text("Toggle MIDI Output from 16-step sequencer").clicked() {
@@ -271,7 +290,9 @@ pub fn render_sequencer_and_transport(
                                     setter.end_set_parameter(&params.midi_out);
                                 }
 
-                                // MIDI Channel selector
+                                // MIDI Channel selector. The field stretches to
+                                // the slot's right edge so the row leaves no
+                                // dead run on the right (round-13 issue 4).
                                 ui.label(
                                     nih_plug_egui::egui::RichText::new("CH:")
                                         .font(FontId::proportional(8.0))
@@ -279,7 +300,8 @@ pub fn render_sequencer_and_transport(
                                 );
                                 let mut ch_val = params.midi_out_channel.value();
                                 if ui
-                                    .add(
+                                    .add_sized(
+                                        vec2(ui.available_width(), row_h),
                                         DragValue::new(&mut ch_val)
                                             .range(1..=16)
                                             .custom_formatter(|n, _| format!("{:02}", n as i32)),
@@ -304,7 +326,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(if bypass_val { theme::WELL_BG } else { theme::ACCENT_ORANGE })
                         .stroke(Stroke::new(1.0_f32, if bypass_val { theme::BORDER_DEFAULT } else { theme::ACCENT_ORANGE }))
-                        .min_size(vec2(TRANSPORT_SLOT_W, 24.0))
+                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(bypass_btn).on_hover_text("Bypass internal synth voice (outputs silence, 0% CPU)").clicked() {
@@ -326,7 +348,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(TRANSPORT_SLOT_W, 24.0))
+                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_left_btn).on_hover_text("Rotate pattern steps left (cyclic)").clicked() {
@@ -343,7 +365,7 @@ pub fn render_sequencer_and_transport(
                         )
                         .fill(theme::SURFACE_ELEVATED)
                         .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(TRANSPORT_SLOT_W, 24.0))
+                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
                         .corner_radius(CornerRadius::same(2));
 
                         if ui.add(shift_right_btn).on_hover_text("Rotate pattern steps right (cyclic)").clicked() {
@@ -360,7 +382,7 @@ pub fn render_sequencer_and_transport(
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
                         ui.allocate_ui_with_layout(
-                            vec2(TRANSPORT_SLOT_W, 24.0),
+                            vec2(TRANSPORT_SLOT_W, row_h),
                             Layout::left_to_right(Align::Center),
                             |ui| {
                                 ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
@@ -379,7 +401,7 @@ pub fn render_sequencer_and_transport(
                                 )
                                 .fill(theme::WELL_BG)
                                 .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                                .min_size(vec2(24.0, 24.0))
+                                .min_size(vec2(24.0, row_h))
                                 .corner_radius(CornerRadius::same(2));
                                 if ui.add(dn_btn).clicked() {
                                     setter.begin_set_parameter(&params.seq_tempo);
@@ -390,8 +412,13 @@ pub fn render_sequencer_and_transport(
                                     setter.end_set_parameter(&params.seq_tempo);
                                 }
 
+                                // The field fills the slot between the steppers
+                                // (24 px + 3 px gap on the right) so the row
+                                // reaches the shared right edge (round-13 issue 4).
+                                let dv_w = (ui.available_width() - 27.0).max(24.0);
                                 if ui
-                                    .add(
+                                    .add_sized(
+                                        vec2(dv_w, row_h),
                                         DragValue::new(&mut tempo_val)
                                             .range(40.0..=300.0)
                                             .speed(0.1)
@@ -412,7 +439,7 @@ pub fn render_sequencer_and_transport(
                                 )
                                 .fill(theme::WELL_BG)
                                 .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                                .min_size(vec2(24.0, 24.0))
+                                .min_size(vec2(24.0, row_h))
                                 .corner_radius(CornerRadius::same(2));
                                 if ui.add(up_btn).clicked() {
                                     setter.begin_set_parameter(&params.seq_tempo);
@@ -426,7 +453,7 @@ pub fn render_sequencer_and_transport(
                         );
 
                         ui.allocate_ui_with_layout(
-                            vec2(TRANSPORT_SLOT_W, 24.0),
+                            vec2(TRANSPORT_SLOT_W, row_h),
                             Layout::left_to_right(Align::Center),
                             |ui| {
                                 ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
@@ -436,8 +463,12 @@ pub fn render_sequencer_and_transport(
                                         .color(theme::TEXT_MUTED),
                                 );
                                 let mut len_val = params.seq_length.value();
+                                // The field fills the slot's remaining width so
+                                // the row reaches the shared right edge
+                                // (round-13 issue 4).
                                 if ui
-                                    .add(
+                                    .add_sized(
+                                        vec2(ui.available_width(), row_h),
                                         DragValue::new(&mut len_val)
                                             .range(1..=16)
                                             .custom_formatter(|n, _| format!("{:02}", n as i32)),
@@ -452,21 +483,20 @@ pub fn render_sequencer_and_transport(
                         );
                     });
 
-                    // Row D: Timebase + Mode + Jitter + Clear. Flows directly
-                    // below Row C with the shared row spacing — no bottom
-                    // anchoring, so leftover column height stays below the last
-                    // row instead of splitting the panel (round-11 item 4).
+                    // Row D: Timebase + Mode + Jitter + Clear. Shares the
+                    // stretched row height with the other four rows so the
+                    // column has no dead band below it (round-13 issue 4).
                     // Two slots on the shared grid keep the row's right edge on
                     // the column's right inner margin.
                     ui.allocate_ui_with_layout(
-                        vec2(ui.available_width(), ROW_D_H),
+                        vec2(ui.available_width(), row_h),
                         Layout::left_to_right(Align::Center),
                         |ui| {
-                            ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+                            ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
                             ui.spacing_mut().button_padding = vec2(4.0, 3.0);
 
                             ui.allocate_ui_with_layout(
-                                vec2(TRANSPORT_SLOT_W, ROW_D_H),
+                                vec2(TRANSPORT_SLOT_W, row_h),
                                 Layout::left_to_right(Align::Center),
                                 |ui| {
                                     ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
@@ -556,10 +586,10 @@ pub fn render_sequencer_and_transport(
                             );
 
                             ui.allocate_ui_with_layout(
-                                vec2(TRANSPORT_SLOT_W, ROW_D_H),
+                                vec2(TRANSPORT_SLOT_W, row_h),
                                 Layout::left_to_right(Align::Center),
                                 |ui| {
-                                    ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+                                    ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
 
                                     let mut jitter_val = params.seq_jitter.value();
                                     let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(
@@ -593,7 +623,13 @@ pub fn render_sequencer_and_transport(
                                     )
                                     .fill(theme::SURFACE_ELEVATED)
                                     .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                                    .min_size(vec2(TRANSPORT_SLOT_W - JIT_HIT_W - 6.0, 24.0))
+                                    // CLEAR fills the slot remainder after
+                                    // JITTER (52) and the 4-px gap, plus the
+                                    // 3 px the centered slot layout leaves on
+                                    // the right, so Row D's right edge lands
+                                    // on the shared column edge like the other
+                                    // rows (round-13 issue 4).
+                                    .min_size(vec2(TRANSPORT_SLOT_W - JIT_HIT_W - 1.0, row_h))
                                     .corner_radius(CornerRadius::same(2));
 
                                     if ui.add(clear_btn).on_hover_text("Reset all steps to default C3 notes").clicked() {

@@ -438,13 +438,22 @@ impl Default for Plugin303Params {
             false
         };
 
+        // QA capture state only: `knobs` starts with one bipolar knob off its
+        // centre detent and one unipolar knob off its default so the
+        // range-derived arc polarity (round-13 issue 1) is verifiable in a
+        // screenshot. Shipped defaults stay 0.0 ct / 0.5.
+        let qa_knobs = std::env::var("VIBE303_QA_STATE")
+            .map(|s| s == "knobs")
+            .unwrap_or(false);
+        let (default_tuning, default_cutoff) = if qa_knobs { (25.0, 0.75) } else { (0.0, 0.5) };
+
         Self {
             tier: EnumParam::new("Tier", Tier::Low),
             topology: EnumParam::new("Circuit Topology", default_topology),
 
             tuning: FloatParam::new(
                 "Tuning",
-                0.0,
+                default_tuning,
                 FloatRange::Linear {
                     min: -100.0,
                     max: 100.0,
@@ -452,7 +461,11 @@ impl Default for Plugin303Params {
             )
             .with_unit(" cents"),
 
-            cutoff: FloatParam::new("Cutoff", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            cutoff: FloatParam::new(
+                "Cutoff",
+                default_cutoff,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             resonance: FloatParam::new("Resonance", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 

@@ -31,7 +31,7 @@ impl<'a, P: Param> Knob303<'a, P> {
     }
 }
 
-impl<'a, P: Param> Widget for Knob303<'a, P> {
+impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
         let desired_size = vec2(self.radius * 2.0 + 16.0, self.radius * 2.0 + 38.0);
         let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
@@ -130,18 +130,19 @@ impl<'a, P: Param> Widget for Knob303<'a, P> {
                 painter.line_segment([p1, p2], Stroke::new(1.0_f32, tick_color));
             }
 
-            // Active value arc. Bipolar knobs (default at 12 o'clock, e.g.
-            // TUNING / PITCH / dB trims) fill outward from the centre detent;
-            // unipolar knobs fill from the minimum (round-11 item 16).
+            // Active value arc. Polarity comes from the parameter's range:
+            // a bipolar range (plain minimum < 0, e.g. TUNING / PITCH / dB
+            // trims) fills outward from the normalized position of 0.0;
+            // a unipolar range fills from the minimum (round-13 issue 1).
             let accent = if is_enabled {
                 self.accent_color.unwrap_or(theme::ACCENT_ORANGE)
             } else {
                 theme::TEXT_MUTED
             };
-            let default_norm = self.param.default_normalized_value();
-            let is_bipolar = (default_norm - 0.5).abs() < 0.01;
+            let zero_norm = self.param.preview_normalized(0.0);
+            let is_bipolar = self.param.preview_plain(0.0) < 0.0;
             let (fill_from, fill_to) = if is_bipolar {
-                (0.5_f32.min(normalized), 0.5_f32.max(normalized))
+                (zero_norm.min(normalized), zero_norm.max(normalized))
             } else {
                 (0.0_f32, normalized)
             };

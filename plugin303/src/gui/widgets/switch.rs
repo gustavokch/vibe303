@@ -14,6 +14,7 @@ pub struct SlideSwitch<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> {
     thumb_color: Option<Color32>,
     active_text_color: Option<Color32>,
     is_vertical: bool,
+    fixed_width: Option<f32>,
 }
 
 impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> SlideSwitch<'a, T> {
@@ -31,7 +32,16 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> SlideSwitch<'a, T> {
             thumb_color: None,
             active_text_color: None,
             is_vertical: false,
+            fixed_width: None,
         }
+    }
+
+    /// Stretch the horizontal track to `width` instead of hugging the option
+    /// labels — used when a switch must fill a layout column so no dead band
+    /// remains beside it (round-13 issue 5).
+    pub fn with_width(mut self, width: f32) -> Self {
+        self.fixed_width = Some(width);
+        self
     }
 
     pub fn with_thumb_color(mut self, color: Color32) -> Self {
@@ -253,7 +263,10 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             })
             .fold(0.0f32, f32::max);
         let per_slot = (max_text_width + 12.0).max(30.0);
-        let width = per_slot * num_opts as f32 + 4.0;
+        let width = self
+            .fixed_width
+            .unwrap_or(per_slot * num_opts as f32 + 4.0)
+            .max(per_slot + 4.0);
         let height = 30.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag());

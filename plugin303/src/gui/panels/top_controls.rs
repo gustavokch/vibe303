@@ -34,19 +34,47 @@ fn render_adsr_bank(
     bank_frame.show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 3.0;
         ui.vertical(|ui| {
-            ui.label(
-                nih_plug_egui::egui::RichText::new(title)
-                    .font(FontId::new(
-                        8.5,
-                        nih_plug_egui::egui::FontFamily::Proportional,
-                    ))
-                    .strong()
-                    .color(if is_active {
-                        theme::TEXT_PRIMARY
-                    } else {
-                        theme::TEXT_SECONDARY
-                    }),
-            );
+            // Title. When the bank is inactive the parent Ui is disabled, so
+            // paint directly on a fade-cleared painter clone: ui.label would
+            // get egui's fade-to-background on top of the muted token
+            // (round-13 issue 6).
+            let title_color = if is_active {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_SECONDARY
+            };
+            let title_font = FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional);
+            if is_active {
+                ui.label(
+                    nih_plug_egui::egui::RichText::new(title)
+                        .font(title_font.clone())
+                        .strong()
+                        .color(title_color),
+                );
+            } else {
+                // Allocate the measured title width only — `available_width`
+                // here is the whole frame row and would stretch the bank.
+                let text_w = ui
+                    .fonts(|f| {
+                        f.layout_no_wrap(title.to_string(), title_font.clone(), title_color)
+                            .size()
+                            .x
+                    })
+                    .ceil();
+                let (title_rect, _) = ui.allocate_exact_size(
+                    vec2(text_w, 11.0),
+                    nih_plug_egui::egui::Sense::hover(),
+                );
+                let mut p = ui.painter().clone();
+                p.set_fade_to_color(None);
+                p.text(
+                    title_rect.left_center(),
+                    nih_plug_egui::egui::Align2::LEFT_CENTER,
+                    title,
+                    title_font,
+                    title_color,
+                );
+            }
             ui.add_space(1.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
@@ -162,6 +190,12 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
 
+                            // One dimming mechanism only (round-13 issue 6):
+                            // add_enabled_ui blocks interaction, while
+                            // render_adsr_bank/MiniFader paint the disabled bank
+                            // with the explicit muted palette on a painter whose
+                            // fade-to-background is cleared — egui's disabled
+                            // fade must not compound on top of the muted tokens.
                             ui.add_enabled_ui(is_adv, |ui| {
                                 render_adsr_bank(
                                     ui,

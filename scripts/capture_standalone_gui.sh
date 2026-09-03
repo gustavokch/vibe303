@@ -106,6 +106,9 @@ capture_single_state "default" "$OUTPUT_DIR/latest.png"
 capture_single_state "accurate" "$OUTPUT_DIR/accurate.png"
 capture_single_state "advanced" "$OUTPUT_DIR/advanced.png"
 capture_single_state "running" "$OUTPUT_DIR/running.png"
+# Bipolar knob off detent + unipolar knob off default (round-13 issue 1
+# verification state).
+capture_single_state "knobs" "$OUTPUT_DIR/knobs.png"
 
 echo "Extracting dynamic section crops, margins, and diff composites..."
 python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
@@ -115,6 +118,7 @@ REQUIRED_CROPS=(
     "accurate.png"
     "advanced.png"
     "running.png"
+    "knobs.png"
     "crop_header.png"
     "crop_classic.png"
     "crop_souped.png"
