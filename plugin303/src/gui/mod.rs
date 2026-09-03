@@ -45,6 +45,18 @@ pub fn create_editor(
                     nih_plug_egui::egui::FontId::monospace(9.0),
                 );
                 style.drag_value_text_style = nih_plug_egui::egui::TextStyle::Monospace;
+
+                // Widget text defaults to egui's greys (#B4B4B4 inactive,
+                // #999999 on combo buttons — neither is a theme token, and the
+                // combo value measured 3.87:1). Point them at the palette so
+                // every DragValue, Button and ComboBox that does not set its
+                // own colour still lands on a token (round-14 issue 7).
+                let widgets = &mut style.visuals.widgets;
+                widgets.noninteractive.fg_stroke.color = theme::TEXT_SECONDARY;
+                widgets.inactive.fg_stroke.color = theme::TEXT_SECONDARY;
+                widgets.hovered.fg_stroke.color = theme::TEXT_PRIMARY;
+                widgets.active.fg_stroke.color = theme::TEXT_PRIMARY;
+                widgets.open.fg_stroke.color = theme::TEXT_PRIMARY;
             });
         },
         move |egui_ctx, setter, _state| {
