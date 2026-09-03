@@ -7,6 +7,16 @@ use crate::params::{CircuitTopology, Plugin303Params};
 
 pub const SOUPED_INNER_HEIGHT: f32 = 131.0;
 
+/// Height the shared panel title row consumes (10-pt label + the 3-px space
+/// under it) before either branch renders its content.
+const TITLE_ROW_H: f32 = 17.0;
+
+/// Vertical padding above the ACCURATE placeholder card so it stays centred in
+/// the height that remains under the title row (round-14 issue 4).
+fn accurate_card_pad(card_h: f32) -> f32 {
+    ((SOUPED_INNER_HEIGHT - TITLE_ROW_H - card_h) * 0.5).max(0.0)
+}
+
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
 
@@ -19,6 +29,28 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
             ui.set_width(ui.available_width());
             ui.set_min_height(SOUPED_INNER_HEIGHT);
 
+            // Panel title in BOTH states: the bypass placeholder used to drop
+            // it, so the section lost its identity and its extent in ACCURATE
+            // (round-14 issue 4). Faded ACCENT_ORANGE measures ≈2.5:1, so the
+            // bypassed title uses the secondary token instead.
+            ui.horizontal(|ui| {
+                ui.label(
+                    nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE & ANALOG DRAWER")
+                        .font(FontId::new(
+                            10.0,
+                            nih_plug_egui::egui::FontFamily::Proportional,
+                        ))
+                        .strong()
+                        .color(if is_accurate {
+                            theme::TEXT_SECONDARY
+                        } else {
+                            theme::ACCENT_ORANGE
+                        }),
+                );
+            });
+
+            ui.add_space(3.0);
+
             if is_accurate {
                 // Centered overlay card when bypassed with zero ghost rendering
                 let total_w = ui.available_width();
@@ -27,7 +59,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 const MIN_CARD_W: f32 = 120.0;
                 let card_w = 300.0_f32.min((total_w - 20.0).max(MIN_CARD_W));
                 let card_h = 72.0_f32;
-                let pad = ((SOUPED_INNER_HEIGHT - card_h) * 0.5).max(0.0);
+                let pad = accurate_card_pad(card_h);
 
                 ui.vertical(|ui| {
                     ui.add_space(pad);
@@ -92,21 +124,6 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 });
             } else {
                 ui.vertical(|ui| {
-                    // Header Bar
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE & ANALOG DRAWER")
-                                .font(FontId::new(
-                                    10.0,
-                                    nih_plug_egui::egui::FontFamily::Proportional,
-                                ))
-                                .strong()
-                                .color(theme::ACCENT_ORANGE),
-                        );
-                    });
-
-                    ui.add_space(3.0);
-
                     // Row 1: Selectors & Mode Toggles — stretched across the
                     // full band so no dead run remains beside the switches
                     // (round-13 issue 5). Split matches option count: 3 slots
@@ -187,14 +204,20 @@ mod tests {
     #[test]
     fn accurate_card_centering_geometry() {
         let card_h = 72.0_f32;
-        let pad = ((SOUPED_INNER_HEIGHT - card_h) * 0.5).max(0.0);
-        assert_eq!(pad, 29.5);
-        assert_eq!(pad * 2.0 + card_h, SOUPED_INNER_HEIGHT);
+        let pad = accurate_card_pad(card_h);
+        assert_eq!(pad, 21.0);
+        // Title row + padded card fill the pinned inner height exactly.
+        assert_eq!(TITLE_ROW_H + pad * 2.0 + card_h, SOUPED_INNER_HEIGHT);
 
         const MIN_CARD_W: f32 = 120.0;
         for total_w in [50.0_f32, 100.0, 200.0, 300.0, 600.0, 1346.0] {
             let card_w = 300.0_f32.min((total_w - 20.0).max(MIN_CARD_W));
             assert!(card_w >= MIN_CARD_W && card_w <= 300.0);
         }
+    }
+
+    #[test]
+    fn accurate_card_pad_never_negative_for_a_tall_card() {
+        assert_eq!(accurate_card_pad(SOUPED_INNER_HEIGHT), 0.0);
     }
 }
