@@ -59,7 +59,29 @@ pub fn render_generator_panel(
                             .color(theme::ACCENT_ORANGE),
                     );
 
-                    let right_group_w = 110.0;
+                    // Measure the NEW SEED button (cached galley + padding +
+                    // stroke) so the spacer lands it flush right even if the
+                    // label or font changes (PR#61 review).
+                    let galley_id = ui.id().with("new_seed_btn_galley");
+                    let galley = ui.ctx().data_mut(|d| {
+                        d.get_temp::<std::sync::Arc<nih_plug_egui::egui::Galley>>(galley_id)
+                    });
+                    let galley = match galley {
+                        Some(g) => g,
+                        None => {
+                            let g = ui.fonts(|f| {
+                                f.layout_no_wrap(
+                                    "NEW SEED".to_string(),
+                                    FontId::proportional(8.5),
+                                    theme::TEXT_PRIMARY,
+                                )
+                            });
+                            ui.ctx().data_mut(|d| d.insert_temp(galley_id, g.clone()));
+                            g
+                        }
+                    };
+                    let right_group_w =
+                        galley.size().x.ceil() + 2.0 * ui.spacing().button_padding.x + 2.0;
                     let space_w = (ui.available_width() - right_group_w).max(0.0);
                     ui.add_space(space_w);
 
