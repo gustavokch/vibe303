@@ -54,26 +54,32 @@ fn render_adsr_bank(
             } else {
                 // Allocate the measured title width only — `available_width`
                 // here is the whole frame row and would stretch the bank.
-                let text_w = ui
-                    .fonts(|f| {
-                        f.layout_no_wrap(title.to_string(), title_font.clone(), title_color)
-                            .size()
-                            .x
-                    })
-                    .ceil();
+                // The galley is cached in egui temp data so the default
+                // (inactive) state does not allocate a String + galley every
+                // frame (PR#61 review; round-10 MEDIUM-7).
+                let galley_id = ui
+                    .id()
+                    .with(("adsr_bank_title", title, title_color));
+                let galley = ui
+                    .ctx()
+                    .data_mut(|d| d.get_temp::<std::sync::Arc<nih_plug_egui::egui::Galley>>(galley_id));
+                let galley = match galley {
+                    Some(g) => g,
+                    None => {
+                        let g = ui.fonts(|f| {
+                            f.layout_no_wrap(title.to_string(), title_font.clone(), title_color)
+                        });
+                        ui.ctx().data_mut(|d| d.insert_temp(galley_id, g.clone()));
+                        g
+                    }
+                };
                 let (title_rect, _) = ui.allocate_exact_size(
-                    vec2(text_w, 11.0),
+                    vec2(galley.size().x.ceil(), 11.0),
                     nih_plug_egui::egui::Sense::hover(),
                 );
                 let mut p = ui.painter().clone();
                 p.set_fade_to_color(None);
-                p.text(
-                    title_rect.left_center(),
-                    nih_plug_egui::egui::Align2::LEFT_CENTER,
-                    title,
-                    title_font,
-                    title_color,
-                );
+                p.galley(title_rect.left_center(), galley, title_color);
             }
             ui.add_space(1.0);
             ui.horizontal(|ui| {
