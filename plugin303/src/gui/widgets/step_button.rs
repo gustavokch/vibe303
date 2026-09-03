@@ -66,10 +66,10 @@ pub fn render_step_strip(
             ui.painter()
                 .rect_filled(strip_rect, CornerRadius::same(2), column_bg);
         }
-        // 1. Playhead LED bar (4.0px flat bar at top — uniform across steps;
+        // 1. Step LED strip (4.0px flat bar at top — uniform across steps;
         // the playhead mark is the column outline, not this bar)
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, LED_H), Sense::hover());
-        let _ = led_resp.on_hover_text("Playhead position indicator");
+        let _ = led_resp.on_hover_text("Step LED strip");
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             p.rect_filled(led_rect, CornerRadius::same(1), theme::WELL_BG);
