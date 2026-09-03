@@ -69,8 +69,17 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
         }
 
         if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
             let is_enabled = ui.is_enabled();
+            // Disabled faders paint with the explicit muted palette below, so
+            // clear egui's fade-to-background on a painter clone — otherwise
+            // the fade compounds on the muted tokens (round-13 issue 6).
+            let painter = if is_enabled {
+                ui.painter().clone()
+            } else {
+                let mut p = ui.painter().clone();
+                p.set_fade_to_color(None);
+                p
+            };
             let accent = if is_enabled {
                 self.accent_color
             } else {

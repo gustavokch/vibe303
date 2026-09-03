@@ -59,21 +59,31 @@ pub fn render_generator_panel(
                             .color(theme::ACCENT_ORANGE),
                     );
 
-                    let right_group_w = 195.0;
+                    // Measure the NEW SEED button (cached galley + padding +
+                    // stroke) so the spacer lands it flush right even if the
+                    // label or font changes (PR#61 review).
+                    let galley_id = ui.id().with("new_seed_btn_galley");
+                    let galley = ui.ctx().data_mut(|d| {
+                        d.get_temp::<std::sync::Arc<nih_plug_egui::egui::Galley>>(galley_id)
+                    });
+                    let galley = match galley {
+                        Some(g) => g,
+                        None => {
+                            let g = ui.fonts(|f| {
+                                f.layout_no_wrap(
+                                    "NEW SEED".to_string(),
+                                    FontId::proportional(8.5),
+                                    theme::TEXT_PRIMARY,
+                                )
+                            });
+                            ui.ctx().data_mut(|d| d.insert_temp(galley_id, g.clone()));
+                            g
+                        }
+                    };
+                    let right_group_w =
+                        galley.size().x.ceil() + 2.0 * ui.spacing().button_padding.x + 2.0;
                     let space_w = (ui.available_width() - right_group_w).max(0.0);
                     ui.add_space(space_w);
-
-                    // Seed Display Badge
-                    ui.label(
-                        nih_plug_egui::egui::RichText::new(format!(
-                            "GEN SEED: {:04}",
-                            gen_params.seed % 10000
-                        ))
-                        .font(FontId::monospace(8.5))
-                        .color(theme::TEXT_MUTED),
-                    );
-
-                    ui.add_space(6.0);
 
                     // New Seed Button
                     let new_seed_btn = Button::new(
@@ -356,6 +366,23 @@ pub fn render_generator_panel(
                                     .speed(0.01)
                                     .range(0.0..=1.0)
                                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                            );
+                        });
+
+                        ui.add_space(2.0);
+
+                        // Seed readout as a flush-left grid row so every band
+                        // in this region shares one left edge (round-13
+                        // issue 10).
+                        ui.horizontal(|ui| {
+                            grid_label(ui, "SEED:", G_LBL_W);
+                            ui.label(
+                                nih_plug_egui::egui::RichText::new(format!(
+                                    "{:04}",
+                                    gen_params.seed % 10000
+                                ))
+                                .font(FontId::monospace(8.5))
+                                .color(theme::TEXT_MUTED),
                             );
                         });
 

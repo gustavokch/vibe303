@@ -107,25 +107,35 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                     ui.add_space(3.0);
 
-                    // Row 1: Selectors & Mode Toggles
+                    // Row 1: Selectors & Mode Toggles — stretched across the
+                    // full band so no dead run remains beside the switches
+                    // (round-13 issue 5). Split matches option count: 3 slots
+                    // for VCF TAPS, 2 for VCA ENV.
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(10.0, 0.0);
+                        let total_w = ui.available_width();
+                        let taps_w = (total_w * 0.6 - 5.0).max(160.0);
+                        let vca_w = (total_w * 0.4 - 5.0).max(90.0);
 
-                        ui.add(SlideSwitch::new(
-                            &params.vcf_taps,
-                            setter,
-                            "VCF TAPS",
-                            &["2-POLE", "3-POLE", "4-POLE"],
-                        ));
+                        ui.add(
+                            SlideSwitch::new(
+                                &params.vcf_taps,
+                                setter,
+                                "VCF TAPS",
+                                &["2-POLE", "3-POLE", "4-POLE"],
+                            )
+                            .with_width(taps_w),
+                        );
 
-                        ui.add_space(8.0);
-
-                        ui.add(SlideSwitch::new(
-                            &params.vca_env_mode,
-                            setter,
-                            "VCA ENV",
-                            &["GATE", "ENV"],
-                        ));
+                        ui.add(
+                            SlideSwitch::new(
+                                &params.vca_env_mode,
+                                setter,
+                                "VCA ENV",
+                                &["GATE", "ENV"],
+                            )
+                            .with_width(vca_w),
+                        );
                     });
 
                     ui.add_space(2.0);

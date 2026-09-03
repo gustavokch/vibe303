@@ -13,6 +13,12 @@ use crate::params::Plugin303Params;
 pub const GUI_WIDTH: u32 = 1366;
 pub const GUI_HEIGHT: u32 = 960;
 
+/// Uniform inter-panel gutter in logical px. Every gap in the central panel
+/// stack is an explicit `add_space(PANEL_GAP)` with the automatic
+/// `item_spacing.y` zeroed, so all six gutters measure identically
+/// (round-13 issue 11).
+pub(crate) const PANEL_GAP: f32 = 4.0;
+
 pub fn create_editor(
     params: Arc<Plugin303Params>,
     editor_state: Arc<EguiState>,
@@ -50,28 +56,32 @@ pub fn create_editor(
                 )
                 .show(egui_ctx, |ui| {
                     ui.set_min_height(600.0);
+                    // Zero the automatic widget spacing: the gutters below are
+                    // explicit PANEL_GAP spacers only (round-13 issue 11).
+                    ui.spacing_mut().item_spacing.y = 0.0;
                     let mut gen_params = gen_params_state.lock().unwrap();
 
                     // 1. Header Bar
                     panels::header_bar::render_header(ui, &params, setter);
-                    ui.add_space(0.5);
+                    ui.add_space(PANEL_GAP);
 
                     // 2. Classic 303 Control Panel (includes integrated WAVE selector)
                     panels::top_controls::render_top_controls(ui, &params, setter);
-                    ui.add_space(0.5);
+                    ui.add_space(PANEL_GAP);
 
                     // 3. Souped-Up Engine Drawer Panel
                     panels::souped_panel::render_souped_panel(ui, &params, setter);
-                    ui.add_space(0.5);
+                    ui.add_space(PANEL_GAP);
 
                     // 4. Output Clipper + Tweaks Panel
                     // Clipper and tweaks stacked vertically to fill height and eliminate dead band
                     ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
                         panels::output_clipper::render_output_clipper(ui, &params, setter);
-                        ui.add_space(3.0);
+                        ui.add_space(PANEL_GAP);
                         panels::tweaks_panel::render_tweaks_panel(ui, &params, setter);
                     });
-                    ui.add_space(0.5);
+                    ui.add_space(PANEL_GAP);
 
                     // 5. Bottom Sequencer Grid & Transport Column
                     panels::sequencer_panel::render_sequencer_and_transport(

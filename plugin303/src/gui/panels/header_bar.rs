@@ -126,12 +126,28 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                                         .color(theme::TEXT_SECONDARY),
                                 );
                                 ComboBox::from_id_salt("header_zoom_selector")
-                                    .selected_text(zoom_label)
+                                    // Header caption class (8.5 pt) for the
+                                    // button text and popup items (round-13
+                                    // issue 8).
+                                    .selected_text(
+                                        nih_plug_egui::egui::RichText::new(zoom_label)
+                                            .font(FontId::new(8.5, FontFamily::Proportional)),
+                                    )
                                     .width(54.0)
                                     .show_ui(ui, |ui| {
                                         for &(preset, label) in &ZOOM_PRESETS {
                                             let is_selected = (current_zoom - preset).abs() < 0.01;
-                                            if ui.selectable_label(is_selected, label).clicked() {
+                                            if ui
+                                                .selectable_label(
+                                                    is_selected,
+                                                    nih_plug_egui::egui::RichText::new(label)
+                                                        .font(FontId::new(
+                                                            8.5,
+                                                            FontFamily::Proportional,
+                                                        )),
+                                                )
+                                                .clicked()
+                                            {
                                                 ui.ctx().set_zoom_factor(preset);
                                             }
                                         }
