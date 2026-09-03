@@ -27,11 +27,11 @@ const KNOB_TOP: f32 = 22.0;
 
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
-    let label_color = if is_accurate {
-        theme::TEXT_MUTED
-    } else {
-        theme::TEXT_SECONDARY
-    };
+    // One dimming mechanism only (round-14 issue 3): `add_enabled_ui` below
+    // already fades the whole panel toward the background when the souped
+    // engine is bypassed. Pre-selecting a muted token here dimmed twice and
+    // landed at 2.32:1 — under the 3:1 floor. TEXT_SECONDARY fades to ≈3.5:1.
+    let label_color = theme::TEXT_SECONDARY;
 
     Frame::new()
         .fill(theme::PANEL_BG)
@@ -48,7 +48,10 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .font(FontId::proportional(10.0))
                             .strong()
                             .color(if is_accurate {
-                                theme::TEXT_MUTED
+                                // Faded ACCENT_ORANGE measures ≈2.5:1; the
+                                // secondary token survives the fade at ≈3.5:1
+                                // (round-14 issue 3).
+                                theme::TEXT_SECONDARY
                             } else {
                                 theme::ACCENT_ORANGE
                             }),
@@ -101,13 +104,21 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 );
                                                 let tol = params.tolerance.value();
                                                 ComboBox::from_id_salt("tweaks_tolerance_combo")
-                                                    .selected_text(match tol {
-                                                        CompTolerance::Zero => "0%",
-                                                        CompTolerance::PointFive => "0.5%",
-                                                        CompTolerance::Two => "2%",
-                                                        CompTolerance::Five => "5%",
-                                                        CompTolerance::Ten => "10%",
-                                                    })
+                                                    // Caption class (8.5 pt),
+                                                    // like the labels beside it
+                                                    // (round-14 issue 5).
+                                                    .selected_text(
+                                                        nih_plug_egui::egui::RichText::new(
+                                                            match tol {
+                                                                CompTolerance::Zero => "0%",
+                                                                CompTolerance::PointFive => "0.5%",
+                                                                CompTolerance::Two => "2%",
+                                                                CompTolerance::Five => "5%",
+                                                                CompTolerance::Ten => "10%",
+                                                            },
+                                                        )
+                                                        .font(FontId::proportional(8.5)),
+                                                    )
                                                     .width(52.0)
                                                     .show_ui(ui, |ui| {
                                                         for (variant, label) in [
@@ -118,7 +129,11 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                             (CompTolerance::Ten, "10% (Wild)"),
                                                         ] {
                                                             if ui
-                                                                .selectable_label(tol == variant, label)
+                                                                .selectable_label(
+                                                                    tol == variant,
+                                                                    nih_plug_egui::egui::RichText::new(label)
+                                                                        .font(FontId::proportional(8.5)),
+                                                                )
                                                                 .clicked()
                                                             {
                                                                 setter.begin_set_parameter(
@@ -328,6 +343,10 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 .font(FontId::proportional(7.5))
                                                 .color(if needs_rebuild {
                                                     theme::ACCENT_ORANGE
+                                                } else if is_accurate {
+                                                    // Muted + egui's fade lands
+                                                    // at 2.3:1 (round-14 issue 3).
+                                                    theme::TEXT_SECONDARY
                                                 } else {
                                                     theme::TEXT_MUTED
                                                 }),
