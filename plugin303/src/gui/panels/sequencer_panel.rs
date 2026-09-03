@@ -45,6 +45,10 @@ const GRID_TOTAL_H: f32 = 2.0 * STRIP_HEIGHT + GRID_GAP;
 const TRANSPORT_TITLE_H: f32 = 13.0;
 /// Number of transport rows sharing the column's vertical extent.
 const TRANSPORT_ROW_COUNT: f32 = 5.0;
+/// Vertical gap between the transport title and each transport row. Used by
+/// both `item_spacing` and `transport_row_height` so the stretch math always
+/// matches the painted spacing (PR#61 review).
+const TRANSPORT_ROW_GAP: f32 = 6.0;
 /// Minimum transport row height; below this the rows would look cramped.
 const TRANSPORT_ROW_MIN_H: f32 = 24.0;
 /// Half of the transport column's inner width: every transport row is laid out
@@ -72,6 +76,15 @@ const JIT_HIT_W: f32 = 52.0;
 /// Compute the adaptive minimum height for the sequencer frame.
 fn frame_min_height(avail_h: f32) -> f32 {
     (avail_h - FRAME_VERT_CHROME_PX).max(GRID_TOTAL_H + 16.0)
+}
+
+/// Stretched height of each transport row: the five rows, the title and the
+/// gaps between them fill the column exactly, leaving no dead band below the
+/// last row (round-13 issue 4).
+fn transport_row_height(avail_h: f32) -> f32 {
+    ((avail_h - TRANSPORT_TITLE_H - TRANSPORT_ROW_COUNT * TRANSPORT_ROW_GAP)
+        / TRANSPORT_ROW_COUNT)
+        .max(TRANSPORT_ROW_MIN_H)
 }
 
 /// Snap a dragged BPM value to a whole number so the `{:.0}` display always
@@ -170,19 +183,15 @@ pub fn render_sequencer_and_transport(
                 // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing = vec2(3.0, 6.0);
+                    ui.spacing_mut().item_spacing = vec2(3.0, TRANSPORT_ROW_GAP);
                     ui.spacing_mut().button_padding = vec2(3.0, 1.0);
 
                     // Stretch the five transport rows across the column's full
                     // height so no dead band remains below the last row
                     // (round-13 issue 4). The frame's min height reaches the
                     // window bottom, so available_height is the whole column.
-                    // Five rows plus five 6-px gaps (title→A … C→D) share it.
-                    let row_h = ((ui.available_height()
-                        - TRANSPORT_TITLE_H
-                        - TRANSPORT_ROW_COUNT * 6.0)
-                        / TRANSPORT_ROW_COUNT)
-                        .max(TRANSPORT_ROW_MIN_H);
+                    // Five rows plus five gaps (title→A … C→D) share it.
+                    let row_h = transport_row_height(ui.available_height());
 
                     ui.label(
                         nih_plug_egui::egui::RichText::new("TRANSPORT & PATTERN")
@@ -680,6 +689,19 @@ mod tests {
     fn transport_slots_fill_column_width() {
         // The two-slot grid spans the full transport column: slot + gap + slot.
         assert_eq!(TRANSPORT_SLOT_W * 2.0 + 4.0, TRANSPORT_COLUMN_W);
+    }
+
+    #[test]
+    fn transport_row_height_fills_column_and_clamps() {
+        // Title + rows + gaps consume the column exactly (no dead band).
+        let avail = 268.0;
+        let row_h = transport_row_height(avail);
+        let total = TRANSPORT_TITLE_H
+            + TRANSPORT_ROW_COUNT * row_h
+            + TRANSPORT_ROW_COUNT * TRANSPORT_ROW_GAP;
+        assert!((total - avail).abs() < 1e-4);
+        // Tiny heights clamp to the minimum row height instead of going negative.
+        assert_eq!(transport_row_height(0.0), TRANSPORT_ROW_MIN_H);
     }
 
     #[test]
