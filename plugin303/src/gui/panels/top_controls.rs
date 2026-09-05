@@ -54,8 +54,12 @@ fn render_adsr_bank(
             // here is the whole frame row and would stretch the bank.
             // The galley is cached in egui temp data so neither state
             // allocates a String + galley every frame (PR#61 review;
-            // round-10 MEDIUM-7).
-            let galley_id = ui.id().with(("adsr_bank_title", title));
+            // round-10 MEDIUM-7). `title_color` must be part of the key:
+            // `layout_no_wrap` bakes the color into the galley mesh, so a
+            // bank toggling active↔inactive would otherwise repaint the
+            // previous state's color (PR#64 review). Color has no metrics
+            // impact — frame height stays identical in both states.
+            let galley_id = ui.id().with(("adsr_bank_title", title, title_color));
             let galley = ui
                 .ctx()
                 .data_mut(|d| d.get_temp::<std::sync::Arc<nih_plug_egui::egui::Galley>>(galley_id));
