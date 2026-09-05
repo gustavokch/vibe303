@@ -447,8 +447,15 @@ impl Default for Plugin303Params {
             .unwrap_or(false);
         let (default_tuning, default_cutoff) = if qa_knobs { (25.0, 0.75) } else { (0.0, 0.5) };
 
+        let default_tier = match std::env::var("VIBE303_QA_STATE").as_deref() {
+            Ok("quality_high") => Tier::High,
+            Ok("quality_ultra") => Tier::Ultra,
+            Ok("quality_ultra2x") => Tier::Ultra2x,
+            _ => Tier::Low,
+        };
+
         Self {
-            tier: EnumParam::new("Tier", Tier::Low),
+            tier: EnumParam::new("Tier", default_tier),
             topology: EnumParam::new("Circuit Topology", default_topology),
 
             tuning: FloatParam::new(
