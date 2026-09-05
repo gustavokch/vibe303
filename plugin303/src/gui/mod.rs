@@ -52,15 +52,19 @@ pub fn create_editor(
         crate::dsp::generator::GeneratorParams::default()
     };
     let gen_params_state = Arc::new(std::sync::Mutex::new(gen_params));
+    // Read once at editor creation: the closure below runs every frame, and a
+    // per-frame `env::var` is a syscall + alloc at repaint rate.
+    let qa_zoom = matches!(
+        std::env::var("VIBE303_QA_STATE").as_deref(),
+        Ok("zoom75")
+    );
 
     create_egui_editor(
         editor_state,
         (),
-        |egui_ctx, _| {
-            if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-                if s == "zoom75" {
-                    egui_ctx.set_zoom_factor(0.75);
-                }
+        move |egui_ctx, _| {
+            if qa_zoom {
+                egui_ctx.set_zoom_factor(0.75);
             }
             egui_ctx.send_viewport_cmd(nih_plug_egui::egui::ViewportCommand::Title(
                 "TECHNEO 303".into(),
