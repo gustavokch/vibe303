@@ -112,6 +112,13 @@ def generate_boundary_and_diff_crops(output_dir: Path, dims: dict):
         composite.save(output_dir / "crop_state_diff.png")
 
 
+# States captured at a non-default egui zoom factor render the UI scaled
+# inside the window, so the fixed 100%-zoom section coordinates do not apply
+# to them. Full screenshots are kept; per-section crops would land on the
+# wrong regions.
+ZOOM_SCALED_STATES = {"zoom75"}
+
+
 def process_all_states(qa_dir: Path):
     dims = parse_gui_dimensions()
     for stem in [
@@ -124,6 +131,8 @@ def process_all_states(qa_dir: Path):
         "generator",
         "zoom75",
     ]:
+        if stem in ZOOM_SCALED_STATES:
+            continue
         p = qa_dir / f"{stem}.png"
         if p.exists():
             process_image(p, qa_dir, dims)
