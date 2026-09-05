@@ -109,6 +109,12 @@ capture_single_state "running" "$OUTPUT_DIR/running.png"
 # Bipolar knob off detent + unipolar knob off default (round-13 issue 1
 # verification state).
 capture_single_state "knobs" "$OUTPUT_DIR/knobs.png"
+# Quality tier selection (High WDF-lite tier)
+capture_single_state "quality_high" "$OUTPUT_DIR/quality_high.png"
+# Generative sequence parameters modified
+capture_single_state "generator" "$OUTPUT_DIR/generator.png"
+# Scaling / Zoom state (75% zoom factor)
+capture_single_state "zoom75" "$OUTPUT_DIR/zoom75.png"
 
 echo "Extracting dynamic section crops, margins, and diff composites..."
 python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
@@ -119,6 +125,9 @@ REQUIRED_CROPS=(
     "advanced.png"
     "running.png"
     "knobs.png"
+    "quality_high.png"
+    "generator.png"
+    "zoom75.png"
     "crop_header.png"
     "crop_classic.png"
     "crop_souped.png"

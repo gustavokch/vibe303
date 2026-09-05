@@ -114,7 +114,16 @@ def generate_boundary_and_diff_crops(output_dir: Path, dims: dict):
 
 def process_all_states(qa_dir: Path):
     dims = parse_gui_dimensions()
-    for stem in ["latest", "accurate", "advanced", "running"]:
+    for stem in [
+        "latest",
+        "accurate",
+        "advanced",
+        "running",
+        "knobs",
+        "quality_high",
+        "generator",
+        "zoom75",
+    ]:
         p = qa_dir / f"{stem}.png"
         if p.exists():
             process_image(p, qa_dir, dims)
