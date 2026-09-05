@@ -7,6 +7,15 @@ use crate::params::{CircuitTopology, Plugin303Params};
 
 pub const SOUPED_INNER_HEIGHT: f32 = 131.0;
 
+/// Panel-gap hierarchy (round-17 issue 2). The central stack in
+/// `gui/mod.rs` separates the six top-level panels with uniform
+/// `PANEL_GAP` spacers (4 logical px = 8 physical). The gaps the QA
+/// `panels` probe reports *inside* this drawer (0 px above the toggles
+/// row, ~43 px above the knob row) are not inter-panel gutters: they
+/// are the drawer's own framed content — a title row + toggle strip +
+/// separator + knob strip inside one `Frame`. Sub-panel spacing is the
+/// `2.0` px separators below; do not insert `PANEL_GAP` here.
+///
 /// Height the shared panel title row consumes (10-pt label + the 3-px space
 /// under it) before either branch renders its content.
 const TITLE_ROW_H: f32 = 17.0;
@@ -212,7 +221,7 @@ mod tests {
         const MIN_CARD_W: f32 = 120.0;
         for total_w in [50.0_f32, 100.0, 200.0, 300.0, 600.0, 1346.0] {
             let card_w = 300.0_f32.min((total_w - 20.0).max(MIN_CARD_W));
-            assert!(card_w >= MIN_CARD_W && card_w <= 300.0);
+            assert!((MIN_CARD_W..=300.0).contains(&card_w));
         }
     }
 

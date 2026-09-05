@@ -36,52 +36,50 @@ fn render_adsr_bank(
     bank_frame.show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 3.0;
         ui.vertical(|ui| {
-            // Title. When the bank is inactive the parent Ui is disabled, so
-            // paint directly on a fade-cleared painter clone: ui.label would
-            // get egui's fade-to-background on top of the muted token
-            // (round-13 issue 6).
+            // Title. Both states share one allocation path keyed off the
+            // cached galley size, so the frame height is identical whether
+            // the bank is active or not (round-17 issue 1: 2 px shift came
+            // from ui.label padding in the active branch vs a fixed 11.0 px
+            // allocation in the inactive branch). When the bank is inactive
+            // the parent Ui is disabled, so paint directly on a fade-cleared
+            // painter clone: ui.label would get egui's fade-to-background on
+            // top of the muted token (round-13 issue 6).
             let title_color = if is_active {
                 theme::TEXT_PRIMARY
             } else {
                 theme::TEXT_SECONDARY
             };
             let title_font = FontId::new(8.5, nih_plug_egui::egui::FontFamily::Proportional);
+            // Allocate the measured title width only — `available_width`
+            // here is the whole frame row and would stretch the bank.
+            // The galley is cached in egui temp data so neither state
+            // allocates a String + galley every frame (PR#61 review;
+            // round-10 MEDIUM-7).
+            let galley_id = ui.id().with(("adsr_bank_title", title));
+            let galley = ui
+                .ctx()
+                .data_mut(|d| d.get_temp::<std::sync::Arc<nih_plug_egui::egui::Galley>>(galley_id));
+            let galley = match galley {
+                Some(g) => g,
+                None => {
+                    let g = ui.fonts(|f| {
+                        f.layout_no_wrap(title.to_string(), title_font.clone(), title_color)
+                    });
+                    ui.ctx().data_mut(|d| d.insert_temp(galley_id, g.clone()));
+                    g
+                }
+            };
+            let (title_rect, _) = ui.allocate_exact_size(
+                vec2(galley.size().x.ceil(), galley.size().y.ceil()),
+                nih_plug_egui::egui::Sense::hover(),
+            );
             if is_active {
-                ui.label(
-                    nih_plug_egui::egui::RichText::new(title)
-                        .font(title_font.clone())
-                        .strong()
-                        .color(title_color),
-                );
+                ui.painter()
+                    .galley(title_rect.left_top(), galley, title_color);
             } else {
-                // Allocate the measured title width only — `available_width`
-                // here is the whole frame row and would stretch the bank.
-                // The galley is cached in egui temp data so the default
-                // (inactive) state does not allocate a String + galley every
-                // frame (PR#61 review; round-10 MEDIUM-7).
-                let galley_id = ui
-                    .id()
-                    .with(("adsr_bank_title", title, title_color));
-                let galley = ui
-                    .ctx()
-                    .data_mut(|d| d.get_temp::<std::sync::Arc<nih_plug_egui::egui::Galley>>(galley_id));
-                let galley = match galley {
-                    Some(g) => g,
-                    None => {
-                        let g = ui.fonts(|f| {
-                            f.layout_no_wrap(title.to_string(), title_font.clone(), title_color)
-                        });
-                        ui.ctx().data_mut(|d| d.insert_temp(galley_id, g.clone()));
-                        g
-                    }
-                };
-                let (title_rect, _) = ui.allocate_exact_size(
-                    vec2(galley.size().x.ceil(), 11.0),
-                    nih_plug_egui::egui::Sense::hover(),
-                );
                 let mut p = ui.painter().clone();
                 p.set_fade_to_color(None);
-                p.galley(title_rect.left_center(), galley, title_color);
+                p.galley(title_rect.left_top(), galley, title_color);
             }
             ui.add_space(1.0);
             ui.horizontal(|ui| {

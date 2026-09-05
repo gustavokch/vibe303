@@ -73,6 +73,15 @@ const MIN_CELL_W: f32 = 72.0;
 /// the CLEAR button (PR#53 review).
 const JIT_HIT_W: f32 = 52.0;
 
+/// Panel-gap hierarchy (round-17 issue 2). The `panels` probe reports a 0 px
+/// gap above the transport row because the transport controls are not a
+/// separate framed panel: they are the right column of the same sequencer
+/// `Frame` as the step grid (GRID_GAP = 4 logical px separates grid rows and
+/// cells inside it). Top-level separation from the generator panel above is
+/// the uniform `PANEL_GAP` spacer at the top of
+/// `render_sequencer_and_transport`; do not add another spacer inside this
+/// frame.
+///
 /// Compute the adaptive minimum height for the sequencer frame.
 fn frame_min_height(avail_h: f32) -> f32 {
     (avail_h - FRAME_VERT_CHROME_PX).max(GRID_TOTAL_H + 16.0)
@@ -82,8 +91,7 @@ fn frame_min_height(avail_h: f32) -> f32 {
 /// gaps between them fill the column exactly, leaving no dead band below the
 /// last row (round-13 issue 4).
 fn transport_row_height(avail_h: f32) -> f32 {
-    ((avail_h - TRANSPORT_TITLE_H - TRANSPORT_ROW_COUNT * TRANSPORT_ROW_GAP)
-        / TRANSPORT_ROW_COUNT)
+    ((avail_h - TRANSPORT_TITLE_H - TRANSPORT_ROW_COUNT * TRANSPORT_ROW_GAP) / TRANSPORT_ROW_COUNT)
         .max(TRANSPORT_ROW_MIN_H)
 }
 
@@ -726,7 +734,7 @@ mod tests {
         // "JITTER" at 8 pt proportional is ~27 px wide; painted from a 15 px
         // offset. The hit rect must cover the full painted text plus margin so
         // no glyph pixels land on the CLEAR button's hit zone.
-        assert!(JIT_HIT_W >= 15.0 + 27.0 + 2.0);
+        const { assert!(JIT_HIT_W >= 15.0 + 27.0 + 2.0) };
     }
 
     #[test]
