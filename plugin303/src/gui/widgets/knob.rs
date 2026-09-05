@@ -66,7 +66,19 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
         }
 
         if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
+            let is_enabled = ui.is_enabled();
+            // Disabled knobs already pick muted tokens below. egui's
+            // fade-to-background would dim them a second time and drop the
+            // needle and value arc to 2.3:1, so clear the fade on a painter
+            // clone and let the tokens be the only dimming (round-14 issue 3,
+            // same treatment as MiniFader).
+            let painter = if is_enabled {
+                ui.painter().clone()
+            } else {
+                let mut p = ui.painter().clone();
+                p.set_fade_to_color(None);
+                p
+            };
             let is_hovered = response.hovered();
 
             // 1. Background disc (flat well)
@@ -107,7 +119,6 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             }
 
             // Radial Tick Marks (7 discrete ticks along the 270° sweep)
-            let is_enabled = ui.is_enabled();
             const NUM_TICKS: usize = 7;
             let tick_r_inner = self.radius - 1.0;
             let tick_r_outer = self.radius + 1.5;
@@ -148,6 +159,11 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             };
             let fill_span = fill_to - fill_from;
             if fill_span > 0.001 {
+                // Arc weight is proportional to the knob: a fixed 2.5 px read
+                // as a blob on the radius-11 tweaks knobs, and its end cap
+                // overhung the needle by ~5° — enough to trip the 4° arc /
+                // needle check (round-14 issue 6).
+                let arc_w = (self.radius * 0.105).clamp(1.0, 2.5);
                 let mut prev_active_pt = pos2(
                     center.x + (start_angle + fill_from * (end_angle - start_angle)).cos() * arc_r,
                     center.y + (start_angle + fill_from * (end_angle - start_angle)).sin() * arc_r,
@@ -156,7 +172,7 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
                     let t = i as f32 / ARC_SEGMENTS as f32;
                     let a = start_angle + (fill_from + t * fill_span) * (end_angle - start_angle);
                     let cur_pt = pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r);
-                    painter.line_segment([prev_active_pt, cur_pt], Stroke::new(2.5_f32, accent));
+                    painter.line_segment([prev_active_pt, cur_pt], Stroke::new(arc_w, accent));
                     prev_active_pt = cur_pt;
                 }
             }

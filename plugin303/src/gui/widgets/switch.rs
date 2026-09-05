@@ -1,10 +1,22 @@
 use nih_plug::prelude::{EnumParam, ParamSetter};
 use nih_plug_egui::egui::{
-    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke,
+    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Painter, Rect, Response, Sense, Stroke,
     StrokeKind, Ui, Widget,
 };
 
 use crate::gui::theme;
+
+/// Painter clone with egui's disabled fade removed.
+///
+/// Inside `add_enabled_ui(false, …)` the Ui's painter fades everything toward
+/// the window fill, which compounded on the explicitly muted tokens below and
+/// dropped the switch's own selection mark to the track colour (round-14
+/// issue 2). One dimming mechanism only: the tokens.
+fn fade_cleared_painter(ui: &Ui) -> Painter {
+    let mut painter = ui.painter().clone();
+    painter.set_fade_to_color(None);
+    painter
+}
 
 pub struct SlideSwitch<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> {
     param: &'a EnumParam<T>,
@@ -109,8 +121,8 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             }
 
             if ui.is_rect_visible(rect) {
-                let painter = ui.painter();
                 let is_enabled = ui.is_enabled();
+                let painter = fade_cleared_painter(ui);
                 let switch_accent = if is_enabled {
                     accent
                 } else {
@@ -145,15 +157,10 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     pos2(track_rect.left() + 1.0, thumb_y + 1.0),
                     vec2(track_rect.width() - 2.0, slot_height - 2.0),
                 );
-                painter.rect_filled(
-                    thumb_rect,
-                    CornerRadius::same(2),
-                    if is_enabled {
-                        theme::SURFACE_ELEVATED
-                    } else {
-                        theme::WELL_BG
-                    },
-                );
+                // The thumb keeps its elevated fill when disabled: it is the
+                // only mark that says which option is selected, and painting it
+                // in the track colour erased it (round-14 issue 2).
+                painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
                 painter.rect_stroke(
                     thumb_rect,
                     CornerRadius::same(2),
@@ -162,7 +169,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                         if is_enabled {
                             switch_accent
                         } else {
-                            theme::BORDER_SUBTLE
+                            theme::BORDER_FOCUS
                         },
                     ),
                     StrokeKind::Inside,
@@ -173,16 +180,16 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     let row_y = track_rect.top() + slot_height * i as f32;
                     let cy = row_y + slot_height * 0.5;
                     let is_selected = i == current_idx;
-                    let text_color = if !is_enabled {
-                        theme::TEXT_MUTED
-                    } else if is_selected {
-                        theme::TEXT_PRIMARY
+                    let text_color = if is_selected {
+                        if is_enabled {
+                            theme::TEXT_PRIMARY
+                        } else {
+                            theme::TEXT_SECONDARY
+                        }
                     } else {
                         theme::TEXT_MUTED
                     };
-                    let glyph_color = if !is_enabled {
-                        theme::TEXT_MUTED
-                    } else if is_selected {
+                    let glyph_color = if is_selected {
                         switch_accent
                     } else {
                         theme::TEXT_MUTED
@@ -295,8 +302,8 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
         }
 
         if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
             let is_enabled = ui.is_enabled();
+            let painter = fade_cleared_painter(ui);
             let switch_accent = if is_enabled {
                 accent
             } else {
@@ -331,15 +338,8 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 pos2(thumb_x + 1.0, track_rect.top() + 1.0),
                 vec2(slot_width - 2.0, track_rect.height() - 2.0),
             );
-            painter.rect_filled(
-                thumb_rect,
-                CornerRadius::same(2),
-                if is_enabled {
-                    theme::SURFACE_ELEVATED
-                } else {
-                    theme::WELL_BG
-                },
-            );
+            // The thumb keeps its elevated fill when disabled (round-14 issue 2).
+            painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
             painter.rect_stroke(
                 thumb_rect,
                 CornerRadius::same(2),
@@ -348,7 +348,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     if is_enabled {
                         switch_accent
                     } else {
-                        theme::BORDER_SUBTLE
+                        theme::BORDER_FOCUS
                     },
                 ),
                 StrokeKind::Inside,
@@ -358,10 +358,12 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             for (i, opt) in self.options.iter().enumerate() {
                 let opt_x = track_rect.left() + slot_width * (i as f32 + 0.5);
                 let is_selected = i == current_idx;
-                let text_color = if !is_enabled {
-                    theme::TEXT_MUTED
-                } else if is_selected {
-                    theme::TEXT_PRIMARY
+                let text_color = if is_selected {
+                    if is_enabled {
+                        theme::TEXT_PRIMARY
+                    } else {
+                        theme::TEXT_SECONDARY
+                    }
                 } else {
                     theme::TEXT_MUTED
                 };

@@ -513,16 +513,25 @@ pub fn render_sequencer_and_transport(
                                     let tb_val = params.seq_timebase.value();
                                     ComboBox::from_id_salt("seq_tb_combo")
                                         .icon(paint_combobox_down_arrow)
-                                        .selected_text(match tb_val {
-                                            crate::params::Timebase::Straight => "16th",
-                                            crate::params::Timebase::Triplet => "12th",
-                                        })
+                                        // Caption class (8.5 pt) like every
+                                        // button in this row; the default
+                                        // button style rendered these glyphs
+                                        // at h=19 next to h=11 captions
+                                        // (round-14 issue 5).
+                                        .selected_text(
+                                            nih_plug_egui::egui::RichText::new(match tb_val {
+                                                crate::params::Timebase::Straight => "16th",
+                                                crate::params::Timebase::Triplet => "12th",
+                                            })
+                                            .font(FontId::proportional(8.5)),
+                                        )
                                         .width(48.0)
                                         .show_ui(ui, |ui| {
                                             if ui
                                                 .selectable_label(
                                                     tb_val == crate::params::Timebase::Straight,
-                                                    "16th",
+                                                    nih_plug_egui::egui::RichText::new("16th")
+                                                        .font(FontId::proportional(8.5)),
                                                 )
                                                 .clicked()
                                             {
@@ -536,7 +545,8 @@ pub fn render_sequencer_and_transport(
                                             if ui
                                                 .selectable_label(
                                                     tb_val == crate::params::Timebase::Triplet,
-                                                    "12th",
+                                                    nih_plug_egui::egui::RichText::new("12th")
+                                                        .font(FontId::proportional(8.5)),
                                                 )
                                                 .clicked()
                                             {
@@ -552,19 +562,25 @@ pub fn render_sequencer_and_transport(
                                     let mode_val = params.seq_mode.value();
                                     ComboBox::from_id_salt("seq_mode_combo")
                                         .icon(paint_combobox_down_arrow)
-                                        .selected_text(match mode_val {
-                                            crate::params::SequencerMode::DirectGrid => "Direct",
-                                            crate::params::SequencerMode::DecoupledHardware => {
-                                                "Decoupled"
-                                            }
-                                        })
+                                        .selected_text(
+                                            nih_plug_egui::egui::RichText::new(match mode_val {
+                                                crate::params::SequencerMode::DirectGrid => {
+                                                    "Direct"
+                                                }
+                                                crate::params::SequencerMode::DecoupledHardware => {
+                                                    "Decoupled"
+                                                }
+                                            })
+                                            .font(FontId::proportional(8.5)),
+                                        )
                                         .width(80.0)
                                         .show_ui(ui, |ui| {
                                             if ui
                                                 .selectable_label(
                                                     mode_val
                                                         == crate::params::SequencerMode::DirectGrid,
-                                                    "Direct",
+                                                    nih_plug_egui::egui::RichText::new("Direct")
+                                                        .font(FontId::proportional(8.5)),
                                                 )
                                                 .clicked()
                                             {
@@ -579,7 +595,8 @@ pub fn render_sequencer_and_transport(
                                                 .selectable_label(
                                                     mode_val
                                                         == crate::params::SequencerMode::DecoupledHardware,
-                                                    "Decoupled",
+                                                    nih_plug_egui::egui::RichText::new("Decoupled")
+                                                        .font(FontId::proportional(8.5)),
                                                 )
                                                 .clicked()
                                             {
