@@ -24,32 +24,27 @@ pub fn create_editor(
     editor_state: Arc<EguiState>,
     current_playing_step: Arc<AtomicU8>,
 ) -> Option<Box<dyn Editor>> {
-    let gen_params = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-        if s == "generator" {
-            crate::dsp::generator::GeneratorParams {
-                root_note: 3, // D#
-                scale: crate::dsp::generator::MusicalScale::Phrygian,
-                octave_min: 0,
-                octave_max: 1,
-                rhythm_pulses: 7,
-                rhythm_length: 12,
-                rhythm_shift: 3,
-                pitch_length: 9,
-                rest_probability: 0.15,
-                accent_probability: 0.45,
-                slide_probability: 0.35,
-                octave_up_prob: 0.3,
-                octave_down_prob: 0.2,
-                accent_pitch_bias: 0.7,
-                slide_chaining: true,
-                mutation_rate: 0.25,
-                seed: 1337,
-            }
-        } else {
-            crate::dsp::generator::GeneratorParams::default()
-        }
-    } else {
-        crate::dsp::generator::GeneratorParams::default()
+    let gen_params = match std::env::var("VIBE303_QA_STATE").as_deref() {
+        Ok("generator") => crate::dsp::generator::GeneratorParams {
+            root_note: 3, // D#
+            scale: crate::dsp::generator::MusicalScale::Phrygian,
+            octave_min: 0,
+            octave_max: 1,
+            rhythm_pulses: 7,
+            rhythm_length: 12,
+            rhythm_shift: 3,
+            pitch_length: 9,
+            rest_probability: 0.15,
+            accent_probability: 0.45,
+            slide_probability: 0.35,
+            octave_up_prob: 0.3,
+            octave_down_prob: 0.2,
+            accent_pitch_bias: 0.7,
+            slide_chaining: true,
+            mutation_rate: 0.25,
+            seed: 1337,
+        },
+        _ => crate::dsp::generator::GeneratorParams::default(),
     };
     let gen_params_state = Arc::new(std::sync::Mutex::new(gen_params));
     // Read once at editor creation: the closure below runs every frame, and a

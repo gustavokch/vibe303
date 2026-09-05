@@ -447,15 +447,11 @@ impl Default for Plugin303Params {
             .unwrap_or(false);
         let (default_tuning, default_cutoff) = if qa_knobs { (25.0, 0.75) } else { (0.0, 0.5) };
 
-        let default_tier = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-            match s.as_str() {
-                "quality_high" => Tier::High,
-                "quality_ultra" => Tier::Ultra,
-                "quality_ultra2x" => Tier::Ultra2x,
-                _ => Tier::Low,
-            }
-        } else {
-            Tier::Low
+        let default_tier = match std::env::var("VIBE303_QA_STATE").as_deref() {
+            Ok("quality_high") => Tier::High,
+            Ok("quality_ultra") => Tier::Ultra,
+            Ok("quality_ultra2x") => Tier::Ultra2x,
+            _ => Tier::Low,
         };
 
         Self {
