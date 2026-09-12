@@ -96,6 +96,9 @@ SURFACE_TOKENS = {
     "BORDER_SUBTLE",
     "BORDER_FOCUS",
     "ACCENT_SLATE",
+    # Partial-coverage antialiased edge blend of the NOTE gate pill
+    # (theme::GATE_NOTE_INACTIVE_EDGE): a fill, not foreground text.
+    "GATE_NOTE_INACTIVE_EDGE",
 }
 
 
@@ -975,7 +978,11 @@ def cmd_report(args):
     images = sorted(
         os.path.join(directory, f)
         for f in os.listdir(directory)
-        if f.endswith(".png") and "_" not in f
+        if f.endswith(".png")
+        and not f.startswith("crop_")
+        and not f.startswith("zone_")
+        and "_crop_" not in f
+        and "_zone_" not in f
     )
     if not images:
         print(f"no top-level capture PNGs in {directory}", file=sys.stderr)

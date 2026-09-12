@@ -49,10 +49,7 @@ pub fn create_editor(
     let gen_params_state = Arc::new(std::sync::Mutex::new(gen_params));
     // Read once at editor creation: the closure below runs every frame, and a
     // per-frame `env::var` is a syscall + alloc at repaint rate.
-    let qa_zoom = matches!(
-        std::env::var("VIBE303_QA_STATE").as_deref(),
-        Ok("zoom75")
-    );
+    let qa_zoom = matches!(std::env::var("VIBE303_QA_STATE").as_deref(), Ok("zoom75"));
 
     create_egui_editor(
         editor_state,

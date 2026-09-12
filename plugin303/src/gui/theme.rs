@@ -41,6 +41,15 @@ pub const GATE_NOTE_COLOR: Color32 = ACCENT_CYAN;
 pub const GATE_TIE_COLOR: Color32 = ACCENT_GOLD;
 pub const GATE_REST_COLOR: Color32 = ACCENT_SLATE;
 
+/// Inactive NOTE cell fill (round-17 issue 3). The NOTE gate pill paints a
+/// `SURFACE_ELEVATED` thumb on an `ACCENT_CYAN` fill in the active state;
+/// when the parent Ui is disabled the pill keeps the cyan fill on a
+/// fade-cleared painter (one dimming mechanism only, round-13 issue 6), and
+/// antialiased edge pixels sample part-cyan. The probe's `#06777F` sample is
+/// that partial-coverage edge blend, not a separate unregistered paint — this
+/// token names it so the QA script snaps it instead of flagging it.
+pub const GATE_NOTE_INACTIVE_EDGE: Color32 = Color32::from_rgb(0x06, 0x77, 0x7F);
+
 pub const KNOB_BODY_LIGHT: Color32 = SURFACE_ELEVATED;
 pub const KNOB_BODY_DARK: Color32 = WELL_BG;
 pub const KNOB_BEZEL: Color32 = BORDER_DEFAULT;
