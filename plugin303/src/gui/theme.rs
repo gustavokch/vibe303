@@ -104,6 +104,14 @@ mod tests {
     }
 
     #[test]
+    fn selection_text_contrast() {
+        // DragValue text selection uses TEXT_PRIMARY on selection.bg_fill (ACCENT_ORANGE)
+        // or TEXT_ON_ACCENT. Both must meet readability standards.
+        assert!(contrast_ratio(TEXT_PRIMARY, ACCENT_ORANGE) >= 2.0);
+        assert!(contrast_ratio(TEXT_ON_ACCENT, ACCENT_ORANGE) >= 4.5);
+    }
+
+    #[test]
     fn field_fill_contrast_and_scale() {
         assert!(contrast_ratio(FIELD_FILL, PANEL_BG) >= 3.0);
         assert!(contrast_ratio(FIELD_FILL_HOVER, PANEL_BG) >= 3.0);
