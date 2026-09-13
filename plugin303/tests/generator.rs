@@ -56,7 +56,10 @@ fn test_generator_determinism() {
     let pat1 = AcidGenerator::generate(&params);
     let pat2 = AcidGenerator::generate(&params);
 
-    assert_eq!(pat1, pat2, "Generator must be 100% deterministic for identical params & seed");
+    assert_eq!(
+        pat1, pat2,
+        "Generator must be 100% deterministic for identical params & seed"
+    );
 }
 
 #[test]
@@ -98,9 +101,12 @@ fn test_scale_quantization_and_octave_bounds() {
                     note_key, scale, params.root_note
                 );
                 assert!(
-                    pat.pitches[i].octave >= params.octave_min && pat.pitches[i].octave <= params.octave_max,
+                    pat.pitches[i].octave >= params.octave_min
+                        && pat.pitches[i].octave <= params.octave_max,
                     "Octave {} out of bounds [{}, {}]",
-                    pat.pitches[i].octave, params.octave_min, params.octave_max
+                    pat.pitches[i].octave,
+                    params.octave_min,
+                    params.octave_max
                 );
             }
         }
@@ -175,7 +181,10 @@ fn test_mutation_determinism_and_zero_rate() {
 
     // With mutation_rate 0.0, no change
     AcidGenerator::mutate(&mut mutated, &params, 1);
-    assert_eq!(original, mutated, "Mutation with rate 0.0 must leave pattern unchanged");
+    assert_eq!(
+        original, mutated,
+        "Mutation with rate 0.0 must leave pattern unchanged"
+    );
 
     // With active mutation, deterministic output for same loop count
     let mut mut_params = params.clone();
@@ -186,7 +195,10 @@ fn test_mutation_determinism_and_zero_rate() {
     AcidGenerator::mutate(&mut m1, &mut_params, 42);
     AcidGenerator::mutate(&mut m2, &mut_params, 42);
 
-    assert_eq!(m1, m2, "Mutate must be deterministic for identical loop seed");
+    assert_eq!(
+        m1, m2,
+        "Mutate must be deterministic for identical loop seed"
+    );
     assert_ne!(original, m1, "Mutation with 0.5 rate must change pattern");
 }
 
@@ -219,8 +231,14 @@ fn test_sequencer_generative_pattern_playback() {
         false,
     );
 
-    assert!(count > 0, "Sequencer must generate sequence events from generative pattern");
-    assert!(seq.loop_count > 0, "Sequencer loop count must increment upon wrapping step 0");
+    assert!(
+        count > 0,
+        "Sequencer must generate sequence events from generative pattern"
+    );
+    assert!(
+        seq.loop_count > 0,
+        "Sequencer loop count must increment upon wrapping step 0"
+    );
 }
 
 #[test]
@@ -264,7 +282,10 @@ fn test_sequencer_loop_wrap_mutates_before_step_zero_playback() {
         false,
     );
 
-    assert_eq!(pat, pat_initial, "Pattern should not mutate before loop wrap");
+    assert_eq!(
+        pat, pat_initial,
+        "Pattern should not mutate before loop wrap"
+    );
 
     // Process block crossing step 15 and wrapping to step 0 of loop 1 (samples 90000..102000)
     seq.process_block_mutating(
@@ -279,7 +300,8 @@ fn test_sequencer_loop_wrap_mutates_before_step_zero_playback() {
         false,
     );
 
-    assert_ne!(pat, pat_initial, "Pattern should be mutated when loop count increments at step 0 boundary");
+    assert_ne!(
+        pat, pat_initial,
+        "Pattern should be mutated when loop count increments at step 0 boundary"
+    );
 }
-
-

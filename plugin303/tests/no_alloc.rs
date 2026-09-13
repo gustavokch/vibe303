@@ -336,21 +336,41 @@ fn analog_character_param_sweep_is_alloc_free() {
     voice.set_tier_immediate(Tier::Ultra);
     voice.note_on(60);
     voice.update_params(
-        0.0, 0.0, 0.0, 0.0, plugin303::params::OscWave::Saw,
-        0.5, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0,
-        plugin303::params::VcfTaps::FourPole, 0.0, false,
-        3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
-        plugin303::params::VcaEnvMode::Envelope,
-        0,                                     // comp_age
-        0.0,                                   // comp_drift
-        plugin303::params::CompTolerance::Five,// tolerance
-        0,                                     // thermal_noise
-        plugin303::params::CircuitTopology::Accurate,
         0.0,
-        1337,                                  // comp_seed
+        0.0,
+        0.0,
+        0.0,
+        plugin303::params::OscWave::Saw,
         0.5,
         0.0,
-        1.0,                                   // recalibration_scale
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.0,
+        plugin303::params::VcfTaps::FourPole,
+        0.0,
+        false,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        plugin303::params::VcaEnvMode::Envelope,
+        0,                                      // comp_age
+        0.0,                                    // comp_drift
+        plugin303::params::CompTolerance::Five, // tolerance
+        0,                                      // thermal_noise
+        plugin303::params::CircuitTopology::Accurate,
+        0.0,
+        1337, // comp_seed
+        0.5,
+        0.0,
+        1.0, // recalibration_scale
     );
     for _ in 0..128 {
         voice.tick();
@@ -360,21 +380,41 @@ fn analog_character_param_sweep_is_alloc_free() {
         let mut acc = 0.0f32;
         for i in 0..1_024 {
             voice.update_params(
-                0.0, 0.0, 0.0, 0.0, plugin303::params::OscWave::Saw,
-                0.5, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0,
-                plugin303::params::VcfTaps::FourPole, 0.0, false,
-                3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
-                plugin303::params::VcaEnvMode::Envelope,
-                0,                                    // comp_age (fixed during RT sweep)
-                (i as f32 * 0.001) % 1.0,             // comp_drift (real-time sweep)
-                plugin303::params::CompTolerance::Five,// tolerance (fixed during RT sweep)
-                (i % 50) as i32,                      // thermal_noise (real-time sweep)
-                plugin303::params::CircuitTopology::Accurate,
                 0.0,
-                1337,                                 // comp_seed (fixed during RT sweep)
+                0.0,
+                0.0,
+                0.0,
+                plugin303::params::OscWave::Saw,
                 0.5,
                 0.0,
-                1.0,                                  // recalibration_scale (fixed during RT sweep)
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.0,
+                plugin303::params::VcfTaps::FourPole,
+                0.0,
+                false,
+                3.0,
+                200.0,
+                0.0,
+                200.0,
+                3.0,
+                200.0,
+                0.0,
+                200.0,
+                plugin303::params::VcaEnvMode::Envelope,
+                0,                                      // comp_age (fixed during RT sweep)
+                (i as f32 * 0.001) % 1.0,               // comp_drift (real-time sweep)
+                plugin303::params::CompTolerance::Five, // tolerance (fixed during RT sweep)
+                (i % 50) as i32,                        // thermal_noise (real-time sweep)
+                plugin303::params::CircuitTopology::Accurate,
+                0.0,
+                1337, // comp_seed (fixed during RT sweep)
+                0.5,
+                0.0,
+                1.0, // recalibration_scale (fixed during RT sweep)
             );
             acc += voice.tick();
         }

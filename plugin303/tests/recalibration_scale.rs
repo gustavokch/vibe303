@@ -29,7 +29,10 @@ fn test_extreme_wear_boundary_fallback() {
     vco.recalculate_luts_sync_with_recal(100, 0.10, 1337, 1.0);
     let lut = vco.get_cv_lut();
     for entry in lut.iter() {
-        assert!(entry.is_finite(), "LUT entries must be finite under extreme wear");
+        assert!(
+            entry.is_finite(),
+            "LUT entries must be finite under extreme wear"
+        );
     }
 }
 
@@ -43,23 +46,89 @@ fn test_recal_scale_audio_integration() {
     v2.set_tier_immediate(Tier::Ultra);
 
     v1.update_params(
-        0.0, 0.0, 0.0, 0.0, OscWave::Saw, 0.5, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0,
-        VcfTaps::FourPole, 0.0, false, 3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
-        VcaEnvMode::Envelope, 40, 0.0, CompTolerance::Ten, 0, CircuitTopology::Accurate,
-        0.0, 1337, 0.5, 0.0, 1.0, // recal = 1.0
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        OscWave::Saw,
+        0.5,
+        0.0,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.0,
+        VcfTaps::FourPole,
+        0.0,
+        false,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        VcaEnvMode::Envelope,
+        40,
+        0.0,
+        CompTolerance::Ten,
+        0,
+        CircuitTopology::Accurate,
+        0.0,
+        1337,
+        0.5,
+        0.0,
+        1.0, // recal = 1.0
     );
 
     v2.update_params(
-        0.0, 0.0, 0.0, 0.0, OscWave::Saw, 0.5, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0,
-        VcfTaps::FourPole, 0.0, false, 3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
-        VcaEnvMode::Envelope, 40, 0.0, CompTolerance::Ten, 0, CircuitTopology::Accurate,
-        0.0, 1337, 0.5, 0.0, 0.0, // recal = 0.0
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        OscWave::Saw,
+        0.5,
+        0.0,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.0,
+        VcfTaps::FourPole,
+        0.0,
+        false,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        VcaEnvMode::Envelope,
+        40,
+        0.0,
+        CompTolerance::Ten,
+        0,
+        CircuitTopology::Accurate,
+        0.0,
+        1337,
+        0.5,
+        0.0,
+        0.0, // recal = 0.0
     );
 
     v1.recalculate_luts_sync();
     v2.recalculate_luts_sync();
 
-    assert_ne!(v1.get_vco_cv_lut(), v2.get_vco_cv_lut(), "LUTs should differ between recal=1.0 and recal=0.0");
+    assert_ne!(
+        v1.get_vco_cv_lut(),
+        v2.get_vco_cv_lut(),
+        "LUTs should differ between recal=1.0 and recal=0.0"
+    );
 
     // At 1% tolerance the wear detune can fall below the secant solver's 0.1%
     // early-return threshold at any given anchor, leaving that anchor identical
@@ -68,14 +137,18 @@ fn test_recal_scale_audio_integration() {
     // tolerance draw landing above the threshold at an arbitrary note.
     let l1 = v1.get_vco_cv_lut();
     let l2 = v2.get_vco_cv_lut();
-    let (best_i, _) = l1
-        .iter()
-        .zip(l2.iter())
-        .enumerate()
-        .fold((0usize, 0.0f64), |(bi, bd), (i, (a, b))| {
-            let d = (a - b).abs();
-            if d > bd { (i, d) } else { (bi, bd) }
-        });
+    let (best_i, _) =
+        l1.iter()
+            .zip(l2.iter())
+            .enumerate()
+            .fold((0usize, 0.0f64), |(bi, bd), (i, (a, b))| {
+                let d = (a - b).abs();
+                if d > bd {
+                    (i, d)
+                } else {
+                    (bi, bd)
+                }
+            });
     let note = (best_i as u8) * 3; // LUT anchors span MIDI 0..108 in 3-semitone steps
 
     v1.note_on(note);
@@ -97,7 +170,10 @@ fn test_recal_scale_audio_integration() {
         v2_samples.push(v2.tick());
     }
 
-    assert_ne!(v1_samples, v2_samples, "Recal scale 1.0 vs 0.0 must produce different audio output");
+    assert_ne!(
+        v1_samples, v2_samples,
+        "Recal scale 1.0 vs 0.0 must produce different audio output"
+    );
 }
 
 #[test]
@@ -123,7 +199,10 @@ fn test_worker_recal_scale_async() {
         }
     }
 
-    assert!(updated, "Async worker should finish and update LUT with recal_scale=0.5");
+    assert!(
+        updated,
+        "Async worker should finish and update LUT with recal_scale=0.5"
+    );
     let lut = vco_half.get_cv_lut();
     for entry in lut.iter() {
         assert!(entry.is_finite(), "Async recal LUT entries must be finite");

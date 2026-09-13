@@ -2,8 +2,8 @@
 //!
 //! Numeric oracles derived from `warm_clipper.cir` ngspice validation.
 
-use plugin303::dsp::warm_clipper::{ClipperParams, WarmClipper};
 use plugin303::dsp::voice::Voice;
+use plugin303::dsp::warm_clipper::{ClipperParams, WarmClipper};
 
 fn compute_rms(samples: &[f32]) -> f32 {
     let sum_sq: f32 = samples.iter().map(|&x| x * x).sum();
@@ -48,7 +48,11 @@ fn dc_rest_state() {
     let mut clipper = WarmClipper::new(48_000.0);
     for _ in 0..1024 {
         let out = clipper.tick(0.0);
-        assert!(out.abs() < 1e-5, "Rest state output should be silent; got {}", out);
+        assert!(
+            out.abs() < 1e-5,
+            "Rest state output should be silent; got {}",
+            out
+        );
     }
 }
 
@@ -84,12 +88,23 @@ fn static_thd_ladder() {
         let rms = compute_rms(&buf);
         let thd = compute_thd(&buf, freq, sr);
 
-        println!("In: {:.2} Vpk -> Out RMS: {:.3} (target {:.3}), THD: {:.1}% (target {:.1}%)",
-                 in_pk, rms, target_rms, thd * 100.0, target_thd * 100.0);
+        println!(
+            "In: {:.2} Vpk -> Out RMS: {:.3} (target {:.3}), THD: {:.1}% (target {:.1}%)",
+            in_pk,
+            rms,
+            target_rms,
+            thd * 100.0,
+            target_thd * 100.0
+        );
 
         // Verify within ±35% tolerance for simplified real-time engine
-        assert!((rms - target_rms).abs() < target_rms * 0.35,
-                "RMS mismatch at {:.2}Vpk: got {:.3}, expected {:.3}", in_pk, rms, target_rms);
+        assert!(
+            (rms - target_rms).abs() < target_rms * 0.35,
+            "RMS mismatch at {:.2}Vpk: got {:.3}, expected {:.3}",
+            in_pk,
+            rms,
+            target_rms
+        );
     }
 }
 
@@ -126,11 +141,19 @@ fn bass_preservation() {
     let gr_500_db = 20.0 * (rms_40 / rms_500).log10();
     let gr_1k_db = 20.0 * (rms_40 / rms_1k).log10();
 
-    println!("Bass preservation: 40Hz={:.3}, 80Hz={:.3}, 500Hz rel={:.1}dB, 1kHz rel={:.1}dB",
-             rms_40, rms_80, gr_500_db, gr_1k_db);
+    println!(
+        "Bass preservation: 40Hz={:.3}, 80Hz={:.3}, 500Hz rel={:.1}dB, 1kHz rel={:.1}dB",
+        rms_40, rms_80, gr_500_db, gr_1k_db
+    );
 
-    assert!((rms_40 - rms_80).abs() / rms_40 < 0.15, "40Hz and 80Hz bass should be preserved");
-    assert!(gr_1k_db > gr_500_db, "1kHz should experience more gain reduction than 500Hz");
+    assert!(
+        (rms_40 - rms_80).abs() / rms_40 < 0.15,
+        "40Hz and 80Hz bass should be preserved"
+    );
+    assert!(
+        gr_1k_db > gr_500_db,
+        "1kHz should experience more gain reduction than 500Hz"
+    );
 }
 
 #[test]
@@ -153,7 +176,10 @@ fn dynamics_anti_windup() {
                 release_samples += 1;
             }
         }
-        println!("Overdrive {:.1}V -> Release samples: {}", overdrive, release_samples);
+        println!(
+            "Overdrive {:.1}V -> Release samples: {}",
+            overdrive, release_samples
+        );
     }
 }
 
@@ -163,7 +189,11 @@ fn robustness_and_nonfinite() {
     for &bad in &[f32::NAN, f32::INFINITY, -f32::INFINITY, 1e20, -1e20] {
         for _ in 0..100 {
             let y = clipper.tick(bad);
-            assert!(y.is_finite(), "Output must be finite for nonfinite input {}", bad);
+            assert!(
+                y.is_finite(),
+                "Output must be finite for nonfinite input {}",
+                bad
+            );
             assert!(y.abs() <= 16.0, "Output must be bounded");
         }
     }
@@ -173,7 +203,11 @@ fn robustness_and_nonfinite() {
 fn bypass_and_latency_equivalence() {
     let sr = 48_000.0;
     let voice = Voice::new(sr);
-    assert_eq!(voice.latency_samples(), 96, "Total plugin latency reported must be 96 samples");
+    assert_eq!(
+        voice.latency_samples(),
+        96,
+        "Total plugin latency reported must be 96 samples"
+    );
 
     // Test bypass dry equivalence after 48-sample clipper alignment
     let mut c = WarmClipper::new(sr);
@@ -188,7 +222,10 @@ fn bypass_and_latency_equivalence() {
         out_samples.push(c.tick(0.0));
     }
 
-    assert_eq!(out_samples[48], impulse_in, "Bypass output must be delayed by exactly 48 samples");
+    assert_eq!(
+        out_samples[48], impulse_in,
+        "Bypass output must be delayed by exactly 48 samples"
+    );
 }
 
 #[test]
@@ -225,7 +262,11 @@ fn knob_behavior() {
     let thd_low = compute_thd(&buf_low, freq, sr);
     let thd_hi = compute_thd(&buf_hi, freq, sr);
 
-    println!("Low drive THD: {:.1}%, High drive THD: {:.1}%", thd_low * 100.0, thd_hi * 100.0);
+    println!(
+        "Low drive THD: {:.1}%, High drive THD: {:.1}%",
+        thd_low * 100.0,
+        thd_hi * 100.0
+    );
     assert!(thd_hi > thd_low, "Higher drive must increase THD");
 }
 
@@ -244,7 +285,11 @@ fn mix_zero_matches_bypass() {
 
     for i in 0..256 {
         let x = if i == 0 { 0.75 } else { 0.0 };
-        assert_eq!(c_byp.tick(x), c_dry.tick(x), "mix=0 must equal bypass output");
+        assert_eq!(
+            c_byp.tick(x),
+            c_dry.tick(x),
+            "mix=0 must equal bypass output"
+        );
     }
 }
 
@@ -362,7 +407,8 @@ fn tilt_pre_emphasis_changes_distortion() {
                 im -= s * (omega * i as f32).sin();
             }
             // Undo the post-shelf gain at this harmonic's frequency.
-            harm_pwr[h] = (re * re + im * im) * shelf_gain_sq(freq_hz * h as f32, engine_sr, tilt_db);
+            harm_pwr[h] =
+                (re * re + im * im) * shelf_gain_sq(freq_hz * h as f32, engine_sr, tilt_db);
         }
         let fund_pwr = harm_pwr[1];
         if fund_pwr < 1e-12 {
@@ -392,8 +438,15 @@ fn tilt_pre_emphasis_changes_distortion() {
     };
     let thd_boost = run_thd(6.0);
     let thd_cut = run_thd(-6.0);
-    println!("THD +6 dB tilt: {:.2}%, -6 dB tilt: {:.2}%", thd_boost * 100.0, thd_cut * 100.0);
-    assert!(thd_boost > thd_cut, "boosting highs pre-clip must increase THD");
+    println!(
+        "THD +6 dB tilt: {:.2}%, -6 dB tilt: {:.2}%",
+        thd_boost * 100.0,
+        thd_cut * 100.0
+    );
+    assert!(
+        thd_boost > thd_cut,
+        "boosting highs pre-clip must increase THD"
+    );
 }
 
 #[test]
@@ -448,8 +501,15 @@ fn dynamics_reduces_sustained_distortion() {
     };
     let thd_off = run_thd(0.0);
     let thd_on = run_thd(1.0);
-    println!("THD dynamics off: {:.2}%, on: {:.2}%", thd_off * 100.0, thd_on * 100.0);
-    assert!(thd_on < thd_off, "dynamics must duck drive on sustained loud signal");
+    println!(
+        "THD dynamics off: {:.2}%, on: {:.2}%",
+        thd_off * 100.0,
+        thd_on * 100.0
+    );
+    assert!(
+        thd_on < thd_off,
+        "dynamics must duck drive on sustained loud signal"
+    );
 }
 
 #[test]
@@ -484,6 +544,10 @@ fn reset_preserves_params() {
     for i in 0..1024 {
         let t = i as f32 / sr;
         let x = (2.0 * std::f32::consts::PI * 500.0 * t).sin();
-        assert_eq!(c.tick(x), fresh.tick(x), "sample {i}: reset must preserve params");
+        assert_eq!(
+            c.tick(x),
+            fresh.tick(x),
+            "sample {i}: reset must preserve params"
+        );
     }
 }

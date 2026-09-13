@@ -37,7 +37,8 @@ fn has_flag(flag: &str) -> bool {
 
 fn arg_tier(flag: &str) -> Option<i32> {
     let args: Vec<String> = std::env::args().collect();
-    let val = args.iter()
+    let val = args
+        .iter()
         .position(|s| s == flag)
         .and_then(|i| args.get(i + 1))?;
 
@@ -67,8 +68,14 @@ fn run_tier(name: &str, tier: Tier, secs: f32, sr: f32, seed: u64) -> (f64, f64,
     let samples_per_step = (sr * 60.0 / (130.0 * 4.0)) as usize;
     let keys = [0, 0, 12, 3, 5, 0, 12, 15, 0, 3, 5, 12, 0, 15, 12, 3];
     let octaves = [0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0];
-    let accents = [true, false, false, true, false, false, true, false, false, true, false, false, true, false, true, false];
-    let slides = [false, false, true, false, false, true, false, false, false, false, true, false, false, false, true, false];
+    let accents = [
+        true, false, false, true, false, false, true, false, false, true, false, false, true,
+        false, true, false,
+    ];
+    let slides = [
+        false, false, true, false, false, true, false, false, false, false, true, false, false,
+        false, true, false,
+    ];
 
     for i in 0..num_samples {
         let step = (i / samples_per_step) % 16;
@@ -81,9 +88,25 @@ fn run_tier(name: &str, tier: Tier, secs: f32, sr: f32, seed: u64) -> (f64, f64,
             let slide = slides[step];
 
             if slide {
-                voice.on_seq_event(SeqEvent::SlideTo { key, octave: oct, accent: acc }, 0.8, 300.0);
+                voice.on_seq_event(
+                    SeqEvent::SlideTo {
+                        key,
+                        octave: oct,
+                        accent: acc,
+                    },
+                    0.8,
+                    300.0,
+                );
             } else {
-                voice.on_seq_event(SeqEvent::Trigger { key, octave: oct, accent: acc }, 0.8, 300.0);
+                voice.on_seq_event(
+                    SeqEvent::Trigger {
+                        key,
+                        octave: oct,
+                        accent: acc,
+                    },
+                    0.8,
+                    300.0,
+                );
             }
         } else if step_offset == samples_per_step * 3 / 4 && !slides[step] {
             voice.on_seq_event(SeqEvent::GateOff, 0.0, 0.0);
@@ -91,11 +114,14 @@ fn run_tier(name: &str, tier: Tier, secs: f32, sr: f32, seed: u64) -> (f64, f64,
 
         // Cutoff modulation and jitter
         if i % 64 == 0 {
-            let sweep = ((i as f32 / num_samples as f32) * std::f32::consts::TAU * 4.0).sin() * 0.4 + 0.5;
+            let sweep =
+                ((i as f32 / num_samples as f32) * std::f32::consts::TAU * 4.0).sin() * 0.4 + 0.5;
             let cutoff_hz = 300.0 * 2.0f32.powf(sweep * 3.5);
             voice.set_cutoff(cutoff_hz);
 
-            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let jitter = ((rng_state >> 32) as u32 as f32 / 4294967296.0) * 0.02 - 0.01;
             voice.set_reso((0.75 + jitter).clamp(0.0, 1.0));
         }
@@ -135,10 +161,7 @@ fn run_sweep(secs: f32, sr: f32, _seed: u64) -> (f64, f64, f64, bool) {
     voice.set_reso(0.75);
     voice.set_env_mod(0.6);
 
-    let topologies = [
-        CircuitTopology::Accurate,
-        CircuitTopology::Fun,
-    ];
+    let topologies = [CircuitTopology::Accurate, CircuitTopology::Fun];
 
     let start = Instant::now();
     let mut sum = 0.0f32;
@@ -162,16 +185,33 @@ fn run_sweep(secs: f32, sr: f32, _seed: u64) -> (f64, f64, f64, bool) {
             let slide = step % 3 == 0;
 
             if slide {
-                voice.on_seq_event(SeqEvent::SlideTo { key, octave: oct, accent: acc }, 0.8, 300.0);
+                voice.on_seq_event(
+                    SeqEvent::SlideTo {
+                        key,
+                        octave: oct,
+                        accent: acc,
+                    },
+                    0.8,
+                    300.0,
+                );
             } else {
-                voice.on_seq_event(SeqEvent::Trigger { key, octave: oct, accent: acc }, 0.8, 300.0);
+                voice.on_seq_event(
+                    SeqEvent::Trigger {
+                        key,
+                        octave: oct,
+                        accent: acc,
+                    },
+                    0.8,
+                    300.0,
+                );
             }
         } else if step_offset == samples_per_step * 3 / 4 {
             voice.on_seq_event(SeqEvent::GateOff, 0.0, 0.0);
         }
 
         if i % 64 == 0 {
-            let sweep = ((i as f32 / num_samples as f32) * std::f32::consts::TAU * 8.0).sin() * 0.4 + 0.5;
+            let sweep =
+                ((i as f32 / num_samples as f32) * std::f32::consts::TAU * 8.0).sin() * 0.4 + 0.5;
             let cutoff_hz = 300.0 * 2.0f32.powf(sweep * 3.5);
             voice.set_cutoff(cutoff_hz);
         }
@@ -210,16 +250,29 @@ fn main() {
     let has_tier_flag = has_flag("--tier");
     let target_tier = arg_tier("--tier");
 
-    let header = format!("== Voice DSP Profile ({} seconds @ {} Hz, seed: 0x{:X}) ==", secs, sr, seed);
+    let header = format!(
+        "== Voice DSP Profile ({} seconds @ {} Hz, seed: 0x{:X}) ==",
+        secs, sr, seed
+    );
     println!("{}", header);
     eprintln!("{}", header);
 
     match target_tier {
-        Some(0) => { run_tier("low", Tier::Low, secs, sr, seed); }
-        Some(1) => { run_tier("high", Tier::High, secs, sr, seed); }
-        Some(2) => { run_tier("ultra", Tier::Ultra, secs, sr, seed); }
-        Some(3) => { run_sweep(secs, sr, seed); }
-        _ if has_tier_flag => { run_sweep(secs, sr, seed); }
+        Some(0) => {
+            run_tier("low", Tier::Low, secs, sr, seed);
+        }
+        Some(1) => {
+            run_tier("high", Tier::High, secs, sr, seed);
+        }
+        Some(2) => {
+            run_tier("ultra", Tier::Ultra, secs, sr, seed);
+        }
+        Some(3) => {
+            run_sweep(secs, sr, seed);
+        }
+        _ if has_tier_flag => {
+            run_sweep(secs, sr, seed);
+        }
         _ => {
             run_tier("low", Tier::Low, secs, sr, seed);
             run_tier("high", Tier::High, secs, sr, seed);

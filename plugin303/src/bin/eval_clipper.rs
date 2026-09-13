@@ -75,13 +75,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--sr" => {
                 sr = take_value(&args, &mut i, "--sr")?.parse()?;
             }
-            "--os" => {
-                match take_value(&args, &mut i, "--os")? {
-                    "2x" | "x2" | "2" => os_mode = ClipperOs::X2,
-                    "4x" | "x4" | "4" => os_mode = ClipperOs::X4,
-                    other => return Err(format!("Unknown --os mode: {}", other).into()),
-                }
-            }
+            "--os" => match take_value(&args, &mut i, "--os")? {
+                "2x" | "x2" | "2" => os_mode = ClipperOs::X2,
+                "4x" | "x4" | "4" => os_mode = ClipperOs::X4,
+                other => return Err(format!("Unknown --os mode: {}", other).into()),
+            },
             "--bypass" => bypass = true,
             "--drive" => {
                 drive = take_value(&args, &mut i, "--drive")?.parse()?;
@@ -160,10 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|n| {
                     let frac = n as f32 / (total_samples as f32 - 1.0).max(1.0);
                     // Phase integral for log sweep
-                    let phase = 2.0
-                        * std::f32::consts::PI
-                        * f_start
-                        * secs
+                    let phase = 2.0 * std::f32::consts::PI * f_start * secs
                         / (f_end / f_start).ln()
                         * ((f_end / f_start).powf(frac) - 1.0);
                     amp * phase.sin()

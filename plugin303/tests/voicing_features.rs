@@ -328,4 +328,3 @@ fn test_accent_analog_memory_staircase() {
         peaks[1]
     );
 }
-

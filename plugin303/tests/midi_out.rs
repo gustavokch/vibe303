@@ -81,7 +81,11 @@ fn test_sequencer_generates_correct_midi_events() {
         false,
     );
 
-    assert!(count >= 4, "Expected at least 4 sequencer events, got {}", count);
+    assert!(
+        count >= 4,
+        "Expected at least 4 sequencer events, got {}",
+        count
+    );
 
     // Step 0: Trigger note 60
     assert_eq!(events[0].0, 0);
@@ -160,9 +164,23 @@ fn test_same_pitch_slide_sequencer_events() {
 
     assert_eq!(count, 3);
     assert_eq!(events[0].0, 0);
-    assert_eq!(events[0].1, SeqEvent::Trigger { key: 0, octave: 0, accent: false });
+    assert_eq!(
+        events[0].1,
+        SeqEvent::Trigger {
+            key: 0,
+            octave: 0,
+            accent: false
+        }
+    );
     assert_eq!(events[1].0, 6000);
-    assert_eq!(events[1].1, SeqEvent::SlideTo { key: 0, octave: 0, accent: false });
+    assert_eq!(
+        events[1].1,
+        SeqEvent::SlideTo {
+            key: 0,
+            octave: 0,
+            accent: false
+        }
+    );
     assert_eq!(events[2].1, SeqEvent::GateOff);
 }
 

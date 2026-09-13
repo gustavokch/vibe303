@@ -50,17 +50,50 @@ fn test_live_tweaks_during_playback() {
 
     // Tweak age + tolerance live while playing
     v.update_params(
-        0.0, 0.0, 0.0, 0.0, OscWave::Saw, 0.5, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0,
-        VcfTaps::FourPole, 0.0, false, 3.0, 200.0, 0.0, 200.0, 3.0, 200.0, 0.0, 200.0,
-        VcaEnvMode::Envelope, 50, 0.0, CompTolerance::Five, 0, CircuitTopology::Accurate,
-        0.0, 1337, 0.5, 0.0, 1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        OscWave::Saw,
+        0.5,
+        0.0,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.0,
+        VcfTaps::FourPole,
+        0.0,
+        false,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        VcaEnvMode::Envelope,
+        50,
+        0.0,
+        CompTolerance::Five,
+        0,
+        CircuitTopology::Accurate,
+        0.0,
+        1337,
+        0.5,
+        0.0,
+        1.0,
     );
 
     // Sample immediately after update_params
     let buf_imm: Vec<f32> = (0..4800).map(|_| v.tick()).collect();
     let hz_imm = realized_hz(&buf_imm, sr);
     let error_imm = (1200.0 * (hz_imm / target).log2()).abs();
-    eprintln!("Pitch immediately after live age tweak: {hz_imm:.2} Hz (error {error_imm:.1} cents)");
+    eprintln!(
+        "Pitch immediately after live age tweak: {hz_imm:.2} Hz (error {error_imm:.1} cents)"
+    );
 
     // Wait 1.0s for worker thread + thermal settling
     for _ in 0..48000 {

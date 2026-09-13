@@ -54,13 +54,17 @@ fn test_qa_running_state_playhead_preserved() {
 
     let mut plugin = plugin303::Plugin303::default();
     assert_eq!(
-        plugin.current_playing_step.load(std::sync::atomic::Ordering::Relaxed),
+        plugin
+            .current_playing_step
+            .load(std::sync::atomic::Ordering::Relaxed),
         3,
         "Running QA state must initialize playhead to step index 3"
     );
     plugin.reset();
     assert_eq!(
-        plugin.current_playing_step.load(std::sync::atomic::Ordering::Relaxed),
+        plugin
+            .current_playing_step
+            .load(std::sync::atomic::Ordering::Relaxed),
         3,
         "Reset in running QA state must preserve active playhead index"
     );

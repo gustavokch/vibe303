@@ -108,13 +108,13 @@ fn test_note_names() {
 
 #[test]
 fn test_row_labels_octave_boundaries() {
-    assert_eq!(row_index_to_label(0), "C6");   // Top C (row 0, semitone 12, oct 2)
+    assert_eq!(row_index_to_label(0), "C6"); // Top C (row 0, semitone 12, oct 2)
     assert_eq!(row_index_to_label(1), "B5");
-    assert_eq!(row_index_to_label(12), "C5");  // Base C in oct 2 (row 12, semitone 0, oct 2)
-    assert_eq!(row_index_to_label(24), "C4");  // Base C in oct 1
-    assert_eq!(row_index_to_label(36), "C3");  // Base C in oct 0 (Middle C)
-    assert_eq!(row_index_to_label(48), "C2");  // Base C in oct -1
-    assert_eq!(row_index_to_label(60), "C1");  // Base C in oct -2 (Lowest note)
+    assert_eq!(row_index_to_label(12), "C5"); // Base C in oct 2 (row 12, semitone 0, oct 2)
+    assert_eq!(row_index_to_label(24), "C4"); // Base C in oct 1
+    assert_eq!(row_index_to_label(36), "C3"); // Base C in oct 0 (Middle C)
+    assert_eq!(row_index_to_label(48), "C2"); // Base C in oct -1
+    assert_eq!(row_index_to_label(60), "C1"); // Base C in oct -2 (Lowest note)
 }
 
 #[test]
