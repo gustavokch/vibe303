@@ -77,7 +77,7 @@ pub fn render_step_strip(
             p.rect_stroke(
                 led_rect,
                 CornerRadius::same(1),
-                Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
+                Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
                 StrokeKind::Inside,
             );
         }

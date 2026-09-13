@@ -10,7 +10,7 @@ use crate::params::Plugin303Params;
 pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let bypassed = params.clipper_bypass.value();
     let frame_stroke = if bypassed {
-        nih_plug_egui::egui::Stroke::new(1.0_f32, theme::BORDER_SUBTLE)
+        nih_plug_egui::egui::Stroke::new(1.0_f32, theme::BORDER_DEFAULT)
     } else {
         theme::border_stroke()
     };

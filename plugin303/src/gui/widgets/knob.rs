@@ -292,7 +292,7 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             painter.rect_stroke(
                 pill_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
+                Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
                 nih_plug_egui::egui::StrokeKind::Inside,
             );
             painter.text(

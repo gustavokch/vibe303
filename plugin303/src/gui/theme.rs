@@ -8,7 +8,6 @@ pub const SURFACE_ELEVATED: Color32 = Color32::from_rgb(0x22, 0x22, 0x28);
 pub const SURFACE_HOVER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x33);
 
 pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
-pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
 pub const BORDER_FOCUS: Color32 = Color32::from_rgb(0x80, 0x80, 0x90);
 pub const BORDER_ACCENT: Color32 = Color32::from_rgb(0xff, 0x7a, 0x00);
 pub const FIELD_FILL: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
