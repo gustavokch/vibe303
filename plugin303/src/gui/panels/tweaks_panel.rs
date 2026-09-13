@@ -222,7 +222,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 &params.comp_drift,
                                                 setter,
                                                 "DRIFT",
-                                                11.0,
+                                                theme::KNOB_RADIUS_SMALL,
                                             ));
                                         }
                                         // Column 3: Seed row + Recal knob on the same baseline
@@ -266,7 +266,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 &params.recalibration_scale,
                                                 setter,
                                                 "RECAL",
-                                                11.0,
+                                                theme::KNOB_RADIUS_SMALL,
                                             ));
                                         }
                                         // Column 4: Calibration action & status

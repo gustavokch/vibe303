@@ -35,15 +35,15 @@ impl<'a, P: Param> MiniFader<'a, P> {
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
         let width = 24.0;
-        // 21 px of chrome: 9 above the track for the letter label, 12 below
-        // for the value readout. The track itself is `height` tall.
-        let total_height = self.height + 21.0;
+        // 27 px of chrome: 14 above the track (8.5pt text + 5.5px gap to track),
+        // 13 below for the value readout. The track itself is `height` tall.
+        let total_height = self.height + 27.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
         let normalized = self.param.unmodulated_normalized_value();
-        let track_top = rect.top() + 9.0;
-        let track_bottom = rect.bottom() - 12.0;
+        let track_top = rect.top() + 14.0;
+        let track_bottom = rect.bottom() - 13.0;
         let track_height = track_bottom - track_top;
 
         // Interaction
@@ -86,7 +86,7 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 theme::TEXT_MUTED
             };
 
-            // Label above (A, D, S, R)
+            // Label above (A, D, S, R) with >= 4 pt gap to track top
             painter.text(
                 pos2(rect.center().x, rect.top() + 1.0),
                 nih_plug_egui::egui::Align2::CENTER_TOP,
@@ -131,14 +131,14 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 painter.rect_filled(fill_rect, CornerRadius::same(1), accent);
             }
 
-            // Flat thumb handle. Travel is inset by half the thumb height so
-            // the handle renders identically at both extremes — clamped fully
-            // inside the track instead of overhanging the caps (round-11
-            // item 22).
-            let thumb_width = 14.0;
+            // Flat thumb handle. Width <= track_width + 4 pt (10.0 px).
+            // Travel is inset by half the thumb height plus 1 px clearance so
+            // the bottom/top track cap remains visible at extremes (round-18 issue 4).
+            let thumb_width = 10.0;
             let thumb_height = 5.0;
+            let travel_inset = thumb_height * 0.5 + 1.0;
             let thumb_y =
-                track_bottom - thumb_height * 0.5 - normalized * (track_height - thumb_height);
+                (track_bottom - travel_inset) - normalized * (track_height - 2.0 * travel_inset);
             let thumb_rect = Rect::from_center_size(
                 pos2(rect.center().x, thumb_y),
                 vec2(thumb_width, thumb_height),
@@ -203,12 +203,12 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
 mod tests {
     #[test]
     fn mini_fader_geometry_bounds() {
-        let height = 20.0_f32;
-        let total_height = height + 21.0;
+        let height = 40.0_f32;
+        let total_height = height + 27.0;
         let top = 0.0_f32;
         let bottom = top + total_height;
-        let track_top = top + 9.0;
-        let track_bottom = bottom - 12.0;
+        let track_top = top + 14.0;
+        let track_bottom = bottom - 13.0;
         let track_height = track_bottom - track_top;
 
         assert!(track_top > top, "Track top must have top label clearance");
@@ -217,15 +217,19 @@ mod tests {
             "Track bottom must have bottom readout clearance"
         );
         assert!(
-            bottom - track_bottom >= 12.0,
-            "Readout text must have at least 12px clearance"
+            bottom - track_bottom >= 13.0,
+            "Readout text must have at least 13px clearance"
         );
-        assert!(track_height > 0.0, "Track height must be positive");
+        assert!(track_height >= 40.0, "Track height must be at least 40pt");
         assert_eq!(track_height, height);
 
-        for normalized in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
-            let thumb_y = track_bottom - normalized * track_height;
-            assert!(thumb_y >= track_top - 1e-4 && thumb_y <= track_bottom + 1e-4);
-        }
+        let thumb_height = 5.0_f32;
+        // At extremes the thumb must leave >= 1 px of track cap visible
+        // (assert physical requirement directly, independent of impl formula).
+        let travel_inset = thumb_height * 0.5 + 1.0;
+        let y0 = track_bottom - travel_inset; // normalized = 0
+        let y1 = track_top + travel_inset; // normalized = 1
+        assert!(y0 + thumb_height * 0.5 <= track_bottom - 1.0);
+        assert!(y1 - thumb_height * 0.5 >= track_top + 1.0);
     }
 }

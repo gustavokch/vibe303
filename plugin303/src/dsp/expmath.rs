@@ -13,8 +13,8 @@
 /// IEEE-754 exponent assembly.
 #[inline]
 pub fn fast_exp(x: f64) -> f64 {
-    const LN2: f64 = 0.6931471805599453;
-    const INV_LN2: f64 = 1.4426950408889634;
+    const LN2: f64 = std::f64::consts::LN_2;
+    const INV_LN2: f64 = std::f64::consts::LOG2_E;
     let kf = (x * INV_LN2 + 0.5).floor();
     let k = kf as i64;
     let r = x - kf * LN2; // |r| <= ln2/2 ~ 0.3466
@@ -54,8 +54,8 @@ pub fn fast_exp(x: f64) -> f64 {
 /// so the upper clamp is a no-op safety rail, not a behavior change.
 #[inline]
 pub fn fast_exp_branchless(x: f64) -> f64 {
-    const LN2: f64 = 0.6931471805599453;
-    const INV_LN2: f64 = 1.4426950408889634;
+    const LN2: f64 = std::f64::consts::LN_2;
+    const INV_LN2: f64 = std::f64::consts::LOG2_E;
     let kf = (x * INV_LN2 + 0.5).floor();
     let k = (kf as i64).clamp(-1023, 1023);
     let r = x - kf * LN2; // unclamped kf keeps r in [-ln2/2, ln2/2]
@@ -75,12 +75,12 @@ pub fn fast_exp_branchless(x: f64) -> f64 {
 /// `ln(x)` via IEEE-754 exponent decompose `x = m·2^e`, `log(m) = 2·atanh(s)`.
 #[inline]
 pub fn fast_log(x: f64) -> f64 {
-    const LN2: f64 = 0.6931471805599453;
+    const LN2: f64 = std::f64::consts::LN_2;
     let bits = x.to_bits();
     let mut e = ((bits >> 52) & 0x7ff) as i64 - 1022; // m in [0.5,1)
     let m_bits = (bits & 0x000f_ffff_ffff_ffff) | 0x3fe0_0000_0000_0000;
     let mut m = f64::from_bits(m_bits);
-    if m < 0.7071067811865476 {
+    if m < std::f64::consts::FRAC_1_SQRT_2 {
         m *= 2.0; // center: m in [~0.707,~1.414)
         e -= 1;
     }

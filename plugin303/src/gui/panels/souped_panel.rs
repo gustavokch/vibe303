@@ -186,15 +186,60 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             );
                         };
 
-                        render_knob(Knob303::new(&params.vcf_drive, setter, "DRIVE", 12.0));
-                        render_knob(Knob303::new(&params.sub_vol, setter, "SUB", 12.0));
-                        render_knob(Knob303::new(&params.glide, setter, "GLIDE", 12.0));
-                        render_knob(Knob303::new(&params.osc1_pitch, setter, "PITCH1", 12.0));
-                        render_knob(Knob303::new(&params.osc2_pitch, setter, "PITCH2", 12.0));
-                        render_knob(Knob303::new(&params.osc2_vol, setter, "MIX2", 12.0));
-                        render_knob(Knob303::new(&params.osc1_pw, setter, "PW", 12.0));
-                        render_knob(Knob303::new(&params.sweep_pos, setter, "SWEEP", 12.0));
-                        render_knob(Knob303::new(&params.reso_comp, setter, "R-COMP", 12.0));
+                        render_knob(Knob303::new(
+                            &params.vcf_drive,
+                            setter,
+                            "DRIVE",
+                            theme::KNOB_RADIUS_MEDIUM,
+                        ));
+                        render_knob(Knob303::new(
+                            &params.sub_vol,
+                            setter,
+                            "SUB",
+                            theme::KNOB_RADIUS_MEDIUM,
+                        ));
+                        render_knob(Knob303::new(
+                            &params.glide,
+                            setter,
+                            "GLIDE",
+                            theme::KNOB_RADIUS_MEDIUM,
+                        ));
+                        render_knob(Knob303::new(
+                            &params.osc1_pitch,
+                            setter,
+                            "PITCH1",
+                            theme::KNOB_RADIUS_MEDIUM,
+                        ));
+                        render_knob(Knob303::new(
+                            &params.osc2_pitch,
+                            setter,
+                            "PITCH2",
+                            theme::KNOB_RADIUS_MEDIUM,
+                        ));
+                        render_knob(Knob303::new(
+                            &params.osc2_vol,
+                            setter,
+                            "MIX2",
+                            theme::KNOB_RADIUS_MEDIUM,
+                        ));
+                        render_knob(Knob303::new(
+                            &params.osc1_pw,
+                            setter,
+                            "PW",
+                            theme::KNOB_RADIUS_MEDIUM,
+                        ));
+                        render_knob(Knob303::new(
+                            &params.sweep_pos,
+                            setter,
+                            "SWEEP",
+                            theme::KNOB_RADIUS_MEDIUM,
+                        ));
+                        render_knob(Knob303::new(
+                            &params.reso_comp,
+                            setter,
+                            "R-COMP",
+                            theme::KNOB_RADIUS_MEDIUM,
+                        ));
                     });
                 });
             }

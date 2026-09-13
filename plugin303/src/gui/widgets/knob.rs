@@ -113,7 +113,7 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
                 let cur_pt = pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r);
                 painter.line_segment(
                     [prev_bg_pt, cur_pt],
-                    Stroke::new(2.0_f32, theme::SURFACE_ELEVATED),
+                    Stroke::new(2.0_f32, theme::KNOB_TRACK_ARC),
                 );
                 prev_bg_pt = cur_pt;
             }
@@ -279,15 +279,20 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
                 raw_str
             };
 
-            let pill_rect = Rect::from_center_size(
-                pos2(rect.center().x, value_y),
-                vec2(desired_size.x - 4.0, 12.0),
-            );
+            let pill_width = if self.radius >= theme::KNOB_RADIUS_LARGE - 0.5 {
+                theme::KNOB_PILL_WIDTH_LARGE
+            } else if self.radius >= theme::KNOB_RADIUS_MEDIUM - 0.5 {
+                theme::KNOB_PILL_WIDTH_MEDIUM
+            } else {
+                theme::KNOB_PILL_WIDTH_SMALL
+            };
+            let pill_rect =
+                Rect::from_center_size(pos2(rect.center().x, value_y), vec2(pill_width, 12.0));
             painter.rect_filled(pill_rect, CornerRadius::same(2), theme::WELL_BG);
             painter.rect_stroke(
                 pill_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
+                Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
                 nih_plug_egui::egui::StrokeKind::Inside,
             );
             painter.text(

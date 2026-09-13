@@ -36,6 +36,15 @@ fn grid_drag<'a>(ui: &mut Ui, drag: DragValue<'a>) {
     ui.add_sized(vec2(G_FIELD_W, G_ROW_H), drag);
 }
 
+fn fmt_octave(v: f64) -> String {
+    let iv = v as i32;
+    if iv == 0 {
+        "0".to_string()
+    } else {
+        format!("{:+}", iv)
+    }
+}
+
 pub fn render_generator_panel(
     ui: &mut Ui,
     params: &Plugin303Params,
@@ -247,14 +256,14 @@ pub fn render_generator_panel(
                                 DragValue::new(&mut gen_params.octave_min)
                                     .range(-1..=1)
                                     .prefix("MIN ")
-                                    .custom_formatter(|v, _| format!("{:+.0}", v)),
+                                    .custom_formatter(|v, _| fmt_octave(v)),
                             );
                             grid_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_max)
                                     .range(-1..=1)
                                     .prefix("MAX ")
-                                    .custom_formatter(|v, _| format!("{:+.0}", v)),
+                                    .custom_formatter(|v, _| fmt_octave(v)),
                             );
                         });
 
@@ -342,7 +351,12 @@ pub fn render_generator_panel(
 
                         ui.add_space(2.0);
 
-                        ui.checkbox(&mut gen_params.slide_chaining, "SLD CHAIN");
+                        ui.checkbox(
+                            &mut gen_params.slide_chaining,
+                            nih_plug_egui::egui::RichText::new("SLD CHAIN")
+                                .font(FontId::proportional(8.5))
+                                .color(theme::TEXT_SECONDARY),
+                        );
                     });
 
                     // ==========================================
@@ -371,19 +385,17 @@ pub fn render_generator_panel(
 
                         ui.add_space(2.0);
 
-                        // Seed readout as a flush-left grid row so every band
-                        // in this region shares one left edge (round-13
-                        // issue 10).
+                        // Seed readout as a flush-left grid row with bordered field chrome (round-18 issue 8)
                         ui.horizontal(|ui| {
                             grid_label(ui, "SEED:", G_LBL_W);
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new(format!(
-                                    "{:04}",
-                                    gen_params.seed % 10000
-                                ))
-                                .font(FontId::monospace(8.5))
-                                .color(theme::TEXT_MUTED),
-                            );
+                            let mut seed_val = (gen_params.seed % 10000) as i32;
+                            ui.add_enabled_ui(false, |ui| {
+                                ui.add_sized(
+                                    vec2(G_FIELD_W, G_ROW_H),
+                                    DragValue::new(&mut seed_val)
+                                        .custom_formatter(|v, _| format!("{:04}", v as i32)),
+                                );
+                            });
                         });
 
                         ui.add_space(4.0);
@@ -440,18 +452,15 @@ pub fn render_generator_panel(
                                 setter.end_set_parameter(&params.seq_length);
                             }
 
-                            // MUTATE uses the cyan "pattern-content" accent
-                            // (NOTE/SLD cell color) to signal it modifies an
-                            // existing pattern, while GENERATE uses the orange
-                            // action accent for creating a new pattern. This
-                            // is an intentional visual convention.
+                            // MUTATE button: secondary hierarchy (outline/flat surface, round-18 issue 15)
                             let mutate_btn = Button::new(
                                 nih_plug_egui::egui::RichText::new("MUTATE")
                                     .font(FontId::proportional(9.5))
                                     .strong()
-                                    .color(theme::TEXT_ON_ACCENT),
+                                    .color(theme::TEXT_PRIMARY),
                             )
-                            .fill(theme::ACCENT_ORANGE)
+                            .fill(theme::SURFACE_ELEVATED)
+                            .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
                             .min_size(vec2(col_w * 0.48, 22.0))
                             .corner_radius(CornerRadius::same(2));
 
@@ -487,4 +496,17 @@ pub fn render_generator_panel(
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn octave_formatter_hides_signed_zero() {
+        assert_eq!(fmt_octave(0.0), "0");
+        assert_eq!(fmt_octave(1.0), "+1");
+        assert_eq!(fmt_octave(-1.0), "-1");
+        assert_eq!(fmt_octave(0.5), "0"); // truncates toward zero; range is integral
+    }
 }
