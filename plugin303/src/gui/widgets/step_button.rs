@@ -42,9 +42,10 @@ pub fn render_step_strip(
     let width = cell_width;
     let is_active = is_current && is_running;
     // Playhead highlight: one mark, one colour, one weight (round-13 issue 2).
-    // The column background tint plus a single 1 px ACCENT_CYAN outline carry
+    // The column background tint plus a single 1 px TEXT_PRIMARY outline carry
     // the active step; the LED bar, step-number pill and pitch pill render in
-    // their non-active treatments (round-18 issue 13: in-palette hue).
+    // their non-active treatments. White (TEXT_PRIMARY) contrasts against every
+    // cell background and is distinct from cyan (NOTE gate) and orange (ACCENT).
     let column_bg = if is_active {
         theme::SURFACE_ELEVATED
     } else if is_current {
@@ -52,7 +53,7 @@ pub fn render_step_strip(
     } else {
         theme::PANEL_BG
     };
-    let playhead_color = theme::ACCENT_CYAN;
+    let playhead_color = theme::TEXT_PRIMARY;
 
     ui.vertical(|ui| {
         ui.set_width(width);
