@@ -224,14 +224,12 @@ mod tests {
         assert_eq!(track_height, height);
 
         let thumb_height = 5.0_f32;
+        // At extremes the thumb must leave >= 1 px of track cap visible
+        // (assert physical requirement directly, independent of impl formula).
         let travel_inset = thumb_height * 0.5 + 1.0;
-        for normalized in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
-            let thumb_y =
-                (track_bottom - travel_inset) - normalized * (track_height - 2.0 * travel_inset);
-            let thumb_top = thumb_y - thumb_height * 0.5;
-            let thumb_bottom = thumb_y + thumb_height * 0.5;
-            assert!(thumb_top >= track_top + 1.0);
-            assert!(thumb_bottom <= track_bottom - 1.0);
-        }
+        let y0 = track_bottom - travel_inset; // normalized = 0
+        let y1 = track_top + travel_inset; // normalized = 1
+        assert!(y0 + thumb_height * 0.5 <= track_bottom - 1.0);
+        assert!(y1 - thumb_height * 0.5 >= track_top + 1.0);
     }
 }
