@@ -36,6 +36,15 @@ fn grid_drag<'a>(ui: &mut Ui, drag: DragValue<'a>) {
     ui.add_sized(vec2(G_FIELD_W, G_ROW_H), drag);
 }
 
+fn fmt_octave(v: f64) -> String {
+    let iv = v as i32;
+    if iv == 0 {
+        "0".to_string()
+    } else {
+        format!("{:+}", iv)
+    }
+}
+
 pub fn render_generator_panel(
     ui: &mut Ui,
     params: &Plugin303Params,
@@ -247,28 +256,14 @@ pub fn render_generator_panel(
                                 DragValue::new(&mut gen_params.octave_min)
                                     .range(-1..=1)
                                     .prefix("MIN ")
-                                    .custom_formatter(|v, _| {
-                                        let iv = v as i32;
-                                        if iv == 0 {
-                                            "0".to_string()
-                                        } else {
-                                            format!("{:+}", iv)
-                                        }
-                                    }),
+                                    .custom_formatter(|v, _| fmt_octave(v)),
                             );
                             grid_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_max)
                                     .range(-1..=1)
                                     .prefix("MAX ")
-                                    .custom_formatter(|v, _| {
-                                        let iv = v as i32;
-                                        if iv == 0 {
-                                            "0".to_string()
-                                        } else {
-                                            format!("{:+}", iv)
-                                        }
-                                    }),
+                                    .custom_formatter(|v, _| fmt_octave(v)),
                             );
                         });
 
@@ -501,4 +496,17 @@ pub fn render_generator_panel(
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn octave_formatter_hides_signed_zero() {
+        assert_eq!(fmt_octave(0.0), "0");
+        assert_eq!(fmt_octave(1.0), "+1");
+        assert_eq!(fmt_octave(-1.0), "-1");
+        assert_eq!(fmt_octave(0.5), "0"); // truncates toward zero; range is integral
+    }
 }
