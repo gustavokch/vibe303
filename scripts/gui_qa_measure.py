@@ -96,6 +96,8 @@ SURFACE_TOKENS = {
     "BORDER_SUBTLE",
     "BORDER_FOCUS",
     "FIELD_FILL",
+    "FIELD_FILL_HOVER",
+    "FIELD_FILL_ACTIVE",
     "KNOB_TRACK_ARC",
     "ACCENT_SLATE",
     # Partial-coverage antialiased edge blend of the NOTE gate pill

@@ -82,8 +82,11 @@ pub fn create_editor(
                 widgets.inactive.fg_stroke.color = theme::TEXT_SECONDARY;
                 widgets.inactive.bg_fill = theme::FIELD_FILL;
                 widgets.hovered.fg_stroke.color = theme::TEXT_PRIMARY;
+                widgets.hovered.bg_fill = theme::FIELD_FILL_HOVER;
                 widgets.active.fg_stroke.color = theme::TEXT_PRIMARY;
+                widgets.active.bg_fill = theme::FIELD_FILL_ACTIVE;
                 widgets.open.fg_stroke.color = theme::TEXT_PRIMARY;
+                widgets.open.bg_fill = theme::FIELD_FILL_HOVER;
 
                 // Checkbox styling: unified 14pt (28px physical) filled square, orange checkmark
                 widgets.inactive.corner_radius = CornerRadius::same(2);

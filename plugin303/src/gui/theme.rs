@@ -11,6 +11,8 @@ pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
 pub const BORDER_FOCUS: Color32 = Color32::from_rgb(0x80, 0x80, 0x90);
 pub const BORDER_ACCENT: Color32 = Color32::from_rgb(0xff, 0x7a, 0x00);
 pub const FIELD_FILL: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
+pub const FIELD_FILL_HOVER: Color32 = Color32::from_rgb(0x70, 0x70, 0x7c);
+pub const FIELD_FILL_ACTIVE: Color32 = Color32::from_rgb(0x5c, 0x5c, 0x66);
 pub const KNOB_TRACK_ARC: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
 
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
@@ -73,4 +75,40 @@ pub fn border_stroke() -> Stroke {
 
 pub fn highlight_stroke() -> Stroke {
     Stroke::new(1.0_f32, BORDER_FOCUS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rel_luminance(c: Color32) -> f64 {
+        let to_linear = |v: u8| {
+            let s = v as f64 / 255.0;
+            if s <= 0.04045 {
+                s / 12.92
+            } else {
+                ((s + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let r = to_linear(c.r());
+        let g = to_linear(c.g());
+        let b = to_linear(c.b());
+        0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+
+    fn contrast_ratio(c1: Color32, c2: Color32) -> f64 {
+        let l1 = rel_luminance(c1);
+        let l2 = rel_luminance(c2);
+        let (hi, lo) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    #[test]
+    fn field_fill_contrast_and_scale() {
+        assert!(contrast_ratio(FIELD_FILL, PANEL_BG) >= 3.0);
+        assert!(contrast_ratio(FIELD_FILL_HOVER, PANEL_BG) >= 3.0);
+        // Active pressed state is darker than resting, hover is lighter
+        assert!(rel_luminance(FIELD_FILL_ACTIVE) < rel_luminance(FIELD_FILL));
+        assert!(rel_luminance(FIELD_FILL) < rel_luminance(FIELD_FILL_HOVER));
+    }
 }
