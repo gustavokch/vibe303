@@ -1,7 +1,6 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Align2, ComboBox, CornerRadius, FontFamily, FontId, Frame, Margin, Rect, Stroke,
-    StrokeKind, Ui,
+    pos2, vec2, ComboBox, CornerRadius, FontFamily, FontId, Frame, Margin, Rect, Ui,
 };
 
 use crate::gui::theme;
@@ -34,49 +33,22 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
             nih_plug_egui::egui::UiBuilder::new().max_rect(left_rect),
             |ui| {
                 ui.horizontal_centered(|ui| {
+                    // TECHNEO 303 title dropped from in-app bar to prevent repetition with window title (round-18 issue 22)
+                    // BASS SYNTH static label (round-18 issue 17: plain label, issue 18: proportional)
                     ui.label(
-                        nih_plug_egui::egui::RichText::new("TECHNEO 303")
-                            .font(FontId::new(13.0, FontFamily::Proportional))
+                        nih_plug_egui::egui::RichText::new("BASS SYNTH")
+                            .font(FontId::new(9.5, FontFamily::Proportional))
+                            .strong()
                             .color(theme::TEXT_PRIMARY),
                     );
+
                     ui.add_space(8.0);
 
-                    // BASS SYNTH badge
-                    let (badge_rect, _) = ui.allocate_exact_size(vec2(72.0, 16.0), nih_plug_egui::egui::Sense::hover());
-                    let painter = ui.painter();
-                    painter.rect_filled(badge_rect, CornerRadius::same(2), theme::WELL_BG);
-                    painter.rect_stroke(
-                        badge_rect,
-                        CornerRadius::same(2),
-                        Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
-                        StrokeKind::Inside,
-                    );
-                    painter.text(
-                        badge_rect.center(),
-                        Align2::CENTER_CENTER,
-                        "BASS SYNTH",
-                        FontId::new(8.0, FontFamily::Monospace),
-                        theme::TEXT_SECONDARY,
-                    );
-
-                    ui.add_space(4.0);
-
-                    // MONO voice mode badge
-                    let (mono_rect, _) = ui.allocate_exact_size(vec2(42.0, 16.0), nih_plug_egui::egui::Sense::hover());
-                    let painter = ui.painter();
-                    painter.rect_filled(mono_rect, CornerRadius::same(2), theme::WELL_BG);
-                    painter.rect_stroke(
-                        mono_rect,
-                        CornerRadius::same(2),
-                        Stroke::new(1.0_f32, theme::BORDER_SUBTLE),
-                        StrokeKind::Inside,
-                    );
-                    painter.text(
-                        mono_rect.center(),
-                        Align2::CENTER_CENTER,
-                        "MONO",
-                        FontId::new(8.0, FontFamily::Monospace),
-                        theme::TEXT_SECONDARY,
+                    // MONO voice mode static label
+                    ui.label(
+                        nih_plug_egui::egui::RichText::new("MONO")
+                            .font(FontId::new(9.5, FontFamily::Proportional))
+                            .color(theme::TEXT_SECONDARY),
                     );
                 });
             },

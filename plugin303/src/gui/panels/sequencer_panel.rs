@@ -627,7 +627,7 @@ pub fn render_sequencer_and_transport(
 
                                     let mut jitter_val = params.seq_jitter.value();
                                     let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(
-                                        vec2(JIT_HIT_W, 28.0),
+                                        vec2(JIT_HIT_W, row_h),
                                         Sense::click(),
                                     );
                                     let jit_resp = jit_resp
@@ -640,13 +640,31 @@ pub fn render_sequencer_and_transport(
                                     }
                                     if ui.is_rect_visible(jit_hit_rect) {
                                         let p = ui.painter();
+                                        // 14pt (28px physical) filled square matching other checkboxes
                                         let box_rect = nih_plug_egui::egui::Rect::from_center_size(
-                                            pos2(jit_hit_rect.left() + 6.0, jit_hit_rect.center().y),
-                                            vec2(12.0, 12.0),
+                                            pos2(jit_hit_rect.left() + 7.0, jit_hit_rect.center().y),
+                                            vec2(14.0, 14.0),
                                         );
-                                        p.rect_filled(box_rect, CornerRadius::same(2), if jitter_val { theme::ACCENT_ORANGE } else { theme::WELL_BG });
+                                        p.rect_filled(box_rect, CornerRadius::same(2), if jitter_val { theme::ACCENT_ORANGE } else { theme::SURFACE_ELEVATED });
                                         p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.0_f32, if jitter_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }), StrokeKind::Inside);
-                                        p.text(pos2(jit_hit_rect.left() + 15.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JITTER", FontId::proportional(8.0), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_MUTED });
+                                        if jitter_val {
+                                            // Orange checkmark
+                                            p.line_segment(
+                                                [
+                                                    pos2(box_rect.left() + 3.0, box_rect.center().y),
+                                                    pos2(box_rect.left() + 6.0, box_rect.bottom() - 3.5),
+                                                ],
+                                                Stroke::new(1.5_f32, theme::TEXT_ON_ACCENT),
+                                            );
+                                            p.line_segment(
+                                                [
+                                                    pos2(box_rect.left() + 6.0, box_rect.bottom() - 3.5),
+                                                    pos2(box_rect.right() - 3.0, box_rect.top() + 3.5),
+                                                ],
+                                                Stroke::new(1.5_f32, theme::TEXT_ON_ACCENT),
+                                            );
+                                        }
+                                        p.text(pos2(jit_hit_rect.left() + 18.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JITTER", FontId::proportional(8.5), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY });
                                     }
 
                                     let clear_btn = Button::new(

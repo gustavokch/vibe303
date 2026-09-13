@@ -88,10 +88,10 @@ fn render_adsr_bank(
             ui.add_space(1.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-                ui.add(MiniFader::new(attack, setter, "A", 20.0, accent));
-                ui.add(MiniFader::new(decay, setter, "D", 20.0, accent));
-                ui.add(MiniFader::new(sustain, setter, "S", 20.0, accent));
-                ui.add(MiniFader::new(release, setter, "R", 20.0, accent));
+                ui.add(MiniFader::new(attack, setter, "A", 40.0, accent));
+                ui.add(MiniFader::new(decay, setter, "D", 40.0, accent));
+                ui.add(MiniFader::new(sustain, setter, "S", 40.0, accent));
+                ui.add(MiniFader::new(release, setter, "R", 40.0, accent));
             });
         });
     });
@@ -171,13 +171,48 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         },
                     );
                 };
-                render_knob(Knob303::new(&params.tuning, setter, "TUNING", 20.0));
-                render_knob(Knob303::new(&params.cutoff, setter, "CUTOFF", 20.0));
-                render_knob(Knob303::new(&params.resonance, setter, "RESONANCE", 20.0));
-                render_knob(Knob303::new(&params.env_mod, setter, "ENV MOD", 20.0));
-                render_knob(Knob303::new(&params.decay, setter, "DECAY", 20.0));
-                render_knob(Knob303::new(&params.accent, setter, "ACCENT", 20.0));
-                render_knob(Knob303::new(&params.volume, setter, "VOLUME", 20.0));
+                render_knob(Knob303::new(
+                    &params.tuning,
+                    setter,
+                    "TUNING",
+                    theme::KNOB_RADIUS_LARGE,
+                ));
+                render_knob(Knob303::new(
+                    &params.cutoff,
+                    setter,
+                    "CUTOFF",
+                    theme::KNOB_RADIUS_LARGE,
+                ));
+                render_knob(Knob303::new(
+                    &params.resonance,
+                    setter,
+                    "RESONANCE",
+                    theme::KNOB_RADIUS_LARGE,
+                ));
+                render_knob(Knob303::new(
+                    &params.env_mod,
+                    setter,
+                    "ENV MOD",
+                    theme::KNOB_RADIUS_LARGE,
+                ));
+                render_knob(Knob303::new(
+                    &params.decay,
+                    setter,
+                    "DECAY",
+                    theme::KNOB_RADIUS_LARGE,
+                ));
+                render_knob(Knob303::new(
+                    &params.accent,
+                    setter,
+                    "ACCENT",
+                    theme::KNOB_RADIUS_LARGE,
+                ));
+                render_knob(Knob303::new(
+                    &params.volume,
+                    setter,
+                    "VOLUME",
+                    theme::KNOB_RADIUS_LARGE,
+                ));
             });
         },
     );

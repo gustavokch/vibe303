@@ -3,7 +3,7 @@ pub mod theme;
 pub mod widgets;
 
 use nih_plug::prelude::Editor;
-use nih_plug_egui::egui::{Frame, Margin};
+use nih_plug_egui::egui::{CornerRadius, Frame, Margin, Stroke};
 use nih_plug_egui::{create_egui_editor, EguiState};
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
@@ -80,9 +80,20 @@ pub fn create_editor(
                 let widgets = &mut style.visuals.widgets;
                 widgets.noninteractive.fg_stroke.color = theme::TEXT_SECONDARY;
                 widgets.inactive.fg_stroke.color = theme::TEXT_SECONDARY;
+                widgets.inactive.bg_fill = theme::FIELD_FILL;
                 widgets.hovered.fg_stroke.color = theme::TEXT_PRIMARY;
                 widgets.active.fg_stroke.color = theme::TEXT_PRIMARY;
                 widgets.open.fg_stroke.color = theme::TEXT_PRIMARY;
+
+                // Checkbox styling: unified 14pt (28px physical) filled square, orange checkmark
+                widgets.inactive.corner_radius = CornerRadius::same(2);
+                widgets.active.corner_radius = CornerRadius::same(2);
+                widgets.hovered.corner_radius = CornerRadius::same(2);
+                widgets.inactive.bg_stroke = Stroke::new(1.0_f32, theme::BORDER_DEFAULT);
+                widgets.active.bg_stroke = Stroke::new(1.0_f32, theme::BORDER_DEFAULT);
+                widgets.hovered.bg_stroke = Stroke::new(1.0_f32, theme::BORDER_FOCUS);
+                style.visuals.selection.bg_fill = theme::ACCENT_ORANGE;
+                style.visuals.selection.stroke = Stroke::new(1.0_f32, theme::ACCENT_ORANGE);
             });
         },
         move |egui_ctx, setter, _state| {

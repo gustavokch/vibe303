@@ -7,10 +7,12 @@ pub const WELL_BG: Color32 = Color32::from_rgb(0x16, 0x16, 0x19);
 pub const SURFACE_ELEVATED: Color32 = Color32::from_rgb(0x22, 0x22, 0x28);
 pub const SURFACE_HOVER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x33);
 
-pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(0x2b, 0x2b, 0x34);
-pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x1e, 0x1e, 0x24);
-pub const BORDER_FOCUS: Color32 = Color32::from_rgb(0x40, 0x40, 0x50);
+pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
+pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
+pub const BORDER_FOCUS: Color32 = Color32::from_rgb(0x80, 0x80, 0x90);
 pub const BORDER_ACCENT: Color32 = Color32::from_rgb(0xff, 0x7a, 0x00);
+pub const FIELD_FILL: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
+pub const KNOB_TRACK_ARC: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
 
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
 pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xc4, 0xc4, 0xd0);
@@ -54,6 +56,17 @@ pub const KNOB_BODY_LIGHT: Color32 = SURFACE_ELEVATED;
 pub const KNOB_BODY_DARK: Color32 = WELL_BG;
 pub const KNOB_BEZEL: Color32 = BORDER_DEFAULT;
 pub const KNOB_POINTER: Color32 = ACCENT_ORANGE;
+
+// Systematic knob size tiers (round-18 issue 12)
+// Outer diameters: LARGE 42 pt (radius 21.0), MEDIUM 27 pt (radius 13.5), SMALL 24 pt (radius 12.0)
+pub const KNOB_RADIUS_LARGE: f32 = 21.0;
+pub const KNOB_RADIUS_MEDIUM: f32 = 13.5;
+pub const KNOB_RADIUS_SMALL: f32 = 12.0;
+
+// Corresponding value-pill widths matching knob tiers (round-18 issue 12, issue 24)
+pub const KNOB_PILL_WIDTH_LARGE: f32 = 52.0;
+pub const KNOB_PILL_WIDTH_MEDIUM: f32 = 38.0;
+pub const KNOB_PILL_WIDTH_SMALL: f32 = 34.0;
 
 pub fn border_stroke() -> Stroke {
     Stroke::new(1.0_f32, BORDER_DEFAULT)

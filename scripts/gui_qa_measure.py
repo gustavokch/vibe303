@@ -95,6 +95,8 @@ SURFACE_TOKENS = {
     "BORDER_DEFAULT",
     "BORDER_SUBTLE",
     "BORDER_FOCUS",
+    "FIELD_FILL",
+    "KNOB_TRACK_ARC",
     "ACCENT_SLATE",
     # Partial-coverage antialiased edge blend of the NOTE gate pill
     # (theme::GATE_NOTE_INACTIVE_EDGE): a fill, not foreground text.
@@ -161,7 +163,7 @@ def find_panels(arr: np.ndarray, top_skip: int = 75, coverage: float = 0.85):
     """
     lum = arr.max(axis=2)
     height, width = lum.shape
-    border = (lum > 40) & (lum < 100)
+    border = (lum > 40) & (lum < 130)
 
     row_hits = border[top_skip:].mean(axis=1)
     border_rows = [y + top_skip for y, frac in enumerate(row_hits) if frac > coverage]

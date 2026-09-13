@@ -42,9 +42,9 @@ pub fn render_step_strip(
     let width = cell_width;
     let is_active = is_current && is_running;
     // Playhead highlight: one mark, one colour, one weight (round-13 issue 2).
-    // The column background tint plus a single 1 px ACCENT_RUBY outline carry
+    // The column background tint plus a single 1 px ACCENT_CYAN outline carry
     // the active step; the LED bar, step-number pill and pitch pill render in
-    // their non-active treatments.
+    // their non-active treatments (round-18 issue 13: in-palette hue).
     let column_bg = if is_active {
         theme::SURFACE_ELEVATED
     } else if is_current {
@@ -52,7 +52,7 @@ pub fn render_step_strip(
     } else {
         theme::PANEL_BG
     };
-    let playhead_color = theme::ACCENT_RUBY;
+    let playhead_color = theme::ACCENT_CYAN;
 
     ui.vertical(|ui| {
         ui.set_width(width);
@@ -81,26 +81,16 @@ pub fn render_step_strip(
             );
         }
 
-        // 2. Step number header pill (uniform across steps — playhead mark is
-        // the column outline)
+        // 2. Step number header text (plain label without button chrome, round-18 issue 17)
         let (step_num_rect, _) = ui.allocate_exact_size(vec2(width, HEADER_H), Sense::hover());
         if ui.is_rect_visible(step_num_rect) {
             let p = ui.painter();
-            let (bg_color, text_color, stroke_color) =
-                (theme::WELL_BG, theme::TEXT_MUTED, theme::BORDER_DEFAULT);
-            p.rect_filled(step_num_rect, CornerRadius::same(2), bg_color);
-            p.rect_stroke(
-                step_num_rect,
-                CornerRadius::same(2),
-                Stroke::new(1.0_f32, stroke_color),
-                StrokeKind::Inside,
-            );
             p.text(
                 step_num_rect.center(),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 format!("{:02}", step_idx + 1),
-                FontId::new(10.0, FontFamily::Monospace),
-                text_color,
+                FontId::new(9.5, FontFamily::Monospace),
+                theme::TEXT_MUTED,
             );
         }
 
@@ -312,17 +302,16 @@ pub fn render_step_strip(
                 Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
                 StrokeKind::Inside,
             );
-            p.text(
-                pitch_rect.center(),
-                nih_plug_egui::egui::Align2::CENTER_CENTER,
-                pitch_str,
-                FontId::new(9.0, FontFamily::Monospace),
-                if is_rest {
-                    theme::TEXT_MUTED
-                } else {
-                    theme::TEXT_PRIMARY
-                },
-            );
+            // REST steps render no pitch text (round-18 issue 14)
+            if !is_rest {
+                p.text(
+                    pitch_rect.center(),
+                    nih_plug_egui::egui::Align2::CENTER_CENTER,
+                    pitch_str,
+                    FontId::new(9.0, FontFamily::Monospace),
+                    theme::TEXT_PRIMARY,
+                );
+            }
         }
 
         // 6. Octave Up / Down flat buttons (30px hit target)

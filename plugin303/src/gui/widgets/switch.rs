@@ -175,6 +175,21 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     StrokeKind::Inside,
                 );
 
+                // Dividers between adjacent unselected segments (round-18 issue 2)
+                for i in 1..num_opts {
+                    let div_y = track_rect.top() + slot_height * i as f32;
+                    // Only draw divider if thumb does not cover it
+                    if i != current_idx && i != current_idx + 1 {
+                        painter.line_segment(
+                            [
+                                pos2(track_rect.left() + 2.0, div_y),
+                                pos2(track_rect.right() - 2.0, div_y),
+                            ],
+                            Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
+                        );
+                    }
+                }
+
                 // Options with integrated glyphs & labels
                 for (i, opt) in self.options.iter().enumerate() {
                     let row_y = track_rect.top() + slot_height * i as f32;
@@ -274,14 +289,14 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             .fixed_width
             .unwrap_or(per_slot * num_opts as f32 + 4.0)
             .max(per_slot + 4.0);
-        let height = 30.0;
+        let height = 34.0;
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag());
 
         let current_idx = self.param.value().to_index();
         let track_rect = Rect::from_min_size(
             pos2(rect.left() + 2.0, rect.top() + 13.0),
-            vec2(width - 4.0, 15.0),
+            vec2(width - 4.0, 18.0),
         );
         let slot_width = (width - 4.0) / num_opts as f32;
 
@@ -353,6 +368,189 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 ),
                 StrokeKind::Inside,
             );
+
+            // Dividers between adjacent unselected segments (round-18 issue 2)
+            for i in 1..num_opts {
+                let div_x = track_rect.left() + slot_width * i as f32;
+                // Only draw divider if thumb does not cover it
+                if i != current_idx && i != current_idx + 1 {
+                    painter.line_segment(
+                        [
+                            pos2(div_x, track_rect.top() + 2.0),
+                            pos2(div_x, track_rect.bottom() - 2.0),
+                        ],
+                        Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
+                    );
+                }
+            }
+
+            // Option labels
+            for (i, opt) in self.options.iter().enumerate() {
+                let opt_x = track_rect.left() + slot_width * (i as f32 + 0.5);
+                let is_selected = i == current_idx;
+                let text_color = if is_selected {
+                    if is_enabled {
+                        theme::TEXT_PRIMARY
+                    } else {
+                        theme::TEXT_SECONDARY
+                    }
+                } else {
+                    theme::TEXT_MUTED
+                };
+                painter.text(
+                    pos2(opt_x, track_rect.center().y),
+                    nih_plug_egui::egui::Align2::CENTER_CENTER,
+                    *opt,
+                    FontId::new(8.5, FontFamily::Proportional),
+                    text_color,
+                );
+            }
+        }
+
+        response
+    }
+}
+
+pub struct BoolSwitch<'a> {
+    param: &'a nih_plug::prelude::BoolParam,
+    setter: &'a ParamSetter<'a>,
+    label: &'a str,
+    options: [&'a str; 2],
+    fixed_width: Option<f32>,
+}
+
+impl<'a> BoolSwitch<'a> {
+    pub fn new(
+        param: &'a nih_plug::prelude::BoolParam,
+        setter: &'a ParamSetter<'a>,
+        label: &'a str,
+        options: [&'a str; 2],
+    ) -> Self {
+        Self {
+            param,
+            setter,
+            label,
+            options,
+            fixed_width: None,
+        }
+    }
+
+    pub fn with_width(mut self, width: f32) -> Self {
+        self.fixed_width = Some(width);
+        self
+    }
+}
+
+impl<'a> Widget for BoolSwitch<'a> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let num_opts = 2;
+        let opt_font = FontId::new(8.5, FontFamily::Proportional);
+        let accent = theme::ACCENT_ORANGE;
+
+        let max_text_width = self
+            .options
+            .iter()
+            .map(|opt| {
+                ui.fonts(|f| {
+                    f.layout_no_wrap(opt.to_string(), opt_font.clone(), Color32::WHITE)
+                        .size()
+                        .x
+                })
+            })
+            .fold(0.0f32, f32::max);
+        let per_slot = (max_text_width + 12.0).max(30.0);
+        let width = self
+            .fixed_width
+            .unwrap_or(per_slot * num_opts as f32 + 4.0)
+            .max(per_slot + 4.0);
+        let height = 34.0;
+        let (rect, mut response) =
+            ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag());
+
+        let current_idx = if self.param.value() { 1 } else { 0 };
+        let track_rect = Rect::from_min_size(
+            pos2(rect.left() + 2.0, rect.top() + 13.0),
+            vec2(width - 4.0, 18.0),
+        );
+        let slot_width = (width - 4.0) / num_opts as f32;
+
+        if response.clicked() || response.dragged() {
+            if let Some(mouse_pos) = response.interact_pointer_pos() {
+                let rel_x = (mouse_pos.x - track_rect.left()).clamp(0.0, track_rect.width());
+                let target_idx = ((rel_x / slot_width).floor() as usize).min(num_opts - 1);
+                if target_idx != current_idx || response.clicked() {
+                    let new_val = target_idx == 1;
+                    self.setter.begin_set_parameter(self.param);
+                    self.setter.set_parameter(self.param, new_val);
+                    self.setter.end_set_parameter(self.param);
+                    response.mark_changed();
+                }
+            }
+        }
+
+        if ui.is_rect_visible(rect) {
+            let is_enabled = ui.is_enabled();
+            let painter = fade_cleared_painter(ui);
+            let switch_accent = if is_enabled {
+                accent
+            } else {
+                theme::TEXT_MUTED
+            };
+
+            // Main parameter title
+            painter.text(
+                pos2(rect.center().x, rect.top() + 1.0),
+                nih_plug_egui::egui::Align2::CENTER_TOP,
+                self.label,
+                FontId::new(8.5, FontFamily::Proportional),
+                if is_enabled {
+                    theme::TEXT_SECONDARY
+                } else {
+                    theme::TEXT_MUTED
+                },
+            );
+
+            // Recessed track container
+            painter.rect_filled(track_rect, CornerRadius::same(2), theme::WELL_BG);
+            painter.rect_stroke(
+                track_rect,
+                CornerRadius::same(2),
+                Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
+                StrokeKind::Inside,
+            );
+
+            // Active segmented pill
+            let thumb_x = track_rect.left() + slot_width * current_idx as f32;
+            let thumb_rect = Rect::from_min_size(
+                pos2(thumb_x + 1.0, track_rect.top() + 1.0),
+                vec2(slot_width - 2.0, track_rect.height() - 2.0),
+            );
+            painter.rect_filled(thumb_rect, CornerRadius::same(2), theme::SURFACE_ELEVATED);
+            painter.rect_stroke(
+                thumb_rect,
+                CornerRadius::same(2),
+                Stroke::new(
+                    1.0_f32,
+                    if is_enabled {
+                        switch_accent
+                    } else {
+                        theme::BORDER_FOCUS
+                    },
+                ),
+                StrokeKind::Inside,
+            );
+
+            // Divider between unselected segments
+            if current_idx != 0 && current_idx != 1 {
+                let div_x = track_rect.left() + slot_width;
+                painter.line_segment(
+                    [
+                        pos2(div_x, track_rect.top() + 2.0),
+                        pos2(div_x, track_rect.bottom() - 2.0),
+                    ],
+                    Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
+                );
+            }
 
             // Option labels
             for (i, opt) in self.options.iter().enumerate() {

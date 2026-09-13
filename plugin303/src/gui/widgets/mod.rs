@@ -12,4 +12,4 @@ pub use led::LedIndicator;
 pub use mini_keyboard::MiniKeyboard;
 pub use piano_roll_popup::render_piano_roll_popup;
 pub use step_button::render_step_strip;
-pub use switch::SlideSwitch;
+pub use switch::{BoolSwitch, SlideSwitch};
