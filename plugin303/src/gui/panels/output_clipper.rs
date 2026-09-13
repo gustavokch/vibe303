@@ -218,7 +218,11 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
 
                         ui.add(
                             BoolSwitch::new(&params.clipper_asym, setter, "DIODE", ["SI", "GE"])
-                                .with_width(52.0),
+                                .with_width(52.0)
+                                .with_option_tooltips([
+                                    Some("Silicon (Symmetric)"),
+                                    Some("Germanium (Asymmetric)"),
+                                ]),
                         );
                         ui.add_space(3.0);
                     });
