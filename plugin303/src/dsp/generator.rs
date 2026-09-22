@@ -258,15 +258,28 @@ impl AcidGenerator {
 
             let key = (params.root_note as i8 + intervals[degree_idx]).rem_euclid(12);
 
-            // Octave selection (random-walk from previous note's octave)
-            let mut octave: i8 = prev_pitch.octave;
+            // Octave selection: random walk from the previous note, reflecting at the
+            // range bounds so an asymmetric up/down bias does not park the walk against
+            // a wall. A clamp here would make the boundary absorbing.
+            let prev_octave = prev_pitch.octave.clamp(oct_lo, oct_hi);
             let oct_r = rng.next_f32();
-            if oct_r < params.octave_up_prob {
-                octave += 1;
+            let step: i8 = if oct_r < params.octave_up_prob {
+                1
             } else if oct_r < (params.octave_up_prob + params.octave_down_prob) {
-                octave -= 1;
+                -1
+            } else {
+                0
+            };
+            let mut octave = prev_octave + step;
+            if octave > oct_hi || octave < oct_lo {
+                // Reflect: try the opposite step, else hold position.
+                let reflected = prev_octave - step;
+                octave = if (oct_lo..=oct_hi).contains(&reflected) {
+                    reflected
+                } else {
+                    prev_octave
+                };
             }
-            octave = octave.clamp(oct_lo, oct_hi);
 
             let pitch_entry = PitchEntry {
                 key,

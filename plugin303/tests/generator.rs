@@ -414,3 +414,40 @@ fn test_octave_walk_is_adjacent_between_notes() {
         }
     }
 }
+
+#[test]
+fn test_octave_walk_does_not_park_at_upper_bound() {
+    // Clamping makes the boundary absorbing, so an asymmetric up/down bias
+    // parks the walk against octave_max. Reflecting keeps the distribution off
+    // the wall. Measured over the default probabilities.
+    let mut at_max = 0usize;
+    let mut total = 0usize;
+    for seed in 0..400u64 {
+        let params = GeneratorParams {
+            octave_min: -1,
+            octave_max: 1,
+            rhythm_pulses: 16,
+            rhythm_length: 16,
+            rest_probability: 0.0,
+            octave_up_prob: 0.2,
+            octave_down_prob: 0.1,
+            seed,
+            ..Default::default()
+        };
+        let pat = AcidGenerator::generate(&params);
+        for i in 0..16 {
+            if pat.timing[i] == TimeEntry::Note {
+                total += 1;
+                if pat.pitches[i].octave == 1 {
+                    at_max += 1;
+                }
+            }
+        }
+    }
+    let share = at_max as f32 / total as f32;
+    assert!(
+        share < 0.40,
+        "Walk parks at octave_max {:.1}% of the time; boundary is absorbing",
+        share * 100.0
+    );
+}
