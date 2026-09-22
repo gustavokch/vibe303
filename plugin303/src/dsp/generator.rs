@@ -201,6 +201,11 @@ impl AcidGenerator {
         let mut prev_slide = false;
         let mut prev_pitch = PitchEntry::default();
 
+        let (oct_lo, oct_hi) = (
+            params.octave_min.min(params.octave_max),
+            params.octave_min.max(params.octave_max),
+        );
+
         for i in 0..MAX_STEPS {
             let is_pulse = pulse_mask[i];
             let is_rest = !is_pulse || (rng.next_f32() < params.rest_probability);
@@ -261,7 +266,7 @@ impl AcidGenerator {
             } else if oct_r < (params.octave_up_prob + params.octave_down_prob) {
                 octave -= 1;
             }
-            octave = octave.clamp(params.octave_min, params.octave_max);
+            octave = octave.clamp(oct_lo, oct_hi);
 
             let pitch_entry = PitchEntry {
                 key,

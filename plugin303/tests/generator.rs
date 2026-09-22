@@ -343,3 +343,32 @@ fn test_sequencer_loop_wrap_mutates_before_step_zero_playback() {
         "Pattern should be mutated when loop count increments at step 0 boundary"
     );
 }
+
+#[test]
+fn test_inverted_octave_range_does_not_panic() {
+    // The GUI exposes MIN and MAX as independent DragValues, so an inverted
+    // range is reachable. `Ord::clamp` panics when min > max; generate() runs
+    // on the editor thread, so that panic would take down the host editor.
+    let params = GeneratorParams {
+        octave_min: 2,
+        octave_max: -2,
+        rhythm_pulses: 16,
+        rhythm_length: 16,
+        rest_probability: 0.0,
+        octave_up_prob: 0.5,
+        octave_down_prob: 0.5,
+        seed: 7,
+        ..Default::default()
+    };
+    let pat = AcidGenerator::generate(&params);
+    for i in 0..16 {
+        if pat.timing[i] == TimeEntry::Note {
+            let oct = pat.pitches[i].octave;
+            assert!(
+                (-2..=2).contains(&oct),
+                "Octave {} outside the bounds implied by an inverted range",
+                oct
+            );
+        }
+    }
+}
