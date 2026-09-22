@@ -30,6 +30,11 @@ impl MusicalScale {
 }
 
 /// Parameters controlling the generative sequence synthesis.
+///
+/// Octave selection is a reflecting random walk seeded from the previous note
+/// step's octave: each note steps +1/-1/hold by `octave_up_prob` /
+/// `octave_down_prob`, reflecting at `octave_min`/`octave_max`. Rest and Tie
+/// steps do not advance the walk.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GeneratorParams {
     /// Root note offset: 0=C, 1=C#, ..., 11=B.
@@ -54,9 +59,9 @@ pub struct GeneratorParams {
     pub accent_probability: f32,
     /// Probability of step slide (0.0..1.0).
     pub slide_probability: f32,
-    /// Probability of octave up shift (+1).
+    /// Probability of stepping one octave up from the previous note.
     pub octave_up_prob: f32,
-    /// Probability of octave down shift (-1).
+    /// Probability of stepping one octave down from the previous note.
     pub octave_down_prob: f32,
     /// Preference for higher scale degrees on accented notes (0.0..1.0).
     pub accent_pitch_bias: f32,
