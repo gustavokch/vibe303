@@ -147,6 +147,9 @@ fn test_octave_wide_range_bounds() {
             }
         }
     }
+    // These two assertions depend on the global RNG call order inside generate().
+    // Adding or removing an rng.next_f32() anywhere earlier in the step loop
+    // reshuffles all 200 seeds and can break this test from an unrelated change.
     assert_eq!(seen_min, -2, "Walk never reached -2 across seeds");
     assert_eq!(seen_max, 2, "Walk never reached +2 across seeds");
 }
@@ -369,6 +372,45 @@ fn test_inverted_octave_range_does_not_panic() {
                 "Octave {} outside the bounds implied by an inverted range",
                 oct
             );
+        }
+    }
+}
+
+#[test]
+fn test_octave_walk_is_adjacent_between_notes() {
+    // The generator walks from the previous *note* step's octave, one step at a
+    // time. Rest and Tie steps do not advance the walk. A revert to absolute
+    // octave selection would break this while still passing the bounds tests.
+    for seed in 0..200u64 {
+        let params = GeneratorParams {
+            scale: MusicalScale::Chromatic,
+            octave_min: -2,
+            octave_max: 2,
+            rhythm_pulses: 16,
+            rhythm_length: 16,
+            rest_probability: 0.0,
+            octave_up_prob: 0.5,
+            octave_down_prob: 0.5,
+            seed,
+            ..Default::default()
+        };
+        let pat = AcidGenerator::generate(&params);
+        let mut prev: Option<i8> = None;
+        for i in 0..16 {
+            if pat.timing[i] == TimeEntry::Note {
+                let cur = pat.pitches[i].octave;
+                if let Some(p) = prev {
+                    assert!(
+                        (cur - p).abs() <= 1,
+                        "Octave jumped from {} to {} at step {} (seed {})",
+                        p,
+                        cur,
+                        i,
+                        seed
+                    );
+                }
+                prev = Some(cur);
+            }
         }
     }
 }
