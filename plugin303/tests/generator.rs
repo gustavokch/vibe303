@@ -150,6 +150,8 @@ fn test_octave_wide_range_bounds() {
     // These two assertions depend on the global RNG call order inside generate().
     // Adding or removing an rng.next_f32() anywhere earlier in the step loop
     // reshuffles all 200 seeds and can break this test from an unrelated change.
+    // Measured margin: 165/200 seeds reach -2, 152/200 reach +2, so this is not
+    // a knife-edge assertion despite depending on RNG order.
     assert_eq!(seen_min, -2, "Walk never reached -2 across seeds");
     assert_eq!(seen_max, 2, "Walk never reached +2 across seeds");
 }
@@ -437,6 +439,10 @@ fn test_octave_walk_does_not_park_at_upper_bound() {
     // Clamping makes the boundary absorbing, so an asymmetric up/down bias
     // parks the walk against octave_max. Reflecting keeps the distribution off
     // the wall. Measured over the default probabilities.
+    // This assertion depends on the global RNG call order inside generate(),
+    // same as the seen_min/seen_max checks in test_octave_wide_range_bounds:
+    // adding or removing an rng.next_f32() earlier in the step loop reshuffles
+    // all 400 seeds and can break this test from an unrelated change.
     let mut at_max = 0usize;
     let mut total = 0usize;
     for seed in 0..400u64 {
