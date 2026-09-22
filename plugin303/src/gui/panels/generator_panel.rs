@@ -251,17 +251,19 @@ pub fn render_generator_panel(
 
                         ui.horizontal(|ui| {
                             grid_label(ui, "OCT RANGE:", G_LBL_W);
+                            let oct_max = gen_params.octave_max;
                             grid_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_min)
-                                    .range(-2..=2)
+                                    .range(-2..=oct_max)
                                     .prefix("MIN ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
                             );
+                            let oct_min = gen_params.octave_min;
                             grid_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_max)
-                                    .range(-2..=2)
+                                    .range(oct_min..=2)
                                     .prefix("MAX ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
                             );
