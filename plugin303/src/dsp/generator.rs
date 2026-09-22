@@ -275,10 +275,10 @@ impl AcidGenerator {
             } else {
                 0
             };
-            let mut octave = prev_octave + step;
+            let mut octave = prev_octave.saturating_add(step);
             if octave > oct_hi || octave < oct_lo {
                 // Reflect: try the opposite step, else hold position.
-                let reflected = prev_octave - step;
+                let reflected = prev_octave.saturating_sub(step);
                 octave = if (oct_lo..=oct_hi).contains(&reflected) {
                     reflected
                 } else {
