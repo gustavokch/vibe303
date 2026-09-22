@@ -209,6 +209,7 @@ impl AcidGenerator {
             params.octave_min.min(params.octave_max),
             params.octave_min.max(params.octave_max),
         );
+        debug_assert!(oct_lo <= oct_hi);
 
         for i in 0..MAX_STEPS {
             let is_pulse = pulse_mask[i];
