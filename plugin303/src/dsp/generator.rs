@@ -31,10 +31,9 @@ impl MusicalScale {
 
 /// Parameters controlling the generative sequence synthesis.
 ///
-/// Octave selection is a reflecting random walk seeded from the previous note
-/// step's octave: each note steps +1/-1/hold by `octave_up_prob` /
-/// `octave_down_prob`, reflecting at `octave_min`/`octave_max`. Rest and Tie
-/// steps do not advance the walk.
+/// Octave selection is a reflecting random walk anchored on the previous note
+/// step's octave, clamped into `octave_min..=octave_max`; see the inline
+/// comment in `AcidGenerator::generate` for the step/reflect mechanics.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GeneratorParams {
     /// Root note offset: 0=C, 1=C#, ..., 11=B.
@@ -264,8 +263,14 @@ impl AcidGenerator {
             let key = (params.root_note as i8 + intervals[degree_idx]).rem_euclid(12);
 
             // Octave selection: random walk from the previous note, reflecting at the
-            // range bounds so an asymmetric up/down bias does not park the walk against
-            // a wall. A clamp here would make the boundary absorbing.
+            // range bounds so an asymmetric up/down bias does not create a fully
+            // absorbing wall the way a clamp would. Reflection reduces the boundary
+            // bias but does not remove it: for the anti-parking test's probabilities
+            // (up 0.2, down 0.1, over -1..=1) the measured stationary share at
+            // octave_max is ~0.33 under reflection vs ~0.60 under clamping.
+            // When octave_min == octave_max, both the +1 and -1 reflections fall
+            // outside the single-value range, so the walk always holds position and
+            // `octave_up_prob`/`octave_down_prob` become no-ops.
             let prev_octave = prev_pitch.octave.clamp(oct_lo, oct_hi);
             let oct_r = rng.next_f32();
             let step: i8 = if oct_r < params.octave_up_prob {
