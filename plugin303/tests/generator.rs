@@ -114,6 +114,44 @@ fn test_scale_quantization_and_octave_bounds() {
 }
 
 #[test]
+fn test_octave_wide_range_bounds() {
+    // Wide -2..=2 range: random-walk must stay clamped yet still reach extremes.
+    let mut seen_min = i8::MAX;
+    let mut seen_max = i8::MIN;
+    for seed in 0..200u64 {
+        let params = GeneratorParams {
+            root_note: 0,
+            scale: MusicalScale::Chromatic,
+            octave_min: -2,
+            octave_max: 2,
+            rhythm_pulses: 16, // all notes -> walk steps every step
+            rhythm_length: 16,
+            rest_probability: 0.0,
+            octave_up_prob: 0.5,
+            octave_down_prob: 0.5,
+            seed,
+            ..Default::default()
+        };
+        let pat = AcidGenerator::generate(&params);
+        for i in 0..16 {
+            if pat.timing[i] == TimeEntry::Note {
+                let oct = pat.pitches[i].octave;
+                assert!(
+                    (-2..=2).contains(&oct),
+                    "Octave {} out of wide bounds [-2, 2] (seed {})",
+                    oct,
+                    seed
+                );
+                seen_min = seen_min.min(oct);
+                seen_max = seen_max.max(oct);
+            }
+        }
+    }
+    assert_eq!(seen_min, -2, "Walk never reached -2 across seeds");
+    assert_eq!(seen_max, 2, "Walk never reached +2 across seeds");
+}
+
+#[test]
 fn test_slide_chaining_rule() {
     let params = GeneratorParams {
         slide_probability: 1.0, // force slide

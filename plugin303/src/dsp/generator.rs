@@ -36,9 +36,9 @@ pub struct GeneratorParams {
     pub root_note: u8,
     /// Musical scale for pitch quantization.
     pub scale: MusicalScale,
-    /// Minimum allowed octave (-1, 0, +1).
+    /// Minimum allowed octave (-2..=2).
     pub octave_min: i8,
-    /// Maximum allowed octave (-1, 0, +1).
+    /// Maximum allowed octave (-2..=2).
     pub octave_max: i8,
     /// Number of Euclidean pulses (k: 1..16).
     pub rhythm_pulses: u8,
@@ -253,13 +253,13 @@ impl AcidGenerator {
 
             let key = (params.root_note as i8 + intervals[degree_idx]).rem_euclid(12);
 
-            // Octave selection
-            let mut octave: i8 = 0;
+            // Octave selection (random-walk from previous note's octave)
+            let mut octave: i8 = prev_pitch.octave;
             let oct_r = rng.next_f32();
             if oct_r < params.octave_up_prob {
-                octave = 1;
+                octave += 1;
             } else if oct_r < (params.octave_up_prob + params.octave_down_prob) {
-                octave = -1;
+                octave -= 1;
             }
             octave = octave.clamp(params.octave_min, params.octave_max);
 

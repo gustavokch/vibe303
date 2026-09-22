@@ -254,14 +254,14 @@ pub fn render_generator_panel(
                             grid_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_min)
-                                    .range(-1..=1)
+                                    .range(-2..=2)
                                     .prefix("MIN ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
                             );
                             grid_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_max)
-                                    .range(-1..=1)
+                                    .range(-2..=2)
                                     .prefix("MAX ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
                             );
