@@ -4,7 +4,7 @@ Circuit-grounded emulation of the Roland TB-303 bass synthesizer, built in Rust 
 
 - **Version:** 0.1.0
 - **Formats:** VST3, CLAP, Standalone
-- **Platforms:** macOS (Apple Silicon), Linux (x86_64 AVX2)
+- **Platforms:** macOS (Apple Silicon), Linux (x86_64 AVX2), Windows (x86_64)
 
 ---
 
@@ -117,6 +117,21 @@ cargo xtask bundle plugin303 --release
 # target/bundled/TB303.clap
 ```
 
+On Windows, build and install both bundles with:
+
+```powershell
+# x86-64-v3 (AVX2) by default; use -Variant v2 for pre-Haswell CPUs
+./scripts/build-windows-x86_64.ps1
+```
+
+The Windows VST3 bundle is a directory, and its payload DLL keeps the `.vst3`
+extension:
+
+```
+TB303.vst3/Contents/x86_64-win/TB303.vst3   # the DLL
+TB303.clap                                  # a DLL with the extension swapped
+```
+
 ### Circuit IR & SPICE Verification
 ```bash
 # Validate circuit IR integrity
@@ -135,3 +150,7 @@ uv run --no-project --with PySpice --with numpy python eval/303/run_vcf303_spice
 GitHub Actions workflows provide automated building and packaging:
 - **Linux:** Native `x86_64` (AVX2 / `x86-64-v3`) VST3/CLAP builds.
 - **macOS:** Apple Silicon (`aarch64-apple-darwin`) builds.
+- **Windows:** Native `x86_64` MSVC builds on a GitHub-hosted runner, in two CPU
+  variants — `x86-64-v3` (AVX2) and `x86-64-v2` (compatibility). Built with
+  `--no-default-features --features gui`; the standalone binary is not shipped
+  for Windows.
