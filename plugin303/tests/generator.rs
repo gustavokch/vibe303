@@ -374,13 +374,30 @@ fn test_inverted_octave_range_does_not_panic() {
             );
         }
     }
+
+    // The GUI normalises an inverted pair with a swap, not a widening. Pin that
+    // a swapped (ordered) pair produces the identical pattern to the inverted
+    // one, since generator.rs itself already derives oct_lo/oct_hi via min/max.
+    let ordered_params = GeneratorParams {
+        octave_min: -2,
+        octave_max: 2,
+        ..params.clone()
+    };
+    let ordered_pat = AcidGenerator::generate(&ordered_params);
+    assert_eq!(
+        pat, ordered_pat,
+        "Inverted range and its swapped equivalent must produce identical patterns"
+    );
 }
 
 #[test]
 fn test_octave_walk_is_adjacent_between_notes() {
     // The generator walks from the previous *note* step's octave, one step at a
-    // time. Rest and Tie steps do not advance the walk. A revert to absolute
-    // octave selection would break this while still passing the bounds tests.
+    // time. Rest and Tie steps do not advance the walk. This pins adjacency
+    // against a revert to absolute octave selection; it does NOT distinguish
+    // reflect from a plain clamp, since a clamp also yields |delta| <= 1 at the
+    // boundary. `test_octave_walk_does_not_park_at_upper_bound` is the test
+    // that pins reflection specifically.
     for seed in 0..200u64 {
         let params = GeneratorParams {
             scale: MusicalScale::Chromatic,
@@ -450,4 +467,56 @@ fn test_octave_walk_does_not_park_at_upper_bound() {
         "Walk parks at octave_max {:.1}% of the time; boundary is absorbing",
         share * 100.0
     );
+}
+
+#[test]
+fn test_extreme_octave_bounds_do_not_panic() {
+    // `GeneratorParams` derives `Deserialize`, so a hand-edited or version-skewed
+    // preset can carry i8::MIN/i8::MAX bounds. `prev_octave + step` used to
+    // overflow before the bounds check ran; saturating arithmetic must hold.
+    let params = GeneratorParams {
+        octave_min: i8::MIN,
+        octave_max: i8::MAX,
+        rhythm_pulses: 16,
+        rhythm_length: 16,
+        rest_probability: 0.0,
+        octave_up_prob: 0.5,
+        octave_down_prob: 0.5,
+        seed: 11,
+        ..Default::default()
+    };
+    let pat = AcidGenerator::generate(&params);
+    for i in 0..16 {
+        if pat.timing[i] == TimeEntry::Note {
+            let oct = pat.pitches[i].octave;
+            assert!(
+                (i8::MIN..=i8::MAX).contains(&oct),
+                "Octave {} outside i8 range",
+                oct
+            );
+        }
+    }
+}
+
+#[test]
+fn test_extreme_octave_bounds_degenerate_does_not_panic() {
+    // Degenerate at-the-extreme range: min == max == i8::MAX pins the
+    // saturating-add overflow path specifically.
+    let params = GeneratorParams {
+        octave_min: i8::MAX,
+        octave_max: i8::MAX,
+        rhythm_pulses: 16,
+        rhythm_length: 16,
+        rest_probability: 0.0,
+        octave_up_prob: 0.5,
+        octave_down_prob: 0.5,
+        seed: 13,
+        ..Default::default()
+    };
+    let pat = AcidGenerator::generate(&params);
+    for i in 0..16 {
+        if pat.timing[i] == TimeEntry::Note {
+            assert_eq!(pat.pitches[i].octave, i8::MAX);
+        }
+    }
 }
