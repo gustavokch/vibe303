@@ -30,15 +30,19 @@ impl MusicalScale {
 }
 
 /// Parameters controlling the generative sequence synthesis.
+///
+/// Octave selection is a reflecting random walk anchored on the previous note
+/// step's octave, clamped into `octave_min..=octave_max`; see the inline
+/// comment in `AcidGenerator::generate` for the step/reflect mechanics.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GeneratorParams {
     /// Root note offset: 0=C, 1=C#, ..., 11=B.
     pub root_note: u8,
     /// Musical scale for pitch quantization.
     pub scale: MusicalScale,
-    /// Minimum allowed octave (-1, 0, +1).
+    /// Minimum allowed octave (-2..=2).
     pub octave_min: i8,
-    /// Maximum allowed octave (-1, 0, +1).
+    /// Maximum allowed octave (-2..=2).
     pub octave_max: i8,
     /// Number of Euclidean pulses (k: 1..16).
     pub rhythm_pulses: u8,
@@ -54,9 +58,9 @@ pub struct GeneratorParams {
     pub accent_probability: f32,
     /// Probability of step slide (0.0..1.0).
     pub slide_probability: f32,
-    /// Probability of octave up shift (+1).
+    /// Probability of stepping one octave up from the previous note.
     pub octave_up_prob: f32,
-    /// Probability of octave down shift (-1).
+    /// Probability of stepping one octave down from the previous note.
     pub octave_down_prob: f32,
     /// Preference for higher scale degrees on accented notes (0.0..1.0).
     pub accent_pitch_bias: f32,
@@ -201,6 +205,12 @@ impl AcidGenerator {
         let mut prev_slide = false;
         let mut prev_pitch = PitchEntry::default();
 
+        let (oct_lo, oct_hi) = (
+            params.octave_min.min(params.octave_max),
+            params.octave_min.max(params.octave_max),
+        );
+        debug_assert!(oct_lo <= oct_hi);
+
         for i in 0..MAX_STEPS {
             let is_pulse = pulse_mask[i];
             let is_rest = !is_pulse || (rng.next_f32() < params.rest_probability);
@@ -253,15 +263,34 @@ impl AcidGenerator {
 
             let key = (params.root_note as i8 + intervals[degree_idx]).rem_euclid(12);
 
-            // Octave selection
-            let mut octave: i8 = 0;
+            // Octave selection: random walk from the previous note, reflecting at the
+            // range bounds so an asymmetric up/down bias does not create a fully
+            // absorbing wall the way a clamp would. Reflection reduces the boundary
+            // bias but does not remove it: for the anti-parking test's probabilities
+            // (up 0.2, down 0.1, over -1..=1) the measured stationary share at
+            // octave_max is ~0.33 under reflection vs ~0.60 under clamping.
+            // When octave_min == octave_max, both the +1 and -1 reflections fall
+            // outside the single-value range, so the walk always holds position and
+            // `octave_up_prob`/`octave_down_prob` become no-ops.
+            let prev_octave = prev_pitch.octave.clamp(oct_lo, oct_hi);
             let oct_r = rng.next_f32();
-            if oct_r < params.octave_up_prob {
-                octave = 1;
+            let step: i8 = if oct_r < params.octave_up_prob {
+                1
             } else if oct_r < (params.octave_up_prob + params.octave_down_prob) {
-                octave = -1;
+                -1
+            } else {
+                0
+            };
+            let mut octave = prev_octave.saturating_add(step);
+            if octave > oct_hi || octave < oct_lo {
+                // Reflect: try the opposite step, else hold position.
+                let reflected = prev_octave.saturating_sub(step);
+                octave = if (oct_lo..=oct_hi).contains(&reflected) {
+                    reflected
+                } else {
+                    prev_octave
+                };
             }
-            octave = octave.clamp(params.octave_min, params.octave_max);
 
             let pitch_entry = PitchEntry {
                 key,

@@ -28,6 +28,9 @@ pub fn create_editor(
         Ok("generator") => crate::dsp::generator::GeneratorParams {
             root_note: 3, // D#
             scale: crate::dsp::generator::MusicalScale::Phrygian,
+            // Narrower than GeneratorParams::default() (-1..=1) by product
+            // choice: the shipped QA preset stays in 0..=1. Align to the
+            // struct default only with sign-off.
             octave_min: 0,
             octave_max: 1,
             rhythm_pulses: 7,

@@ -249,19 +249,28 @@ pub fn render_generator_panel(
                         );
                         ui.add_space(2.0);
 
+                        if gen_params.octave_min > gen_params.octave_max {
+                            // A preset or hand-edited state can load an inverted pair.
+                            // Swap rather than let the ranges below collapse-and-widen
+                            // both stored values on the first interaction.
+                            std::mem::swap(&mut gen_params.octave_min, &mut gen_params.octave_max);
+                        }
+
                         ui.horizontal(|ui| {
                             grid_label(ui, "OCT RANGE:", G_LBL_W);
+                            let oct_max = gen_params.octave_max;
                             grid_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_min)
-                                    .range(-1..=1)
+                                    .range(-2..=oct_max)
                                     .prefix("MIN ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
                             );
+                            let oct_min = gen_params.octave_min;
                             grid_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_max)
-                                    .range(-1..=1)
+                                    .range(oct_min..=2)
                                     .prefix("MAX ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
                             );

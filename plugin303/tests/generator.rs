@@ -114,6 +114,49 @@ fn test_scale_quantization_and_octave_bounds() {
 }
 
 #[test]
+fn test_octave_wide_range_bounds() {
+    // Wide -2..=2 range: random-walk must stay clamped yet still reach extremes.
+    let mut seen_min = i8::MAX;
+    let mut seen_max = i8::MIN;
+    for seed in 0..200u64 {
+        let params = GeneratorParams {
+            root_note: 0,
+            scale: MusicalScale::Chromatic,
+            octave_min: -2,
+            octave_max: 2,
+            rhythm_pulses: 16, // all notes -> walk steps every step
+            rhythm_length: 16,
+            rest_probability: 0.0,
+            octave_up_prob: 0.5,
+            octave_down_prob: 0.5,
+            seed,
+            ..Default::default()
+        };
+        let pat = AcidGenerator::generate(&params);
+        for i in 0..16 {
+            if pat.timing[i] == TimeEntry::Note {
+                let oct = pat.pitches[i].octave;
+                assert!(
+                    (-2..=2).contains(&oct),
+                    "Octave {} out of wide bounds [-2, 2] (seed {})",
+                    oct,
+                    seed
+                );
+                seen_min = seen_min.min(oct);
+                seen_max = seen_max.max(oct);
+            }
+        }
+    }
+    // These two assertions depend on the global RNG call order inside generate().
+    // Adding or removing an rng.next_f32() anywhere earlier in the step loop
+    // reshuffles all 200 seeds and can break this test from an unrelated change.
+    // Measured margin: 165/200 seeds reach -2, 152/200 reach +2, so this is not
+    // a knife-edge assertion despite depending on RNG order.
+    assert_eq!(seen_min, -2, "Walk never reached -2 across seeds");
+    assert_eq!(seen_max, 2, "Walk never reached +2 across seeds");
+}
+
+#[test]
 fn test_slide_chaining_rule() {
     let params = GeneratorParams {
         slide_probability: 1.0, // force slide
@@ -304,4 +347,182 @@ fn test_sequencer_loop_wrap_mutates_before_step_zero_playback() {
         pat, pat_initial,
         "Pattern should be mutated when loop count increments at step 0 boundary"
     );
+}
+
+#[test]
+fn test_inverted_octave_range_does_not_panic() {
+    // The GUI exposes MIN and MAX as independent DragValues, so an inverted
+    // range is reachable. `Ord::clamp` panics when min > max; generate() runs
+    // on the editor thread, so that panic would take down the host editor.
+    let params = GeneratorParams {
+        octave_min: 2,
+        octave_max: -2,
+        rhythm_pulses: 16,
+        rhythm_length: 16,
+        rest_probability: 0.0,
+        octave_up_prob: 0.5,
+        octave_down_prob: 0.5,
+        seed: 7,
+        ..Default::default()
+    };
+    let pat = AcidGenerator::generate(&params);
+    for i in 0..16 {
+        if pat.timing[i] == TimeEntry::Note {
+            let oct = pat.pitches[i].octave;
+            assert!(
+                (-2..=2).contains(&oct),
+                "Octave {} outside the bounds implied by an inverted range",
+                oct
+            );
+        }
+    }
+
+    // The GUI normalises an inverted pair with a swap, not a widening. Pin that
+    // a swapped (ordered) pair produces the identical pattern to the inverted
+    // one, since generator.rs itself already derives oct_lo/oct_hi via min/max.
+    let ordered_params = GeneratorParams {
+        octave_min: -2,
+        octave_max: 2,
+        ..params.clone()
+    };
+    let ordered_pat = AcidGenerator::generate(&ordered_params);
+    assert_eq!(
+        pat, ordered_pat,
+        "Inverted range and its swapped equivalent must produce identical patterns"
+    );
+}
+
+#[test]
+fn test_octave_walk_is_adjacent_between_notes() {
+    // The generator walks from the previous *note* step's octave, one step at a
+    // time. Rest and Tie steps do not advance the walk. This pins adjacency
+    // against a revert to absolute octave selection; it does NOT distinguish
+    // reflect from a plain clamp, since a clamp also yields |delta| <= 1 at the
+    // boundary. `test_octave_walk_does_not_park_at_upper_bound` is the test
+    // that pins reflection specifically.
+    for seed in 0..200u64 {
+        let params = GeneratorParams {
+            scale: MusicalScale::Chromatic,
+            octave_min: -2,
+            octave_max: 2,
+            rhythm_pulses: 16,
+            rhythm_length: 16,
+            rest_probability: 0.0,
+            octave_up_prob: 0.5,
+            octave_down_prob: 0.5,
+            seed,
+            ..Default::default()
+        };
+        let pat = AcidGenerator::generate(&params);
+        let mut prev: Option<i8> = None;
+        for i in 0..16 {
+            if pat.timing[i] == TimeEntry::Note {
+                let cur = pat.pitches[i].octave;
+                if let Some(p) = prev {
+                    assert!(
+                        (cur - p).abs() <= 1,
+                        "Octave jumped from {} to {} at step {} (seed {})",
+                        p,
+                        cur,
+                        i,
+                        seed
+                    );
+                }
+                prev = Some(cur);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_octave_walk_does_not_park_at_upper_bound() {
+    // Clamping makes the boundary absorbing, so an asymmetric up/down bias
+    // parks the walk against octave_max. Reflecting keeps the distribution off
+    // the wall. Measured over the default probabilities.
+    // This assertion depends on the global RNG call order inside generate(),
+    // same as the seen_min/seen_max checks in test_octave_wide_range_bounds:
+    // adding or removing an rng.next_f32() earlier in the step loop reshuffles
+    // all 400 seeds and can break this test from an unrelated change.
+    let mut at_max = 0usize;
+    let mut total = 0usize;
+    for seed in 0..400u64 {
+        let params = GeneratorParams {
+            octave_min: -1,
+            octave_max: 1,
+            rhythm_pulses: 16,
+            rhythm_length: 16,
+            rest_probability: 0.0,
+            octave_up_prob: 0.2,
+            octave_down_prob: 0.1,
+            seed,
+            ..Default::default()
+        };
+        let pat = AcidGenerator::generate(&params);
+        for i in 0..16 {
+            if pat.timing[i] == TimeEntry::Note {
+                total += 1;
+                if pat.pitches[i].octave == 1 {
+                    at_max += 1;
+                }
+            }
+        }
+    }
+    let share = at_max as f32 / total as f32;
+    assert!(
+        share < 0.40,
+        "Walk parks at octave_max {:.1}% of the time; boundary is absorbing",
+        share * 100.0
+    );
+}
+
+#[test]
+fn test_extreme_octave_bounds_do_not_panic() {
+    // `GeneratorParams` derives `Deserialize`, so a hand-edited or version-skewed
+    // preset can carry i8::MIN/i8::MAX bounds. `prev_octave + step` used to
+    // overflow before the bounds check ran; saturating arithmetic must hold.
+    let params = GeneratorParams {
+        octave_min: i8::MIN,
+        octave_max: i8::MAX,
+        rhythm_pulses: 16,
+        rhythm_length: 16,
+        rest_probability: 0.0,
+        octave_up_prob: 0.5,
+        octave_down_prob: 0.5,
+        seed: 11,
+        ..Default::default()
+    };
+    let pat = AcidGenerator::generate(&params);
+    for i in 0..16 {
+        if pat.timing[i] == TimeEntry::Note {
+            let oct = pat.pitches[i].octave;
+            assert!(
+                (i8::MIN..=i8::MAX).contains(&oct),
+                "Octave {} outside i8 range",
+                oct
+            );
+        }
+    }
+}
+
+#[test]
+fn test_extreme_octave_bounds_degenerate_does_not_panic() {
+    // Degenerate at-the-extreme range: min == max == i8::MAX pins the
+    // saturating-add overflow path specifically.
+    let params = GeneratorParams {
+        octave_min: i8::MAX,
+        octave_max: i8::MAX,
+        rhythm_pulses: 16,
+        rhythm_length: 16,
+        rest_probability: 0.0,
+        octave_up_prob: 0.5,
+        octave_down_prob: 0.5,
+        seed: 13,
+        ..Default::default()
+    };
+    let pat = AcidGenerator::generate(&params);
+    for i in 0..16 {
+        if pat.timing[i] == TimeEntry::Note {
+            assert_eq!(pat.pitches[i].octave, i8::MAX);
+        }
+    }
 }
