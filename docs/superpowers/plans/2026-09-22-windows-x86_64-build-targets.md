@@ -361,12 +361,14 @@ python3 -c "import yaml,sys; d=yaml.safe_load(open('.github/workflows/build-wind
 
 Expected output:
 ```
-job steps: 6
+job steps: 7
 variants: ['v3', 'v2']
 release needs: ['windows-x86_64']
 ```
 
-If `job steps` is not 6, a step got absorbed into a previous `run:` block — fix the indentation.
+(7 steps, not 6: checkout, toolchain install, cache, build, locate, package, upload. The cache step was added after this lint expectation was written.)
+
+If `job steps` is not 7, a step got absorbed into a previous `run:` block — fix the indentation.
 
 - [ ] **Step 3: Commit**
 
