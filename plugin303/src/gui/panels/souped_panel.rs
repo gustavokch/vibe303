@@ -164,9 +164,13 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         );
                     });
 
-                    ui.add_space(2.0);
-                    ui.separator();
-                    ui.add_space(2.0);
+                    // Round-19 issue 6: the toggle row and the knob row used to
+                    // be separated by `add_space(2)` + a default `separator()`
+                    // + `add_space(2)`, which the `panels` probe read as a
+                    // 51 px physical dead band. The separator keeps its rule
+                    // but carries its own, tighter spacing instead of padding
+                    // on both sides.
+                    ui.add(nih_plug_egui::egui::Separator::default().spacing(4.0));
 
                     // Row 2: Engine Rotary Dials (9 equal columns across full width)
                     ui.horizontal(|ui| {

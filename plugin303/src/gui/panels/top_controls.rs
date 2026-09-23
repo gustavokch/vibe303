@@ -252,18 +252,7 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                             ui.add_space(10.0);
 
-                            let adv_color = if is_adv {
-                                theme::ACCENT_ORANGE
-                            } else {
-                                theme::TEXT_SECONDARY
-                            };
-                            if ui
-                                .checkbox(
-                                    &mut is_adv,
-                                    nih_plug_egui::egui::RichText::new("ADV ENV")
-                                        .font(FontId::proportional(8.5))
-                                        .color(adv_color),
-                                )
+                            if crate::gui::widgets::checkbox::checkbox(ui, &mut is_adv, "ADV ENV")
                                 .changed()
                             {
                                 setter.begin_set_parameter(&params.advanced_env);

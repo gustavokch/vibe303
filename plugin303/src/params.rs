@@ -424,7 +424,7 @@ impl Default for Plugin303Params {
         };
 
         let default_seq_run = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-            s == "running"
+            s == "running" || s == "running_note"
         } else {
             false
         };
@@ -771,7 +771,22 @@ impl Default for Plugin303Params {
             )
             .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
 
-            pattern: std::sync::RwLock::new(SequencerPattern::default()),
+            pattern: std::sync::RwLock::new({
+                let mut p = SequencerPattern::default();
+                // QA capture state only: `running_note` runs the sequencer
+                // with every step set to NOTE, so wherever the playhead
+                // happens to be when the screenshot is taken it is framing a
+                // bright cyan cell. The default pattern's rests and ties make
+                // the playhead's position a lottery, which left round-19
+                // issue 9 — does the playhead frame read on a bright step? —
+                // unverifiable from a capture. Shipped default is unchanged.
+                if std::env::var("VIBE303_QA_STATE").as_deref() == Ok("running_note") {
+                    for step in p.steps.iter_mut() {
+                        step.gate = StepGate::Note;
+                    }
+                }
+                p
+            }),
         }
     }
 }

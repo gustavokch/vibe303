@@ -80,16 +80,32 @@ pub fn create_editor(
                 // combo value measured 3.87:1). Point them at the palette so
                 // every DragValue, Button and ComboBox that does not set its
                 // own colour still lands on a token (round-14 issue 7).
+                //
+                // Both fill slots are set (round-19 issue 7). egui paints
+                // Button and DragValue backgrounds from `weak_bg_fill`, not
+                // `bg_fill`; leaving it unset dropped those fields to egui's
+                // `from_gray(60)`, which measured 1.43:1 against the panel and
+                // left the FIELD_FILL token dead on the widgets it was written
+                // for. Field text moves to TEXT_PRIMARY in the same step: on
+                // the lighter fill, TEXT_SECONDARY measures only 3.28:1, and no
+                // fill satisfies 3:1 against the panel and 4.5:1 under
+                // TEXT_SECONDARY at once (the luminance windows are
+                // [0.132, inf) and (-inf, 0.085]). White clears both — 3.03:1
+                // fill against the panel, 5.68:1 text on the fill.
                 let widgets = &mut style.visuals.widgets;
                 widgets.noninteractive.fg_stroke.color = theme::TEXT_SECONDARY;
-                widgets.inactive.fg_stroke.color = theme::TEXT_SECONDARY;
+                widgets.inactive.fg_stroke.color = theme::TEXT_PRIMARY;
                 widgets.inactive.bg_fill = theme::FIELD_FILL;
+                widgets.inactive.weak_bg_fill = theme::FIELD_FILL;
                 widgets.hovered.fg_stroke.color = theme::TEXT_PRIMARY;
                 widgets.hovered.bg_fill = theme::FIELD_FILL_HOVER;
+                widgets.hovered.weak_bg_fill = theme::FIELD_FILL_HOVER;
                 widgets.active.fg_stroke.color = theme::TEXT_PRIMARY;
                 widgets.active.bg_fill = theme::FIELD_FILL_ACTIVE;
+                widgets.active.weak_bg_fill = theme::FIELD_FILL_ACTIVE;
                 widgets.open.fg_stroke.color = theme::TEXT_PRIMARY;
                 widgets.open.bg_fill = theme::FIELD_FILL_HOVER;
+                widgets.open.weak_bg_fill = theme::FIELD_FILL_HOVER;
 
                 // Checkbox styling: unified 14pt (28px physical) filled square, orange checkmark
                 widgets.inactive.corner_radius = CornerRadius::same(2);
