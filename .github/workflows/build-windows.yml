@@ -1,0 +1,154 @@
+name: build-plugins-windows
+
+# Manual trigger only. Builds Windows x86_64 VST3 + CLAP bundles on a
+# GitHub-hosted windows-latest runner (native MSVC toolchain) in two CPU
+# variants, uploads them as zips, and (optionally) attaches the zips to a
+# GitHub Release.
+#  - v3      : x86-64-v3 (AVX2+FMA+BMI; Haswell 2013+ / Excavator 2015+).
+#  - v2      : x86-64-v2 (SSE4.2+POPCNT; Nehalem 2008+). Compatibility build.
+#  - release : downloads both zips and publishes a GitHub Release.
+#
+# Features: --no-default-features --features gui
+#   GUI is included; the `standalone` binary is not (plugin hosts do not need
+#   it, and it would drag in cpal/ASIO link surface).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (blank = build-<sha8>, no release published if 'release' input is false)"
+        required: false
+        default: ""
+      release:
+        description: "Publish a GitHub Release with the zips"
+        type: boolean
+        default: true
+      prerelease:
+        description: "Mark the release as a pre-release"
+        type: boolean
+        default: true
+      draft:
+        description: "Create the release as a draft"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read   # build jobs need read-only; the release job re-declares write
+
+env:
+  PKG: plugin303
+  BUNDLE_NAME: TB303
+  TARGET: x86_64-pc-windows-msvc
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-x86_64:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: v3
+            target_cpu: x86-64-v3
+          - variant: v2
+            target_cpu: x86-64-v2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (MSVC host + target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry + target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-${{ matrix.variant }}
+
+      - name: Build + bundle (${{ matrix.target_cpu }})
+        shell: pwsh
+        env:
+          # MUST be plain RUSTFLAGS, not CARGO_TARGET_<TRIPLE>_RUSTFLAGS.
+          # .cargo/config.toml pins -C target-cpu=x86-64-v3 under
+          # [target.'cfg(target_arch = "x86_64")'], which matches this triple.
+          # Plain RUSTFLAGS replaces that bucket outright; the per-triple env
+          # var is merged *with* it, which would silently make the v2 build
+          # AVX2. See Cargo's rustflags precedence rules.
+          RUSTFLAGS: -C target-cpu=${{ matrix.target_cpu }}
+        run: |
+          cargo xtask bundle $env:PKG --release --target $env:TARGET --no-default-features --features gui
+
+      - name: Locate bundles
+        id: find
+        shell: pwsh
+        run: |
+          $dir = "target/$env:TARGET/bundled"
+          if (-not (Test-Path $dir)) { $dir = "target/bundled" }
+          # On Windows the VST3 bundle is a directory and the payload DLL keeps
+          # the .vst3 extension, so assert the DLL itself - an empty directory
+          # would otherwise pass.
+          $vst3Dll = "$dir/$env:BUNDLE_NAME.vst3/Contents/x86_64-win/$env:BUNDLE_NAME.vst3"
+          if (-not (Test-Path -PathType Leaf $vst3Dll)) {
+            Get-ChildItem -Recurse $dir | Select-Object FullName
+            throw "missing VST3 payload: $vst3Dll"
+          }
+          if (-not (Test-Path -PathType Leaf "$dir/$env:BUNDLE_NAME.clap")) {
+            Get-ChildItem -Recurse $dir | Select-Object FullName
+            throw "missing CLAP: $dir/$env:BUNDLE_NAME.clap"
+          }
+          "dir=$dir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $sha8  = "${{ github.sha }}".Substring(0, 8)
+          $out   = "$env:BUNDLE_NAME-windows-x86_64-${{ matrix.variant }}-$sha8"
+          $stage = Join-Path $env:RUNNER_TEMP $out
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item -Recurse "${{ steps.find.outputs.dir }}/$env:BUNDLE_NAME.vst3" $stage
+          Copy-Item "${{ steps.find.outputs.dir }}/$env:BUNDLE_NAME.clap" $stage
+          $zip = Join-Path $env:RUNNER_TEMP "$out.zip"
+          # -Path <dir> (no trailing \*) keeps the top-level folder inside the
+          # archive, matching the `zip -r "$OUT.zip" "$OUT"` layout used by the
+          # linux job in build.yml.
+          Compress-Archive -Path $stage -DestinationPath $zip -Force
+          "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUNDLE_NAME }}-windows-x86_64-${{ matrix.variant }}
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+  release:
+    if: ${{ inputs.release }}
+    needs: [windows-x86_64]
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    permissions:
+      contents: write   # create tags/releases
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Compute release tag
+        id: meta
+        env:
+          IN_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="$IN_TAG"
+          [ -n "$TAG" ] || TAG="build-${GITHUB_SHA::8}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ inputs.prerelease }}
+          draft: ${{ inputs.draft }}
+          files: artifacts/**/*.zip
+          fail_on_unmatched_files: true
