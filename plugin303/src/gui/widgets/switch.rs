@@ -56,12 +56,16 @@ fn render_hsegment_row(
     let width = fixed_width
         .unwrap_or(per_slot * num_opts as f32 + 4.0)
         .max(per_slot + 4.0);
-    let height = 34.0;
+    // Height 24: 8.5-pt label row (~11) + 1 gap + 12-high track. The old
+    // fixed 34 left ~9 logical px unpainted at the bottom, which the souped
+    // drawer read as dead band between the toggle and knob rows (round-19
+    // review, issue 6 follow-up).
+    let height = 24.0;
     let (rect, mut response) = ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag());
 
     let track_rect = Rect::from_min_size(
         pos2(rect.left() + 2.0, rect.top() + 13.0),
-        vec2(width - 4.0, 18.0),
+        vec2(width - 4.0, 11.0),
     );
     let slot_width = (width - 4.0) / num_opts as f32;
 

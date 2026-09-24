@@ -22,15 +22,35 @@ use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
 /// the column run as 735/370/460/1126 physical px and the widest void as an
 /// 870 px band. Equal columns with centred content split each column's
 /// leftover in half on either side, so no single void can exceed half a
-/// column.
+/// column. The achievable bound, measured on capture (round-19 review
+/// follow-up): `col_w` is 332.75 logical (665.5 physical) and the DRIFT knob
+/// — the narrowest column's whole content — paints only ~45 logical wide, so
+/// its voids measure ≈ 290 physical (297 by strict all-background columns).
+/// The round-19 acceptance band of 80 px physical was unreachable with this
+/// content without re-weighting columns, so the criterion is "no void wider
+/// than half a column", recorded here as ≈ 300 physical.
 const NUM_COLS: usize = 4;
 const SEPARATOR_W: f32 = 1.0;
 /// Widest content in any column, in logical px (the TOL/AGE/NOISE cluster).
-/// Nothing sizes off this any more; it is the floor a column may not go below
-/// without clipping, and the test below holds the layout to it.
+/// The floor a column may not go below without clipping; held by the test
+/// below. Test-only since the runtime `debug_assert` was dropped: `qa_zoom`
+/// only ever widens the column, so nothing at runtime can violate the floor.
+#[cfg(test)]
 const WIDEST_COL_CONTENT_W: f32 = 232.0;
 /// One row height: seed row (20) + 2 gap + knob (60) = 82.
 const ROW_H: f32 = 82.0;
+/// Panel content width at the full 1366-logical window: CentralPanel margin
+/// (10 each side) + this frame's inner margin (6 each side). Test-only;
+/// the renderer measures `ui.available_width()` live.
+#[cfg(test)]
+const PANEL_INNER_W: f32 = 1366.0 - 2.0 * 10.0 - 2.0 * 6.0; // 1334.0
+
+/// Equal column width for the tweaks row: content width minus the three 1-px
+/// separators, over four columns. Shared by the renderer and the tests so the
+/// arithmetic cannot drift between them.
+fn column_width(total_w: f32) -> f32 {
+    (total_w - (NUM_COLS as f32 - 1.0) * SEPARATOR_W) / NUM_COLS as f32
+}
 
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
@@ -52,16 +72,20 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 // Title row, outside `add_enabled_ui` on purpose. It is panel
                 // chrome rather than a control, and the bypass reason beside
                 // it has to stay fully legible (>= 4.5:1) while the controls
-                // below it dim.
+                // below it dim. Keeping the title at full strength is a
+                // deliberate deviation from round-14 issue 3 (which dimmed it
+                // with the panel): chrome is not a control, and in ACCURATE
+                // the title carries the bypass warning beside it.
                 ui.horizontal(|ui| {
                     ui.label(
                         nih_plug_egui::egui::RichText::new("ANALOG CHARACTER & TWEAKS")
                             .font(FontId::proportional(10.0))
                             .strong()
                             .color(if is_accurate {
-                                // Faded ACCENT_ORANGE measures ≈2.5:1; the
-                                // secondary token survives the fade at ≈3.5:1
-                                // (round-14 issue 3).
+                                // ACCURATE state: the secondary token, beside
+                                // the bypass reason below. Enabled state:
+                                // ACCENT_ORANGE. The title never rides the
+                                // disabled fade (see above).
                                 theme::TEXT_SECONDARY
                             } else {
                                 theme::ACCENT_ORANGE
@@ -88,14 +112,10 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 ui.add_enabled_ui(!is_accurate, |ui| {
                     // 4 equal columns on one absolute baseline.
                     let total_w = ui.available_width();
-                    let sep_run_w = (NUM_COLS as f32 - 1.0) * SEPARATOR_W;
-                    let col_w = (total_w - sep_run_w) / NUM_COLS as f32;
-                    debug_assert!(
-                        col_w >= WIDEST_COL_CONTENT_W,
-                        "tweaks column ({col_w}px) is narrower than its widest \
-                         content ({WIDEST_COL_CONTENT_W}px); the TOL/AGE/NOISE \
-                         cluster will clip"
-                    );
+                    let col_w = column_width(total_w);
+                    // No runtime assert on the floor: the test below holds the
+                    // 100 % case, and `qa_zoom` 0.75 only ever widens the
+                    // logical column (mod.rs), so the assert could not fire.
                     let row_top = ui.cursor().top();
                     let painter = ui.painter().clone();
                     let left = ui.cursor().left();
@@ -410,10 +430,8 @@ mod tests {
 
     #[test]
     fn tweaks_columns_are_equal_and_fit_their_content() {
-        // CentralPanel inner margin (10) + tweaks frame inner margin (6), both sides
-        let avail_w = 1366.0 - 2.0 * 10.0 - 2.0 * 6.0; // 1334.0
-        let sep_run_w = (NUM_COLS as f32 - 1.0) * SEPARATOR_W;
-        let col_w = (avail_w - sep_run_w) / NUM_COLS as f32;
+        let avail_w = PANEL_INNER_W;
+        let col_w = column_width(avail_w);
 
         // Round-19 issue 4: four equal columns, and they must still be wide
         // enough for the widest cluster.
@@ -423,7 +441,7 @@ mod tests {
         );
 
         // The row fits the panel exactly: four columns plus three separators.
-        let total_used = col_w * NUM_COLS as f32 + sep_run_w;
+        let total_used = col_w * NUM_COLS as f32 + (NUM_COLS as f32 - 1.0) * SEPARATOR_W;
         assert!((total_used - avail_w).abs() <= 0.5);
     }
 
@@ -432,9 +450,8 @@ mod tests {
         // The `panels` probe reads column widths as the distance between
         // dividers, so equal columns are only equal if the dividers land on
         // the boundaries. Walk the same arithmetic the renderer uses.
-        let avail_w = 1366.0 - 2.0 * 10.0 - 2.0 * 6.0;
-        let sep_run_w = (NUM_COLS as f32 - 1.0) * SEPARATOR_W;
-        let col_w = (avail_w - sep_run_w) / NUM_COLS as f32;
+        let avail_w = PANEL_INNER_W;
+        let col_w = column_width(avail_w);
 
         let mut edges = vec![0.0_f32];
         for col in 1..NUM_COLS {

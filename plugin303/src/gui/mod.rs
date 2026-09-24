@@ -3,7 +3,8 @@ pub mod theme;
 pub mod widgets;
 
 use nih_plug::prelude::Editor;
-use nih_plug_egui::egui::{CornerRadius, Frame, Margin, Stroke};
+use nih_plug_egui::egui::style::WidgetVisuals;
+use nih_plug_egui::egui::{Color32, CornerRadius, Frame, Margin, Stroke};
 use nih_plug_egui::{create_egui_editor, EguiState};
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
@@ -18,6 +19,14 @@ pub const GUI_HEIGHT: u32 = 960;
 /// `item_spacing.y` zeroed, so all six gutters measure identically
 /// (round-13 issue 11).
 pub(crate) const PANEL_GAP: f32 = 4.0;
+
+/// Set both fill slots of a widget state together. egui paints some widgets
+/// from `bg_fill` and others from `weak_bg_fill`; setting only one leaves the
+/// other on egui's default grey (round-19 issue 7).
+fn set_fill(v: &mut WidgetVisuals, c: Color32) {
+    v.bg_fill = c;
+    v.weak_bg_fill = c;
+}
 
 pub fn create_editor(
     params: Arc<Plugin303Params>,
@@ -87,33 +96,48 @@ pub fn create_editor(
                 // `from_gray(60)`, which measured 1.43:1 against the panel and
                 // left the FIELD_FILL token dead on the widgets it was written
                 // for. Field text moves to TEXT_PRIMARY in the same step: on
-                // the lighter fill, TEXT_SECONDARY measures only 3.28:1, and no
+                // the lighter fill, TEXT_SECONDARY measures only 3.29:1, and no
                 // fill satisfies 3:1 against the panel and 4.5:1 under
                 // TEXT_SECONDARY at once (the luminance windows are
-                // [0.132, inf) and (-inf, 0.085]). White clears both — 3.03:1
-                // fill against the panel, 5.68:1 text on the fill.
+                // [0.132, inf) and (-inf, 0.085]; the test
+                // `field_fill_windows_are_disjoint` proves it). White clears
+                // both — 3.06:1 fill against the panel, 5.68:1 text on the
+                // fill.
+                //
+                // Scope note: `fg_stroke = TEXT_PRIMARY` on
+                // inactive/hovered/active/open deliberately brightens *all*
+                // inactive widget text — buttons, ComboBoxes, DragValues,
+                // selectable labels — not only field text. egui style slots
+                // cannot express "fields only", and no fill satisfies both
+                // contrast windows, so the alternative (TEXT_SECONDARY text on
+                // the fill) fails 4.5:1 everywhere it lands.
                 let widgets = &mut style.visuals.widgets;
                 widgets.noninteractive.fg_stroke.color = theme::TEXT_SECONDARY;
                 widgets.inactive.fg_stroke.color = theme::TEXT_PRIMARY;
-                widgets.inactive.bg_fill = theme::FIELD_FILL;
-                widgets.inactive.weak_bg_fill = theme::FIELD_FILL;
+                set_fill(&mut widgets.inactive, theme::FIELD_FILL);
                 widgets.hovered.fg_stroke.color = theme::TEXT_PRIMARY;
-                widgets.hovered.bg_fill = theme::FIELD_FILL_HOVER;
-                widgets.hovered.weak_bg_fill = theme::FIELD_FILL_HOVER;
+                set_fill(&mut widgets.hovered, theme::FIELD_FILL_HOVER);
                 widgets.active.fg_stroke.color = theme::TEXT_PRIMARY;
-                widgets.active.bg_fill = theme::FIELD_FILL_ACTIVE;
-                widgets.active.weak_bg_fill = theme::FIELD_FILL_ACTIVE;
+                set_fill(&mut widgets.active, theme::FIELD_FILL_ACTIVE);
                 widgets.open.fg_stroke.color = theme::TEXT_PRIMARY;
-                widgets.open.bg_fill = theme::FIELD_FILL_HOVER;
-                widgets.open.weak_bg_fill = theme::FIELD_FILL_HOVER;
+                set_fill(&mut widgets.open, theme::FIELD_FILL_HOVER);
 
-                // Checkbox styling: unified 14pt (28px physical) filled square, orange checkmark
+                // Widget border slots (round-19 review, issue 1 follow-up).
+                // These slots are app-wide — Button, ComboBox, DragValue and
+                // the Checkbox box all read them — "field" scoping is not
+                // expressible through egui style slots. Resting/active borders
+                // take FIELD_BORDER (visible on FIELD_FILL, where
+                // BORDER_DEFAULT is invisible because the two tokens are the
+                // same colour); hover moves up to TEXT_MUTED so the hovered
+                // border stays distinct from the resting one. Panel frames
+                // keep BORDER_DEFAULT via `theme::border_stroke()`.
+                widgets.inactive.bg_stroke = Stroke::new(1.0_f32, theme::FIELD_BORDER);
+                widgets.active.bg_stroke = Stroke::new(1.0_f32, theme::FIELD_BORDER);
+                widgets.hovered.bg_stroke = Stroke::new(1.0_f32, theme::TEXT_MUTED);
+                // Checkbox styling: unified 14pt (28px physical) filled square, grey checkmark
                 widgets.inactive.corner_radius = CornerRadius::same(2);
                 widgets.active.corner_radius = CornerRadius::same(2);
                 widgets.hovered.corner_radius = CornerRadius::same(2);
-                widgets.inactive.bg_stroke = Stroke::new(1.0_f32, theme::BORDER_DEFAULT);
-                widgets.active.bg_stroke = Stroke::new(1.0_f32, theme::BORDER_DEFAULT);
-                widgets.hovered.bg_stroke = Stroke::new(1.0_f32, theme::BORDER_FOCUS);
                 style.visuals.selection.bg_fill = theme::ACCENT_ORANGE;
                 style.visuals.selection.stroke = Stroke::new(1.0_f32, theme::ACCENT_ORANGE);
             });

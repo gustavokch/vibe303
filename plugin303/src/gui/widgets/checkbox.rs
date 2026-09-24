@@ -13,7 +13,7 @@
 //! * the box is the egui checkbox box — `icon_width` square, the inactive
 //!   widget fill, the inactive widget border — and is **identical checked and
 //!   unchecked**, so the box never carries the state;
-//! * the check glyph is the inactive foreground stroke;
+//! * the check glyph is [`GLYPH_COLOR`] (`TEXT_SECONDARY`) in both paths;
 //! * the **label** carries the state: [`theme::ACCENT_ORANGE`] when checked,
 //!   [`theme::TEXT_SECONDARY`] when not.
 //!
@@ -23,7 +23,8 @@
 //! marks into a caller-supplied rect.
 
 use nih_plug_egui::egui::{
-    pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Response, Stroke, StrokeKind, Ui,
+    pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Response, RichText, Stroke,
+    StrokeKind, Ui,
 };
 
 use crate::gui::theme;
@@ -31,9 +32,10 @@ use crate::gui::theme;
 /// Label font shared by every checkbox site.
 const LABEL_FONT_SIZE: f32 = 8.5;
 
-/// Gap from the box's left edge to the label's left edge, in logical px.
-/// Matches egui's `icon_width + item_spacing.x` at this style.
-const LABEL_OFFSET: f32 = 18.0;
+/// The check glyph colour, one value for both checkbox paths ([`checkbox`]
+/// and [`paint_checkbox`]) so the glyph can never drift between sites. The
+/// label, not the glyph, carries the checked state.
+const GLYPH_COLOR: Color32 = theme::TEXT_SECONDARY;
 
 /// The label colour that carries the checked state. This is the whole
 /// convention in one function — call it rather than re-deriving the pair.
@@ -49,12 +51,22 @@ pub fn label_color(checked: bool) -> Color32 {
 /// callers keep their `.changed()` and `.on_hover_text()` chains.
 pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> Response {
     let color = label_color(*checked);
-    ui.checkbox(
-        checked,
-        nih_plug_egui::egui::RichText::new(label)
-            .font(FontId::proportional(LABEL_FONT_SIZE))
-            .color(color),
-    )
+    // egui paints the check glyph from `ui.style().interact(&response)
+    // .fg_stroke`, so the glyph override must live in the widget visuals.
+    // Scope it to this checkbox: the app-wide foreground stays TEXT_PRIMARY
+    // (field text needs it), and only the glyph moves to GLYPH_COLOR.
+    ui.scope(|ui| {
+        ui.style_mut().visuals.widgets.inactive.fg_stroke.color = GLYPH_COLOR;
+        ui.style_mut().visuals.widgets.hovered.fg_stroke.color = GLYPH_COLOR;
+        ui.style_mut().visuals.widgets.active.fg_stroke.color = GLYPH_COLOR;
+        ui.checkbox(
+            checked,
+            RichText::new(label)
+                .font(FontId::proportional(LABEL_FONT_SIZE))
+                .color(color),
+        )
+    })
+    .inner
 }
 
 /// Paint a checkbox in the shared convention into an explicit rect, for sites
@@ -62,11 +74,17 @@ pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> Response {
 ///
 /// The box is centred vertically in `hit_rect` and inset from its left edge by
 /// half the icon width, which is where egui puts it too; the label follows at
-/// [`LABEL_OFFSET`]. Every colour is read from the same style slots
-/// `ui.checkbox` reads, so the two paths cannot drift apart.
+/// egui's own offset (`icon_width + icon_spacing`, egui 0.31.1
+/// `checkbox.rs:132-133` — not `item_spacing.x`). Every colour is read from
+/// the same style slots `ui.checkbox` reads, except the check glyph, which
+/// both paths take from [`GLYPH_COLOR`], so the two paths cannot drift apart.
 pub fn paint_checkbox(ui: &Ui, hit_rect: Rect, checked: bool, label: &str) {
     let visuals = ui.style().visuals.widgets.inactive;
     let icon_w = ui.spacing().icon_width;
+    // egui places the label at `icon_width + icon_spacing`; derive it from
+    // the live spacing so this path tracks any style change.
+    let label_offset = icon_w + ui.spacing().icon_spacing;
+    let glyph_stroke = Stroke::new(visuals.fg_stroke.width, GLYPH_COLOR);
     let painter = ui.painter();
 
     let box_rect = Rect::from_center_size(
@@ -79,7 +97,7 @@ pub fn paint_checkbox(ui: &Ui, hit_rect: Rect, checked: bool, label: &str) {
     painter.rect_stroke(
         box_rect,
         CornerRadius::same(2),
-        Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
+        visuals.bg_stroke,
         StrokeKind::Inside,
     );
 
@@ -93,19 +111,19 @@ pub fn paint_checkbox(ui: &Ui, hit_rect: Rect, checked: bool, label: &str) {
                 pos2(g.left(), g.center().y),
                 pos2(g.left() + g.width() * 0.4, g.bottom()),
             ],
-            visuals.fg_stroke,
+            glyph_stroke,
         );
         painter.line_segment(
             [
                 pos2(g.left() + g.width() * 0.4, g.bottom()),
                 pos2(g.right(), g.top()),
             ],
-            visuals.fg_stroke,
+            glyph_stroke,
         );
     }
 
     painter.text(
-        pos2(hit_rect.left() + LABEL_OFFSET, hit_rect.center().y),
+        pos2(hit_rect.left() + label_offset, hit_rect.center().y),
         Align2::LEFT_CENTER,
         label,
         FontId::proportional(LABEL_FONT_SIZE),

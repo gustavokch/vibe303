@@ -5,7 +5,7 @@ use crate::gui::theme;
 use crate::gui::widgets::{Knob303, SlideSwitch};
 use crate::params::{CircuitTopology, Plugin303Params};
 
-pub const SOUPED_INNER_HEIGHT: f32 = 131.0;
+pub const SOUPED_INNER_HEIGHT: f32 = 118.0;
 
 /// Panel-gap hierarchy (round-17 issue 2). The central stack in
 /// `gui/mod.rs` separates the six top-level panels with uniform
@@ -169,8 +169,11 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     // + `add_space(2)`, which the `panels` probe read as a
                     // 51 px physical dead band. The separator keeps its rule
                     // but carries its own, tighter spacing instead of padding
-                    // on both sides.
-                    ui.add(nih_plug_egui::egui::Separator::default().spacing(4.0));
+                    // on both sides. Round-19 review follow-up: the SlideSwitch
+                    // repack (height 24) removed the unpainted allocation the
+                    // band mostly consisted of; spacing(2) keeps the
+                    // toggle→knob gap at the drawer's normal row spacing.
+                    ui.add(nih_plug_egui::egui::Separator::default().spacing(2.0));
 
                     // Row 2: Engine Rotary Dials (9 equal columns across full width)
                     ui.horizontal(|ui| {
@@ -180,7 +183,11 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         let mut render_knob = |knob: Knob303<'_, _>| {
                             ui.allocate_ui_with_layout(
-                                vec2(col_w, 64.0),
+                                // 63: the radius-medium knob with its label
+                                // paints ~57; the old 64 left dead space the
+                                // drawer could not reclaim (round-19 review,
+                                // issue 6/8 follow-up).
+                                vec2(col_w, 63.0),
                                 nih_plug_egui::egui::Layout::top_down(
                                     nih_plug_egui::egui::Align::Center,
                                 ),
@@ -256,14 +263,14 @@ mod tests {
 
     #[test]
     fn souped_panel_height_pinned() {
-        assert_eq!(SOUPED_INNER_HEIGHT, 131.0);
+        assert_eq!(SOUPED_INNER_HEIGHT, 118.0);
     }
 
     #[test]
     fn accurate_card_centering_geometry() {
         let card_h = 72.0_f32;
         let pad = accurate_card_pad(card_h);
-        assert_eq!(pad, 21.0);
+        assert_eq!(pad, 14.5);
         // Title row + padded card fill the pinned inner height exactly.
         assert_eq!(TITLE_ROW_H + pad * 2.0 + card_h, SOUPED_INNER_HEIGHT);
 

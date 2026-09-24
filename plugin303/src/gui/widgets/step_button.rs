@@ -421,7 +421,14 @@ pub fn render_step_strip(
         // the outer violet reads against the dark column background, the inner
         // near-black reads against the bright NOTE/TIE cell fills. No single
         // colour clears 3:1 against both extremes — see `theme::
-        // PLAYHEAD_FRAME_OUTER` for the luminance window that proves it empty.
+        // PLAYHEAD_FRAME_OUTER` for the luminance window that proves it empty,
+        // and `theme::tests::playhead_frame_covers_every_cell_it_crosses` for
+        // the numeric derivation (the single source for it).
+        //
+        // Recorded deviation: round-13 specified one frame colour, and
+        // round-19's prompt offered accent-hue or white. Both were
+        // unsatisfiable (the single-colour window is empty, and the gold hue
+        // is already GATE_TIE) — superseded by the two-ring frame.
         if is_active && ui.is_rect_visible(strip_rect) {
             ui.painter().rect_stroke(
                 strip_rect,

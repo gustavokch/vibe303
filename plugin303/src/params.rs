@@ -411,46 +411,72 @@ impl Plugin303Params {
     }
 }
 
+/// QA capture states that drive parameter defaults. The string contract is
+/// shared with `scripts/capture_standalone_gui.sh`, which sets
+/// `VIBE303_QA_STATE` — that script is the other half of this contract, and
+/// the two must stay in sync.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum QaState {
+    Accurate,
+    Advanced,
+    Generator,
+    Knobs,
+    QualityHigh,
+    QualityUltra,
+    QualityUltra2x,
+    Running,
+    RunningNote,
+    Zoom75,
+}
+
+fn parse_qa_state(var: &str) -> Option<QaState> {
+    Some(match var {
+        "accurate" => QaState::Accurate,
+        "advanced" => QaState::Advanced,
+        "generator" => QaState::Generator,
+        "knobs" => QaState::Knobs,
+        "quality_high" => QaState::QualityHigh,
+        "quality_ultra" => QaState::QualityUltra,
+        "quality_ultra2x" => QaState::QualityUltra2x,
+        "running" => QaState::Running,
+        "running_note" => QaState::RunningNote,
+        "zoom75" => QaState::Zoom75,
+        _ => return None,
+    })
+}
+
 impl Default for Plugin303Params {
     fn default() -> Self {
-        let default_topology = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-            if s == "accurate" {
-                CircuitTopology::Accurate
-            } else {
-                CircuitTopology::Fun
-            }
+        // One parse site for the QA state (see `QaState`): every default
+        // below matches on the enum, never on a bare string.
+        let qa_state = std::env::var("VIBE303_QA_STATE")
+            .ok()
+            .and_then(|s| parse_qa_state(&s));
+
+        let default_topology = if qa_state == Some(QaState::Accurate) {
+            CircuitTopology::Accurate
         } else {
             CircuitTopology::Fun
         };
 
-        let default_seq_run = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-            s == "running" || s == "running_note"
-        } else {
-            false
-        };
+        let default_seq_run = matches!(qa_state, Some(QaState::Running | QaState::RunningNote));
 
         // QA capture state only: `advanced` starts with the ADV ENV tier
         // engaged so the MEG/VEG ADSR banks render enabled for screenshots.
         // Shipped default stays false.
-        let default_advanced_env = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-            s == "advanced"
-        } else {
-            false
-        };
+        let default_advanced_env = qa_state == Some(QaState::Advanced);
 
         // QA capture state only: `knobs` starts with one bipolar knob off its
         // centre detent and one unipolar knob off its default so the
         // range-derived arc polarity (round-13 issue 1) is verifiable in a
         // screenshot. Shipped defaults stay 0.0 ct / 0.5.
-        let qa_knobs = std::env::var("VIBE303_QA_STATE")
-            .map(|s| s == "knobs")
-            .unwrap_or(false);
+        let qa_knobs = qa_state == Some(QaState::Knobs);
         let (default_tuning, default_cutoff) = if qa_knobs { (25.0, 0.75) } else { (0.0, 0.5) };
 
-        let default_tier = match std::env::var("VIBE303_QA_STATE").as_deref() {
-            Ok("quality_high") => Tier::High,
-            Ok("quality_ultra") => Tier::Ultra,
-            Ok("quality_ultra2x") => Tier::Ultra2x,
+        let default_tier = match qa_state {
+            Some(QaState::QualityHigh) => Tier::High,
+            Some(QaState::QualityUltra) => Tier::Ultra,
+            Some(QaState::QualityUltra2x) => Tier::Ultra2x,
             _ => Tier::Low,
         };
 
@@ -780,7 +806,7 @@ impl Default for Plugin303Params {
                 // the playhead's position a lottery, which left round-19
                 // issue 9 — does the playhead frame read on a bright step? —
                 // unverifiable from a capture. Shipped default is unchanged.
-                if std::env::var("VIBE303_QA_STATE").as_deref() == Ok("running_note") {
+                if qa_state == Some(QaState::RunningNote) {
                     for step in p.steps.iter_mut() {
                         step.gate = StepGate::Note;
                     }

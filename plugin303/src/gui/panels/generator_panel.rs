@@ -51,12 +51,16 @@ fn grid_drag<'a>(ui: &mut Ui, drag: DragValue<'a>) {
 fn grid_readout(ui: &mut Ui, text: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(G_FIELD_W, G_ROW_H), Sense::hover());
     if ui.is_rect_visible(rect) {
+        // Read the same style slots the live DragValue fields read
+        // (`widgets.inactive`), so this painted cell tracks the shared field
+        // chrome instead of hard-coding tokens that can drift from it.
+        let visuals = ui.style().visuals.widgets.inactive;
         let painter = ui.painter();
-        painter.rect_filled(rect, CornerRadius::same(2), theme::FIELD_FILL);
+        painter.rect_filled(rect, CornerRadius::same(2), visuals.bg_fill);
         painter.rect_stroke(
             rect,
             CornerRadius::same(2),
-            theme::border_stroke(),
+            visuals.bg_stroke,
             nih_plug_egui::egui::StrokeKind::Inside,
         );
         painter.text(

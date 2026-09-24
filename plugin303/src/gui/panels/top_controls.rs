@@ -115,10 +115,12 @@ pub(crate) fn env_group_left(row_width: f32, left_min: f32, desired: f32) -> f32
 }
 
 pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
-    // 103 logical: knobs need 78; the ENVELOPES module (title row + two ADSR
-    // banks of 41-px faders) needs ~84 and must fit inside this panel with
-    // symmetric padding instead of overflowing it (round-11 item 2).
-    let desired_size = vec2(ui.available_width(), 103.0);
+    // 125 logical: the ENVELOPES module renders ~125 (title row + two ADSR
+    // banks of 41-px faders) and must fit inside this panel with symmetric
+    // padding instead of overflowing it (round-11 item 2; round-19 review
+    // issue 6 follow-up: the old 103 let the module paint ~24 logical below
+    // the frame, swallowing the PANEL_GAP gutter).
+    let desired_size = vec2(ui.available_width(), 125.0);
     let (rect, _) = ui.allocate_exact_size(desired_size, nih_plug_egui::egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {
@@ -132,185 +134,209 @@ pub fn render_top_controls(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         );
     }
 
-    let inner = rect.shrink(6.0);
-    // The ENVELOPES module is anchored to the row's right edge and the knob
-    // strip expands into everything left of it, so no dead run remains beside
-    // the module (round-14 issue 1).
-    let env_left = inner.left() + env_group_left(inner.width(), LEFT_MIN_W, ENV_GROUP_W);
-    let left_rect = Rect::from_min_max(inner.min, pos2(env_left, inner.bottom()));
-    let env_rect = Rect::from_min_max(pos2(env_left, inner.top()), inner.max);
+    // All panel content lives inside one child ui bounded by the exact-size
+    // rect: the ENVELOPES module's own allocation can no longer advance the
+    // parent cursor past the frame bottom, which used to swallow the
+    // PANEL_GAP gutter below (round-19 review, issue 6 follow-up).
+    ui.allocate_new_ui(nih_plug_egui::egui::UiBuilder::new().max_rect(rect), |ui| {
+        // Zero the child's automatic spacing: allocations below advance the
+        // cursor by their exact size only.
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        let inner = rect.shrink(6.0);
+        // The ENVELOPES module is anchored to the row's right edge and the knob
+        // strip expands into everything left of it, so no dead run remains beside
+        // the module (round-14 issue 1).
+        let env_left = inner.left() + env_group_left(inner.width(), LEFT_MIN_W, ENV_GROUP_W);
+        let left_rect = Rect::from_min_max(inner.min, pos2(env_left, inner.bottom()));
+        let env_rect = Rect::from_min_max(pos2(env_left, inner.top()), inner.max);
 
-    ui.allocate_new_ui(
-        nih_plug_egui::egui::UiBuilder::new().max_rect(left_rect),
-        |ui| {
-            ui.horizontal(|ui| {
-                // Waveform Selector integrated inside main panel
-                ui.add_space(4.0);
-                ui.add(
-                    SlideSwitch::new(&params.waveform, setter, "WAVE", &["SAW", "SQR", "SWP"])
-                        .vertical()
-                        .with_thumb_color(theme::ACCENT_ORANGE),
-                );
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
-
-                // Classic 303 Parameter Gauges: 7 equal columns filling the
-                // strip, the same distribution the souped knob row uses, so the
-                // width freed by the right-anchored ENVELOPES module is spent
-                // on knob spacing instead of dead space (round-14 issue 1).
-                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                let col_w = ui.available_width() / 7.0;
-                let col_h = ui.available_height();
-                let mut render_knob = |knob: Knob303<'_, _>| {
-                    ui.allocate_ui_with_layout(
-                        vec2(col_w, col_h),
-                        Layout::top_down(Align::Center),
-                        |ui| {
-                            ui.add(knob);
-                        },
+        ui.allocate_new_ui(
+            nih_plug_egui::egui::UiBuilder::new().max_rect(left_rect),
+            |ui| {
+                ui.horizontal(|ui| {
+                    // Waveform Selector integrated inside main panel
+                    ui.add_space(4.0);
+                    ui.add(
+                        SlideSwitch::new(&params.waveform, setter, "WAVE", &["SAW", "SQR", "SWP"])
+                            .vertical()
+                            .with_thumb_color(theme::ACCENT_ORANGE),
                     );
-                };
-                render_knob(Knob303::new(
-                    &params.tuning,
-                    setter,
-                    "TUNING",
-                    theme::KNOB_RADIUS_LARGE,
-                ));
-                render_knob(Knob303::new(
-                    &params.cutoff,
-                    setter,
-                    "CUTOFF",
-                    theme::KNOB_RADIUS_LARGE,
-                ));
-                render_knob(Knob303::new(
-                    &params.resonance,
-                    setter,
-                    "RESONANCE",
-                    theme::KNOB_RADIUS_LARGE,
-                ));
-                render_knob(Knob303::new(
-                    &params.env_mod,
-                    setter,
-                    "ENV MOD",
-                    theme::KNOB_RADIUS_LARGE,
-                ));
-                render_knob(Knob303::new(
-                    &params.decay,
-                    setter,
-                    "DECAY",
-                    theme::KNOB_RADIUS_LARGE,
-                ));
-                render_knob(Knob303::new(
-                    &params.accent,
-                    setter,
-                    "ACCENT",
-                    theme::KNOB_RADIUS_LARGE,
-                ));
-                render_knob(Knob303::new(
-                    &params.volume,
-                    setter,
-                    "VOLUME",
-                    theme::KNOB_RADIUS_LARGE,
-                ));
-            });
-        },
-    );
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(6.0);
 
-    ui.allocate_new_ui(
-        nih_plug_egui::egui::UiBuilder::new().max_rect(env_rect),
-        |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                // Envelopes Module Frame: MEG/VEG/ADV ENV distributed cleanly
-                // without isolated controls or dead gaps.
-                let env_frame = Frame::new()
-                    .fill(theme::WELL_BG)
-                    .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                    .corner_radius(CornerRadius::same(3))
-                    .inner_margin(Margin::symmetric(6, 4));
+                    // Classic 303 Parameter Gauges: 7 equal columns filling the
+                    // strip, the same distribution the souped knob row uses, so the
+                    // width freed by the right-anchored ENVELOPES module is spent
+                    // on knob spacing instead of dead space (round-14 issue 1).
+                    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                    let col_w = ui.available_width() / 7.0;
+                    let col_h = ui.available_height();
+                    let mut render_knob = |knob: Knob303<'_, _>| {
+                        ui.allocate_ui_with_layout(
+                            vec2(col_w, col_h),
+                            Layout::top_down(Align::Center),
+                            |ui| {
+                                ui.add(knob);
+                            },
+                        );
+                    };
+                    render_knob(Knob303::new(
+                        &params.tuning,
+                        setter,
+                        "TUNING",
+                        theme::KNOB_RADIUS_LARGE,
+                    ));
+                    render_knob(Knob303::new(
+                        &params.cutoff,
+                        setter,
+                        "CUTOFF",
+                        theme::KNOB_RADIUS_LARGE,
+                    ));
+                    render_knob(Knob303::new(
+                        &params.resonance,
+                        setter,
+                        "RESONANCE",
+                        theme::KNOB_RADIUS_LARGE,
+                    ));
+                    render_knob(Knob303::new(
+                        &params.env_mod,
+                        setter,
+                        "ENV MOD",
+                        theme::KNOB_RADIUS_LARGE,
+                    ));
+                    render_knob(Knob303::new(
+                        &params.decay,
+                        setter,
+                        "DECAY",
+                        theme::KNOB_RADIUS_LARGE,
+                    ));
+                    render_knob(Knob303::new(
+                        &params.accent,
+                        setter,
+                        "ACCENT",
+                        theme::KNOB_RADIUS_LARGE,
+                    ));
+                    render_knob(Knob303::new(
+                        &params.volume,
+                        setter,
+                        "VOLUME",
+                        theme::KNOB_RADIUS_LARGE,
+                    ));
+                });
+            },
+        );
 
-                env_frame.show(ui, |ui| {
-                    // Compact envelope module: hugs its content (title row and
-                    // the two ADSR banks) instead of stretching across the
-                    // remaining panel width — kills the ~1150 px dead run
-                    // between MEG and VEG (round-11 item 3).
-                    ui.spacing_mut().item_spacing.y = 3.0;
-                    ui.spacing_mut().interact_size.y = 14.0;
-                    ui.vertical(|ui| {
-                        let mut is_adv = params.advanced_env.value();
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                nih_plug_egui::egui::RichText::new("ENVELOPES")
-                                    .font(FontId::new(
-                                        9.0,
-                                        nih_plug_egui::egui::FontFamily::Proportional,
-                                    ))
-                                    .strong()
-                                    // Shared accent title colour (round-11 item 8).
-                                    .color(theme::ACCENT_ORANGE),
-                            );
+        ui.allocate_new_ui(
+            nih_plug_egui::egui::UiBuilder::new().max_rect(env_rect),
+            |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    // Envelopes Module Frame: MEG/VEG/ADV ENV distributed cleanly
+                    // without isolated controls or dead gaps.
+                    let env_frame = Frame::new()
+                        .fill(theme::WELL_BG)
+                        .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
+                        .corner_radius(CornerRadius::same(3))
+                        .inner_margin(Margin::symmetric(6, 4));
 
-                            ui.add_space(10.0);
-
-                            if crate::gui::widgets::checkbox::checkbox(ui, &mut is_adv, "ADV ENV")
-                                .changed()
-                            {
-                                setter.begin_set_parameter(&params.advanced_env);
-                                setter.set_parameter(&params.advanced_env, is_adv);
-                                setter.end_set_parameter(&params.advanced_env);
-                            }
-                        });
-
-                        ui.add_space(3.0);
-
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-
-                            // One dimming mechanism only (round-13 issue 6):
-                            // add_enabled_ui blocks interaction, while
-                            // render_adsr_bank/MiniFader paint the disabled bank
-                            // with the explicit muted palette on a painter whose
-                            // fade-to-background is cleared — egui's disabled
-                            // fade must not compound on top of the muted tokens.
-                            ui.add_enabled_ui(is_adv, |ui| {
-                                render_adsr_bank(
-                                    ui,
-                                    "MEG ADSR (Mod Envelope)",
-                                    &params.meg_attack,
-                                    &params.meg_decay_adj,
-                                    &params.meg_sustain,
-                                    &params.meg_release,
-                                    setter,
-                                    is_adv,
+                    env_frame.show(ui, |ui| {
+                        // Compact envelope module: hugs its content (title row and
+                        // the two ADSR banks) instead of stretching across the
+                        // remaining panel width — kills the ~1150 px dead run
+                        // between MEG and VEG (round-11 item 3).
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.spacing_mut().interact_size.y = 14.0;
+                        ui.vertical(|ui| {
+                            let mut is_adv = params.advanced_env.value();
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    nih_plug_egui::egui::RichText::new("ENVELOPES")
+                                        .font(FontId::new(
+                                            9.0,
+                                            nih_plug_egui::egui::FontFamily::Proportional,
+                                        ))
+                                        .strong()
+                                        // Shared accent title colour (round-11 item 8).
+                                        .color(theme::ACCENT_ORANGE),
                                 );
+
+                                ui.add_space(10.0);
+
+                                if crate::gui::widgets::checkbox::checkbox(
+                                    ui,
+                                    &mut is_adv,
+                                    "ADV ENV",
+                                )
+                                .changed()
+                                {
+                                    setter.begin_set_parameter(&params.advanced_env);
+                                    setter.set_parameter(&params.advanced_env, is_adv);
+                                    setter.end_set_parameter(&params.advanced_env);
+                                }
                             });
 
-                            ui.add_space(8.0);
+                            ui.add_space(2.0);
 
-                            // VEG (voice envelope) is live whether or not ADV
-                            // ENV is engaged, so it must render enabled — the
-                            // disabled tier is reserved for MEG (round-11 item 7).
-                            render_adsr_bank(
-                                ui,
-                                "VEG ADSR (Voice Envelope)",
-                                &params.veg_attack,
-                                &params.veg_decay_adj,
-                                &params.veg_sustain,
-                                &params.veg_release,
-                                setter,
-                                true,
-                            );
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+
+                                // One dimming mechanism only (round-13 issue 6):
+                                // add_enabled_ui blocks interaction, while
+                                // render_adsr_bank/MiniFader paint the disabled bank
+                                // with the explicit muted palette on a painter whose
+                                // fade-to-background is cleared — egui's disabled
+                                // fade must not compound on top of the muted tokens.
+                                ui.add_enabled_ui(is_adv, |ui| {
+                                    render_adsr_bank(
+                                        ui,
+                                        "MEG ADSR (Mod Envelope)",
+                                        &params.meg_attack,
+                                        &params.meg_decay_adj,
+                                        &params.meg_sustain,
+                                        &params.meg_release,
+                                        setter,
+                                        is_adv,
+                                    );
+                                });
+
+                                ui.add_space(8.0);
+
+                                // VEG (voice envelope) is live whether or not ADV
+                                // ENV is engaged, so it must render enabled — the
+                                // disabled tier is reserved for MEG (round-11 item 7).
+                                render_adsr_bank(
+                                    ui,
+                                    "VEG ADSR (Voice Envelope)",
+                                    &params.veg_attack,
+                                    &params.veg_decay_adj,
+                                    &params.veg_sustain,
+                                    &params.veg_release,
+                                    setter,
+                                    true,
+                                );
+                            });
                         });
                     });
-                });
 
-                // Right-to-left layout: this lands immediately left of the
-                // module, matching the divider the flow layout used to draw.
-                ui.add_space(16.0);
-                ui.separator();
-            });
-        },
-    );
+                    // Right-to-left layout: this lands immediately left of the
+                    // module, matching the divider the flow layout used to draw.
+                    ui.add_space(16.0);
+                    ui.separator();
+                });
+            },
+        );
+
+        // Pin the child content rect to the frame bottom edge. egui's
+        // `allocate_new_ui` sets the parent cursor to the child's min_rect
+        // bottom (it does not take a max), and that bottom is wherever the
+        // ENVELOPES module's allocation happens to end — so the PANEL_GAP
+        // gutter below merged into the frame (round-19 review, issue 6
+        // follow-up). Filling to the frame edge lands the cursor exactly on
+        // it, and the uniform 4-logical gutter reads like every other panel
+        // pair.
+        let fill = (rect.bottom() - ui.cursor().top()).max(0.0);
+        ui.allocate_space(vec2(1.0, fill));
+    });
 }
 
 #[cfg(test)]
