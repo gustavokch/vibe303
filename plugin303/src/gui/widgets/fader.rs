@@ -1,7 +1,6 @@
 use nih_plug::prelude::{Param, ParamSetter};
 use nih_plug_egui::egui::{
-    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke,
-    StrokeKind, Ui, Widget,
+    pos2, vec2, Color32, FontFamily, FontId, Rect, Response, Sense, Ui, Widget,
 };
 
 use crate::gui::theme;
@@ -15,6 +14,11 @@ pub struct MiniFader<'a, P: Param> {
 }
 
 impl<'a, P: Param> MiniFader<'a, P> {
+    /// Widget height for a fader whose track is `track_height` tall.
+    pub fn footprint_height(track_height: f32) -> f32 {
+        track_height + 23.0
+    }
+
     pub fn new(
         param: &'a P,
         setter: &'a ParamSetter<'a>,
@@ -35,15 +39,14 @@ impl<'a, P: Param> MiniFader<'a, P> {
 impl<'a, P: Param> Widget for MiniFader<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
         let width = 24.0;
-        // 27 px of chrome: 14 above the track (8.5pt text + 5.5px gap to track),
-        // 13 below for the value readout. The track itself is `height` tall.
-        let total_height = self.height + 27.0;
+        // CHROME_H px around the track: 12 above (8.5 pt label), 11 below (value).
+        let total_height = Self::footprint_height(self.height);
         let (rect, mut response) =
             ui.allocate_exact_size(vec2(width, total_height), Sense::click_and_drag());
 
         let normalized = self.param.unmodulated_normalized_value();
-        let track_top = rect.top() + 14.0;
-        let track_bottom = rect.bottom() - 13.0;
+        let track_top = rect.top() + 12.0;
+        let track_bottom = rect.bottom() - 11.0;
         let track_height = track_bottom - track_top;
 
         // Interaction
@@ -93,77 +96,33 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
                 self.label,
                 FontId::new(8.5, FontFamily::Proportional),
                 if is_enabled {
-                    theme::TEXT_PRIMARY
-                } else {
                     theme::TEXT_SECONDARY
+                } else {
+                    theme::TEXT_MUTED
                 },
             );
 
-            // Recessed vertical track
-            let track_width = 6.0;
+            // Flat bar fader: an inset well filled from the bottom up to the
+            // value, like a Live device slider. No thumb, no outline.
+            let track_width = 12.0;
             let track_rect = Rect::from_min_max(
                 pos2(rect.center().x - track_width * 0.5, track_top),
                 pos2(rect.center().x + track_width * 0.5, track_bottom),
             );
-            painter.rect_filled(track_rect, CornerRadius::same(2), theme::WELL_BG);
-            painter.rect_stroke(
-                track_rect,
-                CornerRadius::same(2),
-                Stroke::new(
-                    1.5_f32,
-                    if is_enabled {
-                        theme::BORDER_FOCUS
-                    } else {
-                        theme::BORDER_DEFAULT
-                    },
-                ),
-                StrokeKind::Inside,
-            );
-
-            // Active level fill bar (solid accent color from bottom to thumb)
-            if normalized > 0.001 {
-                let thumb_y = track_bottom - normalized * track_height;
-                let fill_top = thumb_y.min(track_bottom - 1.0);
+            let track_fill = if is_enabled && response.hovered() {
+                theme::SURFACE_PRESSED
+            } else {
+                theme::WELL_BG
+            };
+            painter.rect_filled(track_rect, theme::radius(), track_fill);
+            let fill_top = track_bottom - normalized * track_height;
+            if track_bottom - fill_top >= 1.0 {
                 let fill_rect = Rect::from_min_max(
-                    pos2(rect.center().x - 2.0, fill_top),
-                    pos2(rect.center().x + 2.0, track_bottom - 1.0),
+                    pos2(track_rect.left(), fill_top),
+                    track_rect.right_bottom(),
                 );
-                painter.rect_filled(fill_rect, CornerRadius::same(1), accent);
+                painter.rect_filled(fill_rect, theme::radius(), accent);
             }
-
-            // Flat thumb handle. Width <= track_width + 4 pt (10.0 px).
-            // Travel is inset by half the thumb height plus 1 px clearance so
-            // the bottom/top track cap remains visible at extremes (round-18 issue 4).
-            let thumb_width = 10.0;
-            let thumb_height = 5.0;
-            let travel_inset = thumb_height * 0.5 + 1.0;
-            let thumb_y =
-                (track_bottom - travel_inset) - normalized * (track_height - 2.0 * travel_inset);
-            let thumb_rect = Rect::from_center_size(
-                pos2(rect.center().x, thumb_y),
-                vec2(thumb_width, thumb_height),
-            );
-            painter.rect_filled(thumb_rect, CornerRadius::same(1), theme::SURFACE_ELEVATED);
-            painter.rect_stroke(
-                thumb_rect,
-                CornerRadius::same(1),
-                Stroke::new(
-                    1.0_f32,
-                    if is_enabled {
-                        theme::BORDER_FOCUS
-                    } else {
-                        theme::BORDER_DEFAULT
-                    },
-                ),
-                StrokeKind::Inside,
-            );
-            painter.line_segment(
-                [
-                    pos2(thumb_rect.left() + 2.0, thumb_y),
-                    pos2(thumb_rect.right() - 2.0, thumb_y),
-                ],
-                Stroke::new(1.0_f32, accent),
-            );
 
             // Readout / value below (compact monospace)
             let val_str = self.param.to_string();
@@ -196,40 +155,5 @@ impl<'a, P: Param> Widget for MiniFader<'a, P> {
         }
 
         response
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn mini_fader_geometry_bounds() {
-        let height = 40.0_f32;
-        let total_height = height + 27.0;
-        let top = 0.0_f32;
-        let bottom = top + total_height;
-        let track_top = top + 14.0;
-        let track_bottom = bottom - 13.0;
-        let track_height = track_bottom - track_top;
-
-        assert!(track_top > top, "Track top must have top label clearance");
-        assert!(
-            track_bottom < bottom,
-            "Track bottom must have bottom readout clearance"
-        );
-        assert!(
-            bottom - track_bottom >= 13.0,
-            "Readout text must have at least 13px clearance"
-        );
-        assert!(track_height >= 40.0, "Track height must be at least 40pt");
-        assert_eq!(track_height, height);
-
-        let thumb_height = 5.0_f32;
-        // At extremes the thumb must leave >= 1 px of track cap visible
-        // (assert physical requirement directly, independent of impl formula).
-        let travel_inset = thumb_height * 0.5 + 1.0;
-        let y0 = track_bottom - travel_inset; // normalized = 0
-        let y1 = track_top + travel_inset; // normalized = 1
-        assert!(y0 + thumb_height * 0.5 <= track_bottom - 1.0);
-        assert!(y1 - thumb_height * 0.5 >= track_top + 1.0);
     }
 }

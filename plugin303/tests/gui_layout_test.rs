@@ -2,7 +2,7 @@
 
 use nih_plug::prelude::{GuiContext, PluginApi};
 use nih_plug_egui::egui::{self, Frame, Margin};
-use plugin303::gui::{panels, theme, GUI_HEIGHT, GUI_WIDTH};
+use plugin303::gui::{render_editor, theme, GUI_HEIGHT, GUI_WIDTH, MARGIN};
 use plugin303::params::Plugin303Params;
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
@@ -29,30 +29,20 @@ impl GuiContext for DummyGuiContext {
     fn set_state(&self, _state: nih_plug::prelude::PluginState) {}
 }
 
-/// Assert the panel stack stays inside the CentralPanel content area.
-/// Content right edge = GUI_WIDTH - 10 (CentralPanel inner margin), +0.5 slack.
-fn assert_fits_width(ui: &egui::Ui, content_right: f32, panel: &str) {
-    assert!(
-        ui.min_rect().max.x <= content_right,
-        "{} overflow: max.x = {}",
-        panel,
-        ui.min_rect().max.x
-    );
-}
-
+/// The full editor, rendered through the same `render_editor` the plugin uses,
+/// must fill the window: no horizontal or vertical overflow, and no dead band
+/// below the last device.
 #[test]
-fn test_all_panels_sequential_full_ui() {
+fn editor_fills_window_without_overflow_or_dead_band() {
     let params = Arc::new(Plugin303Params::default());
     let current_playing_step = Arc::new(AtomicU8::new(0));
-    let gen_params_state = Arc::new(std::sync::Mutex::new(
-        plugin303::dsp::generator::GeneratorParams::default(),
-    ));
+    let mut gen_params = plugin303::dsp::generator::GeneratorParams::default();
 
     let dummy_ctx = DummyGuiContext;
     let setter = nih_plug::prelude::ParamSetter::new(&dummy_ctx);
 
     let ctx = egui::Context::default();
-    ctx.set_visuals(egui::Visuals::dark());
+    theme::apply(&ctx);
 
     let raw_input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
@@ -62,57 +52,59 @@ fn test_all_panels_sequential_full_ui() {
         ..Default::default()
     };
 
-    let _output = ctx.run(raw_input, |ctx| {
-        egui::CentralPanel::default()
-            .frame(
-                Frame::new()
-                    .fill(theme::CHASSIS_BG)
-                    .inner_margin(Margin::same(10)),
-            )
-            .show(ctx, |ui| {
-                ui.set_min_height(600.0);
-                let mut gen_params = gen_params_state.lock().unwrap();
-                let content_right = GUI_WIDTH as f32 - 10.0 + 0.5;
-
-                // 1. Header Bar
-                panels::header_bar::render_header(ui, &params, &setter);
-                assert_fits_width(ui, content_right, "Header");
-                assert!(
-                    ui.min_rect().max.x >= 1340.0,
-                    "Header right control group not flush right: max.x = {}",
-                    ui.min_rect().max.x
-                );
-                ui.add_space(0.5);
-
-                // 2. Classic 303 Control Panel
-                panels::top_controls::render_top_controls(ui, &params, &setter);
-                assert_fits_width(ui, content_right, "Top controls");
-                ui.add_space(0.5);
-
-                // 3. Souped-Up Engine Drawer Panel
-                panels::souped_panel::render_souped_panel(ui, &params, &setter);
-                assert_fits_width(ui, content_right, "Souped panel");
-                ui.add_space(0.5);
-
-                // 4. Output Clipper + Tweaks Panel
-                ui.vertical(|ui| {
-                    panels::output_clipper::render_output_clipper(ui, &params, &setter);
-                    assert_fits_width(ui, content_right, "Clipper");
-                    ui.add_space(3.0);
-                    panels::tweaks_panel::render_tweaks_panel(ui, &params, &setter);
-                    assert_fits_width(ui, content_right, "Tweaks");
+    let mut content = egui::Rect::NOTHING;
+    // egui lays a fresh Ui out over two passes; check the settled one.
+    for _ in 0..2 {
+        let _ = ctx.run(raw_input.clone(), |ctx| {
+            egui::CentralPanel::default()
+                .frame(
+                    Frame::new()
+                        .fill(theme::CHASSIS_BG)
+                        .inner_margin(Margin::same(MARGIN as i8)),
+                )
+                .show(ctx, |ui| {
+                    // CentralPanel stretches its own Ui to the whole window, so
+                    // measure in a child that only grows with real content.
+                    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect()));
+                    render_editor(
+                        &mut inner,
+                        &params,
+                        &setter,
+                        &mut gen_params,
+                        &current_playing_step,
+                    );
+                    content = inner.min_rect();
                 });
-                ui.add_space(0.5);
+        });
+    }
 
-                // 5. Bottom Sequencer Grid & Transport Column
-                panels::sequencer_panel::render_sequencer_and_transport(
-                    ui,
-                    &params,
-                    &mut gen_params,
-                    &setter,
-                    &current_playing_step,
-                );
-                assert_fits_width(ui, content_right, "Sequencer");
-            });
-    });
+    let right_limit = GUI_WIDTH as f32 - MARGIN + 0.5;
+    let bottom_limit = GUI_HEIGHT as f32 - MARGIN + 0.5;
+    assert!(
+        content.max.x <= right_limit,
+        "content overflows the window width: max.x = {}",
+        content.max.x
+    );
+    assert!(
+        content.max.x >= GUI_WIDTH as f32 - MARGIN - 0.5,
+        "devices stop short of the right margin: max.x = {}",
+        content.max.x
+    );
+    assert!(
+        content.max.y <= bottom_limit,
+        "content overflows the window height: max.y = {}",
+        content.max.y
+    );
+    assert!(
+        content.max.y >= bottom_limit - 8.0,
+        "dead band below the last device: max.y = {}, window bottom = {}",
+        content.max.y,
+        bottom_limit
+    );
+}
+
+/// Product requirement: the window is exactly 19:10.
+#[test]
+fn window_aspect_ratio_is_19_to_10() {
+    assert_eq!(GUI_WIDTH * 10, GUI_HEIGHT * 19);
 }

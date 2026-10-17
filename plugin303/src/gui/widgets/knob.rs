@@ -1,6 +1,6 @@
 use nih_plug::prelude::{Param, ParamSetter};
 use nih_plug_egui::egui::{
-    pos2, vec2, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Stroke, Ui, Widget,
+    pos2, vec2, FontFamily, FontId, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Widget,
 };
 use std::f32::consts::PI;
 
@@ -25,6 +25,12 @@ impl<'a, P: Param> Knob303<'a, P> {
         }
     }
 
+    /// Footprint of a knob with outer radius `radius`: the dial, then the label
+    /// row and the value well stacked tight beneath it.
+    pub fn size(radius: f32) -> nih_plug_egui::egui::Vec2 {
+        vec2(radius * 2.0 + 16.0, radius * 2.0 + 26.0)
+    }
+
     pub fn with_accent(mut self, color: nih_plug_egui::egui::Color32) -> Self {
         self.accent_color = Some(color);
         self
@@ -33,10 +39,10 @@ impl<'a, P: Param> Knob303<'a, P> {
 
 impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let desired_size = vec2(self.radius * 2.0 + 16.0, self.radius * 2.0 + 38.0);
+        let desired_size = Self::size(self.radius);
         let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
-        let center = pos2(rect.center().x, rect.top() + self.radius + 6.0);
+        let center = pos2(rect.center().x, rect.top() + self.radius + 2.0);
         let normalized = self.param.unmodulated_normalized_value();
 
         // Interaction
@@ -81,70 +87,35 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             };
             let is_hovered = response.hovered();
 
-            // 1. Background disc (flat well)
-            painter.circle_filled(center, self.radius, theme::WELL_BG);
-            painter.circle_stroke(
-                center,
-                self.radius,
-                Stroke::new(
-                    1.0_f32,
-                    if is_hovered {
-                        theme::BORDER_FOCUS
-                    } else {
-                        theme::BORDER_DEFAULT
-                    },
-                ),
-            );
-
-            // 2. 270° Perimeter Track (135° to 405°)
+            // 1. Flat dial, Ableton style: a thin value ring around a flat
+            // body disc with a pointer line. No outline, no ticks, no bezel.
             let start_angle = 135.0 * PI / 180.0;
             let end_angle = 405.0 * PI / 180.0;
-            let arc_r = self.radius * 0.75;
+            let arc_w = (self.radius * 0.14).clamp(2.0, 3.0);
+            let ring_r = self.radius - arc_w * 0.5;
+            let body_r = self.radius * 0.68;
 
-            // Background inactive arc (24 segments, 0 heap allocations)
-            const ARC_SEGMENTS: usize = 24;
-            let mut prev_bg_pt = pos2(
-                center.x + start_angle.cos() * arc_r,
-                center.y + start_angle.sin() * arc_r,
-            );
-            for i in 1..=ARC_SEGMENTS {
-                let t = i as f32 / ARC_SEGMENTS as f32;
-                let a = start_angle + t * (end_angle - start_angle);
-                let cur_pt = pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r);
-                painter.line_segment(
-                    [prev_bg_pt, cur_pt],
-                    Stroke::new(2.0_f32, theme::KNOB_TRACK_ARC),
-                );
-                prev_bg_pt = cur_pt;
-            }
-
-            // Radial Tick Marks (7 discrete ticks along the 270° sweep)
-            const NUM_TICKS: usize = 7;
-            let tick_r_inner = self.radius - 1.0;
-            let tick_r_outer = self.radius + 1.5;
-            let tick_color = if is_enabled {
-                theme::BORDER_DEFAULT
-            } else {
-                theme::WELL_BG
+            let arc_points = |from: f32, to: f32| -> Vec<Pos2> {
+                const ARC_SEGMENTS: usize = 36;
+                let steps = (((to - from).abs() * ARC_SEGMENTS as f32).ceil() as usize).max(2);
+                (0..=steps)
+                    .map(|i| {
+                        let n = from + (to - from) * i as f32 / steps as f32;
+                        let a = start_angle + n * (end_angle - start_angle);
+                        pos2(center.x + a.cos() * ring_r, center.y + a.sin() * ring_r)
+                    })
+                    .collect()
             };
-            for i in 0..NUM_TICKS {
-                let t = i as f32 / (NUM_TICKS - 1) as f32;
-                let a = start_angle + t * (end_angle - start_angle);
-                let p1 = pos2(
-                    center.x + a.cos() * tick_r_inner,
-                    center.y + a.sin() * tick_r_inner,
-                );
-                let p2 = pos2(
-                    center.x + a.cos() * tick_r_outer,
-                    center.y + a.sin() * tick_r_outer,
-                );
-                painter.line_segment([p1, p2], Stroke::new(1.0_f32, tick_color));
-            }
 
-            // Active value arc. Polarity comes from the parameter's range:
-            // a bipolar range (plain minimum < 0, e.g. TUNING / PITCH / dB
-            // trims) fills outward from the normalized position of 0.0;
-            // a unipolar range fills from the minimum (round-13 issue 1).
+            // 2. Value ring: full-sweep track, then the active fill. Polarity
+            // comes from the parameter's range: a bipolar range (plain minimum
+            // < 0, e.g. TUNING / PITCH / dB trims) fills outward from the
+            // normalized position of 0.0; a unipolar range fills from the
+            // minimum (round-13 issue 1).
+            painter.add(Shape::line(
+                arc_points(0.0, 1.0),
+                Stroke::new(arc_w, theme::KNOB_TRACK),
+            ));
             let accent = if is_enabled {
                 self.accent_color.unwrap_or(theme::ACCENT_ORANGE)
             } else {
@@ -157,52 +128,54 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             } else {
                 (0.0_f32, normalized)
             };
-            let fill_span = fill_to - fill_from;
-            if fill_span > 0.001 {
-                // Arc weight is proportional to the knob: a fixed 2.5 px read
-                // as a blob on the radius-11 tweaks knobs, and its end cap
-                // overhung the needle by ~5° — enough to trip the 4° arc /
-                // needle check (round-14 issue 6).
-                let arc_w = (self.radius * 0.105).clamp(1.0, 2.5);
-                let mut prev_active_pt = pos2(
-                    center.x + (start_angle + fill_from * (end_angle - start_angle)).cos() * arc_r,
-                    center.y + (start_angle + fill_from * (end_angle - start_angle)).sin() * arc_r,
-                );
-                for i in 1..=ARC_SEGMENTS {
-                    let t = i as f32 / ARC_SEGMENTS as f32;
-                    let a = start_angle + (fill_from + t * fill_span) * (end_angle - start_angle);
-                    let cur_pt = pos2(center.x + a.cos() * arc_r, center.y + a.sin() * arc_r);
-                    painter.line_segment([prev_active_pt, cur_pt], Stroke::new(arc_w, accent));
-                    prev_active_pt = cur_pt;
-                }
+            if fill_to - fill_from > 0.001 {
+                painter.add(Shape::line(
+                    arc_points(fill_from, fill_to),
+                    Stroke::new(arc_w, accent),
+                ));
             }
 
-            // 3. Pointer Needle
+            // 3. Body disc and pointer.
+            let body_fill = if is_hovered && is_enabled {
+                theme::KNOB_BODY_HOVER
+            } else {
+                theme::KNOB_BODY
+            };
+            painter.circle_filled(center, body_r, body_fill);
+
             // Display string parsed once here and reused by the value badge
             // below.
             let raw_str = self.param.to_string();
             let plain_value = parse_plain_value(&raw_str);
             let current_angle = compute_needle_angle(normalized, start_angle, end_angle);
-            let needle_inner = pos2(
-                center.x + current_angle.cos() * (self.radius * 0.2),
-                center.y + current_angle.sin() * (self.radius * 0.2),
-            );
-            let needle_outer = pos2(
-                center.x + current_angle.cos() * (self.radius * 0.75),
-                center.y + current_angle.sin() * (self.radius * 0.75),
-            );
-            let needle_color = if is_enabled {
+            let pointer_color = if is_enabled {
                 theme::TEXT_PRIMARY
             } else {
                 theme::TEXT_MUTED
             };
             painter.line_segment(
-                [needle_inner, needle_outer],
-                Stroke::new(1.5_f32, needle_color),
+                [
+                    pos2(
+                        center.x + current_angle.cos() * body_r * 0.35,
+                        center.y + current_angle.sin() * body_r * 0.35,
+                    ),
+                    pos2(
+                        center.x + current_angle.cos() * (body_r - 1.0),
+                        center.y + current_angle.sin() * (body_r - 1.0),
+                    ),
+                ],
+                Stroke::new(
+                    if self.radius >= 18.0 {
+                        2.0_f32
+                    } else {
+                        1.5_f32
+                    },
+                    pointer_color,
+                ),
             );
 
             // 4. Parameter Label
-            let label_y = center.y + self.radius + 6.0;
+            let label_y = center.y + self.radius + 7.0;
             let label_color = if is_enabled {
                 theme::TEXT_SECONDARY
             } else {
@@ -217,7 +190,7 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             );
 
             // 5. Monospace Value Badge
-            let value_y = label_y + 12.0;
+            let value_y = label_y + 11.0;
             let value_str = if let Some(f) = plain_value {
                 if self.label.contains("CUTOFF") {
                     let hz = 300.0 * (15000.0 / 300.0_f32).powf(f.clamp(0.0, 1.0));
@@ -287,14 +260,8 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
                 theme::KNOB_PILL_WIDTH_SMALL
             };
             let pill_rect =
-                Rect::from_center_size(pos2(rect.center().x, value_y), vec2(pill_width, 12.0));
-            painter.rect_filled(pill_rect, CornerRadius::same(2), theme::WELL_BG);
-            painter.rect_stroke(
-                pill_rect,
-                CornerRadius::same(2),
-                Stroke::new(1.0_f32, theme::BORDER_DEFAULT),
-                nih_plug_egui::egui::StrokeKind::Inside,
-            );
+                Rect::from_center_size(pos2(rect.center().x, value_y), vec2(pill_width, 11.0));
+            painter.rect_filled(pill_rect, theme::radius(), theme::WELL_BG);
             painter.text(
                 pos2(rect.center().x, value_y),
                 nih_plug_egui::egui::Align2::CENTER_CENTER,

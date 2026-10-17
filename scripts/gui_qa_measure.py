@@ -45,13 +45,14 @@ DEFAULT_THEME_RS = "plugin303/src/gui/theme.rs"
 # copy of the palette drifts silently, and a stale entry turns a genuine palette
 # drift finding into "matches a token".
 THEME_FALLBACK = {
-    "PANEL_BG": (0x1A, 0x1A, 0x1E),
-    "WELL_BG": (0x16, 0x16, 0x19),
-    "SURFACE_ELEVATED": (0x22, 0x22, 0x28),
-    "BORDER_DEFAULT": (0x2B, 0x2B, 0x34),
-    "TEXT_PRIMARY": (0xFF, 0xFF, 0xFF),
-    "TEXT_MUTED": (0x8F, 0x8F, 0xA4),
-    "ACCENT_ORANGE": (0xFF, 0x7A, 0x00),
+    "CHASSIS_BG": (0x15, 0x15, 0x15),
+    "WELL_BG": (0x1A, 0x1A, 0x1A),
+    "PANEL_BG": (0x26, 0x26, 0x26),
+    "PANEL_HEADER_BG": (0x2F, 0x2F, 0x2F),
+    "SURFACE_ELEVATED": (0x3A, 0x3A, 0x3A),
+    "TEXT_PRIMARY": (0xEC, 0xEC, 0xEC),
+    "TEXT_MUTED": (0x8F, 0x8F, 0x8F),
+    "ACCENT_ORANGE": (0xF6, 0x66, 0x1E),
 }
 
 THEME = dict(THEME_FALLBACK)
@@ -81,28 +82,24 @@ def load_theme_tokens(path: str = DEFAULT_THEME_RS):
 SWEEP_MIN_DEG = -135.0
 SWEEP_MAX_DEG = 135.0
 
-EXPECTED_WIDTH = 2732  # a wrong window id silently yields a different width
+EXPECTED_WIDTH = 2432  # a wrong window id silently yields a different width
 
 # Tokens that name a surface, a fill or a frame. Contrast floors apply to
 # foreground colours only, so these are listed but never flagged.
 SURFACE_TOKENS = {
     "CHASSIS_BG",
-    "PANEL_BG",
-    "PANEL_BG_SOUPED",
     "WELL_BG",
+    "PANEL_BG",
+    "PANEL_HEADER_BG",
     "SURFACE_ELEVATED",
     "SURFACE_HOVER",
-    "BORDER_DEFAULT",
-    "BORDER_SUBTLE",
-    "BORDER_FOCUS",
-    "FIELD_FILL",
-    "FIELD_FILL_HOVER",
-    "FIELD_FILL_ACTIVE",
-    "KNOB_TRACK_ARC",
-    "ACCENT_SLATE",
-    # Partial-coverage antialiased edge blend of the NOTE gate pill
-    # (theme::GATE_NOTE_INACTIVE_EDGE): a fill, not foreground text.
-    "GATE_NOTE_INACTIVE_EDGE",
+    "SURFACE_PRESSED",
+    "KNOB_TRACK",
+    # Lit fills that carry dark TEXT_ON_ACCENT text.
+    "ACCENT_ORANGE_HOVER",
+    "ACCENT_BLUE",
+    "GATE_NOTE_FILL",
+    "GATE_TIE_FILL",
 }
 
 

@@ -1,15 +1,14 @@
 use crate::gui::theme;
 use crate::params::SequencerPattern;
 use nih_plug_egui::egui::{
-    pos2, vec2, Align, Align2, Area, Color32, CornerRadius, FontId, Frame, Id, Key, Margin, Order,
-    Rect, RichText, ScrollArea, Sense, Stroke,
+    pos2, vec2, Align, Align2, Area, FontId, Frame, Id, Key, Margin, Order, Rect, RichText,
+    ScrollArea, Sense, Stroke,
 };
 
 pub const TOTAL_PIANO_ROLL_ROWS: usize = 61; // C1 (row 60) through C6 (row 0)
-pub const POPUP_WIDTH: f32 = 160.0;
-pub const POPUP_HEIGHT: f32 = 270.0;
-pub const ROW_HEIGHT: f32 = 22.0;
-
+pub const POPUP_WIDTH: f32 = 145.0;
+pub const POPUP_HEIGHT: f32 = 255.0;
+pub const ROW_HEIGHT: f32 = 19.0;
 pub const PIANO_ROLL_LABELS: [&str; TOTAL_PIANO_ROLL_ROWS] = [
     "C6", "B5", "A#5", "A5", "G#5", "G5", "F#5", "F5", "E5", "D#5", "D5",
     "C#5", // Rows 0..=11
@@ -167,19 +166,18 @@ pub fn render_piano_roll_popup(
         .show(ctx, |ui| {
             Frame::new()
                 .fill(theme::PANEL_BG)
-                .stroke(Stroke::new(1.5_f32, theme::PANEL_BORDER_HIGHLIGHT))
-                .corner_radius(CornerRadius::same(6))
-                .inner_margin(Margin::same(6))
+                .stroke(Stroke::NONE)
+                .corner_radius(theme::radius())
+                .inner_margin(Margin::same(4))
                 .show(ui, |ui| {
-                    ui.set_width(POPUP_WIDTH - 12.0);
-                    ui.set_height(POPUP_HEIGHT - 12.0);
+                    ui.set_width(POPUP_WIDTH - 8.0);
+                    ui.set_height(POPUP_HEIGHT - 8.0);
 
                     // Header bar
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(format!("STEP {:02} NOTE", open_state.step_idx + 1))
-                                .font(FontId::monospace(10.0))
-                                .strong()
+                                .font(FontId::monospace(8.5))
                                 .color(theme::TEXT_PRIMARY),
                         );
 
@@ -188,11 +186,11 @@ pub fn render_piano_roll_popup(
                             |ui| {
                                 let close_btn = nih_plug_egui::egui::Button::new(
                                     RichText::new("✕")
-                                        .font(FontId::proportional(11.0))
-                                        .color(theme::TEXT_MUTED),
+                                        .font(FontId::proportional(9.0))
+                                        .color(theme::TEXT_SECONDARY),
                                 )
-                                .fill(Color32::TRANSPARENT)
-                                .min_size(vec2(18.0, 18.0));
+                                .fill(theme::SURFACE_ELEVATED)
+                                .min_size(vec2(16.0, 16.0));
 
                                 if ui.add(close_btn).clicked() {
                                     should_close = true;
@@ -201,13 +199,13 @@ pub fn render_piano_roll_popup(
                         );
                     });
 
-                    ui.add_space(3.0);
+                    ui.add_space(2.0);
                     ui.separator();
                     ui.add_space(2.0);
 
                     // Scrollable piano roll
                     ScrollArea::vertical()
-                        .max_height(POPUP_HEIGHT - 50.0)
+                        .max_height(POPUP_HEIGHT - 32.0)
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
@@ -242,82 +240,53 @@ pub fn render_piano_roll_popup(
                                     let is_hovered = row_resp.hovered();
 
                                     // Key Cap styling (left portion)
-                                    let key_cap_width = 46.0;
+                                    let key_cap_width = 40.0;
                                     let key_rect = Rect::from_min_size(
                                         row_rect.min,
                                         vec2(key_cap_width, ROW_HEIGHT),
                                     );
-
                                     // Background fill for the full row
                                     let row_bg = if is_active {
-                                        Color32::from_rgba_premultiplied(0xff, 0xaa, 0x00, 0x28)
+                                        theme::SURFACE_ELEVATED
                                     } else if is_hovered {
-                                        Color32::from_rgb(0x28, 0x30, 0x3c)
+                                        theme::SURFACE_PRESSED
                                     } else {
-                                        Color32::from_rgb(0x1a, 0x1e, 0x24)
+                                        theme::PANEL_BG
                                     };
-                                    p.rect_filled(row_rect, 2.0, row_bg);
+                                    p.rect_filled(row_rect, theme::radius(), row_bg);
 
-                                    // Piano key graphic
-                                    let (key_fill, key_text_color, key_stroke) = if is_active {
-                                        (
-                                            theme::ACCENT_AMBER,
-                                            Color32::BLACK,
-                                            Stroke::new(1.0_f32, theme::ACCENT_AMBER_GLOW),
-                                        )
+                                    // Piano key graphic:
+                                    // White keys: GATE_NOTE_FILL with TEXT_ON_ACCENT labels (hover: TEXT_PRIMARY)
+                                    // Black keys: WELL_BG with TEXT_SECONDARY labels (hover: SURFACE_PRESSED)
+                                    // Selected key: ACCENT_ORANGE with TEXT_ON_ACCENT
+                                    let (key_fill, key_text_color) = if is_active {
+                                        (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
                                     } else if is_black {
-                                        (
-                                            if is_hovered {
-                                                Color32::from_rgb(0x32, 0x38, 0x44)
-                                            } else {
-                                                Color32::from_rgb(0x18, 0x1c, 0x22)
-                                            },
-                                            if is_hovered {
-                                                theme::SLIDE_CYAN
-                                            } else {
-                                                Color32::from_rgb(0x9a, 0xa2, 0xad)
-                                            },
-                                            Stroke::new(
-                                                1.0_f32,
-                                                Color32::from_rgb(0x38, 0x40, 0x4c),
-                                            ),
-                                        )
+                                        if is_hovered {
+                                            (theme::SURFACE_PRESSED, theme::TEXT_SECONDARY)
+                                        } else {
+                                            (theme::WELL_BG, theme::TEXT_SECONDARY)
+                                        }
+                                    } else if is_hovered {
+                                        (theme::TEXT_PRIMARY, theme::TEXT_ON_ACCENT)
                                     } else {
-                                        (
-                                            if is_hovered {
-                                                Color32::from_rgb(0xf0, 0xf4, 0xfc)
-                                            } else {
-                                                Color32::from_rgb(0xd0, 0xd6, 0xe0)
-                                            },
-                                            Color32::from_rgb(0x14, 0x18, 0x20),
-                                            Stroke::new(
-                                                1.0_f32,
-                                                Color32::from_rgb(0x88, 0x90, 0x9c),
-                                            ),
-                                        )
+                                        (theme::GATE_NOTE_FILL, theme::TEXT_ON_ACCENT)
                                     };
 
-                                    p.rect_filled(key_rect, 2.0, key_fill);
-                                    p.rect_stroke(
-                                        key_rect,
-                                        2.0,
-                                        key_stroke,
-                                        nih_plug_egui::egui::StrokeKind::Inside,
-                                    );
-
+                                    p.rect_filled(key_rect, theme::radius(), key_fill);
                                     // Note label on key
                                     p.text(
                                         pos2(key_rect.center().x, key_rect.center().y),
                                         Align2::CENTER_CENTER,
                                         note_name,
-                                        FontId::monospace(10.0),
+                                        FontId::monospace(8.5),
                                         key_text_color,
                                     );
 
                                     // Full pitch descriptor + octave indicator on right
                                     let label_pos = pos2(row_rect.max.x - 6.0, row_rect.center().y);
                                     let full_label_color = if is_active {
-                                        theme::ACCENT_AMBER
+                                        theme::ACCENT_ORANGE
                                     } else if is_hovered {
                                         theme::TEXT_PRIMARY
                                     } else {
@@ -328,10 +297,9 @@ pub fn render_piano_roll_popup(
                                         label_pos,
                                         Align2::RIGHT_CENTER,
                                         full_note_str,
-                                        FontId::monospace(10.5),
+                                        FontId::monospace(9.0),
                                         full_label_color,
                                     );
-
                                     // Octave dividing line on 'C' notes
                                     if semitone == 0 {
                                         p.line_segment(
@@ -339,7 +307,7 @@ pub fn render_piano_roll_popup(
                                                 pos2(row_rect.left(), row_rect.bottom()),
                                                 pos2(row_rect.right(), row_rect.bottom()),
                                             ],
-                                            Stroke::new(1.0_f32, theme::PANEL_BORDER_HIGHLIGHT),
+                                            Stroke::new(1.0_f32, theme::WELL_BG),
                                         );
                                     }
                                 }

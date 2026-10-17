@@ -1,80 +1,151 @@
-use nih_plug_egui::egui::{Color32, Stroke};
+//! Flat device-chain theme: Bitwig Studio's charcoal planes and orange accent,
+//! drawn with Ableton Live's flat vocabulary (tone-on-tone planes, no outlines,
+//! no gradients, no shadows).
+//!
+//! Depth comes from five neutral planes only. Orange marks live state: value
+//! arcs, lit toggles, the selected segment, the playhead. A second hue is
+//! allowed only where a fixed role needs it (`ACCENT_BLUE` = slide).
 
-pub const CHASSIS_BG: Color32 = Color32::from_rgb(0x13, 0x13, 0x15);
-pub const PANEL_BG: Color32 = Color32::from_rgb(0x1a, 0x1a, 0x1e);
-pub const PANEL_BG_SOUPED: Color32 = Color32::from_rgb(0x18, 0x18, 0x1c);
-pub const WELL_BG: Color32 = Color32::from_rgb(0x16, 0x16, 0x19);
-pub const SURFACE_ELEVATED: Color32 = Color32::from_rgb(0x22, 0x22, 0x28);
-pub const SURFACE_HOVER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x33);
+use nih_plug_egui::egui::{self, Color32, CornerRadius, FontId, Shadow, Stroke, TextStyle, Ui};
 
-pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
-pub const BORDER_FOCUS: Color32 = Color32::from_rgb(0x80, 0x80, 0x90);
-pub const BORDER_ACCENT: Color32 = Color32::from_rgb(0xff, 0x7a, 0x00);
-pub const FIELD_FILL: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
-pub const FIELD_FILL_HOVER: Color32 = Color32::from_rgb(0x70, 0x70, 0x7c);
-pub const FIELD_FILL_ACTIVE: Color32 = Color32::from_rgb(0x5c, 0x5c, 0x66);
-pub const KNOB_TRACK_ARC: Color32 = Color32::from_rgb(0x66, 0x66, 0x70);
+// ── Planes (darkest to lightest) ────────────────────────────────────────────
+/// Window plane. Shows through as the gutter between devices.
+pub const CHASSIS_BG: Color32 = Color32::from_rgb(0x15, 0x15, 0x15);
+/// Inset plane: value fields, fader tracks, empty step cells, dividers.
+pub const WELL_BG: Color32 = Color32::from_rgb(0x1a, 0x1a, 0x1a);
+/// Device body.
+pub const PANEL_BG: Color32 = Color32::from_rgb(0x26, 0x26, 0x26);
+/// Device header strip.
+pub const PANEL_HEADER_BG: Color32 = Color32::from_rgb(0x2f, 0x2f, 0x2f);
+/// Control at rest: buttons, unselected segments, knob body.
+pub const SURFACE_ELEVATED: Color32 = Color32::from_rgb(0x3a, 0x3a, 0x3a);
+pub const SURFACE_HOVER: Color32 = Color32::from_rgb(0x49, 0x49, 0x49);
+pub const SURFACE_PRESSED: Color32 = Color32::from_rgb(0x30, 0x30, 0x30);
 
-pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
-pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xc4, 0xc4, 0xd0);
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x8f, 0x8f, 0xa4);
-pub const TEXT_ON_ACCENT: Color32 = Color32::from_rgb(0x0b, 0x0b, 0x0d);
+// ── Text ────────────────────────────────────────────────────────────────────
+pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xec, 0xec, 0xec);
+/// Safe on every plane including `SURFACE_ELEVATED` and `PANEL_HEADER_BG`.
+pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xb8, 0xb8, 0xb8);
+/// Safe on `CHASSIS_BG`, `WELL_BG` and `PANEL_BG` only. Below 4.5:1 on
+/// `PANEL_HEADER_BG` and `SURFACE_ELEVATED`.
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x8f, 0x8f, 0x8f);
+/// Text on `ACCENT_ORANGE`, `ACCENT_BLUE` and the light step-gate fills.
+pub const TEXT_ON_ACCENT: Color32 = Color32::from_rgb(0x14, 0x14, 0x14);
 
-pub const ACCENT_ORANGE: Color32 = Color32::from_rgb(0xff, 0x7a, 0x00);
-pub const ACCENT_CYAN: Color32 = Color32::from_rgb(0x00, 0xf0, 0xff);
-pub const ACCENT_GOLD: Color32 = Color32::from_rgb(0xff, 0xc8, 0x3b);
-pub const ACCENT_SLATE: Color32 = Color32::from_rgb(0x2c, 0x2d, 0x36);
-pub const ACCENT_RUBY: Color32 = Color32::from_rgb(0xff, 0x3b, 0x56);
+// ── Accent ──────────────────────────────────────────────────────────────────
+/// Bitwig CI orange.
+pub const ACCENT_ORANGE: Color32 = Color32::from_rgb(0xf6, 0x66, 0x1e);
+pub const ACCENT_ORANGE_HOVER: Color32 = Color32::from_rgb(0xff, 0x7f, 0x3a);
+/// Bitwig blue. Fixed role: a lit SLIDE flag.
+pub const ACCENT_BLUE: Color32 = Color32::from_rgb(0x5c, 0xa8, 0xee);
 
-// Backward-compatibility aliases during transition
-pub const PANEL_BORDER: Color32 = BORDER_DEFAULT;
-pub const PANEL_BORDER_HIGHLIGHT: Color32 = BORDER_FOCUS;
-pub const BANK_FRAME_BG: Color32 = WELL_BG;
-pub const BANK_FRAME_BORDER: Color32 = BORDER_DEFAULT;
-pub const BTN_ACTIVE_BG: Color32 = SURFACE_ELEVATED;
-pub const BTN_INACTIVE_BG: Color32 = WELL_BG;
-pub const ACCENT_AMBER: Color32 = ACCENT_ORANGE;
-pub const ACCENT_AMBER_GLOW: Color32 = Color32::from_rgba_premultiplied(0xff, 0x7a, 0x00, 0x40);
-pub const SLIDE_CYAN: Color32 = ACCENT_CYAN;
-pub const SLIDE_CYAN_GLOW: Color32 = Color32::from_rgba_premultiplied(0x00, 0xf0, 0xff, 0x40);
-pub const PLAYHEAD_RED: Color32 = ACCENT_ORANGE;
-pub const PLAYHEAD_RED_GLOW: Color32 = Color32::from_rgba_premultiplied(0xff, 0x7a, 0x00, 0x40);
-pub const SOUPED_ORANGE: Color32 = ACCENT_ORANGE;
-pub const GATE_NOTE_COLOR: Color32 = ACCENT_CYAN;
-pub const GATE_TIE_COLOR: Color32 = ACCENT_GOLD;
-pub const GATE_REST_COLOR: Color32 = ACCENT_SLATE;
+// ── Step gate fills ─────────────────────────────────────────────────────────
+// Neutral on purpose: orange is reserved for ACCENT, blue for SLIDE, so the
+// rhythm skeleton reads from the gate row alone. NOTE > TIE > REST in
+// brightness. NOTE takes dark text, TIE takes light text.
+pub const GATE_NOTE_FILL: Color32 = Color32::from_rgb(0xa8, 0xa8, 0xa8);
+pub const GATE_TIE_FILL: Color32 = Color32::from_rgb(0x5f, 0x5f, 0x5f);
 
-/// Inactive NOTE cell fill (round-17 issue 3). The NOTE gate pill paints a
-/// `SURFACE_ELEVATED` thumb on an `ACCENT_CYAN` fill in the active state;
-/// when the parent Ui is disabled the pill keeps the cyan fill on a
-/// fade-cleared painter (one dimming mechanism only, round-13 issue 6), and
-/// antialiased edge pixels sample part-cyan. The probe's `#06777F` sample is
-/// that partial-coverage edge blend, not a separate unregistered paint — this
-/// token names it so the QA script snaps it instead of flagging it.
-pub const GATE_NOTE_INACTIVE_EDGE: Color32 = Color32::from_rgb(0x06, 0x77, 0x7F);
+// ── Knob ────────────────────────────────────────────────────────────────────
+pub const KNOB_BODY: Color32 = SURFACE_ELEVATED;
+pub const KNOB_BODY_HOVER: Color32 = SURFACE_HOVER;
+/// Unfilled part of the value ring.
+pub const KNOB_TRACK: Color32 = Color32::from_rgb(0x40, 0x40, 0x40);
 
-pub const KNOB_BODY_LIGHT: Color32 = SURFACE_ELEVATED;
-pub const KNOB_BODY_DARK: Color32 = WELL_BG;
-pub const KNOB_BEZEL: Color32 = BORDER_DEFAULT;
-pub const KNOB_POINTER: Color32 = ACCENT_ORANGE;
-
-// Systematic knob size tiers (round-18 issue 12)
-// Outer diameters: LARGE 42 pt (radius 21.0), MEDIUM 27 pt (radius 13.5), SMALL 24 pt (radius 12.0)
+// Knob size tiers: outer diameter LARGE 42 pt, MEDIUM 24 pt, SMALL 22 pt.
 pub const KNOB_RADIUS_LARGE: f32 = 21.0;
-pub const KNOB_RADIUS_MEDIUM: f32 = 13.5;
-pub const KNOB_RADIUS_SMALL: f32 = 12.0;
+pub const KNOB_RADIUS_MEDIUM: f32 = 12.0;
+pub const KNOB_RADIUS_SMALL: f32 = 11.0;
 
-// Corresponding value-pill widths matching knob tiers (round-18 issue 12, issue 24)
+// Value-field widths matching the knob tiers.
 pub const KNOB_PILL_WIDTH_LARGE: f32 = 52.0;
 pub const KNOB_PILL_WIDTH_MEDIUM: f32 = 38.0;
 pub const KNOB_PILL_WIDTH_SMALL: f32 = 34.0;
 
-pub fn border_stroke() -> Stroke {
-    Stroke::new(1.0_f32, BORDER_DEFAULT)
+// ── Shape ───────────────────────────────────────────────────────────────────
+/// Every panel, button and field uses this one radius.
+pub const RADIUS: u8 = 2;
+
+pub fn radius() -> CornerRadius {
+    CornerRadius::same(RADIUS)
 }
 
-pub fn highlight_stroke() -> Stroke {
-    Stroke::new(1.0_f32, BORDER_FOCUS)
+/// Scope style for numeric fields and dropdowns: an inset well instead of a
+/// raised button, so a value you type reads differently from an action you click.
+pub fn field_style(ui: &mut Ui) {
+    let w = &mut ui.style_mut().visuals.widgets;
+    w.inactive.weak_bg_fill = WELL_BG;
+    w.inactive.bg_fill = WELL_BG;
+    w.inactive.fg_stroke.color = TEXT_PRIMARY;
+    w.hovered.weak_bg_fill = SURFACE_PRESSED;
+    w.hovered.bg_fill = SURFACE_PRESSED;
+    w.active.weak_bg_fill = SURFACE_PRESSED;
+    w.active.bg_fill = SURFACE_PRESSED;
+    w.open.weak_bg_fill = SURFACE_PRESSED;
+    w.open.bg_fill = SURFACE_PRESSED;
+}
+
+/// Install the flat style on the egui context. Built-in widgets (DragValue,
+/// ComboBox, Button) inherit it, so panels only draw what is specific to them.
+pub fn apply(ctx: &egui::Context) {
+    ctx.set_visuals(egui::Visuals::dark());
+    ctx.style_mut(|style| {
+        // One font rule: every numeric readout (every DragValue) renders in the
+        // monospace face at the compact size; word-valued controls keep the
+        // proportional face.
+        style
+            .text_styles
+            .insert(TextStyle::Monospace, FontId::monospace(9.0));
+        style.drag_value_text_style = TextStyle::Monospace;
+        // Unstyled text (combo values, plain buttons, labels) follows the same
+        // compact scale instead of egui's 14 pt default.
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::proportional(9.5));
+        style
+            .text_styles
+            .insert(TextStyle::Button, FontId::proportional(9.5));
+
+        style.spacing.item_spacing = egui::vec2(6.0, 3.0);
+        style.spacing.button_padding = egui::vec2(8.0, 1.0);
+        style.spacing.interact_size = egui::vec2(24.0, 18.0);
+
+        let v = &mut style.visuals;
+        v.panel_fill = CHASSIS_BG;
+        v.window_fill = SURFACE_ELEVATED;
+        v.window_stroke = Stroke::NONE;
+        v.window_corner_radius = radius();
+        v.menu_corner_radius = radius();
+        v.window_shadow = Shadow::NONE;
+        v.popup_shadow = Shadow::NONE;
+        v.extreme_bg_color = WELL_BG;
+        v.faint_bg_color = PANEL_BG;
+        v.selection.bg_fill = ACCENT_ORANGE;
+        v.selection.stroke = Stroke::new(1.0_f32, TEXT_ON_ACCENT);
+        v.text_cursor.stroke = Stroke::new(1.5_f32, ACCENT_ORANGE);
+
+        let w = &mut v.widgets;
+        w.noninteractive.bg_fill = PANEL_BG;
+        w.noninteractive.weak_bg_fill = PANEL_BG;
+        // Separators use this stroke: a 1 px dark line, the only line in the UI.
+        w.noninteractive.bg_stroke = Stroke::new(1.0_f32, WELL_BG);
+        w.noninteractive.fg_stroke.color = TEXT_SECONDARY;
+
+        for (state, fill, text) in [
+            (&mut w.inactive, SURFACE_ELEVATED, TEXT_SECONDARY),
+            (&mut w.hovered, SURFACE_HOVER, TEXT_PRIMARY),
+            (&mut w.active, SURFACE_PRESSED, TEXT_PRIMARY),
+            (&mut w.open, SURFACE_HOVER, TEXT_PRIMARY),
+        ] {
+            state.bg_fill = fill;
+            state.weak_bg_fill = fill;
+            state.bg_stroke = Stroke::NONE;
+            state.fg_stroke = Stroke::new(1.0_f32, text);
+            state.corner_radius = radius();
+            state.expansion = 0.0;
+        }
+        w.noninteractive.corner_radius = radius();
+    });
 }
 
 #[cfg(test)]
@@ -90,10 +161,7 @@ mod tests {
                 ((s + 0.055) / 1.055).powf(2.4)
             }
         };
-        let r = to_linear(c.r());
-        let g = to_linear(c.g());
-        let b = to_linear(c.b());
-        0.2126 * r + 0.7152 * g + 0.0722 * b
+        0.2126 * to_linear(c.r()) + 0.7152 * to_linear(c.g()) + 0.0722 * to_linear(c.b())
     }
 
     fn contrast_ratio(c1: Color32, c2: Color32) -> f64 {
@@ -103,20 +171,92 @@ mod tests {
         (hi + 0.05) / (lo + 0.05)
     }
 
+    /// Every text token must clear WCAG AA (4.5:1) on every plane it is
+    /// documented as safe for. Small caps labels at 8.5 pt need the full ratio.
     #[test]
-    fn selection_text_contrast() {
-        // DragValue text selection uses TEXT_PRIMARY on selection.bg_fill (ACCENT_ORANGE)
-        // or TEXT_ON_ACCENT. Both must meet readability standards.
-        assert!(contrast_ratio(TEXT_PRIMARY, ACCENT_ORANGE) >= 2.0);
-        assert!(contrast_ratio(TEXT_ON_ACCENT, ACCENT_ORANGE) >= 4.5);
+    fn text_tokens_clear_aa_on_their_planes() {
+        let on_all = [
+            CHASSIS_BG,
+            WELL_BG,
+            PANEL_BG,
+            PANEL_HEADER_BG,
+            SURFACE_ELEVATED,
+            SURFACE_HOVER,
+        ];
+        for plane in on_all {
+            for text in [TEXT_PRIMARY, TEXT_SECONDARY] {
+                assert!(
+                    contrast_ratio(text, plane) >= 4.5,
+                    "{text:?} on {plane:?} = {:.2}",
+                    contrast_ratio(text, plane)
+                );
+            }
+        }
+        for plane in [CHASSIS_BG, WELL_BG, PANEL_BG] {
+            assert!(
+                contrast_ratio(TEXT_MUTED, plane) >= 4.5,
+                "TEXT_MUTED on {plane:?} = {:.2}",
+                contrast_ratio(TEXT_MUTED, plane)
+            );
+        }
     }
 
+    /// Dark text sits on every lit fill (accent, slide, light gate cells).
     #[test]
-    fn field_fill_contrast_and_scale() {
-        assert!(contrast_ratio(FIELD_FILL, PANEL_BG) >= 3.0);
-        assert!(contrast_ratio(FIELD_FILL_HOVER, PANEL_BG) >= 3.0);
-        // Active pressed state is darker than resting, hover is lighter
-        assert!(rel_luminance(FIELD_FILL_ACTIVE) < rel_luminance(FIELD_FILL));
-        assert!(rel_luminance(FIELD_FILL) < rel_luminance(FIELD_FILL_HOVER));
+    fn text_on_accent_clears_aa_on_every_lit_fill() {
+        for fill in [
+            ACCENT_ORANGE,
+            ACCENT_ORANGE_HOVER,
+            ACCENT_BLUE,
+            GATE_NOTE_FILL,
+        ] {
+            assert!(
+                contrast_ratio(TEXT_ON_ACCENT, fill) >= 4.5,
+                "TEXT_ON_ACCENT on {fill:?} = {:.2}",
+                contrast_ratio(TEXT_ON_ACCENT, fill)
+            );
+        }
+        assert!(
+            contrast_ratio(TEXT_PRIMARY, GATE_TIE_FILL) >= 4.5,
+            "TEXT_PRIMARY on the TIE fill = {:.2}",
+            contrast_ratio(TEXT_PRIMARY, GATE_TIE_FILL)
+        );
+    }
+
+    /// Orange as a foreground (value arc, selected text) must stay visible on
+    /// the device body: 3:1 is the non-text floor.
+    #[test]
+    fn accent_is_visible_on_device_body() {
+        assert!(contrast_ratio(ACCENT_ORANGE, PANEL_BG) >= 3.0);
+        assert!(contrast_ratio(ACCENT_ORANGE, PANEL_HEADER_BG) >= 3.0);
+    }
+
+    /// Interaction states must be ordered: hover lighter than rest, pressed
+    /// darker than rest.
+    #[test]
+    fn control_states_are_ordered() {
+        assert!(rel_luminance(SURFACE_PRESSED) < rel_luminance(SURFACE_ELEVATED));
+        assert!(rel_luminance(SURFACE_ELEVATED) < rel_luminance(SURFACE_HOVER));
+    }
+
+    /// Planes must step upward so each nesting level is distinguishable
+    /// without an outline.
+    #[test]
+    fn planes_step_upward() {
+        let planes = [
+            CHASSIS_BG,
+            WELL_BG,
+            PANEL_BG,
+            PANEL_HEADER_BG,
+            SURFACE_ELEVATED,
+        ];
+        for pair in planes.windows(2) {
+            assert!(
+                rel_luminance(pair[0]) < rel_luminance(pair[1]),
+                "{:?} must be darker than {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
     }
 }
