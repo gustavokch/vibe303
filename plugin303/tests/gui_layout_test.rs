@@ -2,8 +2,9 @@
 
 use nih_plug::prelude::{GuiContext, PluginApi};
 use nih_plug_egui::egui::{self, Frame, Margin};
+use plugin303::gui::panels::sequencer_panel::{render_transport_panel, SEQUENCER_H};
 use plugin303::gui::widgets::DevicePanel;
-use plugin303::gui::{render_editor, theme, GUI_HEIGHT, GUI_WIDTH, MARGIN};
+use plugin303::gui::{render_editor, split_columns, theme, GUI_HEIGHT, GUI_WIDTH, MARGIN};
 use plugin303::params::Plugin303Params;
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
@@ -148,4 +149,86 @@ fn device_panel_overflow_reaches_parent_rect() {
         measured.height(),
         card_h
     );
+}
+
+/// Transport rows are two equal slots of same-height tiles: every row's left
+/// slot ends on Row 1's seam, every row reaches Row 1's right edge, and every
+/// tile is Row 1's height.
+#[test]
+fn transport_rows_share_one_seam_and_tile_height() {
+    let params = Arc::new(Plugin303Params::default());
+    let dummy_ctx = DummyGuiContext;
+    let setter = nih_plug::prelude::ParamSetter::new(&dummy_ctx);
+    let ctx = egui::Context::default();
+    theme::apply(&ctx);
+    let (_, right_w) = split_columns(GUI_WIDTH as f32 - 2.0 * MARGIN);
+    let raw_input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(right_w, SEQUENCER_H),
+        )),
+        ..Default::default()
+    };
+    for _ in 0..2 {
+        let _ = ctx.run(raw_input.clone(), |ctx| {
+            egui::CentralPanel::default()
+                .frame(Frame::new())
+                .show(ctx, |ui| render_transport_panel(ui, &params, &setter));
+        });
+    }
+
+    // Tiles: clickable widgets at least one interact row tall. Labels are
+    // shorter, and the card itself only senses hover.
+    let min_h = ctx.style().spacing.interact_size.y - 0.5;
+    let mut tiles: Vec<egui::Rect> = ctx.viewport(|vp| {
+        vp.prev_pass
+            .widgets
+            .layers()
+            .flat_map(|(_, ws)| ws.iter())
+            .filter(|w| w.sense.senses_click() && w.rect.height() >= min_h)
+            .map(|w| w.rect)
+            .collect()
+    });
+    tiles.sort_by(|a, b| a.center().y.total_cmp(&b.center().y));
+    let mut rows: Vec<Vec<egui::Rect>> = Vec::new();
+    for t in tiles {
+        match rows.last_mut() {
+            Some(row) if (row[0].center().y - t.center().y).abs() < 8.0 => row.push(t),
+            _ => rows.push(vec![t]),
+        }
+    }
+    assert_eq!(rows.len(), 6, "six transport rows expected: {rows:?}");
+
+    let tile_h = rows[0][0].height();
+    let seam = rows[0]
+        .iter()
+        .map(|r| r.max.x)
+        .fold(f32::INFINITY, f32::min);
+    let right = rows[0]
+        .iter()
+        .map(|r| r.max.x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    for (i, row) in rows.iter().enumerate() {
+        for t in row {
+            assert!(
+                (t.height() - tile_h).abs() < 0.5,
+                "row {}: tile {t:?} is not {tile_h} tall",
+                i + 1
+            );
+        }
+        assert!(
+            row.iter().any(|t| (t.max.x - seam).abs() < 1.0),
+            "row {}: no tile ends on the seam x={seam}: {row:?}",
+            i + 1
+        );
+        let row_right = row
+            .iter()
+            .map(|r| r.max.x)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            (row_right - right).abs() < 1.0,
+            "row {}: ends at {row_right}, card edge is {right}",
+            i + 1
+        );
+    }
 }

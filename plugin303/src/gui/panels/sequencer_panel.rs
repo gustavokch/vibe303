@@ -424,99 +424,116 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
             // Row 5: Timebase (16th/12th) and Mode (Direct/Decoupled) Dropdowns
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
-                ui.set_min_height(ROW_H);
 
                 // Timebase combo
-                ui.scope(|ui| {
-                    theme::field_style(ui);
-                    let tb_val = params.seq_timebase.value();
-                    ComboBox::from_id_salt("seq_tb_combo")
-                        .icon(paint_combobox_down_arrow)
-                        .selected_text(
-                            RichText::new(match tb_val {
-                                crate::params::Timebase::Straight => "16th",
-                                crate::params::Timebase::Triplet => "12th",
-                            })
-                            .font(FontId::proportional(8.5)),
-                        )
-                        .width(slot_w - 24.0)
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_label(
-                                    tb_val == crate::params::Timebase::Straight,
-                                    RichText::new("16th").font(FontId::proportional(8.5)),
+                ui.allocate_ui_with_layout(
+                    vec2(slot_w, ROW_H),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.scope(|ui| {
+                            theme::field_style(ui);
+                            ui.spacing_mut().interact_size.y = ROW_H;
+                            let tb_val = params.seq_timebase.value();
+                            ComboBox::from_id_salt("seq_tb_combo")
+                                .icon(paint_combobox_down_arrow)
+                                .selected_text(
+                                    RichText::new(match tb_val {
+                                        crate::params::Timebase::Straight => "16th",
+                                        crate::params::Timebase::Triplet => "12th",
+                                    })
+                                    .font(FontId::proportional(8.5)),
                                 )
-                                .clicked()
-                            {
-                                setter.begin_set_parameter(&params.seq_timebase);
-                                setter.set_parameter(
-                                    &params.seq_timebase,
-                                    crate::params::Timebase::Straight,
-                                );
-                                setter.end_set_parameter(&params.seq_timebase);
-                            }
-                            if ui
-                                .selectable_label(
-                                    tb_val == crate::params::Timebase::Triplet,
-                                    RichText::new("12th").font(FontId::proportional(8.5)),
-                                )
-                                .clicked()
-                            {
-                                setter.begin_set_parameter(&params.seq_timebase);
-                                setter.set_parameter(
-                                    &params.seq_timebase,
-                                    crate::params::Timebase::Triplet,
-                                );
-                                setter.end_set_parameter(&params.seq_timebase);
-                            }
+                                .width(slot_w)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(
+                                            tb_val == crate::params::Timebase::Straight,
+                                            RichText::new("16th").font(FontId::proportional(8.5)),
+                                        )
+                                        .clicked()
+                                    {
+                                        setter.begin_set_parameter(&params.seq_timebase);
+                                        setter.set_parameter(
+                                            &params.seq_timebase,
+                                            crate::params::Timebase::Straight,
+                                        );
+                                        setter.end_set_parameter(&params.seq_timebase);
+                                    }
+                                    if ui
+                                        .selectable_label(
+                                            tb_val == crate::params::Timebase::Triplet,
+                                            RichText::new("12th").font(FontId::proportional(8.5)),
+                                        )
+                                        .clicked()
+                                    {
+                                        setter.begin_set_parameter(&params.seq_timebase);
+                                        setter.set_parameter(
+                                            &params.seq_timebase,
+                                            crate::params::Timebase::Triplet,
+                                        );
+                                        setter.end_set_parameter(&params.seq_timebase);
+                                    }
+                                });
                         });
-                });
+                    },
+                );
 
                 // Mode combo
-                ui.scope(|ui| {
-                    theme::field_style(ui);
-                    let mode_val = params.seq_mode.value();
-                    ComboBox::from_id_salt("seq_mode_combo")
-                        .icon(paint_combobox_down_arrow)
-                        .selected_text(
-                            RichText::new(match mode_val {
-                                crate::params::SequencerMode::DirectGrid => "Direct",
-                                crate::params::SequencerMode::DecoupledHardware => "Decoupled",
-                            })
-                            .font(FontId::proportional(8.5)),
-                        )
-                        .width(slot_w - 24.0)
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_label(
-                                    mode_val == crate::params::SequencerMode::DirectGrid,
-                                    RichText::new("Direct").font(FontId::proportional(8.5)),
+                ui.allocate_ui_with_layout(
+                    vec2(slot_w, ROW_H),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.scope(|ui| {
+                            theme::field_style(ui);
+                            ui.spacing_mut().interact_size.y = ROW_H;
+                            let mode_val = params.seq_mode.value();
+                            ComboBox::from_id_salt("seq_mode_combo")
+                                .icon(paint_combobox_down_arrow)
+                                .selected_text(
+                                    RichText::new(match mode_val {
+                                        crate::params::SequencerMode::DirectGrid => "Direct",
+                                        crate::params::SequencerMode::DecoupledHardware => {
+                                            "Decoupled"
+                                        }
+                                    })
+                                    .font(FontId::proportional(8.5)),
                                 )
-                                .clicked()
-                            {
-                                setter.begin_set_parameter(&params.seq_mode);
-                                setter.set_parameter(
-                                    &params.seq_mode,
-                                    crate::params::SequencerMode::DirectGrid,
-                                );
-                                setter.end_set_parameter(&params.seq_mode);
-                            }
-                            if ui
-                                .selectable_label(
-                                    mode_val == crate::params::SequencerMode::DecoupledHardware,
-                                    RichText::new("Decoupled").font(FontId::proportional(8.5)),
-                                )
-                                .clicked()
-                            {
-                                setter.begin_set_parameter(&params.seq_mode);
-                                setter.set_parameter(
-                                    &params.seq_mode,
-                                    crate::params::SequencerMode::DecoupledHardware,
-                                );
-                                setter.end_set_parameter(&params.seq_mode);
-                            }
+                                .width(slot_w)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(
+                                            mode_val == crate::params::SequencerMode::DirectGrid,
+                                            RichText::new("Direct").font(FontId::proportional(8.5)),
+                                        )
+                                        .clicked()
+                                    {
+                                        setter.begin_set_parameter(&params.seq_mode);
+                                        setter.set_parameter(
+                                            &params.seq_mode,
+                                            crate::params::SequencerMode::DirectGrid,
+                                        );
+                                        setter.end_set_parameter(&params.seq_mode);
+                                    }
+                                    if ui
+                                        .selectable_label(
+                                            mode_val
+                                                == crate::params::SequencerMode::DecoupledHardware,
+                                            RichText::new("Decoupled")
+                                                .font(FontId::proportional(8.5)),
+                                        )
+                                        .clicked()
+                                    {
+                                        setter.begin_set_parameter(&params.seq_mode);
+                                        setter.set_parameter(
+                                            &params.seq_mode,
+                                            crate::params::SequencerMode::DecoupledHardware,
+                                        );
+                                        setter.end_set_parameter(&params.seq_mode);
+                                    }
+                                });
                         });
-                });
+                    },
+                );
             });
 
             ui.add_space(row_gap);
@@ -531,7 +548,11 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     |ui| {
                         let mut jitter_val = params.seq_jitter.value();
                         if ui
-                            .add(ToggleButton::new(&mut jitter_val, "JITTER").min_width(slot_w))
+                            .add(
+                                ToggleButton::new(&mut jitter_val, "JITTER")
+                                    .min_width(slot_w)
+                                    .height(ROW_H),
+                            )
                             .on_hover_text("Clock jitter / micro-timing humanization")
                             .changed()
                         {

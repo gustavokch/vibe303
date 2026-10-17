@@ -2,7 +2,7 @@ use nih_plug_egui::egui::{vec2, Align2, Color32, FontFamily, FontId, Response, S
 
 use crate::gui::theme;
 
-/// Height of every toggle and flat button: one height, one row rhythm.
+/// Default height of a toggle and flat button: one height, one row rhythm.
 pub const TOGGLE_H: f32 = 18.0;
 
 /// A flat on/off tile. Lit orange when on, a quiet grey tile when off. Replaces
@@ -11,6 +11,7 @@ pub struct ToggleButton<'a> {
     on: &'a mut bool,
     label: &'a str,
     min_width: f32,
+    height: f32,
 }
 
 impl<'a> ToggleButton<'a> {
@@ -19,12 +20,19 @@ impl<'a> ToggleButton<'a> {
             on,
             label,
             min_width: 0.0,
+            height: TOGGLE_H,
         }
     }
 
     /// Floor for the tile width, so a group of toggles can share one width.
     pub fn min_width(mut self, width: f32) -> Self {
         self.min_width = width;
+        self
+    }
+
+    /// Tile height, for rows that run taller than the default.
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = height;
         self
     }
 }
@@ -50,7 +58,7 @@ impl Widget for ToggleButton<'_> {
                 .x
         });
         let width = (text_w + 16.0).max(self.min_width);
-        let (rect, mut response) = ui.allocate_exact_size(vec2(width, TOGGLE_H), Sense::click());
+        let (rect, mut response) = ui.allocate_exact_size(vec2(width, self.height), Sense::click());
         if response.clicked() {
             *self.on = !*self.on;
             response.mark_changed();
