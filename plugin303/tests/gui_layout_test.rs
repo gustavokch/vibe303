@@ -105,12 +105,6 @@ fn editor_fills_window_without_overflow_or_dead_band() {
     );
 }
 
-/// Product requirement: the window is exactly 19:10.
-#[test]
-fn window_aspect_ratio_is_19_to_10() {
-    assert_eq!(GUI_WIDTH * 10, GUI_HEIGHT * 19);
-}
-
 /// Content that overflows a device card must reach the parent's measured
 /// rect, or the editor test above cannot see a clipped panel.
 #[test]

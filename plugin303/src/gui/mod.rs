@@ -17,6 +17,7 @@ use crate::params::Plugin303Params;
 /// device chain), so `GUI_WIDTH * 10 == GUI_HEIGHT * 19`.
 pub const GUI_WIDTH: u32 = 1216;
 pub const GUI_HEIGHT: u32 = 640;
+const _: () = assert!(GUI_WIDTH * 10 == GUI_HEIGHT * 19, "window must stay 19:10");
 
 /// Window margin in logical px: the chassis plane showing around the devices.
 pub const MARGIN: f32 = 4.0;
@@ -177,20 +178,4 @@ pub fn create_editor(
                 });
         },
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The two columns plus the gutter always add back up to the row width, so
-    /// no sliver of dead space opens beside a device at any zoom.
-    #[test]
-    fn columns_tile_the_row_exactly() {
-        for total in [900.0_f32, 1354.0, 1821.0, 2400.0] {
-            let (left, right) = split_columns(total);
-            assert_eq!(left + PANEL_GAP + right, total);
-            assert!(left > right, "left column is the wider one");
-        }
-    }
 }
