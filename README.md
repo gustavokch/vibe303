@@ -38,12 +38,13 @@ Circuit-grounded emulation of the Roland TB-303 bass synthesizer, built in Rust 
   - **Decoupled (Roland TB-303):** Authentic hardware mode with decoupled pitch and timing (Note / Tie / Rest) entry buffers.
 - **Timebases:** Straight 16th notes and Triplet 12th notes with analog clock jitter/swing simulation.
 - **Per-Step Parameters:** Pitch (C1–C4), Octave transpose (-2..+2), Step Gate (Note, Tie, Rest), Accent, Slide (hardware glide modeling), Velocity, and Gate Length.
-- **Interactive UI:** Step LED playhead, interactive piano roll popup, mini keyboard preview, and host transport sync.
+- **Interactive UI:** Step LED playhead, interactive piano roll popup, and host transport sync.
 
-### 4. Hardware-Inspired Flat GUI
-- Custom vector interface designed with `nih_plug_egui`.
-- Textured aluminum finish with metallic dials, physical engineering units readout (`cents`, `Hz`, `dB`, `%`, `ms`, `BPM`), and tactile switches.
-- Retractable **Souped Drawer** on the right panel, neatly organizing extended synth parameters while dimming inactive controls in Accurate mode.
+### 4. Flat Device GUI
+- Custom vector interface designed with `nih_plug_egui`, in a 1216x640 (19:10) window.
+- Flat Bitwig/Ableton-style device cards on one 2/3 | 1/3 column seam: charcoal planes, no outlines, one orange accent (blue only for SLIDE).
+- Physical engineering units readout (`cents`, `Hz`, `dB`, `%`, `ms`, `BPM`).
+- The **SOUPED-UP ENGINE** device dims its controls in Accurate mode.
 
 ### 5. Real-Time Audio Performance
 - **100% Real-Time Safe:** Allocation-free audio processing thread guarded by `assert_no_alloc`.
