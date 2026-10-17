@@ -2,6 +2,7 @@
 
 use nih_plug::prelude::{GuiContext, PluginApi};
 use nih_plug_egui::egui::{self, Frame, Margin};
+use plugin303::gui::widgets::DevicePanel;
 use plugin303::gui::{render_editor, theme, GUI_HEIGHT, GUI_WIDTH, MARGIN};
 use plugin303::params::Plugin303Params;
 use std::sync::atomic::AtomicU8;
@@ -107,4 +108,44 @@ fn editor_fills_window_without_overflow_or_dead_band() {
 #[test]
 fn window_aspect_ratio_is_19_to_10() {
     assert_eq!(GUI_WIDTH * 10, GUI_HEIGHT * 19);
+}
+
+/// Content that overflows a device card must reach the parent's measured
+/// rect, or the editor test above cannot see a clipped panel.
+#[test]
+fn device_panel_overflow_reaches_parent_rect() {
+    let ctx = egui::Context::default();
+    let raw_input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(400.0, 400.0),
+        )),
+        ..Default::default()
+    };
+    let card_h = 60.0;
+    let mut measured = egui::Rect::NOTHING;
+    let _ = ctx.run(raw_input, |ctx| {
+        egui::CentralPanel::default()
+            .frame(Frame::new())
+            .show(ctx, |ui| {
+                let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect()));
+                DevicePanel::new("OVERFLOW", card_h).show(
+                    &mut inner,
+                    |_| {},
+                    |body| {
+                        body.allocate_exact_size(
+                            egui::vec2(10.0, 3.0 * card_h),
+                            egui::Sense::hover(),
+                        );
+                    },
+                );
+                measured = inner.min_rect();
+            });
+    });
+    assert!(
+        measured.height() > card_h,
+        "body overflow hidden from the parent: measured {} vs card {}",
+        measured.height(),
+        card_h
+    );
 }

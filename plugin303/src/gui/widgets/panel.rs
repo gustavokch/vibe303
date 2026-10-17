@@ -44,7 +44,8 @@ impl<'a> DevicePanel<'a> {
     /// Draw the card. `header` fills the strip right-to-left (first item added
     /// sits flush right); `body` fills the area below, top-down from the
     /// top-left. The card's full rect is allocated up front, so neither
-    /// closure can move the parent's cursor.
+    /// closure can move the parent's cursor; content that overflows the card
+    /// still grows the parent's `min_rect`, so layout tests see it.
     pub fn show<R>(
         self,
         ui: &mut Ui,
@@ -90,6 +91,7 @@ impl<'a> DevicePanel<'a> {
                 .layout(Layout::right_to_left(Align::Center)),
         );
         header(&mut header_ui);
+        ui.expand_to_include_rect(header_ui.min_rect());
 
         let mut body_ui = ui.new_child(
             UiBuilder::new()
@@ -97,6 +99,8 @@ impl<'a> DevicePanel<'a> {
                 .max_rect(body_rect.shrink2(vec2(PAD_X, PAD_Y)))
                 .layout(Layout::top_down(Align::Min)),
         );
-        body(&mut body_ui)
+        let inner = body(&mut body_ui);
+        ui.expand_to_include_rect(body_ui.min_rect());
+        inner
     }
 }
