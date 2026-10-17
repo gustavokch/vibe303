@@ -6,6 +6,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="$REPO_ROOT/target/gui-qa"
 LOG_FILE="$OUTPUT_DIR/standalone.log"
 
+GUI_MOD="$REPO_ROOT/plugin303/src/gui/mod.rs"
+GUI_W=$(sed -nE 's/^pub const GUI_WIDTH: u32 = ([0-9]+);/\1/p' "$GUI_MOD")
+GUI_H=$(sed -nE 's/^pub const GUI_HEIGHT: u32 = ([0-9]+);/\1/p' "$GUI_MOD")
+[[ -n "$GUI_W" && -n "$GUI_H" ]] || { echo "cannot read GUI_WIDTH/GUI_HEIGHT from $GUI_MOD" >&2; exit 1; }
+
 mkdir -p "$OUTPUT_DIR"
 
 echo "Building standalone binary (release)..."
@@ -46,12 +51,15 @@ capture_single_state() {
     done
 
     if [[ -z "$win_id" || "$win_id" == "missing value" ]]; then
-        win_id=$(PROCESS_PID=$app_pid swift - << 'EOF' 2>/dev/null || true
+        win_id=$(PROCESS_PID=$app_pid MIN_W=$((GUI_W * 9 / 10)) MIN_H=$((GUI_H * 9 / 10)) swift - << 'EOF' 2>/dev/null || true
 import Cocoa
 import CoreGraphics
 import Foundation
 
-let envPid = Int32(ProcessInfo.processInfo.environment["PROCESS_PID"] ?? "0") ?? 0
+let env = ProcessInfo.processInfo.environment
+let envPid = Int32(env["PROCESS_PID"] ?? "0") ?? 0
+let minW = Int(env["MIN_W"] ?? "0") ?? 0
+let minH = Int(env["MIN_H"] ?? "0") ?? 0
 if let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
     for w in windowList {
         let pid = w[kCGWindowOwnerPID as String] as? pid_t ?? 0
@@ -60,7 +68,7 @@ if let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as
         let owner = w[kCGWindowOwnerName as String] as? String ?? ""
         let width = bounds["Width"] as? Int ?? 0
         let height = bounds["Height"] as? Int ?? 0
-        if (pid == envPid || owner == "standalone") && width >= 1200 && height >= 700 {
+        if (pid == envPid || owner == "standalone") && width >= minW && height >= minH {
             print(id)
             break
         }
