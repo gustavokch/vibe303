@@ -6,7 +6,7 @@ use nih_plug_egui::egui::{vec2, Align, FontFamily, FontId, Layout, Sense, Ui};
 use crate::gui::theme;
 use crate::gui::widgets::panel::DevicePanel;
 use crate::gui::widgets::toggle::ToggleButton;
-use crate::gui::widgets::{Knob303, MiniFader, SlideSwitch};
+use crate::gui::widgets::{fader, Knob303, MiniFader, SlideSwitch};
 use crate::params::Plugin303Params;
 
 const CAPTION_H: f32 = 11.0;
@@ -166,7 +166,7 @@ pub fn render_envelope_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Par
             let body_h = body_ui.available_height();
             body_ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                let track_h = (body_h - CAPTION_H - 23.0).max(10.0);
+                let track_h = (body_h - CAPTION_H - fader::CHROME_H).max(10.0);
 
                 let total_w = ui.available_width();
                 // 13 px of inter-bank separator area: 6 px + 1 px separator + 6 px (<= 8 px each side)

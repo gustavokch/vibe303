@@ -21,7 +21,8 @@ fn caption(text: &str) -> RichText {
 }
 
 /// The app bar: instrument identity on the left, engine-wide modes on the
-/// right. One flat strip, one row, every control on the same 20 px height.
+/// right. One flat strip, one row, every control on the same 18 px height
+/// (`SEG_H`, `TOGGLE_H`).
 pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, HEADER_BAR_H), Sense::hover());

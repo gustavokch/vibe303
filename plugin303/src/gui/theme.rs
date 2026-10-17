@@ -52,10 +52,9 @@ pub const KNOB_BODY_HOVER: Color32 = SURFACE_HOVER;
 /// Unfilled part of the value ring.
 pub const KNOB_TRACK: Color32 = Color32::from_rgb(0x40, 0x40, 0x40);
 
-// Knob size tiers: outer diameter LARGE 42 pt, MEDIUM 24 pt, SMALL 22 pt.
+// Knob size tiers: outer diameter LARGE 42 pt, MEDIUM 24 pt.
 pub const KNOB_RADIUS_LARGE: f32 = 21.0;
 pub const KNOB_RADIUS_MEDIUM: f32 = 12.0;
-pub const KNOB_RADIUS_SMALL: f32 = 11.0;
 
 // Value-field widths matching the knob tiers.
 pub const KNOB_PILL_WIDTH_LARGE: f32 = 52.0;

@@ -5,6 +5,10 @@ use nih_plug_egui::egui::{
 
 use crate::gui::theme;
 
+/// Height of the caption and value rows around the track: 12 above (8.5 pt
+/// label), 11 below (value).
+pub const CHROME_H: f32 = 23.0;
+
 pub struct MiniFader<'a, P: Param> {
     param: &'a P,
     setter: &'a ParamSetter<'a>,
@@ -16,7 +20,7 @@ pub struct MiniFader<'a, P: Param> {
 impl<'a, P: Param> MiniFader<'a, P> {
     /// Widget height for a fader whose track is `track_height` tall.
     pub fn footprint_height(track_height: f32) -> f32 {
-        track_height + 23.0
+        track_height + CHROME_H
     }
 
     pub fn new(

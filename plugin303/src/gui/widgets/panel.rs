@@ -76,7 +76,7 @@ impl<'a> DevicePanel<'a> {
                 self.title,
                 FontId::new(9.0, FontFamily::Proportional),
                 if self.dimmed {
-                    theme::TEXT_MUTED
+                    theme::TEXT_SECONDARY
                 } else {
                     theme::TEXT_PRIMARY
                 },

@@ -107,7 +107,7 @@ pub fn render_editor(
     ui.add_space(PANEL_GAP);
 
     columns(ui, "generator", |left, right| {
-        panels::generator_panel::render_generator_panel(left, params, gen_params, setter);
+        panels::generator_panel::render_generator_panel(left, gen_params);
         panels::generator_panel::render_generation_panel(right, params, gen_params, setter);
     });
     ui.add_space(PANEL_GAP);

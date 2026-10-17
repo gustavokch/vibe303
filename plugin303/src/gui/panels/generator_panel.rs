@@ -50,12 +50,7 @@ fn fmt_octave(v: f64) -> String {
     }
 }
 
-pub fn render_generator_panel(
-    ui: &mut Ui,
-    _params: &Plugin303Params,
-    gen_params: &mut GeneratorParams,
-    _setter: &ParamSetter,
-) {
+pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
     DevicePanel::new("ACID EUCLIDEAN GENERATOR", GENERATOR_H).show(
         ui,
         |header_ui| {

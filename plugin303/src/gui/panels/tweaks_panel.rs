@@ -10,6 +10,12 @@ use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
 
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
+    let calibrating = params.calibrate_sync.value();
+    let needs_rebuild = params.recalibration_scale.value() != 1.0
+        || params.comp_age.value() != 0
+        || params.tolerance.value() != crate::params::CompTolerance::Zero
+        || params.thermal_noise.value() != 0
+        || params.comp_drift.value() != 0.1;
 
     DevicePanel::new("ANALOG TWEAKS", crate::gui::TWEAKS_H)
         .dimmed(is_accurate)
@@ -17,13 +23,6 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
             ui,
             |header_ui| {
                 header_ui.add_enabled_ui(!is_accurate, |ui| {
-                    let calibrating = params.calibrate_sync.value();
-                    let needs_rebuild = params.recalibration_scale.value() != 1.0
-                        || params.comp_age.value() != 0
-                        || params.tolerance.value() != crate::params::CompTolerance::Zero
-                        || params.thermal_noise.value() != 0
-                        || params.comp_drift.value() != 0.1;
-
                     let btn_text = if calibrating {
                         "CALIBRATING..."
                     } else {
@@ -71,12 +70,6 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         let col_gap = 8.0;
                         let left_w = FIELD_COL_W.min(total_w);
                         let right_w = (total_w - left_w - col_gap).max(0.0);
-
-                        let needs_rebuild = params.recalibration_scale.value() != 1.0
-                            || params.comp_age.value() != 0
-                            || params.tolerance.value() != crate::params::CompTolerance::Zero
-                            || params.thermal_noise.value() != 0
-                            || params.comp_drift.value() != 0.1;
 
                         // Left column: 4 label-left field rows + 1 calibration status row
                         ui.allocate_ui_with_layout(
