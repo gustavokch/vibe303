@@ -11,7 +11,7 @@ use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 
 use crate::dsp::generator::GeneratorParams;
-use crate::params::Plugin303Params;
+use crate::params::{Plugin303Params, QaState};
 
 /// Window size in logical px. The aspect ratio is 19:10 (wide and short, like a
 /// device chain), so `GUI_WIDTH * 10 == GUI_HEIGHT * 19`.
@@ -120,7 +120,7 @@ pub fn render_editor(
 
 /// Zoom factor of the `VIBE303_QA_STATE=zoom75` capture.
 pub fn qa_zoom_factor(state: Option<&str>) -> Option<f32> {
-    (state == Some("zoom75")).then_some(0.75)
+    (state.and_then(QaState::parse) == Some(QaState::Zoom75)).then_some(0.75)
 }
 
 /// Generator preset of a `VIBE303_QA_STATE` capture: every `generator` field
@@ -128,8 +128,8 @@ pub fn qa_zoom_factor(state: Option<&str>) -> Option<f32> {
 /// `create_editor` and the offscreen renderer (`tools/gui_render`) both read
 /// this, so a window capture and its offscreen render cannot drift.
 pub fn qa_generator_params(state: Option<&str>) -> GeneratorParams {
-    match state {
-        Some("generator") => GeneratorParams {
+    match state.and_then(QaState::parse) {
+        Some(QaState::Generator) => GeneratorParams {
             root_note: 3, // D#
             scale: crate::dsp::generator::MusicalScale::Phrygian,
             // Narrower than GeneratorParams::default() (-1..=1) by product
