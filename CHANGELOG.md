@@ -38,6 +38,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   48 kHz) and a High crossfade blended misaligned paths. High now has its own
   compensation delay, and every tier reaches the output at the reported
   latency.
+- A crossfade between tiers that shared DSP state ticked that state twice per
+  sample for the 10 ms fade. High <-> Best ran the circuit VCO at double rate
+  (an audible pitch jump, then a phase offset); Low <-> High and the circuit
+  tiers also shared the 2x oversampler and the sub oscillator. Each tier now
+  owns its oversampler and nodal ladder, and the circuit VCOs and sub
+  oscillator tick once per sample, also during a High <-> Best fade.
 
 ### Removed
 - The BA283 Neve-preamp product (plugin crate, WaveNet/LSTM model, WDF engine, training

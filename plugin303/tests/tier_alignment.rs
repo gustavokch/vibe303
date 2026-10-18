@@ -1,11 +1,12 @@
 //! Every tier must be padded to the same total latency, so the host PDC is
 //! constant and a tier crossfade blends time-aligned paths.
 //!
-//! High and Best share the circuit VCO and nodal ladder and differ only in the
-//! oversampling factor (2× vs 4×), so their outputs are near-identical apart
-//! from the oversampler group delay. The cross-correlation peak between them
-//! must therefore sit at lag 0. A High path padded for Best's 4× latency
-//! instead of its own 2× latency shows up as a 16-sample lead at 48 kHz.
+//! High and Best share the circuit VCO and use identically configured nodal
+//! ladders that differ only in the oversampling factor (2× vs 4×), so their
+//! outputs are near-identical apart from the oversampler group delay. The
+//! cross-correlation peak between them must therefore sit at lag 0. A High
+//! path padded for Best's 4× latency instead of its own 2× latency shows up as
+//! a 16-sample lead at 48 kHz.
 
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;

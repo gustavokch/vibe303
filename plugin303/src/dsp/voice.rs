@@ -21,6 +21,7 @@ pub fn midi_to_freq(note: u8) -> f32 {
 }
 
 pub const BEST_OS_FACTOR: f32 = 4.0;
+pub const HIGH_OS_FACTOR: f32 = 2.0;
 pub const LOW_OS_FACTOR: f32 = 2.0;
 
 /// VCO output gain. The circuit-VCO MNA solver outputs a raw saw wave with ~1.12 V p-p swing.
@@ -196,21 +197,28 @@ pub struct Voice {
     osc2_low: BlepOsc,
     /// Sub-oscillator for Low tier (always a square wave, one octave below).
     sub_osc_low: BlepOsc,
-    /// Low-tier nodal diode-ladder (polyBLEP saw source), run inside `os2` at 2x.
+    /// Low-tier nodal diode-ladder (polyBLEP saw source), run inside `os2_low` at 2x.
     ladder_low: LadderVcf,
-    /// 2x oversampling filter (2x Kaiser FIR), shared by the Low and High tiers.
-    os2: Os2x,
+    /// Low-tier oversampling filter (2x Kaiser FIR).
+    os2_low: Os2x,
 
     // --- High and Best Tiers (circuit VCO) ---
+    // The oscillator source is shared and ticked once per output sample, also
+    // during a High <-> Best crossfade. Each tier owns its filter path.
     /// Nodal circuit VCO for the High and Best tiers (replaces the polyBLEP saw there).
     vco: Vco303,
     /// Secondary nodal circuit VCO.
     vco2: Vco303,
-    /// Nodal diode-ladder for the circuit-VCO tiers, preallocated. Runs inside `os` at 4x
-    /// (Best) or `os2` at 2x (High).
-    ladder: LadderVcf,
+    /// Sub-oscillator for the circuit-VCO tiers (always a square wave, one octave below).
+    sub_osc_circuit: BlepOsc,
+    /// High-tier nodal diode-ladder, run inside `os2_high` at 2x.
+    ladder_high: LadderVcf,
+    /// High-tier oversampling filter (2x Kaiser FIR).
+    os2_high: Os2x,
+    /// Best-tier nodal diode-ladder, run inside `os4_best` at 4x.
+    ladder_best: LadderVcf,
     /// Best-tier oversampling filter (4x Kaiser FIR).
-    os: Os4x,
+    os4_best: Os4x,
 
     // --- Envelopes & Modulators ---
     /// Filter envelope (MEG), ADSR structure collapsing to classic AD.
@@ -398,49 +406,53 @@ impl Voice {
     pub fn new(sr: f32) -> Self {
         let lat_draft = 0;
         let lat_low = Os2x::new().latency_samples();
+        let lat_high = Os2x::new().latency_samples();
         let lat_best = Os4x::new().latency_samples();
-        let max_latency = lat_best.max(lat_low).max(lat_draft);
-        // The Tier::Best arm drives this ladder 4× per output sample through
-        // Os4x and the nodal solver tunes its capacitors from the constructor
-        // rate, so it must always be built at the oversampled clock (see the
-        // unit test pinning this below). Setter-side rebuilds
-        // (`rebuild_circuit_ladder_if_needed`) use the same rate.
-        let mut ladder = LadderVcf::new(sr * BEST_OS_FACTOR);
-        let _tuning_offset: f32;
-        let _tuning_offset_int: i32;
-        ladder.set_instance_id(3);
-        ladder.set_cal(CIRCUIT_BRIGHT);
+        let max_latency = lat_best.max(lat_high).max(lat_low).max(lat_draft);
+        // Each nodal ladder tunes its capacitors from the constructor rate, so
+        // it is built at the oversampled clock its tier drives it at (see the
+        // unit test pinning this below).
+        let mut ladder_best = LadderVcf::new(sr * BEST_OS_FACTOR);
+        ladder_best.set_instance_id(3);
+        ladder_best.set_cal(CIRCUIT_BRIGHT);
+        let mut ladder_high = LadderVcf::new(sr * HIGH_OS_FACTOR);
+        ladder_high.set_instance_id(3);
+        ladder_high.set_cal(CIRCUIT_BRIGHT);
         let mut ladder_low = LadderVcf::new(sr * LOW_OS_FACTOR);
         ladder_low.set_instance_id(4);
         ladder_low.set_cal(LOW_BRIGHT);
 
         // Sub oscillators are always square waves
-        let mut sub1 = BlepOsc::new();
-        sub1.set_wave(OscWave::Square);
-        let mut sub2 = BlepOsc::new();
-        sub2.set_wave(OscWave::Square);
+        let square = || {
+            let mut sub = BlepOsc::new();
+            sub.set_wave(OscWave::Square);
+            sub
+        };
 
         let mut vco = Vco303::new(sr);
         vco.set_instance_id(1);
         let mut vco2 = Vco303::new(sr);
         vco2.set_instance_id(2);
 
-        Self {
+        let mut voice = Self {
             osc: BlepOsc::new(),
             osc2: BlepOsc::new(),
-            sub_osc: sub1,
+            sub_osc: square(),
             filter: TptLadder::new(sr),
 
             osc_low: BlepOsc::new(),
             osc2_low: BlepOsc::new(),
-            sub_osc_low: sub2,
+            sub_osc_low: square(),
             ladder_low,
-            os2: Os2x::new(),
+            os2_low: Os2x::new(),
 
             vco,
             vco2,
-            ladder,
-            os: Os4x::new(),
+            sub_osc_circuit: square(),
+            ladder_high,
+            os2_high: Os2x::new(),
+            ladder_best,
+            os4_best: Os4x::new(),
 
             meg: AdsrEnv::new(sr),
             veg: AdsrEnv::new(sr),
@@ -488,7 +500,7 @@ impl Voice {
             pending_tier: None,
             comp_draft: CompDelay::new(max_latency - lat_draft),
             comp_low: CompDelay::new(max_latency - lat_low),
-            comp_high: CompDelay::new(max_latency - lat_low),
+            comp_high: CompDelay::new(max_latency - lat_high),
             comp_best: CompDelay::new(max_latency - lat_best),
             max_latency,
             clipper: WarmClipper::new(sr),
@@ -531,7 +543,20 @@ impl Voice {
             reso_comp: 0.0,
             classic_slide_tau_ms: 22.0,
             vco_dirty: true,
+        };
+        // Bring the circuit ladders to the current thermal and wear state, as
+        // `update_params` does on every later change.
+        let tol = voice.tolerance_f64();
+        for ladder in [&mut voice.ladder_high, &mut voice.ladder_best] {
+            ladder.set_thermal(voice.ladder_thermal_state);
+            ladder.set_analog_wear(
+                tol,
+                voice.age,
+                voice.comp_seed as u32,
+                voice.recalibration_scale,
+            );
         }
+        voice
     }
 
     pub fn get_reso_comp(&self) -> f32 {
@@ -682,18 +707,14 @@ impl Voice {
             let is_fun_mode = topology == CircuitTopology::Fun;
             self.vco.set_fun(is_fun_mode);
             self.vco2.set_fun(is_fun_mode);
-            self.ladder.set_analog_wear(
-                tol_f64,
-                comp_age,
-                comp_seed as u32,
-                self.recalibration_scale,
-            );
-            self.ladder_low.set_analog_wear(
-                tol_f64,
-                comp_age,
-                comp_seed as u32,
-                self.recalibration_scale,
-            );
+            for ladder in [&mut self.ladder_high, &mut self.ladder_best, &mut self.ladder_low] {
+                ladder.set_analog_wear(
+                    tol_f64,
+                    comp_age,
+                    comp_seed as u32,
+                    self.recalibration_scale,
+                );
+            }
 
             if self.tier == Tier::Best
                 || self.tier == Tier::High
@@ -737,7 +758,8 @@ impl Voice {
             || tolerance_changed
             || topology_changed
         {
-            self.ladder.set_thermal(thermal_noise);
+            self.ladder_high.set_thermal(thermal_noise);
+            self.ladder_best.set_thermal(thermal_noise);
             self.ladder_low.set_thermal(thermal_noise);
             self.ladder_thermal_state = thermal_noise;
         }
@@ -821,7 +843,8 @@ impl Voice {
             VcfTaps::FourPole => 4,
         };
         self.filter.set_poles(poles_n);
-        self.ladder.set_poles(poles_n);
+        self.ladder_high.set_poles(poles_n);
+        self.ladder_best.set_poles(poles_n);
         self.ladder_low.set_poles(poles_n);
 
         // Update Osc Waveforms & PW parameters
@@ -931,10 +954,6 @@ impl Voice {
     /// construction or `initialize`, where there is no prior audio to fade from.
     /// Runtime changes go through [`set_tier`] (faded).
     pub fn set_tier_immediate(&mut self, tier: Tier) {
-        // Rebuild while `self.tier` still holds the previous tier — the helper
-        // skips work when nothing actually changes.
-        self.rebuild_circuit_ladder_if_needed(tier);
-
         self.tier = tier;
         self.xfade_from = None;
         self.xfade_pos = 1.0;
@@ -958,34 +977,6 @@ impl Voice {
                 self.vco_dirty = false;
             }
         }
-    }
-
-    /// The circuit-VCO ladders run the nodal solver at the tier's oversampled rate and
-    /// tune their capacitors from the constructor SR (`dt = 1/self.sr`), so the
-    /// ladder must be rebuilt whenever the target tier's rate differs from the
-    /// built one. Shared by [`Self::set_tier`] and [`Self::set_tier_immediate`]
-    /// so both entry points establish an identical ladder for the same target.
-    fn rebuild_circuit_ladder_if_needed(&mut self, tier: Tier) {
-        if !matches!(tier, Tier::Best | Tier::High) || self.tier == tier {
-            return;
-        }
-        let factor = if tier == Tier::High {
-            2.0
-        } else {
-            BEST_OS_FACTOR
-        };
-        let mut new_ladder = LadderVcf::new(self.sr * factor);
-        new_ladder.set_instance_id(3);
-        new_ladder.set_cal(CIRCUIT_BRIGHT);
-        new_ladder.set_poles(self.ladder.poles);
-        new_ladder.set_thermal(self.ladder_thermal_state);
-        new_ladder.set_analog_wear(
-            self.tolerance_f64(),
-            self.age,
-            self.comp_seed as u32,
-            self.recalibration_scale,
-        );
-        self.ladder = new_ladder;
     }
 
     /// Clear all runtime state to silence, **in place** — the host reset path.
@@ -1013,11 +1004,16 @@ impl Voice {
 
         self.vco.reset(); // preserves cv_lut — no cache lock, no rebuild, no alloc
         self.vco2.reset();
+        self.sub_osc_circuit = BlepOsc::new();
+        self.sub_osc_circuit.set_wave(OscWave::Square);
         self.filter.reset();
-        self.ladder.reset(); // preserves cutoff / reso / brightness
+        // Nodal ladders: in-place reset preserves cutoff / reso / brightness.
+        self.ladder_high.reset();
+        self.ladder_best.reset();
         self.ladder_low.reset();
-        self.os = Os4x::new();
-        self.os2 = Os2x::new();
+        self.os4_best = Os4x::new();
+        self.os2_high = Os2x::new();
+        self.os2_low = Os2x::new();
         self.meg.reset();
         self.veg.reset();
         self.meg_decay.reset();
@@ -1087,8 +1083,6 @@ impl Voice {
                 self.vco_dirty = false;
             }
         }
-
-        self.rebuild_circuit_ladder_if_needed(tier);
 
         if self.xfade_from.is_some() {
             // If a fade is already in flight, queue the new target instead of
@@ -1269,7 +1263,11 @@ impl Voice {
     }
 
     /// Renders a single sample for a specific tier, advancing its state.
-    fn render_tier(&mut self, tier: Tier) -> f32 {
+    ///
+    /// `circuit_mix` caches the circuit oscillator mix for this output sample.
+    /// High and Best share the circuit VCOs, so during a High <-> Best fade the
+    /// second circuit path reuses the mix instead of ticking the VCOs again.
+    fn render_tier(&mut self, tier: Tier, circuit_mix: &mut Option<f32>) -> f32 {
         match tier {
             // Draft: polyBLEP saw → TPT ladder (cheap, ships). Padded to the common
             // latency so the host PDC is constant across tiers.
@@ -1299,85 +1297,75 @@ impl Voice {
                 };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
-                let hi = self.os2.up(mix * self.drive);
+                let hi = self.os2_low.up(mix * self.drive);
                 let o = [self.ladder_low.tick(hi[0]), self.ladder_low.tick(hi[1])];
                 // LOW_LEVEL_TRIM equalises Low's loudness to Best (tier-switch
                 // is then timbre-only). Pre-comp-delay so the crossfade blends
                 // level-matched paths.
                 self.comp_low
-                    .process(self.os2.down(o) * (LOW_LEVEL_TRIM / self.drive))
+                    .process(self.os2_low.down(o) * (LOW_LEVEL_TRIM / self.drive))
             }
-            // High: circuit VCO saw → nodal diode-ladder at 2× oversample, with the
-            // same VCO/BLEP path as Best below.
+            // High: circuit VCO saw → nodal diode-ladder at 2× oversample.
             Tier::High => {
-                let raw = self.vco.tick() * VCO_GAIN;
-                let blep = match self.vco.wave {
-                    OscWave::Saw => self.vco.blep_now,
-                    OscWave::Sweep => self.vco.blep_now * (1.0 - self.vco.sweep_pos as f32),
-                    OscWave::Square => 0.0,
-                };
-                let osc1 = raw + blep;
-                let sub = self.sub_osc_low.tick() * self.sub_vol;
-                let osc2 = if self.osc2_vol > 0.0 {
-                    let raw2 = self.vco2.tick() * VCO_GAIN;
-                    let blep2 = match self.vco2.wave {
-                        OscWave::Saw => self.vco2.blep_now,
-                        OscWave::Sweep => self.vco2.blep_now * (1.0 - self.vco2.sweep_pos as f32),
-                        OscWave::Square => 0.0,
-                    };
-                    raw2 + blep2
-                } else {
-                    0.0
-                };
-                let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
-
-                let hi = self.os2.up(mix * self.drive);
-                let o = [self.ladder.tick(hi[0]), self.ladder.tick(hi[1])];
-                self.comp_high.process(self.os2.down(o) / self.drive)
+                let mix = self.circuit_mix(circuit_mix);
+                let hi = self.os2_high.up(mix * self.drive);
+                let o = [self.ladder_high.tick(hi[0]), self.ladder_high.tick(hi[1])];
+                self.comp_high.process(self.os2_high.down(o) / self.drive)
             }
-            // Best: circuit VCO saw → nodal diode-ladder at 4× oversample.
-            // The nodal VCO runs at base rate; its sharp JFET reset edge is corrected
-            // by a 2-tap first-order BLEP computed inside `Vco303::tick()`. `blep_now`
-            // is already calibrated to SPICE OR_SWING × VCO_GAIN (= 2.92 V); tap 1 is
-            // auto-injected on the following tick. The 4× OS + decimation FIR then
-            // band-limits the downstream ladder nonlinearity as before.
-            //
-            // RESIDUAL LIMITATION: the VCO still runs at base rate; higher-order alias
-            // from the smooth ramp (not the reset edge) is negligible relative to the
-            // reset. Option A (full 4× VCO, as in a future full-rate-VCO tier) gives
-            // complete alias freedom at ~4× the CPU cost.
+            // Best: circuit VCO saw → nodal diode-ladder at 4× oversample. The
+            // 4× OS + decimation FIR band-limits the ladder nonlinearity.
             Tier::Best => {
-                let raw = self.vco.tick() * VCO_GAIN;
-                let blep = match self.vco.wave {
-                    OscWave::Saw => self.vco.blep_now,
-                    OscWave::Sweep => self.vco.blep_now * (1.0 - self.vco.sweep_pos as f32),
-                    OscWave::Square => 0.0,
-                };
-                let osc1 = raw + blep;
-                let sub = self.sub_osc_low.tick() * self.sub_vol;
-                let osc2 = if self.osc2_vol > 0.0 {
-                    let raw2 = self.vco2.tick() * VCO_GAIN;
-                    let blep2 = match self.vco2.wave {
-                        OscWave::Saw => self.vco2.blep_now,
-                        OscWave::Sweep => self.vco2.blep_now * (1.0 - self.vco2.sweep_pos as f32),
-                        OscWave::Square => 0.0,
-                    };
-                    raw2 + blep2
-                } else {
-                    0.0
-                };
-                let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
-
-                let hi = self.os.up(mix * self.drive);
+                let mix = self.circuit_mix(circuit_mix);
+                let hi = self.os4_best.up(mix * self.drive);
                 let o = [
-                    self.ladder.tick(hi[0]),
-                    self.ladder.tick(hi[1]),
-                    self.ladder.tick(hi[2]),
-                    self.ladder.tick(hi[3]),
+                    self.ladder_best.tick(hi[0]),
+                    self.ladder_best.tick(hi[1]),
+                    self.ladder_best.tick(hi[2]),
+                    self.ladder_best.tick(hi[3]),
                 ];
-                self.comp_best.process(self.os.down(o) / self.drive)
+                self.comp_best.process(self.os4_best.down(o) / self.drive)
             }
         }
+    }
+
+    /// Circuit oscillator mix (VCO, sub, VCO 2) for the current output sample.
+    /// Ticks the oscillators only if `cached` is empty, then caches the result.
+    ///
+    /// The nodal VCO runs at base rate; its sharp JFET reset edge is corrected by
+    /// a 2-tap first-order BLEP computed inside `Vco303::tick()`. `blep_now` is
+    /// already calibrated to SPICE OR_SWING × VCO_GAIN (= 2.92 V); tap 1 is
+    /// auto-injected on the following tick.
+    ///
+    /// RESIDUAL LIMITATION: higher-order alias from the smooth ramp (not the
+    /// reset edge) is negligible relative to the reset. A full 4× VCO (a future
+    /// full-rate-VCO tier) gives complete alias freedom at ~4× the CPU cost.
+    #[inline]
+    fn circuit_mix(&mut self, cached: &mut Option<f32>) -> f32 {
+        if let Some(mix) = *cached {
+            return mix;
+        }
+        let raw = self.vco.tick() * VCO_GAIN;
+        let blep = match self.vco.wave {
+            OscWave::Saw => self.vco.blep_now,
+            OscWave::Sweep => self.vco.blep_now * (1.0 - self.vco.sweep_pos as f32),
+            OscWave::Square => 0.0,
+        };
+        let osc1 = raw + blep;
+        let sub = self.sub_osc_circuit.tick() * self.sub_vol;
+        let osc2 = if self.osc2_vol > 0.0 {
+            let raw2 = self.vco2.tick() * VCO_GAIN;
+            let blep2 = match self.vco2.wave {
+                OscWave::Saw => self.vco2.blep_now,
+                OscWave::Sweep => self.vco2.blep_now * (1.0 - self.vco2.sweep_pos as f32),
+                OscWave::Square => 0.0,
+            };
+            raw2 + blep2
+        } else {
+            0.0
+        };
+        let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
+        *cached = Some(mix);
+        mix
     }
 
     /// Advances the voice by one sample, computing modulations, rendering the active
@@ -1460,6 +1448,7 @@ impl Voice {
         let sub_f = osc1_f * 0.5;
         self.sub_osc.set_freq(sub_f, self.sr);
         self.sub_osc_low.set_freq(sub_f, self.sr);
+        self.sub_osc_circuit.set_freq(sub_f, self.sr);
 
         if self.osc2_vol > 0.0 {
             let vco2_f = 440.0
@@ -1558,18 +1547,21 @@ impl Voice {
         self.ladder_low.set_cutoff(low_fc as f32);
         self.ladder_low.set_reso(low_reso as f32);
 
-        self.ladder.set_cutoff(final_cutoff_hz as f32);
-        self.ladder.set_reso(final_reso);
+        for ladder in [&mut self.ladder_high, &mut self.ladder_best] {
+            ladder.set_cutoff(final_cutoff_hz as f32);
+            ladder.set_reso(final_reso);
+        }
 
         // --- 3. Render Tier audio ---
+        let mut circuit_mix = None;
         let f = match self.xfade_from {
             // Steady state: render the active tier only.
-            None => self.render_tier(self.tier),
+            None => self.render_tier(self.tier, &mut circuit_mix),
             // Crossfade: render both paths and blend equal-power. The outgoing
             // path keeps running until the fade completes, then is dropped.
             Some(from) => {
-                let a = self.render_tier(from);
-                let b = self.render_tier(self.tier);
+                let a = self.render_tier(from, &mut circuit_mix);
+                let b = self.render_tier(self.tier, &mut circuit_mix);
                 let g = self.xfade_pos.min(1.0);
                 // Equal-power (constant-energy) weights: the tiers are largely
                 // uncorrelated in timbre, so equal-power avoids the mid-fade dip
@@ -1658,7 +1650,8 @@ impl Voice {
     }
 
     pub fn set_circuit_brightness(&mut self, cal: f64) {
-        self.ladder.set_cal(cal);
+        self.ladder_high.set_cal(cal);
+        self.ladder_best.set_cal(cal);
     }
 
     pub fn set_low_brightness(&mut self, cal: f64) {
@@ -1670,7 +1663,8 @@ impl Voice {
     }
 
     pub fn set_circuit_reso_gain(&mut self, g: f64) {
-        self.ladder.set_reso_gain(g);
+        self.ladder_high.set_reso_gain(g);
+        self.ladder_best.set_reso_gain(g);
     }
 
     pub fn set_topology(&mut self, topology: CircuitTopology) {
@@ -1723,23 +1717,25 @@ fn exp_to_lin(y: f64, min: f64, max: f64) -> f64 {
 mod tests {
     use super::*;
 
-    /// Regression pin for 21b7307: the shared circuit ladder must be built at
-    /// the tier's oversampled clock (`sr * BEST_OS_FACTOR`) because the
-    /// Tier::Best arm drives it 4× per output sample through `Os4x` and the
-    /// nodal solver tunes its capacitors from the constructor rate. The
-    /// setter-side rebuild (`rebuild_circuit_ladder_if_needed`) assumes this too.
+    /// Regression pin for 21b7307: each nodal ladder must be built at the
+    /// oversampled clock its tier drives it at, because the nodal solver tunes
+    /// its capacitors from the constructor rate.
     #[test]
-    fn voice_new_builds_best_ladder_at_oversampled_rate() {
+    fn voice_new_builds_ladders_at_oversampled_rate() {
         for sr in [44_100.0f32, 48_000.0, 96_000.0] {
             let v = Voice::new(sr);
-            let expected = sr as f64 * BEST_OS_FACTOR as f64;
-            assert!(
-                (v.ladder.sample_rate() - expected).abs() < 1e-6,
-                "sr {}: ladder built at {} Hz, expected {} Hz",
-                sr,
-                v.ladder.sample_rate(),
-                expected
-            );
+            for (name, ladder, factor) in [
+                ("low", &v.ladder_low, LOW_OS_FACTOR),
+                ("high", &v.ladder_high, HIGH_OS_FACTOR),
+                ("best", &v.ladder_best, BEST_OS_FACTOR),
+            ] {
+                let expected = sr as f64 * factor as f64;
+                assert!(
+                    (ladder.sample_rate() - expected).abs() < 1e-6,
+                    "sr {sr}: {name} ladder built at {} Hz, expected {expected} Hz",
+                    ladder.sample_rate(),
+                );
+            }
         }
     }
 }

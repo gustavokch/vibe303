@@ -8,6 +8,7 @@
 
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
+use plugin303::params::{CircuitTopology, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
 
 fn max_step(s: &[f32]) -> f32 {
     s.windows(2)
@@ -88,6 +89,132 @@ fn draft_to_best_is_click_free() {
 #[test]
 fn best_to_draft_is_click_free() {
     switch_test(Tier::Best, Tier::Draft);
+}
+
+#[test]
+fn low_to_high_is_click_free() {
+    switch_test(Tier::Low, Tier::High);
+}
+
+#[test]
+fn high_to_low_is_click_free() {
+    switch_test(Tier::High, Tier::Low);
+}
+
+#[test]
+fn high_to_best_is_click_free() {
+    switch_test(Tier::High, Tier::Best);
+}
+
+#[test]
+fn best_to_high_is_click_free() {
+    switch_test(Tier::Best, Tier::High);
+}
+
+/// Fun mode with the sub oscillator at full level, so a fade that ticks a
+/// shared sub oscillator twice per sample shows up as a sub phase offset.
+fn fun_mode_with_sub(v: &mut Voice) {
+    v.update_params(
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        OscWave::Saw,
+        0.5,
+        1.0, // sub_vol
+        0.6,
+        0.3,
+        0.0,
+        0.5,
+        0.5,
+        0.0,
+        VcfTaps::FourPole,
+        0.0,
+        false,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        3.0,
+        200.0,
+        0.0,
+        200.0,
+        VcaEnvMode::Gate,
+        0,
+        0.0,
+        CompTolerance::Zero,
+        0,
+        CircuitTopology::Fun,
+        0.0,
+        0,
+        0.5,
+        0.0,
+        1.0,
+    );
+}
+
+/// Renders `from`, switches to `to` at `switch_at` (crossfaded or immediate)
+/// and returns the output.
+fn render_switch(from: Tier, to: Tier, fun_sub: bool, fade: bool) -> Vec<f32> {
+    let switch_at = 2_000;
+    let mut v = Voice::new(48_000.0);
+    v.set_tier_immediate(from);
+    if fun_sub {
+        fun_mode_with_sub(&mut v);
+        v.set_gate(true, true, false, false);
+    } else {
+        v.set_cutoff(3_000.0);
+        v.set_reso(0.0);
+    }
+    v.note_on(57);
+    (0..6_000)
+        .map(|i| {
+            if i == switch_at {
+                if fade {
+                    v.set_tier(to);
+                } else {
+                    v.set_tier_immediate(to);
+                }
+            }
+            v.tick()
+        })
+        .collect()
+}
+
+/// Tiers that share an oscillator must advance it once per output sample,
+/// also during a crossfade. Otherwise the shared oscillator runs at double
+/// rate for the fade (an audible pitch jump) and stays out of phase after it.
+/// So once the 10 ms fade has ended, the output must match an immediate switch
+/// made at the same sample.
+#[test]
+fn fade_keeps_shared_oscillators_in_phase() {
+    let cases = [
+        (Tier::High, Tier::Best, false),
+        (Tier::Best, Tier::High, false),
+        (Tier::Low, Tier::High, true),
+        (Tier::High, Tier::Low, true),
+        (Tier::Low, Tier::Best, true),
+    ];
+    let mut drifted = Vec::new();
+    for (from, to, fun_sub) in cases {
+        let faded = render_switch(from, to, fun_sub, true);
+        let direct = render_switch(from, to, fun_sub, false);
+        let after = 4_000..6_000;
+        let err: f32 = faded[after.clone()]
+            .iter()
+            .zip(&direct[after.clone()])
+            .map(|(a, b)| (a - b).powi(2))
+            .sum();
+        let power: f32 = direct[after].iter().map(|y| y * y).sum();
+        assert!(power > 1e-3, "{from:?}->{to:?}: silent reference");
+        if err / power >= 1e-3 {
+            drifted.push(format!("{from:?}->{to:?} (sub: {fun_sub}): {:.4}", err / power));
+        }
+    }
+    assert!(
+        drifted.is_empty(),
+        "post-fade output drifted from an immediate switch (relative error): {drifted:?}"
+    );
 }
 
 #[test]
