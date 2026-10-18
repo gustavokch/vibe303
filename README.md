@@ -173,7 +173,7 @@ After a build, `docs/DAW_SMOKE_TEST.md` lists the manual host checks.
 ### Headless render
 ```bash
 cargo run --release --bin render303 -p plugin303 -- --note 57 --sr 48000 --secs 0.5 \
-    --cutoff 1000 --reso 85 --tier 2 --out /tmp/render.f32
+    --cutoff 1000 --reso 85 --tier best --out /tmp/render.f32
 ```
 
 ### GUI screenshots

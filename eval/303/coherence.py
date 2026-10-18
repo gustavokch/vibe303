@@ -1,16 +1,16 @@
-"""Offline spectral cross-check for the Ultra tier (F3-VCO V5).
+"""Offline spectral cross-check for the Best tier (F3-VCO V5).
 
-Mirrors the Rust gate `plugin303/tests/ultra_spectral.rs`: compares the Welch-
-averaged spectrum of an Ultra render against the whole-voice SPICE gold and
+Mirrors the Rust gate `plugin303/tests/best_spectral.rs`: compares the Welch-
+averaged spectrum of a Best render against the whole-voice SPICE gold and
 reports the gold-power-weighted log-spectral distance (LSD) + the dB-spectrum
-correlation. The Ultra acceptance is a spectral *character* match, not sample-
+correlation. The Best acceptance is a spectral *character* match, not sample-
 exact ESR (which is structurally out of reach vs ngspice — see the design doc).
 
 Usage:
-  cargo run --bin render303 -p plugin303 -- --tier 2 --note 57 --sr 48000 \
-      --secs 0.2 --cutoff 1002 --reso 85 --out /tmp/ultra.f32
+  cargo run --bin render303 -p plugin303 -- --tier best --note 57 --sr 48000 \
+      --secs 0.2 --cutoff 1002 --reso 85 --out /tmp/best.f32
   uv run --no-project --with numpy python eval/303/coherence.py \
-      eval/303/gold/voice_A2_mid.f32 /tmp/ultra.f32
+      eval/303/gold/voice_A2_mid.f32 /tmp/best.f32
 """
 
 from __future__ import annotations

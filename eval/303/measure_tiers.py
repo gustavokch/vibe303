@@ -49,7 +49,7 @@ import metrics as esr
 
 
 # --- Render Subprocess ------------------------------------------------------
-def render_rust(note: int, cutoff_hz: float, reso_knob: float, wave_idx: int, tier_idx: int,
+def render_rust(note: int, cutoff_hz: float, reso_knob: float, wave_idx: int, tier: str,
                 sr: float, secs: float) -> np.ndarray:
     """Render Rust voice via subprocess to render303 binary."""
     with tempfile.TemporaryDirectory() as d:
@@ -64,7 +64,7 @@ def render_rust(note: int, cutoff_hz: float, reso_knob: float, wave_idx: int, ti
                 "--cutoff", str(cutoff_hz),
                 "--reso", str(reso_knob * 100.0),
                 "--wave", str(wave_idx),
-                "--tier", str(tier_idx),
+                "--tier", tier.lower(),
                 "--out", str(out)
             ],
             check=True, capture_output=True
@@ -73,7 +73,7 @@ def render_rust(note: int, cutoff_hz: float, reso_knob: float, wave_idx: int, ti
 
 
 # --- Plotting Helpers --------------------------------------------------------
-def plot_waveform(ref: np.ndarray, low: np.ndarray, high: np.ndarray, ultra: np.ndarray,
+def plot_waveform(ref: np.ndarray, draft: np.ndarray, low: np.ndarray, best: np.ndarray,
                   sr: float, title: str, filepath: Path):
     """Plot overlay of aligned waveforms (first 50 ms for visual detail)."""
     fig = Figure(figsize=(10, 4))
@@ -85,9 +85,9 @@ def plot_waveform(ref: np.ndarray, low: np.ndarray, high: np.ndarray, ultra: np.
     
     # Lag align for visualization
     r_n = norm_signal(ref)
-    l_n = norm_signal(low)
-    h_n = norm_signal(high)
-    u_n = norm_signal(ultra)
+    l_n = norm_signal(draft)
+    h_n = norm_signal(low)
+    u_n = norm_signal(best)
     
     # Get lags vs ref
     lag_l = esr.best_lag(r_n, l_n)
@@ -102,9 +102,10 @@ def plot_waveform(ref: np.ndarray, low: np.ndarray, high: np.ndarray, ultra: np.
         return sig[:n_samples]
         
     ax.plot(t, r_n[:n_samples], label="SPICE Ref", color="black", alpha=0.8, linewidth=2)
-    ax.plot(t, align_slice(l_n, lag_l), label="Low (TPT)", color="#e06666", alpha=0.7, linestyle="--")
-    ax.plot(t, align_slice(h_n, lag_h), label="High (Nodal 2x)", color="#6fa8dc", alpha=0.7)
-    ax.plot(t, align_slice(u_n, lag_u), label="Ultra (Nodal 4x)", color="#8e7cc3", alpha=0.8)
+    ax.plot(t, align_slice(l_n, lag_l), label="Draft (TPT)", color="#e06666", alpha=0.7,
+            linestyle="--")
+    ax.plot(t, align_slice(h_n, lag_h), label="Low (Nodal 2x)", color="#6fa8dc", alpha=0.7)
+    ax.plot(t, align_slice(u_n, lag_u), label="Best (Nodal 4x)", color="#8e7cc3", alpha=0.8)
     
     ax.set_title(title)
     ax.set_xlabel("Time (ms)")
@@ -115,15 +116,15 @@ def plot_waveform(ref: np.ndarray, low: np.ndarray, high: np.ndarray, ultra: np.
     fig.savefig(filepath, dpi=150)
 
 
-def plot_spectrum(ref_spectrum: np.ndarray | None, low_spectrum: np.ndarray,
-                  high_spectrum: np.ndarray, ultra_spectrum: np.ndarray,
+def plot_spectrum(ref_spectrum: np.ndarray | None, draft_spectrum: np.ndarray,
+                  low_spectrum: np.ndarray, best_spectrum: np.ndarray,
                   sr: float, title: str, filepath: Path):
     """Plot spectrum overlays (Welch dB spectra)."""
     fig = Figure(figsize=(10, 4))
     canvas = FigureCanvas(fig)
     ax = fig.add_subplot(111)
     
-    seg = len(low_spectrum) * 2
+    seg = len(draft_spectrum) * 2
     freqs = np.fft.rfftfreq(seg, 1 / sr)[:seg // 2]
     
     if ref_spectrum is not None:
@@ -131,16 +132,16 @@ def plot_spectrum(ref_spectrum: np.ndarray | None, low_spectrum: np.ndarray,
         ref_db -= ref_db.mean()
         ax.semilogx(freqs, ref_db, label="SPICE Ref", color="black", alpha=0.8, linewidth=2)
         
+    draft_db = 10 * np.log10(np.maximum(draft_spectrum, 1e-30))
+    draft_db -= draft_db.mean()
     low_db = 10 * np.log10(np.maximum(low_spectrum, 1e-30))
     low_db -= low_db.mean()
-    high_db = 10 * np.log10(np.maximum(high_spectrum, 1e-30))
-    high_db -= high_db.mean()
-    ultra_db = 10 * np.log10(np.maximum(ultra_spectrum, 1e-30))
-    ultra_db -= ultra_db.mean()
+    best_db = 10 * np.log10(np.maximum(best_spectrum, 1e-30))
+    best_db -= best_db.mean()
     
-    ax.semilogx(freqs, low_db, label="Low (TPT)", color="#e06666", alpha=0.7, linestyle="--")
-    ax.semilogx(freqs, high_db, label="High (Nodal 2x)", color="#6fa8dc", alpha=0.7)
-    ax.semilogx(freqs, ultra_db, label="Ultra (Nodal 4x)", color="#8e7cc3", alpha=0.8)
+    ax.semilogx(freqs, draft_db, label="Draft (TPT)", color="#e06666", alpha=0.7, linestyle="--")
+    ax.semilogx(freqs, low_db, label="Low (Nodal 2x)", color="#6fa8dc", alpha=0.7)
+    ax.semilogx(freqs, best_db, label="Best (Nodal 4x)", color="#8e7cc3", alpha=0.8)
     
     ax.set_title(title)
     ax.set_xlabel("Frequency (Hz)")
@@ -283,13 +284,13 @@ def main():
         cutoff_hz = vr.itail_to_hz(c_val)
         
         rust_renders = {}
-        for tier_name, tier_idx in [("Low", 0), ("High", 1), ("Ultra", 2)]:
+        for tier_name in ["Draft", "Low", "Best"]:
             rust_renders[tier_name] = render_rust(
                 note=n_val,
                 cutoff_hz=cutoff_hz,
                 reso_knob=r_val,
                 wave_idx=w_idx,
-                tier_idx=tier_idx,
+                tier=tier_name,
                 sr=rust_sr,
                 secs=secs
             )
@@ -317,7 +318,7 @@ def main():
             tier_centroid_err_row = []
             tier_rms_delta_row = []
             
-            for t_name in ["Low", "High", "Ultra"]:
+            for t_name in ["Draft", "Low", "Best"]:
                 model = rust_renders[t_name]
                 model_norm = norm_signal(model)
                 
@@ -361,52 +362,52 @@ def main():
             # Defer plotting
             plot_waveform(
                 ref=ref_96k,
+                draft=rust_renders["Draft"],
                 low=rust_renders["Low"],
-                high=rust_renders["High"],
-                ultra=rust_renders["Ultra"],
+                best=rust_renders["Best"],
                 sr=rust_sr,
                 title=f"Waveform Overlay (Saw): {cond_name}",
                 filepath=out_dir / f"waveform_saw_{cond_name}.png"
             )
             
+            draft_p = welch_pow(rust_renders["Draft"])
             low_p = welch_pow(rust_renders["Low"])
-            high_p = welch_pow(rust_renders["High"])
-            ultra_p = welch_pow(rust_renders["Ultra"])
+            best_p = welch_pow(rust_renders["Best"])
             
             plot_spectrum(
                 ref_spectrum=ref_pow,
+                draft_spectrum=draft_p,
                 low_spectrum=low_p,
-                high_spectrum=high_p,
-                ultra_spectrum=ultra_p,
+                best_spectrum=best_p,
                 sr=rust_sr,
                 title=f"Spectrum Overlay (Saw): {cond_name}",
                 filepath=out_dir / f"spectrum_saw_{cond_name}.png"
             )
             
         else:
-            low_baseline = rust_renders["Low"]
+            draft_baseline = rust_renders["Draft"]
             
             tier_lsd_row = []
             tier_corr_row = []
             
-            for t_name in ["Low", "High", "Ultra"]:
+            for t_name in ["Draft", "Low", "Best"]:
                 model = rust_renders[t_name]
                 
-                lsd, corr = spectral_match(low_baseline, model, rust_sr)
+                lsd, corr = spectral_match(draft_baseline, model, rust_sr)
                 
                 model_centroid = spectral_centroid(model, rust_sr)
                 model_rms = rms_dbfs(model)
                 crest = crest_factor_db(model)
                 
                 metrics_per_tier[t_name] = {
-                    "lsd_vs_low_db": lsd,
-                    "corr_vs_low": corr,
+                    "lsd_vs_draft_db": lsd,
+                    "corr_vs_draft": corr,
                     "centroid_hz": model_centroid,
                     "rms_dbfs": model_rms,
                     "crest_db": crest
                 }
                 
-                if t_name in ["High", "Ultra"]:
+                if t_name in ["Low", "Best"]:
                     tier_lsd_row.append(lsd)
                     tier_corr_row.append(corr)
             
@@ -415,15 +416,15 @@ def main():
                 "corr_row": tier_corr_row,
             }
             
+            draft_p = welch_pow(rust_renders["Draft"])
             low_p = welch_pow(rust_renders["Low"])
-            high_p = welch_pow(rust_renders["High"])
-            ultra_p = welch_pow(rust_renders["Ultra"])
+            best_p = welch_pow(rust_renders["Best"])
             
             plot_spectrum(
                 ref_spectrum=None,
+                draft_spectrum=draft_p,
                 low_spectrum=low_p,
-                high_spectrum=high_p,
-                ultra_spectrum=ultra_p,
+                best_spectrum=best_p,
                 sr=rust_sr,
                 title=f"Spectrum Overlay (Square): {cond_name}",
                 filepath=out_dir / f"spectrum_square_{cond_name}.png"
@@ -472,40 +473,40 @@ def main():
     # 4. Generate summary heatmaps
     print("Generating summary heatmaps...")
     plot_heatmap(
-        np.array(saw_esr_matrix), saw_conds, ["Low", "High", "Ultra"],
+        np.array(saw_esr_matrix), saw_conds, ["Draft", "Low", "Best"],
         "Saw - ESR (dB) vs SPICE", out_dir / "heatmap_saw_esr.png",
         fmt=".1f", cmap="magma_r"
     )
     plot_heatmap(
-        np.array(saw_lsd_matrix), saw_conds, ["Low", "High", "Ultra"],
+        np.array(saw_lsd_matrix), saw_conds, ["Draft", "Low", "Best"],
         "Saw - LSD (dB) vs SPICE", out_dir / "heatmap_saw_lsd.png",
         fmt=".2f", cmap="plasma_r"
     )
     plot_heatmap(
-        np.array(saw_corr_matrix), saw_conds, ["Low", "High", "Ultra"],
+        np.array(saw_corr_matrix), saw_conds, ["Draft", "Low", "Best"],
         "Saw - dB Spectrum Correlation", out_dir / "heatmap_saw_correlation.png",
         fmt=".3f", cmap="viridis"
     )
     plot_heatmap(
-        np.array(saw_centroid_err_matrix), saw_conds, ["Low", "High", "Ultra"],
+        np.array(saw_centroid_err_matrix), saw_conds, ["Draft", "Low", "Best"],
         "Saw - Centroid Error (%) vs SPICE", out_dir / "heatmap_saw_centroid_error.png",
         fmt=".1f", cmap="coolwarm"
     )
     plot_heatmap(
-        np.array(saw_rms_delta_matrix), saw_conds, ["Low", "High", "Ultra"],
+        np.array(saw_rms_delta_matrix), saw_conds, ["Draft", "Low", "Best"],
         "Saw - RMS Level Delta (dB) vs SPICE", out_dir / "heatmap_saw_rms_delta.png",
         fmt=".1f", cmap="coolwarm"
     )
     
-    # Square heatmaps vs Low tier
+    # Square heatmaps vs Draft tier
     plot_heatmap(
-        np.array(sq_lsd_matrix), sq_conds, ["High", "Ultra"],
-        "Square - LSD (dB) vs Low tier", out_dir / "heatmap_square_lsd.png",
+        np.array(sq_lsd_matrix), sq_conds, ["Low", "Best"],
+        "Square - LSD (dB) vs Draft tier", out_dir / "heatmap_square_lsd.png",
         fmt=".2f", cmap="plasma_r"
     )
     plot_heatmap(
-        np.array(sq_corr_matrix), sq_conds, ["High", "Ultra"],
-        "Square - Correlation vs Low tier", out_dir / "heatmap_square_correlation.png",
+        np.array(sq_corr_matrix), sq_conds, ["Low", "Best"],
+        "Square - Correlation vs Draft tier", out_dir / "heatmap_square_correlation.png",
         fmt=".3f", cmap="viridis"
     )
     print("Heatmaps saved.")
@@ -518,7 +519,7 @@ def main():
     # Saw Table
     report_lines.append("### SAW WAVEFORM METRICS (vs SPICE reference)\n")
     report_lines.append(
-        f"{'Condition':<25} | {'Metric':<18} | {'Low (TPT)':<12} | {'High (Nodal 2x)':<16} | {'Ultra (Nodal 4x)':<16}"
+        f"{'Condition':<25} | {'Metric':<18} | {'Draft (TPT)':<12} | {'Low (Nodal 2x)':<16} | {'Best (Nodal 4x)':<16}"
     )
     report_lines.append("-" * 97)
     
@@ -536,13 +537,13 @@ def main():
         cond = r["condition"]
         first = True
         for label, key, fmt in saw_metrics:
+            draft_val = r["metrics"]["Draft"][key]
             low_val = r["metrics"]["Low"][key]
-            high_val = r["metrics"]["High"][key]
-            ultra_val = r["metrics"]["Ultra"][key]
+            best_val = r["metrics"]["Best"][key]
             
             c_str = cond if first else ""
             report_lines.append(
-                f"{c_str:<25} | {label:<18} | {low_val:{fmt[1:]}}         | {high_val:{fmt[1:]}}             | {ultra_val:{fmt[1:]}}"
+                f"{c_str:<25} | {label:<18} | {draft_val:{fmt[1:]}}         | {low_val:{fmt[1:]}}             | {best_val:{fmt[1:]}}"
             )
             first = False
         report_lines.append("-" * 97)
@@ -550,9 +551,9 @@ def main():
     report_lines.append("\n")
     
     # Square Table
-    report_lines.append("### SQUARE WAVEFORM METRICS (absolute + vs Low tier)\n")
+    report_lines.append("### SQUARE WAVEFORM METRICS (absolute + vs Draft tier)\n")
     report_lines.append(
-        f"{'Condition':<25} | {'Metric':<22} | {'Low (TPT)':<12} | {'High (Nodal 2x)':<16} | {'Ultra (Nodal 4x)':<16}"
+        f"{'Condition':<25} | {'Metric':<22} | {'Draft (TPT)':<12} | {'Low (Nodal 2x)':<16} | {'Best (Nodal 4x)':<16}"
     )
     report_lines.append("-" * 101)
     
@@ -560,8 +561,8 @@ def main():
         ("Centroid (Hz)", "centroid_hz", ".0f"),
         ("RMS (dBFS)", "rms_dbfs", ".1f"),
         ("Crest (dB)", "crest_db", ".1f"),
-        ("LSD vs Low (dB)", "lsd_vs_low_db", ".2f"),
-        ("Corr vs Low", "corr_vs_low", ".3f")
+        ("LSD vs Draft (dB)", "lsd_vs_draft_db", ".2f"),
+        ("Corr vs Draft", "corr_vs_draft", ".3f")
     ]
     
     for r in results:
@@ -570,13 +571,13 @@ def main():
         cond = r["condition"]
         first = True
         for label, key, fmt in sq_metrics:
+            draft_val = r["metrics"]["Draft"].get(key, 0.0)
             low_val = r["metrics"]["Low"].get(key, 0.0)
-            high_val = r["metrics"]["High"].get(key, 0.0)
-            ultra_val = r["metrics"]["Ultra"].get(key, 0.0)
+            best_val = r["metrics"]["Best"].get(key, 0.0)
             
-            l_str = f"{low_val:{fmt[1:]}}" if key in r["metrics"]["Low"] else "N/A"
-            h_str = f"{high_val:{fmt[1:]}}" if key in r["metrics"]["High"] else "N/A"
-            u_str = f"{ultra_val:{fmt[1:]}}" if key in r["metrics"]["Ultra"] else "N/A"
+            l_str = f"{draft_val:{fmt[1:]}}" if key in r["metrics"]["Draft"] else "N/A"
+            h_str = f"{low_val:{fmt[1:]}}" if key in r["metrics"]["Low"] else "N/A"
+            u_str = f"{best_val:{fmt[1:]}}" if key in r["metrics"]["Best"] else "N/A"
             
             c_str = cond if first else ""
             report_lines.append(

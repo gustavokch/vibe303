@@ -25,7 +25,7 @@ RENDER303_REL = ROOT / "target" / "release" / "render303"
 RENDER303_DBG = ROOT / "target" / "debug" / "render303"
 RENDER303 = RENDER303_REL if RENDER303_REL.exists() else RENDER303_DBG
 
-def render_voice(note: int, cutoff_hz: float, reso_knob: float, wave_idx: int, tier_idx: int,
+def render_voice(note: int, cutoff_hz: float, reso_knob: float, wave_idx: int, tier: str,
                  sr: float, secs: float) -> np.ndarray:
     with tempfile.TemporaryDirectory() as d:
         out = Path(d) / "r.f32"
@@ -38,7 +38,7 @@ def render_voice(note: int, cutoff_hz: float, reso_knob: float, wave_idx: int, t
                 "--cutoff", str(cutoff_hz),
                 "--reso", str(reso_knob * 100.0),
                 "--wave", str(wave_idx),
-                "--tier", str(tier_idx),
+                "--tier", tier.lower(),
                 "--out", str(out)
             ],
             check=True, capture_output=True
@@ -49,9 +49,8 @@ def render_voice(note: int, cutoff_hz: float, reso_knob: float, wave_idx: int, t
 
 st.title("Analog Tier Voicing Harness")
 st.sidebar.markdown("### Settings")
-tier = st.sidebar.selectbox("Selected Tier", ["Low", "High", "Ultra"])
-tier_map = {"Low": 0, "High": 1, "Ultra": 2}
-selected_tier_idx = tier_map[tier]
+tier = st.sidebar.selectbox("Selected Tier", ["Draft", "Low", "Best"])
+selected_tier = tier.lower()
 
 # Sidebar checkbox to toggle slow SPICE transient reference runs
 show_spice = st.sidebar.checkbox("Show SPICE Reference", value=False)
@@ -71,9 +70,9 @@ if st.button("Run VCO Evaluation"):
     progress = st.progress(0.0)
     for idx, note in enumerate(notes):
         # selected tier
-        sig_selected = render_voice(note, 1000.0, 0.0, 0, selected_tier_idx, sr, secs)
-        # reference (Ultra)
-        sig_ultra = render_voice(note, 1000.0, 0.0, 0, 2, sr, secs)
+        sig_selected = render_voice(note, 1000.0, 0.0, 0, selected_tier, sr, secs)
+        # reference (Best)
+        sig_ultra = render_voice(note, 1000.0, 0.0, 0, "best", sr, secs)
         
         # Ideal freq
         ref_hz = 440.0 * (2.0 ** ((note - 69) / 12.0))
@@ -95,7 +94,7 @@ if st.button("Run VCO Evaluation"):
         
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.plot(notes, errors_selected, 'o-', label=f"{tier} Tier")
-    ax.plot(notes, errors_ultra, 'x--', label="Ultra Tier (Reference)")
+    ax.plot(notes, errors_ultra, 'x--', label="Best Tier (Reference)")
     if show_spice:
         ax.plot(notes, errors_spice, 's-.', label="SPICE VCO Reference (Uncalibrated)")
     ax.set_title("VCO Pitch Tracking Error (cents)")
@@ -111,8 +110,8 @@ if st.button("Run VCO Evaluation"):
     sweep_notes = [36, 48, 60, 72]
     
     for i, note in enumerate(sweep_notes):
-        sig_sel = render_voice(note, 1000.0, 0.0, 0, selected_tier_idx, sr, secs)
-        sig_ult = render_voice(note, 1000.0, 0.0, 0, 2, sr, secs)
+        sig_sel = render_voice(note, 1000.0, 0.0, 0, selected_tier, sr, secs)
+        sig_ult = render_voice(note, 1000.0, 0.0, 0, "best", sr, secs)
         
         p_sel = welch_pow(sig_sel)
         p_ult = welch_pow(sig_ult)
@@ -120,7 +119,7 @@ if st.button("Run VCO Evaluation"):
         freqs = np.fft.rfftfreq(1024, 1 / sr)[:512]
         
         axes[i].plot(freqs, 10 * np.log10(p_sel + 1e-30), label=f"{tier}")
-        axes[i].plot(freqs, 10 * np.log10(p_ult + 1e-30), '--', label="Ultra")
+        axes[i].plot(freqs, 10 * np.log10(p_ult + 1e-30), '--', label="Best")
         
         if show_spice:
             ref_hz = 440.0 * (2.0 ** ((note - 69) / 12.0))
@@ -141,15 +140,15 @@ if st.button("Run VCO Evaluation"):
     st.pyplot(fig)
     
     st.write("Waveform Plot Comparison (MIDI note 60, first 10ms)...")
-    sig_sel = render_voice(60, 1000.0, 0.0, 0, selected_tier_idx, sr, secs)
-    sig_ult = render_voice(60, 1000.0, 0.0, 0, 2, sr, secs)
+    sig_sel = render_voice(60, 1000.0, 0.0, 0, selected_tier, sr, secs)
+    sig_ult = render_voice(60, 1000.0, 0.0, 0, "best", sr, secs)
     
     samples_10ms = int(0.01 * sr)
     t = np.arange(samples_10ms) / sr * 1000.0
     
     fig, ax = plt.subplots(figsize=(8, 3))
     ax.plot(t, sig_sel[:samples_10ms], label=f"{tier}")
-    ax.plot(t, sig_ult[:samples_10ms], '--', label="Ultra")
+    ax.plot(t, sig_ult[:samples_10ms], '--', label="Best")
     
     if show_spice:
         ref_hz = 440.0 * (2.0 ** ((60 - 69) / 12.0))
@@ -171,8 +170,8 @@ if st.button("Run Filter/Env Evaluation"):
     secs = 1.0 # 1.0s to measure decay
     
     # We trigger note 60 with a decay envelope
-    sig_sel = render_voice(60, 2000.0, 0.5, 0, selected_tier_idx, sr, secs)
-    sig_ult = render_voice(60, 2000.0, 0.5, 0, 2, sr, secs)
+    sig_sel = render_voice(60, 2000.0, 0.5, 0, selected_tier, sr, secs)
+    sig_ult = render_voice(60, 2000.0, 0.5, 0, "best", sr, secs)
     
     env_sel = np.abs(hilbert(sig_sel))
     env_ult = np.abs(hilbert(sig_ult))
@@ -181,7 +180,7 @@ if st.button("Run Filter/Env Evaluation"):
     t60_ult = t60_decay_time(env_ult, sr)
     
     st.write(f"**T60 Decay Time ({tier}):** {t60_sel:.3f} s")
-    st.write(f"**T60 Decay Time (Ultra):** {t60_ult:.3f} s")
+    st.write(f"**T60 Decay Time (Best):** {t60_ult:.3f} s")
     
     if show_spice:
         ref_hz = 440.0 * (2.0 ** ((60 - 69) / 12.0))
@@ -195,7 +194,7 @@ if st.button("Run Filter/Env Evaluation"):
     t = np.arange(len(env_sel)) / sr
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.plot(t, env_sel, label=f"{tier} Envelope")
-    ax.plot(t, env_ult, '--', label="Ultra Envelope")
+    ax.plot(t, env_ult, '--', label="Best Envelope")
     if show_spice:
         ax.plot(t, env_sp, ':', label="SPICE Envelope")
     ax.set_title("Amplitude Decay Envelope")
@@ -213,7 +212,7 @@ if st.button("Run Filter/Env Evaluation"):
     
     fig, ax = plt.subplots(figsize=(8, 3))
     ax.plot(t, dc_sel, label=f"{tier} DC Drift")
-    ax.plot(t, dc_ult, '--', label="Ultra DC Drift")
+    ax.plot(t, dc_ult, '--', label="Best DC Drift")
     if show_spice:
         ax.plot(t, dc_sp, ':', label="SPICE DC Drift")
     ax.set_title("DC Offset Drift (5Hz Lowpass)")
