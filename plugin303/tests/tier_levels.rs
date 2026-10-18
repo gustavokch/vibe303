@@ -89,12 +89,11 @@ fn tiers_match_at_passband() {
 /// tier switch is a timbre change, not a volume jump — **in the resonant regime
 /// a 303 actually plays in** (reso ≳ 0.2). Low's polyBLEP-saw path sits below
 /// Best's nodal-VCO path through the depressed-corner ladder by a
-/// resonance-dependent amount; `LOW_LEVEL_TRIM` (voice.rs) is centred on the
-/// resonant regime, landing ±1.5 dB there. The gap widens to a few dB only at
-/// literally reso = 0 (no peak to dominate — the source/OS-rate passband
-/// difference is exposed); that is irreducible without a reso-dependent makeup
-/// and is the darkest, least-used setting, so it is intentionally not gated
-/// tightly (the passband test bounds it loosely vs Draft instead).
+/// resonance-dependent amount; `LOW_LEVEL_TRIM` (voice.rs) is a reso-dependent
+/// makeup table that matches the median level per resonance knot. The residual
+/// spread is the filter-shape difference (largest at reso = 0 with the cutoff
+/// near the fundamental), so it is not gated tightly at reso = 0 (the passband
+/// test bounds it loosely vs Draft instead).
 #[test]
 fn low_tracks_best_level() {
     for &(note, cutoff, reso) in &[
