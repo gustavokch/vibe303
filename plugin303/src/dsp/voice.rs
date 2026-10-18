@@ -34,8 +34,8 @@ pub const VCO_GAIN: f32 = 2.607;
 /// per tier (different OS rate ⇒ different optimum): Best (4×) at 0.70 minimises
 /// LSD to 3.87 dB; Low (2×) at 0.50 keeps corr ≥ 0.95 while beating its prior
 /// LSD. See `brightness_sweep`/`low_brightness_sweep` diagnostics (F6.5).
-const CIRCUIT_BRIGHT: f64 = 0.70;
-const LOW_BRIGHT: f64 = 0.50;
+pub const CIRCUIT_BRIGHT: f64 = 0.70;
+pub const LOW_BRIGHT: f64 = 0.50;
 const LOW_LEVEL_TRIM: f32 = 1.55; // +3.8 dB
 const XFADE_SECS: f32 = 0.010;
 const COMP_BUF: usize = 64;
@@ -268,8 +268,10 @@ pub struct Voice {
     comp_draft: CompDelay,
     /// Compensation delay line for Low tier to align latency with Best.
     comp_low: CompDelay,
-    /// Compensation delay line for the circuit-VCO tiers (typically 0 delay, sized for Best).
-    comp_circuit: CompDelay,
+    /// Compensation delay line for High tier (2x OS) to align latency with Best.
+    comp_high: CompDelay,
+    /// Compensation delay line for Best tier (typically 0 delay: Best sets the max).
+    comp_best: CompDelay,
     /// Common reported latency (base samples) = max OS group delay over all tiers.
     max_latency: usize,
     /// Global staged Germanium/JFET output clipper, after VCA/resonance compensation.
@@ -486,7 +488,8 @@ impl Voice {
             pending_tier: None,
             comp_draft: CompDelay::new(max_latency - lat_draft),
             comp_low: CompDelay::new(max_latency - lat_low),
-            comp_circuit: CompDelay::new(max_latency - lat_best),
+            comp_high: CompDelay::new(max_latency - lat_low),
+            comp_best: CompDelay::new(max_latency - lat_best),
             max_latency,
             clipper: WarmClipper::new(sr),
             sr,
@@ -1051,7 +1054,8 @@ impl Voice {
         self.pending_tier = None;
         self.comp_draft.reset();
         self.comp_low.reset();
-        self.comp_circuit.reset();
+        self.comp_high.reset();
+        self.comp_best.reset();
         self.clipper.reset();
         self.comp_seed = -1;
     }
@@ -1329,7 +1333,7 @@ impl Voice {
 
                 let hi = self.os2.up(mix * self.drive);
                 let o = [self.ladder.tick(hi[0]), self.ladder.tick(hi[1])];
-                self.comp_circuit.process(self.os2.down(o) / self.drive)
+                self.comp_high.process(self.os2.down(o) / self.drive)
             }
             // Best: circuit VCO saw → nodal diode-ladder at 4× oversample.
             // The nodal VCO runs at base rate; its sharp JFET reset edge is corrected
@@ -1371,7 +1375,7 @@ impl Voice {
                     self.ladder.tick(hi[2]),
                     self.ladder.tick(hi[3]),
                 ];
-                self.comp_circuit.process(self.os.down(o) / self.drive)
+                self.comp_best.process(self.os.down(o) / self.drive)
             }
         }
     }
