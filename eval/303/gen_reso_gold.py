@@ -2,7 +2,7 @@
 
 Wraps ``run_vcf303_spice.py``'s ``--reso`` machinery: at the Rreso ~47 kΩ Q
 optimum (VCF_MAP §11), sweep the bias current I_tail ∈ {16,32,64,128} µA and
-record the resonance peak frequency at each — the fc-tracking map the Ultra Q9
+record the resonance peak frequency at each — the fc-tracking map the Best Q9
 feedback (F6.3) must reproduce. Writes ``vcf303_reso_gold.json``.
 
     uv run --no-project --with PySpice --with numpy python eval/303/gen_reso_gold.py

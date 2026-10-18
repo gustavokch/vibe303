@@ -33,7 +33,7 @@ Verified building on this branch: both `TB303.vst3` and `TB303.clap` are produce
 - [ ] **No denormal / CPU spikes** on sustained notes. Best is ~1.5 cores/voice
       (offline-grade — expected); Low ~0.4 core (RT-viable). Confirm Draft/Low run
       comfortably in real time; Best may glitch at low buffer sizes — expected.
-      High must also make sound; its CPU was not profiled.
+- [ ] **High exists and must make sound** (circuit VCO at 2x). Its CPU was not profiled.
 - [ ] **A/B the Best render by ear** against `eval/303/gold/voice_A2_mid.f32`
       (note 57 / cutoff 1002 Hz / reso 0.85). Same brightness / resonance
       character?

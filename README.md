@@ -18,7 +18,7 @@ The editor is 1216x640 points. The image above is rendered offscreen from the re
 
 ### 1. Circuit modeling and quality tiers
 
-The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, and checked against ngspice. The circuit-VCO tiers (High and Best) solve the circuit as a nodal system (MNA with a Newton solver in `f64`), not as a wave digital filter.
+The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, and checked against ngspice. Low, High, and Best solve the filter as a nodal system (MNA with a Newton solver in `f64`), not as a wave digital filter. High and Best also solve the oscillator from the circuit.
 
 |Tier|Oscillator|Filter|Oversampling|
 |---|---|---|---|
@@ -29,7 +29,7 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
 
 - Tier switches use a 10 ms equal-power crossfade, so they do not click.
 - Plugin delay compensation is the same for every tier. The host never has to rebuild its graph when you change tier.
-- The circuit-VCO tiers (High and Best) cost far more CPU than Draft and Low. Use Draft or Low for tracking, Best for bounces.
+- Best costs the most CPU of the four tiers (~147% of one core per voice, offline-grade); Low is ~42%. Use Draft or Low for tracking, Best for bounces.
 
 ### 2. Topology: Accurate and Fun
 

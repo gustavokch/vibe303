@@ -24,8 +24,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   new names; `--tier` takes names only (`draft|low|high|best`), not indices.
   The QA state `quality_high` now selects the High tier; the capture suite uses
   `quality_low` for what `quality_high` captured before. Sessions saved before
-  this change that used Ultra or Ultra 2x load as each other's replacement
-  (stored index 2 is now High, index 3 is now Best).
+  this change: a saved Ultra (index 2) now loads as High; a saved Ultra 2x
+  (index 3) now loads as Best.
 
 ### Removed
 - The BA283 Neve-preamp product (plugin crate, WaveNet/LSTM model, WDF engine, training

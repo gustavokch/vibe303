@@ -308,7 +308,7 @@ The handoff document is `HANDOFF.md` (root) — the definitive status snapshot. 
 
 ## Current Status & Next Steps
 
-**F1–F6 DONE.** The three-tier fidelity axis is complete, gated, click-free, PDC-reported, with active Q9 resonance + per-note VCO pitch.
+**F1–F6 DONE.** The four-tier fidelity axis is complete, gated, click-free, PDC-reported, with active Q9 resonance + per-note VCO pitch.
 
 Remaining work:
 
