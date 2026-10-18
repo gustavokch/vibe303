@@ -42,7 +42,19 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                     );
                     ui.add_space(2.0);
                     let mut bypass = bypassed;
-                    if crate::gui::widgets::checkbox::checkbox(ui, &mut bypass, "BYPASS").changed()
+                    let is_bypassed = bypass;
+                    if ui
+                        .checkbox(
+                            &mut bypass,
+                            nih_plug_egui::egui::RichText::new("BYPASS")
+                                .font(FontId::proportional(8.5))
+                                .color(if is_bypassed {
+                                    theme::ACCENT_ORANGE
+                                } else {
+                                    theme::TEXT_SECONDARY
+                                }),
+                        )
+                        .changed()
                     {
                         setter.begin_set_parameter(&params.clipper_bypass);
                         setter.set_parameter(&params.clipper_bypass, bypass);
@@ -174,7 +186,18 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                     ui.vertical(|ui| {
                         ui.add_space(2.0);
                         let mut link = params.clipper_gain_link.value();
-                        if crate::gui::widgets::checkbox::checkbox(ui, &mut link, "LINK")
+                        let is_linked = link;
+                        if ui
+                            .checkbox(
+                                &mut link,
+                                nih_plug_egui::egui::RichText::new("LINK")
+                                    .font(FontId::proportional(8.5))
+                                    .color(if is_linked {
+                                        theme::ACCENT_ORANGE
+                                    } else {
+                                        theme::TEXT_SECONDARY
+                                    }),
+                            )
                             .on_hover_text("Link: OUT tracks −IN while dragging (edit-time only)")
                             .changed()
                         {
