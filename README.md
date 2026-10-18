@@ -1,6 +1,6 @@
-# vibe303 — Souped-up TB-303
+# vibe303: Souped-up TB-303
 
-Circuit-grounded emulation of the Roland TB-303 bass synthesizer, built in Rust with [nih-plug](https://github.com/robbert-vdh/nih-plug) and [egui](https://github.com/emilk/egui). Features a SPICE-validated analog core, multi-tier DSP engine (TPT up to full WDF ladder), authentic accent/glide dynamics, an authentic decoupled 16-step sequencer, and a collapsible "Souped-Up" modulation/extended-voice drawer.
+Circuit-grounded emulation of the Roland TB-303 bass synthesizer, built in Rust with [nih-plug](https://github.com/robbert-vdh/nih-plug) and [egui](https://github.com/emilk/egui). The analog core is validated against ngspice. The plugin has four quality tiers, a decoupled 16-step sequencer, a Euclidean acid pattern generator, a germanium JFET output clipper, and a "Souped-Up" engine that adds the controls the hardware never had.
 
 - **Version:** 0.1.0
 - **Formats:** VST3, CLAP, Standalone
@@ -8,151 +8,201 @@ Circuit-grounded emulation of the Roland TB-303 bass synthesizer, built in Rust 
 
 ---
 
-<img width="1080" height="672" alt="latest" src="https://github.com/user-attachments/assets/0fc79385-983f-47e2-b3f2-05b0235d85ca" />
+<img width="1216" alt="vibe303 editor in Fun topology with the sequencer running" src="docs/assets/screenshot.png" />
+
+The editor is 1216x640 points. The image above is rendered offscreen from the real editor code (`tools/gui_render`, state `running_note`).
 
 ---
 
-## Key Features
+## Features
 
-### 1. Multi-Tier Circuit Modeling
-- **Low / Eco Tier:** Real-time optimized TPT (Topology-Preserving Transform) diode ladder filter.
-- **High Tier:** 4x oversampled non-linear filter with saturation modeling.
-- **Ultra Tier:** Full Wave Digital Filter (WDF) with iterative non-linear Newton-Raphson BJT/diode solvers, capacitor ESR, thermal noise, component aging, and tolerance drift LUT.
-- **Topology Switching:**
-  - **Accurate:** Exact Roland TB-303 circuit domain with active Q9 feedback scaling and authentic non-self-oscillating resonance behavior.
-  - **Fun:** Extended resonance range with self-oscillation, variable drive, and additional filter poles.
+### 1. Circuit modeling and quality tiers
 
-### 2. Sound Engine & Voice Architecture
-- **Oscillator Core:** Antialiased PolyBLEP / ADAA oscillators with classic Saw, Square, and continuous Saw↔Square sweep.
-- **Souped-Up Levers:** Dual oscillator section with independent pitch/level controls, sub-oscillator, and pulse-width modulation (PWM).
-- **Diode-Ladder VCF:** Switchable 2-pole (12 dB/oct), 3-pole (18 dB/oct), and 4-pole (24 dB/oct) slopes with passband resonance gain compensation.
-- **Envelope & Accent Circuit:**
-  - SPICE-calibrated MEG and VEG RC envelope discharge curves.
-  - Authentic accent dynamics with capacitor sweep memory accumulation and decay ducking.
-  - Optional **Advanced Envelope** mode with full MEG/VEG ADSR mini-faders and VCA Gate/Env selector.
-- **Analog Drift & Aging:** Simulated component tolerances (0% to 10%), aging years, thermal noise, and repeatable deterministic seeds.
+The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, and checked against ngspice. The two higher tiers solve the circuit as a nodal system (MNA with a Newton solver in `f64`), not as a wave digital filter.
 
-### 3. Authentic 16-Step Sequencer
-- **Dual Sequencing Modes:**
-  - **Direct Grid:** Modern 16-step DAW-style step sequencer.
-  - **Decoupled (Roland TB-303):** Authentic hardware mode with decoupled pitch and timing (Note / Tie / Rest) entry buffers.
-- **Timebases:** Straight 16th notes and Triplet 12th notes with analog clock jitter/swing simulation.
-- **Per-Step Parameters:** Pitch (C1–C4), Octave transpose (-2..+2), Step Gate (Note, Tie, Rest), Accent, Slide (hardware glide modeling), Velocity, and Gate Length.
-- **Interactive UI:** Step LED playhead, interactive piano roll popup, and host transport sync.
+|Tier|Oscillator|Filter|Oversampling|
+|---|---|---|---|
+|**Low**|PolyBLEP saw|TPT diode-ladder approximation|none|
+|**High**|PolyBLEP saw|Nodal diode ladder with active Q9 resonance|2x|
+|**Ultra**|Nodal relaxation VCO (21 nodes)|Nodal diode ladder with active Q9 resonance|4x|
+|**Ultra 2x**|Nodal relaxation VCO at the base rate|Nodal diode ladder|2x|
 
-### 4. Flat Device GUI
-- Custom vector interface designed with `nih_plug_egui`, in a 1216x640 (19:10) window.
-- Flat Bitwig/Ableton-style device cards on one 2/3 | 1/3 column seam: charcoal planes, no outlines, one orange accent (blue only for SLIDE).
-- Physical engineering units readout (`cents`, `Hz`, `dB`, `%`, `ms`, `BPM`).
-- The **SOUPED-UP ENGINE** device dims its controls in Accurate mode.
+- Tier switches use a 10 ms equal-power crossfade, so they do not click.
+- Plugin delay compensation is the same for every tier. The host never has to rebuild its graph when you change tier.
+- Ultra tiers cost far more CPU than Low and High. Use Low or High for tracking, Ultra for bounces.
 
-### 5. Real-Time Audio Performance
-- **100% Real-Time Safe:** Allocation-free audio processing thread guarded by `assert_no_alloc`.
-- Thread-safe atomics and triple buffering for GUI-to-audio communication.
+### 2. Topology: Accurate and Fun
+
+- **Accurate:** hardware behavior. Fixed 4-pole filter, no drive, no second oscillator, no sub, fixed 50% pulse width, Sweep wave falls back to Saw, simple envelopes, pitch limited to MIDI 24 to 72. The SOUPED-UP ENGINE device dims its controls.
+- **Fun:** unlocks the Souped-Up engine and widens the pitch range to MIDI 0 to 108. Fun is the default.
+
+### 3. Voice
+
+- **Oscillators:** Saw, Square, and a continuous Saw to Square Sweep. Souped-Up adds a second oscillator with pitch and mix, a sub oscillator, pulse width, and sweep.
+- **Filter:** diode ladder with switchable 2-pole (12 dB/oct), 3-pole (18 dB/oct), and 4-pole (24 dB/oct) taps, plus drive and resonance gain compensation.
+- **Envelopes and accent:**
+  - RC envelope decay curves calibrated against the circuit.
+  - Accent with capacitor sweep memory and decay ducking.
+  - Slide with an adjustable glide time.
+  - **ADV ENV** mode exposes MEG (modulation) and VEG (voice) ADSR faders, and a VCA Gate/Envelope selector.
+- **Analog tweaks:** component tolerance (0%, 0.5%, 2%, 5%, 10%), age in years, thermal noise, drift, a repeatable component seed, and a CALIBRATE / RECAL control.
+
+### 4. Output clipper
+
+A global output stage modeled on a germanium JFET clipper netlist (`docs/Germanium JFET Clipper Schematic/`). It is evaluated as four small stateful stages with a fast-attack, slow-release JFET shunt. Controls: drive, threshold, bass, tone, in and out gain (linkable), tilt, dynamics, mix, silicon or germanium diode, 2x or 4x oversampling, and bypass.
+
+### 5. Sequencer
+
+- **Modes:**
+  - **Direct Grid:** a DAW-style 16-step grid.
+  - **Decoupled (Roland 303):** the hardware model, where pitch and timing (Note, Tie, Rest) are separate entries.
+- **Timebases:** 16th (straight) and 12th (triplet). JITTER adds the hardware clock quantisation jitter.
+- **Per step:** key, octave (-2 to +2), Note / Tie / Rest, Accent, Slide.
+- **Transport:** RUN, SYNC to host, BPM, pattern length (up to 16), pattern shift, CLEAR. A piano-roll popup edits pitch, and a playhead LED follows playback.
+- **MIDI:** basic MIDI input drives the voice. MIDI OUT sends the sequencer on a chosen channel. SYNTH ON/OFF mutes the internal voice.
+
+### 6. Acid Euclidean generator
+
+Generates patterns from a seed. The same seed always gives the same pattern.
+
+- Bjorklund pulses and steps with rotation shift.
+- Six scales: minor pentatonic, Dorian, Phrygian, Aeolian, harmonic minor, chromatic, with a root note.
+- Octave range, octave up and down probabilities, rest, accent, and slide probabilities, accent pitch bias, and slide chaining.
+- GENERATE, MUTATE, and a per-loop mutation rate. Patterns reach the audio thread without locking it.
+- A CLI prints a pattern as an ASCII grid or JSON: `cargo run -p plugin303 --bin gen_acid`.
+
+### 7. Real-time safety
+
+- The audio path does not allocate. `plugin303/tests/no_alloc.rs` enforces this with `assert_no_alloc` for every tier.
+- The VCO pitch table is built in `initialize()` and updated through a lock-free triple buffer.
+- The audio thread reads the sequencer pattern with `try_read`, so a GUI edit never blocks it.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 vibe303/
-├── circuit/               # Circuit-IR definitions (vco303.toml, vcf303.toml)
+├── circuit/               # Circuit IR (vco303.toml, vcf303.toml): the source of truth
 ├── tools/
-│   ├── circuitgen/        # IR → SPICE / ACME netlist generator & drift guard
-│   ├── schemagen/         # SPICE-deck and schematic parser
+│   ├── circuitgen/        # IR to SPICE / ACME generator and drift guard
+│   ├── schemagen/         # Schematic image to draft IR (experimental)
 │   └── gui_render/        # Offscreen editor renderer for GUI QA (egui_kittest + wgpu)
 ├── eval/
-│   ├── 303/               # ngspice & ACME validation testbenches and calibration scripts
-│   └── acme_vs_spice/     # Julia ACME environment for circuit parity
-├── plugin303/             # Main Rust plugin crate (nih-plug)
+│   ├── 303/               # ngspice validation, gold renders, calibration scripts
+│   └── acme_vs_spice/     # Julia ACME parity study (historical, no-go)
+├── plugin303/             # Main Rust crate (nih-plug)
 │   ├── src/
-│   │   ├── dsp/           # Audio engine: VCO, WDF/TPT ladder, envelopes, sequencer, oversampling
-│   │   ├── gui/           # egui interface: dials, panels, step strip, piano roll popup
-│   │   ├── params.rs      # Plugin parameter tree & persistence
-│   │   └── lib.rs         # Plugin lifecycle and VST3/CLAP entrypoints
-│   └── tests/             # Extensive DSP integration and regression test suite
-├── xtask/                 # Plugin bundler runner
-└── docs/                  # Design documents, circuit analysis, and calibration specs
+│   │   ├── dsp/           # Voice, VCO, ladder filters, envelopes, sequencer, generator, clipper, oversampling
+│   │   ├── gui/           # egui editor: panels/, widgets/, theme
+│   │   ├── bin/           # standalone, render303 (headless renderer), gen_acid, profiling tools
+│   │   ├── params.rs      # Parameter tree and pattern persistence
+│   │   └── lib.rs         # Plugin lifecycle, VST3/CLAP entry points
+│   └── tests/             # DSP, spectral, no-alloc, sequencer, and GUI tests
+├── scripts/               # Platform build scripts and GUI QA capture tools
+├── tests/circuitgen/      # Drift-guard tests for the generated backends
+├── xtask/                 # nih-plug bundler runner
+├── .github/workflows/     # Manual-dispatch build and release workflows
+└── docs/                  # Design plans, circuit analysis, DAW smoke-test checklist
 ```
 
 ---
 
-## Building and Running
+## Building and running
 
 ### Prerequisites
-- **Rust:** Stable toolchain (edition 2021)
-- **Python (Optional, for SPICE validation):** Python 3.12+ with `uv`
-- **System Libraries (Linux):** `libasound2-dev`, `libjack-dev`, `libx11-dev`, `libxcb1-dev`, `libgl1-mesa-dev`
+- **Rust:** stable toolchain (edition 2021)
+- **Python (optional, for SPICE validation):** Python 3.12+ with `uv`, and ngspice
+- **System libraries (Linux):** `libasound2-dev`, `libjack-dev`, `libx11-dev`, `libxcb1-dev`, `libgl1-mesa-dev`
 
-### Running the Standalone Synth
+### Standalone synth
 ```bash
-cargo run --bin standalone
+cargo run --release --bin standalone
 ```
 
-### Running Tests
+### Tests
 ```bash
 # Fast suite (default nextest profile): skips slow spectral/calibration
-# render gates; also skips gui-gated tests. Target: under 60s.
+# render gates and gui-gated tests. Target: under 60 s.
 cargo nextest run -p plugin303 --no-default-features
 
 # Full suite including slow render gates
 cargo nextest run -p plugin303 --no-default-features --profile slow
 
-# Run everything with plain cargo test (no partitioning)
+# Plain cargo test, no partitioning
 cargo test -p plugin303
 
-# Run allocation-free audio thread verification
+# Allocation-free audio thread check
 cargo test -p plugin303 --test no_alloc
 
-# Note: --no-default-features skips gui-gated tests. To cover
-# gui_build / piano_roll_mapping, run with default features:
+# --no-default-features skips gui-gated tests. To cover
+# gui_build and piano_roll_mapping, use default features:
 cargo test -p plugin303 --test gui_build --test piano_roll_mapping
 ```
 
-### Building VST3 and CLAP Bundles
+### VST3 and CLAP bundles
 ```bash
-# Bundle release binaries for current architecture
 cargo xtask bundle plugin303 --release
 
-# Bundled artifacts will be located in:
-# target/bundled/TB303.vst3
-# target/bundled/TB303.clap
+# Output:
+#   target/bundled/TB303.vst3
+#   target/bundled/TB303.clap
 ```
 
-On Windows, build and install both bundles with:
+Platform scripts build and install the bundles:
+
+```bash
+bash scripts/build-macos-arm64.sh        # installs to ~/Library/Audio/Plug-Ins, ad-hoc codesigned
+bash scripts/build-linux-x86_64-v3.sh    # installs to ~/.vst3 and ~/.clap
+```
 
 ```powershell
 # x86-64-v3 (AVX2) by default; use -Variant v2 for pre-Haswell CPUs
 ./scripts/build-windows-x86_64.ps1
 ```
 
-The Windows VST3 bundle is a directory, and its payload DLL keeps the `.vst3`
-extension:
+The Windows VST3 bundle is a directory, and its payload DLL keeps the `.vst3` extension:
 
 ```
 TB303.vst3/Contents/x86_64-win/TB303.vst3   # the DLL
 TB303.clap                                  # a DLL with the extension swapped
 ```
 
-### Circuit IR & SPICE Verification
+After a build, `docs/DAW_SMOKE_TEST.md` lists the manual host checks.
+
+### Headless render
 ```bash
-# Validate circuit IR integrity
+cargo run --release --bin render303 -p plugin303 -- --note 57 --sr 48000 --secs 0.5 \
+    --cutoff 1000 --reso 85 --tier 2 --out /tmp/render.f32
+```
+
+### GUI screenshots
+Render every QA state offscreen, with no window and no Screen Recording permission:
+
+```bash
+bash scripts/render_gui_offscreen.sh    # writes to target/gui-qa-offscreen
+```
+
+To refresh the README image, copy the new `running_note.png` to `docs/assets/screenshot.png`.
+
+### Circuit IR and SPICE verification
+```bash
+# Check that generated backends match the IR
 uv run --no-project python -m tools.circuitgen --check
 uv run --no-project --with pytest python -m pytest tests/circuitgen/ -q
 
-# Run ngspice validation runs
+# ngspice runs
 uv run --no-project --with PySpice --with numpy python eval/303/run_vco303_spice.py 5
 uv run --no-project --with PySpice --with numpy python eval/303/run_vcf303_spice.py --reso
 ```
 
+Never edit generated files by hand. Edit the `.toml` IR and run `python -m tools.circuitgen`.
+
 ---
 
-## CI / Cross-Compilation
+## CI and cross-compilation
 
-GitHub Actions workflows provide automated building and packaging:
-- **Linux:** Native `x86_64` (AVX2 / `x86-64-v3`) VST3/CLAP builds.
-- **macOS:** Apple Silicon (`aarch64-apple-darwin`) builds.
-- **Windows:** Native `x86_64` MSVC builds on a GitHub-hosted runner, in two CPU
-  variants — `x86-64-v3` (AVX2) and `x86-64-v2` (compatibility). Built with
-  `--no-default-features --features gui`; the standalone binary is not shipped
-  for Windows.
+GitHub Actions workflows build and package the plugin:
+- **Linux:** native `x86_64` (AVX2, `x86-64-v3`) VST3 and CLAP.
+- **macOS:** Apple Silicon (`aarch64-apple-darwin`).
+- **Windows:** native `x86_64` MSVC on a GitHub-hosted runner, in two CPU variants: `x86-64-v3` (AVX2) and `x86-64-v2` (compatibility). Built with `--no-default-features --features gui`. The standalone binary is not shipped for Windows.
