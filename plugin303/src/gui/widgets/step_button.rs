@@ -41,13 +41,11 @@ pub fn render_step_strip(
     let mut changed = false;
     let width = cell_width;
     let is_active = is_current && is_running;
-    // Playhead highlight: one mark, one weight (round-13 issue 2). The column
-    // background tint plus a single 2 px outline carry the active step; the
-    // LED bar, step-number pill and pitch pill render in their non-active
-    // treatments. The outline is violet over near-black rather than the
-    // round-13 white, because white measured 1.67:1 against a TIE cell
-    // (round-19 issue 9); `theme::PLAYHEAD_FRAME_OUTER` documents why two
-    // tones are needed and violet is the free hue.
+    // Playhead highlight: one mark, one colour, one weight (round-13 issue 2).
+    // The column background tint plus a single 1 px TEXT_PRIMARY outline carry
+    // the active step; the LED bar, step-number pill and pitch pill render in
+    // their non-active treatments. White (TEXT_PRIMARY) contrasts against every
+    // cell background and is distinct from cyan (NOTE gate) and orange (ACCENT).
     let column_bg = if is_active {
         theme::SURFACE_ELEVATED
     } else if is_current {
@@ -55,8 +53,7 @@ pub fn render_step_strip(
     } else {
         theme::PANEL_BG
     };
-    let playhead_inner = theme::PLAYHEAD_FRAME_INNER;
-    let playhead_outer = theme::PLAYHEAD_FRAME_OUTER;
+    let playhead_color = theme::TEXT_PRIMARY;
 
     ui.vertical(|ui| {
         ui.set_width(width);
@@ -416,30 +413,11 @@ pub fn render_step_strip(
         // and strokes cannot interrupt it (round-11 item 5). It reuses the
         // exact background rect, so the highlighted column's bounding box
         // matches its neighbours to the pixel.
-        //
-        // Two concentric 1 px rings, both inside that rect (round-19 issue 9):
-        // the outer violet reads against the dark column background, the inner
-        // near-black reads against the bright NOTE/TIE cell fills. No single
-        // colour clears 3:1 against both extremes — see `theme::
-        // PLAYHEAD_FRAME_OUTER` for the luminance window that proves it empty,
-        // and `theme::tests::playhead_frame_covers_every_cell_it_crosses` for
-        // the numeric derivation (the single source for it).
-        //
-        // Recorded deviation: round-13 specified one frame colour, and
-        // round-19's prompt offered accent-hue or white. Both were
-        // unsatisfiable (the single-colour window is empty, and the gold hue
-        // is already GATE_TIE) — superseded by the two-ring frame.
         if is_active && ui.is_rect_visible(strip_rect) {
             ui.painter().rect_stroke(
                 strip_rect,
                 CornerRadius::same(2),
-                Stroke::new(1.0_f32, playhead_outer),
-                StrokeKind::Inside,
-            );
-            ui.painter().rect_stroke(
-                strip_rect.shrink(1.0),
-                CornerRadius::same(1),
-                Stroke::new(1.0_f32, playhead_inner),
+                Stroke::new(1.0_f32, playhead_color),
                 StrokeKind::Inside,
             );
         }

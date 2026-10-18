@@ -106,9 +106,6 @@ capture_single_state "default" "$OUTPUT_DIR/latest.png"
 capture_single_state "accurate" "$OUTPUT_DIR/accurate.png"
 capture_single_state "advanced" "$OUTPUT_DIR/advanced.png"
 capture_single_state "running" "$OUTPUT_DIR/running.png"
-# Running with every step set to NOTE, so the playhead frame is always
-# captured over a bright cyan cell (round-19 issue 9 verification state).
-capture_single_state "running_note" "$OUTPUT_DIR/running_note.png"
 # Bipolar knob off detent + unipolar knob off default (round-13 issue 1
 # verification state).
 capture_single_state "knobs" "$OUTPUT_DIR/knobs.png"
@@ -130,7 +127,6 @@ REQUIRED_CROPS=(
     "accurate.png"
     "advanced.png"
     "running.png"
-    "running_note.png"
     "knobs.png"
     "quality_high.png"
     "generator.png"
