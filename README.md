@@ -59,7 +59,8 @@ vibe303/
 ├── circuit/               # Circuit-IR definitions (vco303.toml, vcf303.toml)
 ├── tools/
 │   ├── circuitgen/        # IR → SPICE / ACME netlist generator & drift guard
-│   └── schemagen/         # SPICE-deck and schematic parser
+│   ├── schemagen/         # SPICE-deck and schematic parser
+│   └── gui_render/        # Offscreen editor renderer for GUI QA (egui_kittest + wgpu)
 ├── eval/
 │   ├── 303/               # ngspice & ACME validation testbenches and calibration scripts
 │   └── acme_vs_spice/     # Julia ACME environment for circuit parity

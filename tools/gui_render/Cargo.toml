@@ -1,0 +1,13 @@
+[package]
+name = "gui_render"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+plugin303 = { path = "../../plugin303", default-features = false, features = ["gui"] }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23" }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23" }
+egui_kittest = { version = "0.31.1", features = ["wgpu"] }
+# Same major as egui_kittest's, so `RgbaImage` is one type. PNG output only.
+image = { version = "0.25", default-features = false, features = ["png"] }
