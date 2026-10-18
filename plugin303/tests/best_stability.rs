@@ -12,7 +12,7 @@ fn best_voice_is_finite_and_bounded_under_sweep() {
     let mut v = Voice::new(sr);
     v.set_tier_immediate(Tier::Best);
     v.set_reso(0.85);
-    v.note_on(45); // draft note → many VCO periods over the render
+    v.note_on(45); // low note → many VCO periods over the render
 
     let n = (sr * 1.0) as usize; // 1 s
     let mut peak = 0.0f32;

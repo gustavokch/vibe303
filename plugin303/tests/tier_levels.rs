@@ -117,7 +117,7 @@ fn low_tracks_best_level() {
 /// Regression floor: across the full patch space (incl. resonance and dark
 /// cutoffs where the depressed corner bites hardest), no tier may collapse to
 /// the old ~28 dB-below-Draft failure. The bound is loose (−24 dB) on purpose: the
-/// worst structural case (low note + dark cutoff, where the depressed nodal
+/// worst structural case (high note + dark cutoff, where the depressed nodal
 /// corner rolls off nearly the whole saw) lands ~−21 dB and is NOT a gain bug.
 /// Reverting `out_gain` to 1 would drop every case a further ~28 dB, so this
 /// floor still pins the normalisation in place everywhere.

@@ -76,7 +76,8 @@ mod tests {
         assert_eq!(Tier::parse("HIGH"), Some(Tier::High));
         assert_eq!(Tier::parse("best"), Some(Tier::Best));
         // Retired names and bare indices must fail, not map to a different tier.
-        for retired in ["0", "2", ""] {
+        // `ultra` is the one permitted `ultra` in code: it is the retired-name case.
+        for retired in ["ultra", "ultra2x", "0", "2", ""] {
             assert_eq!(Tier::parse(retired), None, "{retired:?}");
         }
     }

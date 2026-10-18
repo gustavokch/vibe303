@@ -206,7 +206,8 @@ pub struct Voice {
     vco: Vco303,
     /// Secondary nodal circuit VCO.
     vco2: Vco303,
-    /// Nodal diode-ladder for the circuit-VCO tiers, preallocated, run inside `os` at 4x.
+    /// Nodal diode-ladder for the circuit-VCO tiers, preallocated. Runs inside `os` at 4x
+    /// (Best) or `os2` at 2x (High).
     ladder: LadderVcf,
     /// Best-tier oversampling filter (4x Kaiser FIR).
     os: Os4x,
@@ -1540,7 +1541,8 @@ impl Voice {
 
         let draft_fc = (2.0f64.powf(eval_poly3(x, y, &DRAFT_FC_POLY)) * self.draft_cutoff_mult)
             .clamp(20.0, (self.sr * 0.45) as f64);
-        let draft_reso = (eval_poly3(x, y, &DRAFT_RESO_POLY) * self.draft_reso_mult).clamp(0.0, 1.0);
+        let draft_reso =
+            (eval_poly3(x, y, &DRAFT_RESO_POLY) * self.draft_reso_mult).clamp(0.0, 1.0);
 
         let low_fc = 2.0f64
             .powf(eval_poly3(x, y, &LOW_FC_POLY))

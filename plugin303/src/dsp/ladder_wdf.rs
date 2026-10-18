@@ -1,4 +1,4 @@
-//! Nodal diode-ladder VCF solver — Best tier core (F3.3).
+//! Nodal diode-ladder VCF solver — shared by the Low, High and Best tiers (F3.3).
 //!
 //! Per-sample **nodal MNA + Newton-Raphson** of the vcf303 4-rung diode ladder
 //! (8× 1N4148 + 4 shunt caps), biased by the cutoff tail current. Trapezoidal
