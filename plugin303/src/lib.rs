@@ -8,7 +8,7 @@ pub mod gui;
 pub mod params;
 use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::{Voice, VoiceClipperParams};
-use params::Plugin303Params;
+use params::{Plugin303Params, QaState};
 
 /// Step the playhead is pinned to in the `running` and `running_note` QA states.
 const QA_PLAYHEAD_STEP: u8 = 3;
@@ -17,7 +17,10 @@ const QA_PLAYHEAD_STEP: u8 = 3;
 /// sequencer. `Plugin303` and the offscreen renderer (`tools/gui_render`) both
 /// read this, so a window capture and its offscreen render cannot drift.
 pub fn qa_playhead_pin(state: Option<&str>) -> Option<u8> {
-    matches!(state, Some("running" | "running_note")).then_some(QA_PLAYHEAD_STEP)
+    state
+        .and_then(QaState::parse)
+        .is_some_and(QaState::runs_sequencer)
+        .then_some(QA_PLAYHEAD_STEP)
 }
 
 /// Convert sequencer step key (0..12) and octave (-2..2) to standard MIDI note number (0..127).

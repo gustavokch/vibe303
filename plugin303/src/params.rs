@@ -414,9 +414,10 @@ impl Plugin303Params {
 /// QA capture states that drive parameter defaults. The string contract is
 /// shared with `scripts/capture_standalone_gui.sh`, which sets
 /// `VIBE303_QA_STATE` — that script is the other half of this contract, and
-/// the two must stay in sync.
+/// the two must stay in sync. `QaState::parse` is the only place in the crate
+/// that knows the state names.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum QaState {
+pub(crate) enum QaState {
     Accurate,
     Advanced,
     Generator,
@@ -429,29 +430,44 @@ enum QaState {
     Zoom75,
 }
 
-fn parse_qa_state(var: &str) -> Option<QaState> {
-    Some(match var {
-        "accurate" => QaState::Accurate,
-        "advanced" => QaState::Advanced,
-        "generator" => QaState::Generator,
-        "knobs" => QaState::Knobs,
-        "quality_high" => QaState::QualityHigh,
-        "quality_ultra" => QaState::QualityUltra,
-        "quality_ultra2x" => QaState::QualityUltra2x,
-        "running" => QaState::Running,
-        "running_note" => QaState::RunningNote,
-        "zoom75" => QaState::Zoom75,
-        _ => return None,
-    })
+impl QaState {
+    /// `None` for an unknown name.
+    pub(crate) fn parse(var: &str) -> Option<Self> {
+        Some(match var {
+            "accurate" => Self::Accurate,
+            "advanced" => Self::Advanced,
+            "generator" => Self::Generator,
+            "knobs" => Self::Knobs,
+            "quality_high" => Self::QualityHigh,
+            "quality_ultra" => Self::QualityUltra,
+            "quality_ultra2x" => Self::QualityUltra2x,
+            "running" => Self::Running,
+            "running_note" => Self::RunningNote,
+            "zoom75" => Self::Zoom75,
+            _ => return None,
+        })
+    }
+
+    /// The state named by `VIBE303_QA_STATE`; `None` if unset or unknown.
+    pub(crate) fn from_env() -> Option<Self> {
+        std::env::var("VIBE303_QA_STATE")
+            .ok()
+            .as_deref()
+            .and_then(Self::parse)
+    }
+
+    /// States that start the sequencer. The playhead is pinned in exactly
+    /// these (`qa_playhead_pin`), so the two cannot drift.
+    pub(crate) fn runs_sequencer(self) -> bool {
+        matches!(self, Self::Running | Self::RunningNote)
+    }
 }
 
 impl Default for Plugin303Params {
     fn default() -> Self {
-        // One parse site for the QA state (see `QaState`): every default
-        // below matches on the enum, never on a bare string.
-        let qa_state = std::env::var("VIBE303_QA_STATE")
-            .ok()
-            .and_then(|s| parse_qa_state(&s));
+        // `QaState::from_env` is the one read of VIBE303_QA_STATE for the
+        // defaults below; they match on the enum, never on a bare string.
+        let qa_state = QaState::from_env();
 
         let default_topology = if qa_state == Some(QaState::Accurate) {
             CircuitTopology::Accurate
@@ -459,7 +475,7 @@ impl Default for Plugin303Params {
             CircuitTopology::Fun
         };
 
-        let default_seq_run = matches!(qa_state, Some(QaState::Running | QaState::RunningNote));
+        let default_seq_run = qa_state.is_some_and(QaState::runs_sequencer);
 
         // QA capture state only: `advanced` starts with the ADV ENV tier
         // engaged so the MEG/VEG ADSR banks render enabled for screenshots.
