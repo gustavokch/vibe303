@@ -155,7 +155,7 @@ fn test_qa_quality_high_state() {
     let params = Plugin303Params::default();
     assert_eq!(
         params.tier.value(),
-        Tier::High,
+        Tier::Low,
         "quality_high QA state must initialize Tier to High"
     );
 }

@@ -39,7 +39,7 @@ fn tier_pitch_comparison() {
                 let target = 440.0 * 2.0f32.powf((note as f32 - 69.0) / 12.0);
                 eprintln!("\n=== MIDI note {note}, target {target:.2} Hz ===");
 
-                for &tier in &[Tier::Low, Tier::High, Tier::Ultra] {
+                for &tier in &[Tier::Draft, Tier::Low, Tier::Best] {
                     let mut v = Voice::new(sr);
                     v.set_tier_immediate(tier);
                     v.set_wave(wave);
@@ -76,10 +76,10 @@ fn tier_switch_pitch_stability() {
     eprintln!("\n=== Switching tier mid-note, MIDI {note}, target {target:.2} Hz ===");
 
     for &(from, to) in &[
-        (Tier::Low, Tier::Ultra),
-        (Tier::Ultra, Tier::Low),
-        (Tier::Low, Tier::High),
-        (Tier::High, Tier::Ultra),
+        (Tier::Draft, Tier::Best),
+        (Tier::Best, Tier::Draft),
+        (Tier::Draft, Tier::Low),
+        (Tier::Low, Tier::Best),
     ] {
         let mut v = Voice::new(sr);
         v.set_tier_immediate(from);

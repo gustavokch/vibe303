@@ -23,7 +23,7 @@ const ULTRA_BRIGHTNESS: f64 = 0.70; // re-tuned VCF brightness (resonance-active
 fn render_ultra(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: f64) -> Vec<f32> {
     let mut v = Voice::new(sr);
     v.update_clipper_params_immediate(common::bypassed_clipper());
-    v.set_tier_immediate(Tier::Ultra);
+    v.set_tier_immediate(Tier::Best);
     v.set_advanced_env(true);
     v.set_ultra_brightness(cal);
     v.set_cutoff(cutoff);
@@ -48,7 +48,7 @@ fn brightness_sweep() {
     println!("-- reso_gain sweep at cal=0.70 --");
     for rg in [8.0f64, 10.0, 11.0, 12.0, 13.0, 14.0] {
         let mut v = Voice::new(op.sr);
-        v.set_tier_immediate(Tier::Ultra);
+        v.set_tier_immediate(Tier::Best);
         v.set_ultra_brightness(0.70);
         v.set_ultra_reso_gain(rg);
         v.set_cutoff(op.cutoff);

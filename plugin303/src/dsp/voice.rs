@@ -352,7 +352,7 @@ pub struct Voice {
     reso_comp: f32,
     /// Cached classic slide tau in ms.
     classic_slide_tau_ms: f64,
-    /// Whether the VCO LUTs need recalculation before running Tier::Ultra.
+    /// Whether the VCO LUTs need recalculation before running Tier::Best.
     vco_dirty: bool,
 }
 
@@ -397,7 +397,7 @@ impl Voice {
         let lat_high = Os2x::new().latency_samples();
         let lat_ultra = Os4x::new().latency_samples();
         let max_latency = lat_ultra.max(lat_high).max(lat_low);
-        // The Tier::Ultra arm drives this ladder 4× per output sample through
+        // The Tier::Best arm drives this ladder 4× per output sample through
         // Os4x and the nodal solver tunes its capacitors from the constructor
         // rate, so it must always be built at the oversampled clock (see the
         // unit test pinning this below). Setter-side rebuilds
@@ -478,7 +478,7 @@ impl Voice {
                 li
             },
 
-            tier: Tier::Low,
+            tier: Tier::Draft,
             xfade_from: None,
             xfade_pos: 1.0,
             xfade_step: 1.0 / (sr * XFADE_SECS).max(1.0),
@@ -691,10 +691,10 @@ impl Voice {
                 self.recalibration_scale,
             );
 
-            if self.tier == Tier::Ultra
-                || self.tier == Tier::Ultra2x
-                || self.pending_tier == Some(Tier::Ultra)
-                || self.pending_tier == Some(Tier::Ultra2x)
+            if self.tier == Tier::Best
+                || self.tier == Tier::High
+                || self.pending_tier == Some(Tier::Best)
+                || self.pending_tier == Some(Tier::High)
                 || self.xfade_from.is_some()
             {
                 let ok1 = self.vco.recalculate_luts_async(
@@ -936,7 +936,7 @@ impl Voice {
         self.xfade_pos = 1.0;
         self.pending_tier = None;
 
-        if (tier == Tier::Ultra || tier == Tier::Ultra2x) && self.vco_dirty {
+        if (tier == Tier::Best || tier == Tier::High) && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
             let ok1 = self.vco.recalculate_luts_async(
                 self.age,
@@ -962,10 +962,10 @@ impl Voice {
     /// built one. Shared by [`Self::set_tier`] and [`Self::set_tier_immediate`]
     /// so both entry points establish an identical ladder for the same target.
     fn rebuild_ultra_ladder_if_needed(&mut self, tier: Tier) {
-        if !matches!(tier, Tier::Ultra | Tier::Ultra2x) || self.tier == tier {
+        if !matches!(tier, Tier::Best | Tier::High) || self.tier == tier {
             return;
         }
-        let factor = if tier == Tier::Ultra2x {
+        let factor = if tier == Tier::High {
             2.0
         } else {
             ULTRA_OS_FACTOR
@@ -1036,7 +1036,7 @@ impl Voice {
         self.drift_reso = DriftGenerator::new(2468);
         self.drift_pitch_osc2 = DriftGenerator::new(3579);
         self.accent_acc = 0.0;
-        self.tier = Tier::Low;
+        self.tier = Tier::Draft;
         self.topology = CircuitTopology::Accurate;
         self.advanced_env = false;
         self.slide_active = false;
@@ -1064,7 +1064,7 @@ impl Voice {
     /// and the incoming path starts cold, so a hard switch would pop. No
     /// allocation, RT-safe (plain field writes).
     pub fn set_tier(&mut self, tier: Tier) {
-        if (tier == Tier::Ultra || tier == Tier::Ultra2x) && self.vco_dirty {
+        if (tier == Tier::Best || tier == Tier::High) && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
             let ok1 = self.vco.recalculate_luts_async(
                 self.age,
@@ -1268,7 +1268,7 @@ impl Voice {
         match tier {
             // Low: polyBLEP saw → TPT ladder (cheap, ships). Padded to the common
             // latency so the host PDC is constant across tiers.
-            Tier::Low => {
+            Tier::Draft => {
                 let osc1 = self.osc.tick();
                 let sub = self.sub_osc.tick() * self.sub_vol;
                 let osc2 = if self.osc2_vol > 0.0 {
@@ -1284,7 +1284,7 @@ impl Voice {
             // High (F4.1): polyBLEP saw → nodal diode-ladder at 2× oversample.
             // Skips the costly nodal VCO Newton but keeps the circuit-filter
             // character — sits between Low and Ultra at a fraction of Ultra cost.
-            Tier::High => {
+            Tier::Low => {
                 let osc1 = self.osc_hi.tick();
                 let sub = self.sub_osc_hi.tick() * self.sub_vol;
                 let osc2 = if self.osc2_vol > 0.0 {
@@ -1313,7 +1313,7 @@ impl Voice {
             // from the smooth ramp (not the reset edge) is negligible relative to the
             // reset. Option A (full 4× VCO, future `Tier::UltraHd`) gives complete alias
             // freedom at ~4× the CPU cost.
-            Tier::Ultra2x => {
+            Tier::High => {
                 let raw = self.vco.tick() * VCO_GAIN;
                 let blep = match self.vco.wave {
                     OscWave::Saw => self.vco.blep_now,
@@ -1339,7 +1339,7 @@ impl Voice {
                 let o = [self.ladder.tick(hi[0]), self.ladder.tick(hi[1])];
                 self.comp_ultra.process(self.os2.down(o) / self.drive)
             }
-            Tier::Ultra => {
+            Tier::Best => {
                 let raw = self.vco.tick() * VCO_GAIN;
                 let blep = match self.vco.wave {
                     OscWave::Saw => self.vco.blep_now,
@@ -1717,7 +1717,7 @@ mod tests {
 
     /// Regression pin for 21b7307: the shared Ultra ladder must be built at
     /// the tier's oversampled clock (`sr * ULTRA_OS_FACTOR`) because the
-    /// Tier::Ultra arm drives it 4× per output sample through `Os4x` and the
+    /// Tier::Best arm drives it 4× per output sample through `Os4x` and the
     /// nodal solver tunes its capacitors from the constructor rate. The
     /// setter-side rebuild (`rebuild_ultra_ladder_if_needed`) assumes this too.
     #[test]

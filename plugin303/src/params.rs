@@ -491,10 +491,10 @@ impl Default for Plugin303Params {
         let (default_tuning, default_cutoff) = if qa_knobs { (25.0, 0.75) } else { (0.0, 0.5) };
 
         let default_tier = match qa_state {
-            Some(QaState::QualityHigh) => Tier::High,
-            Some(QaState::QualityUltra) => Tier::Ultra,
-            Some(QaState::QualityUltra2x) => Tier::Ultra2x,
-            _ => Tier::Low,
+            Some(QaState::QualityHigh) => Tier::Low,
+            Some(QaState::QualityUltra) => Tier::Best,
+            Some(QaState::QualityUltra2x) => Tier::High,
+            _ => Tier::Draft,
         };
 
         Self {

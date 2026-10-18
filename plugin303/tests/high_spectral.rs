@@ -34,7 +34,7 @@ const CORR_MIN: f32 = 0.95; // achieved 0.964; Low's 0.931 fails → real discri
 fn render_high(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize) -> Vec<f32> {
     let mut v = Voice::new(sr);
     v.update_clipper_params_immediate(common::bypassed_clipper());
-    v.set_tier_immediate(Tier::High);
+    v.set_tier_immediate(Tier::Low);
     v.set_advanced_env(true);
     v.set_cutoff(cutoff);
     v.set_reso(reso);
@@ -66,7 +66,7 @@ fn high_brightness_sweep() {
     let op = load_gold_op("voice_A2_mid.json");
     for cal in [0.4f64, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2] {
         let mut v = Voice::new(op.sr);
-        v.set_tier_immediate(Tier::High);
+        v.set_tier_immediate(Tier::Low);
         v.set_high_brightness(cal);
         v.set_cutoff(op.cutoff);
         v.set_reso(op.reso);
@@ -87,9 +87,9 @@ fn high_spectral_report() {
         op.note, op.cutoff, op.reso, op.sr
     );
     for (name, tier) in [
-        ("Low", Tier::Low),
-        ("High", Tier::High),
-        ("Ultra", Tier::Ultra),
+        ("Low", Tier::Draft),
+        ("High", Tier::Low),
+        ("Ultra", Tier::Best),
     ] {
         let m = render_tier(tier, &op, gold.len());
         let (lsd, corr) = spectral_match(&gold, &m, op.sr);
@@ -104,9 +104,9 @@ fn cost_bench() {
     let op = load_gold_op("voice_A2_mid.json");
     let n = (op.sr as usize) * 2; // 2 s
     for (name, tier) in [
-        ("Low", Tier::Low),
-        ("High", Tier::High),
-        ("Ultra", Tier::Ultra),
+        ("Low", Tier::Draft),
+        ("High", Tier::Low),
+        ("Ultra", Tier::Best),
     ] {
         let mut v = Voice::new(op.sr);
         v.set_tier_immediate(tier);

@@ -5,7 +5,7 @@ fn main() {
     let sr = 48_000.0;
     let note = 84u8;
     let mut v = Voice::new(sr);
-    v.set_tier_immediate(Tier::Ultra);
+    v.set_tier_immediate(Tier::Best);
     v.set_cutoff(4000.0);
     v.set_reso(0.0);
     v.note_on(note);

@@ -61,9 +61,9 @@ fn tier_rms(tier: Tier, note: u8, cutoff: f32, reso: f32) -> f32 {
 #[test]
 fn tiers_match_at_passband() {
     for &(note, cutoff) in &[(45u8, 2_000.0f32), (45, 3_000.0), (57, 3_000.0)] {
-        let low = tier_rms(Tier::Low, note, cutoff, 0.0);
-        let high = tier_rms(Tier::High, note, cutoff, 0.0);
-        let ultra = tier_rms(Tier::Ultra, note, cutoff, 0.0);
+        let low = tier_rms(Tier::Draft, note, cutoff, 0.0);
+        let high = tier_rms(Tier::Low, note, cutoff, 0.0);
+        let ultra = tier_rms(Tier::Best, note, cutoff, 0.0);
 
         let hi_db = 20.0 * (high / low).log10();
         let ul_db = 20.0 * (ultra / low).log10();
@@ -103,8 +103,8 @@ fn high_tracks_ultra_level() {
         (57, 3_000.0, 0.2),
         (57, 1_002.0, 0.85), // the gold patch
     ] {
-        let high = tier_rms(Tier::High, note, cutoff, reso);
-        let ultra = tier_rms(Tier::Ultra, note, cutoff, reso);
+        let high = tier_rms(Tier::Low, note, cutoff, reso);
+        let ultra = tier_rms(Tier::Best, note, cutoff, reso);
         let db = 20.0 * (high / ultra).log10();
         eprintln!("note{note} fc{cutoff:.0} r{reso}  High vs Ultra = {db:+.1} dB");
         assert!(
@@ -130,9 +130,9 @@ fn no_tier_collapses_in_level() {
         (57, 400.0, 0.0),
     ];
     for &(note, cutoff, reso) in cases {
-        let low = tier_rms(Tier::Low, note, cutoff, reso);
-        let high = tier_rms(Tier::High, note, cutoff, reso);
-        let ultra = tier_rms(Tier::Ultra, note, cutoff, reso);
+        let low = tier_rms(Tier::Draft, note, cutoff, reso);
+        let high = tier_rms(Tier::Low, note, cutoff, reso);
+        let ultra = tier_rms(Tier::Best, note, cutoff, reso);
         let hi_db = 20.0 * (high / low).log10();
         let ul_db = 20.0 * (ultra / low).log10();
         assert!(
@@ -152,9 +152,9 @@ fn no_tier_collapses_in_level_exhaustive() {
     for &note in &[33u8, 45, 57] {
         for &cutoff in &[400.0f32, 1_500.0, 6_000.0] {
             for &reso in &[0.0f32, 0.5] {
-                let low = tier_rms(Tier::Low, note, cutoff, reso);
-                let high = tier_rms(Tier::High, note, cutoff, reso);
-                let ultra = tier_rms(Tier::Ultra, note, cutoff, reso);
+                let low = tier_rms(Tier::Draft, note, cutoff, reso);
+                let high = tier_rms(Tier::Low, note, cutoff, reso);
+                let ultra = tier_rms(Tier::Best, note, cutoff, reso);
                 let hi_db = 20.0 * (high / low).log10();
                 let ul_db = 20.0 * (ultra / low).log10();
                 assert!(

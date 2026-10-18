@@ -72,22 +72,22 @@ fn switch_test(from: Tier, to: Tier) {
 
 #[test]
 fn low_to_high_is_click_free() {
-    switch_test(Tier::Low, Tier::High);
+    switch_test(Tier::Draft, Tier::Low);
 }
 
 #[test]
 fn high_to_ultra_is_click_free() {
-    switch_test(Tier::High, Tier::Ultra);
+    switch_test(Tier::Low, Tier::Best);
 }
 
 #[test]
 fn low_to_ultra_is_click_free() {
-    switch_test(Tier::Low, Tier::Ultra);
+    switch_test(Tier::Draft, Tier::Best);
 }
 
 #[test]
 fn ultra_to_low_is_click_free() {
-    switch_test(Tier::Ultra, Tier::Low);
+    switch_test(Tier::Best, Tier::Draft);
 }
 
 #[test]
@@ -96,10 +96,10 @@ fn switch_step_report() {
     let sr = 48_000.0;
     let (switch_at, win) = (2_000usize, 800usize);
     for (from, to) in [
-        (Tier::Low, Tier::High),
-        (Tier::High, Tier::Ultra),
-        (Tier::Low, Tier::Ultra),
-        (Tier::Ultra, Tier::Low),
+        (Tier::Draft, Tier::Low),
+        (Tier::Low, Tier::Best),
+        (Tier::Draft, Tier::Best),
+        (Tier::Best, Tier::Draft),
     ] {
         let ref_step = steady_max_step(from, sr, switch_at - win / 2, win).max(steady_max_step(
             to,

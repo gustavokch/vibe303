@@ -84,9 +84,9 @@ fn test_pitch_parity_accurate() {
     // Under Accurate topology, the circuit VCO range spans the authentic 3-octave TB-303 keyboard (notes 24 to 60).
     for note in [24u8, 36, 48, 60] {
         let target = 440.0f32 * 2.0f32.powf((note as f32 - 69.0) / 12.0);
-        let f_ultra = voice_realized_hz(Tier::Ultra, CircuitTopology::Accurate, note);
-        let f_low = voice_realized_hz(Tier::Low, CircuitTopology::Accurate, note);
-        let f_high = voice_realized_hz(Tier::High, CircuitTopology::Accurate, note);
+        let f_ultra = voice_realized_hz(Tier::Best, CircuitTopology::Accurate, note);
+        let f_low = voice_realized_hz(Tier::Draft, CircuitTopology::Accurate, note);
+        let f_high = voice_realized_hz(Tier::Low, CircuitTopology::Accurate, note);
 
         let err_low = (f_low / f_ultra - 1.0).abs();
         let err_high = (f_high / f_ultra - 1.0).abs();
@@ -118,9 +118,9 @@ fn test_pitch_parity_fun() {
     // Each tier must realize the target MIDI pitch within tolerance.
     for note in [24u8, 48, 72, 96, 108] {
         let target = 440.0f32 * 2.0f32.powf((note as f32 - 69.0) / 12.0);
-        let f_ultra = voice_realized_hz(Tier::Ultra, CircuitTopology::Fun, note);
-        let f_low = voice_realized_hz(Tier::Low, CircuitTopology::Fun, note);
-        let f_high = voice_realized_hz(Tier::High, CircuitTopology::Fun, note);
+        let f_ultra = voice_realized_hz(Tier::Best, CircuitTopology::Fun, note);
+        let f_low = voice_realized_hz(Tier::Draft, CircuitTopology::Fun, note);
+        let f_high = voice_realized_hz(Tier::Low, CircuitTopology::Fun, note);
 
         let err_ultra = (f_ultra / target - 1.0).abs();
         let err_low = (f_low / target - 1.0).abs();
@@ -178,9 +178,9 @@ fn test_voicing_parity_sweeps() {
     let reso_knob = 0.65;
     let len = 48000;
 
-    let pcm_ultra = render_sweep(Tier::Ultra, note, cutoff_knob, reso_knob, len);
-    let pcm_high = render_sweep(Tier::High, note, cutoff_knob, reso_knob, len);
-    let pcm_low = render_sweep(Tier::Low, note, cutoff_knob, reso_knob, len);
+    let pcm_ultra = render_sweep(Tier::Best, note, cutoff_knob, reso_knob, len);
+    let pcm_high = render_sweep(Tier::Low, note, cutoff_knob, reso_knob, len);
+    let pcm_low = render_sweep(Tier::Draft, note, cutoff_knob, reso_knob, len);
 
     let (lsd_high, corr_high) = spectral_match(&pcm_ultra, &pcm_high, SR);
     let (lsd_low, corr_low) = spectral_match(&pcm_ultra, &pcm_low, SR);

@@ -38,9 +38,9 @@ fn main() {
 
     let mut v = Voice::new(sr);
     v.set_tier_immediate(match tier {
-        1 => Tier::High,
-        2 => Tier::Ultra,
-        _ => Tier::Low,
+        1 => Tier::Low,
+        2 => Tier::Best,
+        _ => Tier::Draft,
     });
     let wave_mode = match wave {
         1 => OscWave::Square,

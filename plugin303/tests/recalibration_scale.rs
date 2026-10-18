@@ -42,8 +42,8 @@ fn test_recal_scale_audio_integration() {
     let mut v1 = Voice::new(sr);
     let mut v2 = Voice::new(sr);
 
-    v1.set_tier_immediate(Tier::Ultra);
-    v2.set_tier_immediate(Tier::Ultra);
+    v1.set_tier_immediate(Tier::Best);
+    v2.set_tier_immediate(Tier::Best);
 
     v1.update_params(
         0.0,

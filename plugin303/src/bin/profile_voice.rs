@@ -156,7 +156,7 @@ fn run_tier(name: &str, tier: Tier, secs: f32, sr: f32, seed: u64) -> (f64, f64,
 fn run_sweep(secs: f32, sr: f32, _seed: u64) -> (f64, f64, f64, bool) {
     let num_samples = (secs * sr) as usize;
     let mut voice = Voice::new(sr);
-    voice.set_tier_immediate(Tier::Ultra);
+    voice.set_tier_immediate(Tier::Best);
     voice.set_cutoff(800.0);
     voice.set_reso(0.75);
     voice.set_env_mod(0.6);
@@ -166,7 +166,7 @@ fn run_sweep(secs: f32, sr: f32, _seed: u64) -> (f64, f64, f64, bool) {
     let start = Instant::now();
     let mut sum = 0.0f32;
     let samples_per_step = (sr * 60.0 / (130.0 * 4.0)) as usize;
-    let tiers = [Tier::Ultra, Tier::High, Tier::Low, Tier::Ultra];
+    let tiers = [Tier::Best, Tier::Low, Tier::Draft, Tier::Best];
 
     for i in 0..num_samples {
         let step = (i / samples_per_step) % 16;
@@ -259,13 +259,13 @@ fn main() {
 
     match target_tier {
         Some(0) => {
-            run_tier("low", Tier::Low, secs, sr, seed);
+            run_tier("low", Tier::Draft, secs, sr, seed);
         }
         Some(1) => {
-            run_tier("high", Tier::High, secs, sr, seed);
+            run_tier("high", Tier::Low, secs, sr, seed);
         }
         Some(2) => {
-            run_tier("ultra", Tier::Ultra, secs, sr, seed);
+            run_tier("ultra", Tier::Best, secs, sr, seed);
         }
         Some(3) => {
             run_sweep(secs, sr, seed);
@@ -274,9 +274,9 @@ fn main() {
             run_sweep(secs, sr, seed);
         }
         _ => {
-            run_tier("low", Tier::Low, secs, sr, seed);
-            run_tier("high", Tier::High, secs, sr, seed);
-            run_tier("ultra", Tier::Ultra, secs, sr, seed);
+            run_tier("low", Tier::Draft, secs, sr, seed);
+            run_tier("high", Tier::Low, secs, sr, seed);
+            run_tier("ultra", Tier::Best, secs, sr, seed);
             run_sweep(secs, sr, seed);
         }
     }

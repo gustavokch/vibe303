@@ -24,7 +24,7 @@ fn test_reso_gain_comp_scaling() {
     let sr = 48000.0;
     let mut voice = Voice::new(sr);
     voice.update_clipper_params_immediate(common::bypassed_clipper());
-    voice.set_tier(Tier::Low);
+    voice.set_tier(Tier::Draft);
     voice.set_topology(CircuitTopology::Fun);
 
     // Setup base note: Note 36 (C2, ~65 Hz), high cutoff (1.0), gate on
@@ -99,7 +99,7 @@ fn test_reso_gain_comp_scaling() {
 fn test_reso_gain_comp_zero_at_zero_reso() {
     let sr = 48000.0;
     let mut voice = Voice::new(sr);
-    voice.set_tier(Tier::Low);
+    voice.set_tier(Tier::Draft);
     voice.set_topology(CircuitTopology::Fun);
 
     // When resonance is 0.0, reso_comp should have no effect (factor = 1.0 + comp * 0 = 1.0)

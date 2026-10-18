@@ -10,7 +10,7 @@ use plugin303::dsp::voice::Voice;
 fn ultra_voice_is_finite_and_bounded_under_sweep() {
     let sr = 48_000.0;
     let mut v = Voice::new(sr);
-    v.set_tier_immediate(Tier::Ultra);
+    v.set_tier_immediate(Tier::Best);
     v.set_reso(0.85);
     v.note_on(45); // low note → many VCO periods over the render
 
