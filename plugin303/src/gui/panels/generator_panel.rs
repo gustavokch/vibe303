@@ -36,6 +36,43 @@ fn grid_drag<'a>(ui: &mut Ui, drag: DragValue<'a>) {
     ui.add_sized(vec2(G_FIELD_W, G_ROW_H), drag);
 }
 
+/// Read-only numeric field cell: a field that shows live information but
+/// cannot be edited, in the same chrome as the editable `grid_drag` fields
+/// beside it.
+///
+/// Painted rather than delegated to a disabled `DragValue` (round-19 issue 1).
+/// Wrapping one in `add_enabled_ui(false, ..)` applied egui's
+/// fade-to-background on top of the widget's own greys and sank the value to
+/// 2.84:1 with a 1.68:1 border — below even the 3:1 floor this project allows
+/// deliberately disabled content. The value is not disabled content; it is the
+/// generator's current seed, so it renders at full strength. Painting also
+/// keeps the field honestly inert: an enabled `DragValue` bound to a local
+/// would drag under the cursor and snap back on the next frame.
+fn grid_readout(ui: &mut Ui, text: &str) {
+    let (rect, _) = ui.allocate_exact_size(vec2(G_FIELD_W, G_ROW_H), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        // Read the same style slots the live DragValue fields read
+        // (`widgets.inactive`), so this painted cell tracks the shared field
+        // chrome instead of hard-coding tokens that can drift from it.
+        let visuals = ui.style().visuals.widgets.inactive;
+        let painter = ui.painter();
+        painter.rect_filled(rect, CornerRadius::same(2), visuals.bg_fill);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(2),
+            visuals.bg_stroke,
+            nih_plug_egui::egui::StrokeKind::Inside,
+        );
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            text,
+            FontId::monospace(9.0),
+            theme::TEXT_PRIMARY,
+        );
+    }
+}
+
 fn fmt_octave(v: f64) -> String {
     let iv = v as i32;
     if iv == 0 {
@@ -360,11 +397,14 @@ pub fn render_generator_panel(
 
                         ui.add_space(2.0);
 
-                        ui.checkbox(
+                        // One checkbox convention (round-19 issue 3): the
+                        // label carries the checked state, not the box. This
+                        // site used to hard-code TEXT_SECONDARY and so looked
+                        // identical on and off.
+                        crate::gui::widgets::checkbox::checkbox(
+                            ui,
                             &mut gen_params.slide_chaining,
-                            nih_plug_egui::egui::RichText::new("SLD CHAIN")
-                                .font(FontId::proportional(8.5))
-                                .color(theme::TEXT_SECONDARY),
+                            "SLD CHAIN",
                         );
                     });
 
@@ -397,14 +437,8 @@ pub fn render_generator_panel(
                         // Seed readout as a flush-left grid row with bordered field chrome (round-18 issue 8)
                         ui.horizontal(|ui| {
                             grid_label(ui, "SEED:", G_LBL_W);
-                            let mut seed_val = (gen_params.seed % 10000) as i32;
-                            ui.add_enabled_ui(false, |ui| {
-                                ui.add_sized(
-                                    vec2(G_FIELD_W, G_ROW_H),
-                                    DragValue::new(&mut seed_val)
-                                        .custom_formatter(|v, _| format!("{:04}", v as i32)),
-                                );
-                            });
+                            let seed_val = (gen_params.seed % 10000) as i32;
+                            grid_readout(ui, &format!("{:04}", seed_val));
                         });
 
                         ui.add_space(4.0);

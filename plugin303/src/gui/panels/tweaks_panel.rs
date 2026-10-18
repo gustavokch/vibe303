@@ -7,23 +7,50 @@ use crate::gui::theme;
 use crate::gui::widgets::Knob303;
 use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
 
-/// Horizontal geometry of the 4-column tweaks row (round-11 item 10).
+/// Horizontal geometry of the 4-column tweaks row (round-11 item 10,
+/// re-cut for round-19 issue 4).
 ///
 /// Columns are placed on absolute rects instead of flowing through the parent
 /// cursor: egui re-advances the horizontal cursor with each column's *actual*
 /// content height, which tilted every following column a few px lower. With
-/// fixed rects all four columns share one top edge, and the two knobs share a
-/// baseline by construction (both start KNOB_TOP below it).
+/// fixed rects all four columns share one top edge.
+///
+/// The four columns are now **equal width**, cut from the panel's content
+/// width, with the separators sitting exactly on the column boundaries. They
+/// used to be content-hugging (232/64/108/140 logical) separated by equal
+/// gaps, which put the dividers at unequal spacings — the `panels` probe read
+/// the column run as 735/370/460/1126 physical px and the widest void as an
+/// 870 px band. Equal columns with centred content split each column's
+/// leftover in half on either side, so no single void can exceed half a
+/// column. The achievable bound, measured on capture (round-19 review
+/// follow-up): `col_w` is 332.75 logical (665.5 physical) and the DRIFT knob
+/// — the narrowest column's whole content — paints only ~45 logical wide, so
+/// its voids measure ≈ 290 physical (297 by strict all-background columns).
+/// The round-19 acceptance band of 80 px physical was unreachable with this
+/// content without re-weighting columns, so the criterion is "no void wider
+/// than half a column", recorded here as ≈ 300 physical.
 const NUM_COLS: usize = 4;
-/// Content-hugging column widths; the leftover panel width is split into equal
-/// side gaps so no column shows a one-sided trailing void.
-const COL_W: [f32; NUM_COLS] = [232.0, 64.0, 108.0, 140.0];
 const SEPARATOR_W: f32 = 1.0;
+/// Widest content in any column, in logical px (the TOL/AGE/NOISE cluster).
+/// The floor a column may not go below without clipping; held by the test
+/// below. Test-only since the runtime `debug_assert` was dropped: `qa_zoom`
+/// only ever widens the column, so nothing at runtime can violate the floor.
+#[cfg(test)]
+const WIDEST_COL_CONTENT_W: f32 = 232.0;
 /// One row height: seed row (20) + 2 gap + knob (60) = 82.
 const ROW_H: f32 = 82.0;
-/// Knob columns start their knob this far below the row top, so DRIFT and
-/// RECAL share a vertical centre line without a placeholder row.
-const KNOB_TOP: f32 = 22.0;
+/// Panel content width at the full 1366-logical window: CentralPanel margin
+/// (10 each side) + this frame's inner margin (6 each side). Test-only;
+/// the renderer measures `ui.available_width()` live.
+#[cfg(test)]
+const PANEL_INNER_W: f32 = 1366.0 - 2.0 * 10.0 - 2.0 * 6.0; // 1334.0
+
+/// Equal column width for the tweaks row: content width minus the three 1-px
+/// separators, over four columns. Shared by the renderer and the tests so the
+/// arithmetic cannot drift between them.
+fn column_width(total_w: f32) -> f32 {
+    (total_w - (NUM_COLS as f32 - 1.0) * SEPARATOR_W) / NUM_COLS as f32
+}
 
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
@@ -41,45 +68,70 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.set_min_height(95.0);
-            ui.add_enabled_ui(!is_accurate, |ui| {
-                ui.vertical(|ui| {
+            ui.vertical(|ui| {
+                // Title row, outside `add_enabled_ui` on purpose. It is panel
+                // chrome rather than a control, and the bypass reason beside
+                // it has to stay fully legible (>= 4.5:1) while the controls
+                // below it dim. Keeping the title at full strength is a
+                // deliberate deviation from round-14 issue 3 (which dimmed it
+                // with the panel): chrome is not a control, and in ACCURATE
+                // the title carries the bypass warning beside it.
+                ui.horizontal(|ui| {
                     ui.label(
                         nih_plug_egui::egui::RichText::new("ANALOG CHARACTER & TWEAKS")
                             .font(FontId::proportional(10.0))
                             .strong()
                             .color(if is_accurate {
-                                // Faded ACCENT_ORANGE measures ≈2.5:1; the
-                                // secondary token survives the fade at ≈3.5:1
-                                // (round-14 issue 3).
+                                // ACCURATE state: the secondary token, beside
+                                // the bypass reason below. Enabled state:
+                                // ACCENT_ORANGE. The title never rides the
+                                // disabled fade (see above).
                                 theme::TEXT_SECONDARY
                             } else {
                                 theme::ACCENT_ORANGE
                             }),
                     );
 
-                    ui.add_space(3.0);
+                    // Round-19 issue 5: ACCURATE bypasses this panel and used
+                    // to say so nowhere — it only dimmed, while the souped
+                    // panel got a full banner. The reason shares the title row
+                    // so the panel's height does not change, and it lands in
+                    // horizontal space the row was wasting anyway.
+                    if is_accurate {
+                        ui.add_space(10.0);
+                        ui.label(
+                            nih_plug_egui::egui::RichText::new(
+                                "Analog character bypassed in ACCURATE mode",
+                            )
+                            .font(FontId::proportional(8.5))
+                            .color(theme::TEXT_SECONDARY),
+                        );
+                    }
+                });
 
-                    // 4 columns on one absolute baseline (round-11 item 10).
+                ui.add_enabled_ui(!is_accurate, |ui| {
+                    // 4 equal columns on one absolute baseline.
                     let total_w = ui.available_width();
-                    let sep_run_w = 3.0 * SEPARATOR_W;
-                    let content_w: f32 = COL_W.iter().sum();
-                    // 2*NUM_COLS equal gaps: one outside each outer column and
-                    // one on each side of every separator, so mid-gaps read as
-                    // gap + divider + gap and no column hugs a divider.
-                    let gap = (total_w - content_w - sep_run_w) / ((2 * NUM_COLS) as f32);
+                    let col_w = column_width(total_w);
+                    // No runtime assert on the floor: the test below holds the
+                    // 100 % case, and `qa_zoom` 0.75 only ever widens the
+                    // logical column (mod.rs), so the assert could not fire.
                     let row_top = ui.cursor().top();
                     let painter = ui.painter().clone();
+                    let left = ui.cursor().left();
 
-                    let mut x = ui.cursor().left() + gap;
-                    for (col, &w) in COL_W.iter().enumerate() {
+                    for col in 0..NUM_COLS {
+                        let x = left + col as f32 * (col_w + SEPARATOR_W);
                         let col_rect = nih_plug_egui::egui::Rect::from_min_size(
                             nih_plug_egui::egui::pos2(x, row_top),
-                            nih_plug_egui::egui::vec2(w, ROW_H),
+                            nih_plug_egui::egui::vec2(col_w, ROW_H),
                         );
                         if col > 0 {
                             // Painted divider (not a widget): zero layout side
-                            // effects, spans the full row height.
-                            let mid = x - gap * 0.5;
+                            // effects, spans the full row height. It sits on
+                            // the column boundary, so the probe reads four
+                            // equal columns.
+                            let mid = x - SEPARATOR_W * 0.5;
                             painter.line_segment(
                                 [
                                     nih_plug_egui::egui::pos2(mid, row_top + 6.0),
@@ -215,9 +267,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 }
                                             });
                                         }
-                                        // Column 2: Drift knob on the shared baseline
+                                        // Column 2: Drift knob, top-aligned
                                         1 => {
-                                            ui.add_space(KNOB_TOP);
                                             ui.add(Knob303::new(
                                                 &params.comp_drift,
                                                 setter,
@@ -225,7 +276,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 theme::KNOB_RADIUS_SMALL,
                                             ));
                                         }
-                                        // Column 3: Seed row + Recal knob on the same baseline
+                                        // Column 3: Seed row + Recal knob, top-aligned
                                         2 => {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
@@ -255,12 +306,19 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 }
                                             });
 
-                                            // Exact baseline: pad whatever the seed row
-                                            // actually measured up to KNOB_TOP, so RECAL
-                                            // shares DRIFT's vertical centre to the pixel
-                                            // (round-11 item 10).
-                                            let used = ui.cursor().top() - col_rect.top();
-                                            ui.add_space(KNOB_TOP - used);
+                                            // Round-19 issue 4 retires the
+                                            // shared knob baseline of round-11
+                                            // item 10. That rule pushed DRIFT
+                                            // and RECAL 22 px below the row
+                                            // top to line their centres up,
+                                            // which is exactly the mixed
+                                            // vertical alignment the audit
+                                            // flagged: two columns started at
+                                            // the row top and two started
+                                            // below it. Every column now
+                                            // top-aligns, so RECAL simply
+                                            // follows its seed row.
+                                            ui.add_space(2.0);
 
                                             ui.add(Knob303::new(
                                                 &params.recalibration_scale,
@@ -356,13 +414,9 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 });
                             },
                         );
-                        x += w + gap;
-                        if col < NUM_COLS - 1 {
-                            x += SEPARATOR_W + gap;
-                        }
                     }
                     ui.advance_cursor_after_rect(nih_plug_egui::egui::Rect::from_min_size(
-                        nih_plug_egui::egui::pos2(ui.cursor().left(), row_top),
+                        nih_plug_egui::egui::pos2(left, row_top),
                         nih_plug_egui::egui::vec2(total_w, ROW_H),
                     ));
                 });
@@ -375,29 +429,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tweaks_row_fits_panel_with_positive_gaps() {
-        // CentralPanel inner margin (10) + tweaks frame inner margin (6), both sides
-        let avail_w = 1366.0 - 2.0 * 10.0 - 2.0 * 6.0; // 1334.0
-        let content_w: f32 = COL_W.iter().sum();
-        let gap = (avail_w - content_w - 3.0 * SEPARATOR_W) / (2.0 * NUM_COLS as f32);
-        assert!(gap > 24.0, "the side gaps must stay real gaps, got {gap}");
-        // The row must fit inside the panel: outer gap + content + gaps + separators.
-        let total_used = content_w + 3.0 * SEPARATOR_W + 2.0 * NUM_COLS as f32 * gap;
-        assert!(total_used <= avail_w + 0.5);
+    fn tweaks_columns_are_equal_and_fit_their_content() {
+        let avail_w = PANEL_INNER_W;
+        let col_w = column_width(avail_w);
+
+        // Round-19 issue 4: four equal columns, and they must still be wide
+        // enough for the widest cluster.
+        assert!(
+            col_w >= WIDEST_COL_CONTENT_W,
+            "column {col_w} is narrower than its widest content {WIDEST_COL_CONTENT_W}"
+        );
+
+        // The row fits the panel exactly: four columns plus three separators.
+        let total_used = col_w * NUM_COLS as f32 + (NUM_COLS as f32 - 1.0) * SEPARATOR_W;
+        assert!((total_used - avail_w).abs() <= 0.5);
     }
 
     #[test]
-    fn tweaks_knob_columns_share_baseline() {
-        // Both knob columns place their knob KNOB_TOP below the row top; the
-        // seed row (20) + spacing (2) above RECAL adds up to the same offset.
-        assert_eq!(20.0 + 2.0, KNOB_TOP);
+    fn tweaks_dividers_sit_on_the_column_boundaries() {
+        // The `panels` probe reads column widths as the distance between
+        // dividers, so equal columns are only equal if the dividers land on
+        // the boundaries. Walk the same arithmetic the renderer uses.
+        let avail_w = PANEL_INNER_W;
+        let col_w = column_width(avail_w);
+
+        let mut edges = vec![0.0_f32];
+        for col in 1..NUM_COLS {
+            edges.push(col as f32 * (col_w + SEPARATOR_W) - SEPARATOR_W * 0.5);
+        }
+        edges.push(avail_w);
+
+        let widths: Vec<f32> = edges.windows(2).map(|w| w[1] - w[0]).collect();
+        let (min, max) = widths
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), w| (lo.min(*w), hi.max(*w)));
+        // 8 px physical = 4 logical px is the round-19 acceptance band.
+        assert!(
+            max - min <= 4.0,
+            "columns must measure equal within 4 logical px, got {widths:?}"
+        );
     }
 
     #[test]
     fn tweaks_row_height_fits_knob() {
+        // Every column top-aligns now, so the tallest column is the seed row
+        // (20) + its gap (2) + the knob (60).
         assert!(
-            ROW_H >= KNOB_TOP + 60.0,
-            "row must fit knob below baseline offset"
+            ROW_H >= 20.0 + 2.0 + 60.0,
+            "row must fit the seed row and the knob below it"
         );
     }
 }

@@ -1,7 +1,7 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    epaint::Shape, pos2, style::WidgetVisuals, vec2, AboveOrBelow, Align, Button, ComboBox,
-    CornerRadius, DragValue, FontId, Frame, Layout, Margin, Rect, Sense, Stroke, StrokeKind, Ui,
+    epaint::Shape, style::WidgetVisuals, vec2, AboveOrBelow, Align, Button, ComboBox, CornerRadius,
+    DragValue, FontId, Frame, Layout, Margin, Rect, Sense, Stroke, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -56,11 +56,20 @@ const TRANSPORT_ROW_MIN_H: f32 = 24.0;
 /// reach the panel's right inner margin (round-11 items 4 and 21).
 const TRANSPORT_SLOT_W: f32 = 138.0;
 /// Vertical chrome subtracted from the pre-frame available height so the
-/// frame bottom reaches the window bottom without overflowing it:
-/// frame inner margins (top 4 + bottom 12 = 16) + frame stroke (1) + trailing
-/// item spacing (4) = 21.0. The extra bottom margin matches the visual padding
-/// above the first step row (round-11 item 23).
-const FRAME_VERT_CHROME_PX: f32 = 21.0;
+/// frame bottom lands on the bottom outer margin (20 physical px, matching
+/// the other three sides): just a 2-logical breathing gap above the chassis
+/// content edge. The frame's own inner margins live inside its height, so
+/// they do not subtract here — the old 21.0 (margins 16 + stroke 1 +
+/// trailing spacing 4) pushed the frame bottom 42 physical px above the
+/// content edge, which read as an oversized bottom margin once the floor
+/// stopped dominating (round-19 issue 8, fixed in the review follow-up).
+///
+/// The fix funds itself from the panels above: the souped drawer repack
+/// (SlideSwitch height 24, separator spacing 2, knob row 63) freed ~13
+/// logical px, so at 1366x992 `avail_h - FRAME_VERT_CHROME_PX` (~284.5)
+/// now exceeds the grid floor (`GRID_TOTAL_H + 16` = 284) and the frame
+/// bottom border renders inside the window.
+const FRAME_VERT_CHROME_PX: f32 = 2.0;
 /// `add_space(8)` + separator widget (~7 with its margins) + `add_space(8)`
 /// between grid and transport column. Measured on-canvas: the run costs 23.1 px
 /// with item_spacing.x = 0 (round-11 item 4 fix).
@@ -93,6 +102,17 @@ fn frame_min_height(avail_h: f32) -> f32 {
 fn transport_row_height(avail_h: f32) -> f32 {
     ((avail_h - TRANSPORT_TITLE_H - TRANSPORT_ROW_COUNT * TRANSPORT_ROW_GAP) / TRANSPORT_ROW_COUNT)
         .max(TRANSPORT_ROW_MIN_H)
+}
+
+/// Per-slot setup shared by the transport column's `allocate_ui_with_layout`
+/// slots: the standard 4-px internal gutter and one height for every control
+/// in the slot via `interact_size.y = row_h`, so a slot cannot size itself off
+/// egui's default `interact_size` and measure against its row (round-14
+/// issue 5). Row C's BPM/LEN steppers deliberately keep a tighter 3.0 gutter
+/// and override `item_spacing` after calling this (round-11 item 24).
+fn begin_transport_slot(ui: &mut Ui, row_h: f32) {
+    ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+    ui.spacing_mut().interact_size.y = row_h;
 }
 
 /// Snap a dragged BPM value to a whole number so the `{:.0}` display always
@@ -130,7 +150,18 @@ pub fn render_sequencer_and_transport(
 
     let frame_avail_h = ui.available_height();
 
-    Frame::new()
+    // The frame gets an explicit height: a bare `Frame::show(ui, ..)` takes
+    // the whole remaining available rect and, because the transport column
+    // stretches to fill it, the painted frame consistently overshoots the
+    // content bottom by ~8.5 logical px and its bottom stroke lands outside
+    // the captured window (round-19 issue 8). Allocating the frame at
+    // `frame_min_height` pins the bottom border to a deterministic position.
+    let frame_h = frame_min_height(frame_avail_h);
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), frame_h),
+        Layout::top_down(Align::LEFT),
+        |ui| {
+            Frame::new()
         .fill(theme::PANEL_BG)
         .stroke(theme::border_stroke())
         .corner_radius(CornerRadius::same(4))
@@ -142,7 +173,6 @@ pub fn render_sequencer_and_transport(
         })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height(frame_min_height(frame_avail_h));
 
             // Grid geometry: 2 rows x 8 columns; transport column on the right
             let (cell_w, clamped) = grid_cell_width(ui.available_width());
@@ -286,7 +316,7 @@ pub fn render_sequencer_and_transport(
                             vec2(TRANSPORT_SLOT_W, row_h),
                             Layout::left_to_right(Align::Center),
                             |ui| {
-                                ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                                begin_transport_slot(ui, row_h);
 
                                 // MIDI OUT button
                                 let midi_val = params.midi_out.value();
@@ -402,6 +432,9 @@ pub fn render_sequencer_and_transport(
                             vec2(TRANSPORT_SLOT_W, row_h),
                             Layout::left_to_right(Align::Center),
                             |ui| {
+                                begin_transport_slot(ui, row_h);
+                                // Tighter gutter between the BPM steppers
+                                // (round-11 item 24).
                                 ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
                                 ui.label(
                                     nih_plug_egui::egui::RichText::new("BPM:")
@@ -473,6 +506,7 @@ pub fn render_sequencer_and_transport(
                             vec2(TRANSPORT_SLOT_W, row_h),
                             Layout::left_to_right(Align::Center),
                             |ui| {
+                                begin_transport_slot(ui, row_h);
                                 ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
                                 ui.label(
                                     nih_plug_egui::egui::RichText::new("LEN:")
@@ -505,20 +539,24 @@ pub fn render_sequencer_and_transport(
                     // column has no dead band below it (round-13 issue 4).
                     // Two slots on the shared grid keep the row's right edge on
                     // the column's right inner margin.
-                    ui.allocate_ui_with_layout(
-                        vec2(ui.available_width(), row_h),
-                        Layout::left_to_right(Align::Center),
-                        |ui| {
-                            ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                            ui.spacing_mut().button_padding = vec2(4.0, 3.0);
+                    //
+                    // Round-19 issue 2: built with the same `ui.horizontal` +
+                    // two-slot construction as rows B and C, instead of its own
+                    // `allocate_ui_with_layout` outer, so its slot edges land
+                    // on the same grid. The two combos also take `row_h` now —
+                    // they used to size themselves off `interact_size` and
+                    // measured 75 px physical against CLEAR's 175 px in the
+                    // same row.
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                        ui.spacing_mut().button_padding = vec2(4.0, 3.0);
 
-                            ui.allocate_ui_with_layout(
-                                vec2(TRANSPORT_SLOT_W, row_h),
-                                Layout::left_to_right(Align::Center),
-                                |ui| {
-                                    ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-
-                                    let tb_val = params.seq_timebase.value();
+                        ui.allocate_ui_with_layout(
+                            vec2(TRANSPORT_SLOT_W, row_h),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                begin_transport_slot(ui, row_h);
+                                let tb_val = params.seq_timebase.value();
                                     ComboBox::from_id_salt("seq_tb_combo")
                                         .icon(paint_combobox_down_arrow)
                                         // Caption class (8.5 pt) like every
@@ -581,7 +619,11 @@ pub fn render_sequencer_and_transport(
                                             })
                                             .font(FontId::proportional(8.5)),
                                         )
-                                        .width(80.0)
+                                        // 48 + 4 gap + 86 fills the 138-px slot
+                                        // exactly, so Direct's right edge lands
+                                        // on the column boundary rows 1-4 use
+                                        // (round-19 issue 2).
+                                        .width(86.0)
                                         .show_ui(ui, |ui| {
                                             if ui
                                                 .selectable_label(
@@ -623,7 +665,7 @@ pub fn render_sequencer_and_transport(
                                 vec2(TRANSPORT_SLOT_W, row_h),
                                 Layout::left_to_right(Align::Center),
                                 |ui| {
-                                    ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                                    begin_transport_slot(ui, row_h);
 
                                     let mut jitter_val = params.seq_jitter.value();
                                     let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(
@@ -639,32 +681,21 @@ pub fn render_sequencer_and_transport(
                                         setter.end_set_parameter(&params.seq_jitter);
                                     }
                                     if ui.is_rect_visible(jit_hit_rect) {
-                                        let p = ui.painter();
-                                        // 14pt (28px physical) filled square matching other checkboxes
-                                        let box_rect = nih_plug_egui::egui::Rect::from_center_size(
-                                            pos2(jit_hit_rect.left() + 7.0, jit_hit_rect.center().y),
-                                            vec2(14.0, 14.0),
+                                        // One checkbox convention (round-19
+                                        // issue 3). This site keeps its own
+                                        // hit rect — it sits in a
+                                        // hand-measured transport slot — but
+                                        // the marks come from the shared
+                                        // painter, so it can no longer drift
+                                        // from ADV ENV / LINK / BYPASS /
+                                        // SLD CHAIN. It used to invert the box
+                                        // to an orange fill with a dark glyph.
+                                        crate::gui::widgets::checkbox::paint_checkbox(
+                                            ui,
+                                            jit_hit_rect,
+                                            jitter_val,
+                                            "JITTER",
                                         );
-                                        p.rect_filled(box_rect, CornerRadius::same(2), if jitter_val { theme::ACCENT_ORANGE } else { theme::SURFACE_ELEVATED });
-                                        p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.0_f32, if jitter_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }), StrokeKind::Inside);
-                                        if jitter_val {
-                                            // Orange checkmark
-                                            p.line_segment(
-                                                [
-                                                    pos2(box_rect.left() + 3.0, box_rect.center().y),
-                                                    pos2(box_rect.left() + 6.0, box_rect.bottom() - 3.5),
-                                                ],
-                                                Stroke::new(1.5_f32, theme::TEXT_ON_ACCENT),
-                                            );
-                                            p.line_segment(
-                                                [
-                                                    pos2(box_rect.left() + 6.0, box_rect.bottom() - 3.5),
-                                                    pos2(box_rect.right() - 3.0, box_rect.top() + 3.5),
-                                                ],
-                                                Stroke::new(1.5_f32, theme::TEXT_ON_ACCENT),
-                                            );
-                                        }
-                                        p.text(pos2(jit_hit_rect.left() + 18.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JITTER", FontId::proportional(8.5), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY });
                                     }
 
                                     let clear_btn = Button::new(
@@ -676,12 +707,12 @@ pub fn render_sequencer_and_transport(
                                     .fill(theme::SURFACE_ELEVATED)
                                     .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
                                     // CLEAR fills the slot remainder after
-                                    // JITTER (52) and the 4-px gap, plus the
-                                    // 3 px the centered slot layout leaves on
-                                    // the right, so Row D's right edge lands
-                                    // on the shared column edge like the other
-                                    // rows (round-13 issue 4).
-                                    .min_size(vec2(TRANSPORT_SLOT_W - JIT_HIT_W - 1.0, row_h))
+                                    // JITTER and the 4-px gap, so Row D's
+                                    // right edge lands on the shared column
+                                    // edge like the other rows (round-13
+                                    // issue 4, width corrected in round-19
+                                    // issue 2).
+                                    .min_size(vec2(TRANSPORT_SLOT_W - JIT_HIT_W - 4.0, row_h))
                                     .corner_radius(CornerRadius::same(2));
 
                                     if ui.add(clear_btn).on_hover_text("Reset all steps to default C3 notes").clicked() {
@@ -701,11 +732,12 @@ pub fn render_sequencer_and_transport(
                                     }
                                 },
                             );
-                        },
-                    );
+                    });
                 });
             });
         });
+        },
+    );
 }
 
 #[cfg(test)]
@@ -768,11 +800,16 @@ mod tests {
     #[test]
     fn row_d_clear_button_reaches_slot_right_edge() {
         // Row D's second slot is JITTER + gap + CLEAR; the CLEAR button fills
-        // the slot remainder so the row's right edge lands on the column's
-        // right inner margin.
-        let clear_w = TRANSPORT_SLOT_W - JIT_HIT_W - 6.0;
+        // the slot remainder exactly, so the row's right edge lands on the
+        // same column edge rows 1-4 use.
+        //
+        // Round-19 issue 2: the slot's item_spacing is 4, not the 3 this test
+        // used to assume, so the old `- 1.0` width overshot the column edge by
+        // 7 physical px. Slot = JITTER + gap + CLEAR, with nothing left over.
+        let gap = 4.0;
+        let clear_w = TRANSPORT_SLOT_W - JIT_HIT_W - gap;
         assert!(clear_w >= 36.0, "CLEAR must keep a usable hit target");
-        assert_eq!(JIT_HIT_W + 3.0 + clear_w, TRANSPORT_SLOT_W - 3.0);
+        assert_eq!(JIT_HIT_W + gap + clear_w, TRANSPORT_SLOT_W);
     }
 
     #[test]

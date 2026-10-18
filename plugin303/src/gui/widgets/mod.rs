@@ -1,3 +1,4 @@
+pub mod checkbox;
 pub mod fader;
 pub mod knob;
 pub mod led;
