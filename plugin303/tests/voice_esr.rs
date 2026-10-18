@@ -1,9 +1,9 @@
-//! Fidelity gate: the Low/TPT voice vs a committed whole-voice SPICE gold waveform.
+//! Fidelity gate: the Draft/TPT voice vs a committed whole-voice SPICE gold waveform.
 //! Lag-aligned, RMS-normalised ESR (the Rust port of `eval/303/esr.py::metrics`).
 //!
-//! Per the F2.4 finding the Low/TPT gap is topological (~+2.5 dB ESR) and cannot be
+//! Per the F2.4 finding the Draft/TPT gap is topological (~+2.5 dB ESR) and cannot be
 //! calibrated toward SPICE, so this is a REGRESSION GUARD on the TPT path, not a
-//! fidelity target. The WDF tiers (F3/F4) get their own, far tighter gates.
+//! fidelity target. The nodal tiers (F3/F4) get their own, far tighter gates.
 
 mod common;
 
@@ -72,7 +72,7 @@ fn esr_db(reference: &[f32], model: &[f32]) -> f32 {
 }
 
 #[test]
-fn low_voice_esr_within_budget() {
+fn draft_voice_esr_within_budget() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let sidecar = std::fs::read_to_string(gold_dir().join("voice_A2_mid.json")).unwrap();
     let sc: serde_json::Value = serde_json::from_str(&sidecar).unwrap();
@@ -93,6 +93,6 @@ fn low_voice_esr_within_budget() {
     let e = esr_db(&gold, &model); // measured ~2.44 dB at F2.6
     assert!(
         e <= BUDGET_DB,
-        "Low voice ESR {e:.2} dB exceeds budget {BUDGET_DB} dB (regressed?)"
+        "Draft voice ESR {e:.2} dB exceeds budget {BUDGET_DB} dB (regressed?)"
     );
 }

@@ -79,34 +79,34 @@ fn voice_realized_hz(tier: Tier, topology: CircuitTopology, note: u8) -> f32 {
 fn test_pitch_parity_accurate() {
     // Under Accurate topology, playable range is 24..=72.
     // Each tier must realize the target MIDI pitch within tolerance.
-    // Low/High use polyBLEP + midi_to_freq() directly → tight budget.
-    // Ultra uses the circuit VCO via the per-note secant LUT → up to 1%
+    // Draft/Low use polyBLEP + midi_to_freq() directly → tight budget.
+    // Best uses the circuit VCO via the per-note secant LUT → up to 1%
     // Under Accurate topology, the circuit VCO range spans the authentic 3-octave TB-303 keyboard (notes 24 to 60).
     for note in [24u8, 36, 48, 60] {
         let target = 440.0f32 * 2.0f32.powf((note as f32 - 69.0) / 12.0);
-        let f_ultra = voice_realized_hz(Tier::Best, CircuitTopology::Accurate, note);
-        let f_low = voice_realized_hz(Tier::Draft, CircuitTopology::Accurate, note);
-        let f_high = voice_realized_hz(Tier::Low, CircuitTopology::Accurate, note);
+        let f_best = voice_realized_hz(Tier::Best, CircuitTopology::Accurate, note);
+        let f_draft = voice_realized_hz(Tier::Draft, CircuitTopology::Accurate, note);
+        let f_low = voice_realized_hz(Tier::Low, CircuitTopology::Accurate, note);
 
-        let err_low = (f_low / f_ultra - 1.0).abs();
-        let err_high = (f_high / f_ultra - 1.0).abs();
-        let dev_ultra = (f_ultra / target - 1.0).abs();
+        let err_draft = (f_draft / f_best - 1.0).abs();
+        let err_low = (f_low / f_best - 1.0).abs();
+        let dev_best = (f_best / target - 1.0).abs();
 
         println!(
-            "Accurate Note {}: target={:.2} Hz, Ultra={:.2} Hz ({:.3}%), Low={:.2} Hz, High={:.2} Hz",
-            note, target, f_ultra, dev_ultra * 100.0, f_low, f_high
+            "Accurate Note {}: target={:.2} Hz, Best={:.2} Hz ({:.3}%), Draft={:.2} Hz, Low={:.2} Hz",
+            note, target, f_best, dev_best * 100.0, f_draft, f_low
         );
 
+        assert!(
+            err_draft < 0.002,
+            "Draft pitch mismatch ({:.3}%) at note {}",
+            err_draft * 100.0,
+            note
+        );
         assert!(
             err_low < 0.002,
             "Low pitch mismatch ({:.3}%) at note {}",
             err_low * 100.0,
-            note
-        );
-        assert!(
-            err_high < 0.002,
-            "High pitch mismatch ({:.3}%) at note {}",
-            err_high * 100.0,
             note
         );
     }
@@ -118,36 +118,36 @@ fn test_pitch_parity_fun() {
     // Each tier must realize the target MIDI pitch within tolerance.
     for note in [24u8, 48, 72, 96, 108] {
         let target = 440.0f32 * 2.0f32.powf((note as f32 - 69.0) / 12.0);
-        let f_ultra = voice_realized_hz(Tier::Best, CircuitTopology::Fun, note);
-        let f_low = voice_realized_hz(Tier::Draft, CircuitTopology::Fun, note);
-        let f_high = voice_realized_hz(Tier::Low, CircuitTopology::Fun, note);
+        let f_best = voice_realized_hz(Tier::Best, CircuitTopology::Fun, note);
+        let f_draft = voice_realized_hz(Tier::Draft, CircuitTopology::Fun, note);
+        let f_low = voice_realized_hz(Tier::Low, CircuitTopology::Fun, note);
 
-        let err_ultra = (f_ultra / target - 1.0).abs();
+        let err_best = (f_best / target - 1.0).abs();
+        let err_draft = (f_draft / target - 1.0).abs();
         let err_low = (f_low / target - 1.0).abs();
-        let err_high = (f_high / target - 1.0).abs();
 
         println!(
-            "Fun Note {}: target={:.2} Hz, Ultra={:.2} Hz ({:.3}%), Low={:.2} Hz ({:.3}%), High={:.2} Hz ({:.3}%)",
-            note, target, f_ultra, err_ultra * 100.0, f_low, err_low * 100.0, f_high, err_high * 100.0
+            "Fun Note {}: target={:.2} Hz, Best={:.2} Hz ({:.3}%), Draft={:.2} Hz ({:.3}%), Low={:.2} Hz ({:.3}%)",
+            note, target, f_best, err_best * 100.0, f_draft, err_draft * 100.0, f_low, err_low * 100.0
         );
 
+        assert!(
+            err_draft < 0.002,
+            "Draft pitch mismatch ({:.3}%) at note {}",
+            err_draft * 100.0,
+            note
+        );
         assert!(
             err_low < 0.002,
             "Low pitch mismatch ({:.3}%) at note {}",
             err_low * 100.0,
             note
         );
-        assert!(
-            err_high < 0.002,
-            "High pitch mismatch ({:.3}%) at note {}",
-            err_high * 100.0,
-            note
-        );
         if note <= 72 {
             assert!(
-                err_ultra < 0.01,
-                "Ultra pitch mismatch ({:.3}%) at note {}",
-                err_ultra * 100.0,
+                err_best < 0.01,
+                "Best pitch mismatch ({:.3}%) at note {}",
+                err_best * 100.0,
                 note
             );
         }
@@ -178,53 +178,53 @@ fn test_voicing_parity_sweeps() {
     let reso_knob = 0.65;
     let len = 48000;
 
-    let pcm_ultra = render_sweep(Tier::Best, note, cutoff_knob, reso_knob, len);
-    let pcm_high = render_sweep(Tier::Low, note, cutoff_knob, reso_knob, len);
-    let pcm_low = render_sweep(Tier::Draft, note, cutoff_knob, reso_knob, len);
+    let pcm_best = render_sweep(Tier::Best, note, cutoff_knob, reso_knob, len);
+    let pcm_low = render_sweep(Tier::Low, note, cutoff_knob, reso_knob, len);
+    let pcm_draft = render_sweep(Tier::Draft, note, cutoff_knob, reso_knob, len);
 
-    let (lsd_high, corr_high) = spectral_match(&pcm_ultra, &pcm_high, SR);
-    let (lsd_low, corr_low) = spectral_match(&pcm_ultra, &pcm_low, SR);
+    let (lsd_low, corr_low) = spectral_match(&pcm_best, &pcm_low, SR);
+    let (lsd_draft, corr_draft) = spectral_match(&pcm_best, &pcm_draft, SR);
 
     println!(
-        "High vs Ultra: LSD = {:.2} dB, corr = {:.3}",
-        lsd_high, corr_high
-    );
-    println!(
-        "Low vs Ultra: LSD = {:.2} dB, corr = {:.3}",
+        "Low vs Best: LSD = {:.2} dB, corr = {:.3}",
         lsd_low, corr_low
     );
+    println!(
+        "Draft vs Best: LSD = {:.2} dB, corr = {:.3}",
+        lsd_draft, corr_draft
+    );
 
-    // High vs Ultra target: LSD <= 17.0 dB, corr >= 0.975
+    // Low vs Best target: LSD <= 17.0 dB, corr >= 0.975
     // (LSD budget raised from 15.0: two changes shifted the measurement —
     //  dd55f98's DECAY knob remap speeds the default sweep (1515 ms -> 400 ms
     //  at knob 0.5), which widens inter-tier spectral divergence, and the
-    //  Ultra ladder now rebuilds at the Os4x rate in set_tier_immediate,
+    //  Best ladder now rebuilds at the Os4x rate in set_tier_immediate,
     //  restoring the pre-21b7307 filter response. Parity property intact:
     //  corr 0.993 at the new operating point. Margin intentionally tight
     //  (~1.4 dB over the measured operating point) to keep the parity
     //  property under active drift watch.)
     assert!(
-        lsd_high <= 17.0,
-        "High vs Ultra LSD ({:.2} dB) exceeds budget",
-        lsd_high
-    );
-    assert!(
-        corr_high >= 0.975,
-        "High vs Ultra corr ({:.3}) below budget",
-        corr_high
-    );
-
-    // Low vs Ultra target: LSD <= 42.0 dB, corr >= 0.94
-    // (LSD budget widened from 28.0: classic RC envelope path produces more
-    //  spectral divergence between tiers than the advanced MEG path)
-    assert!(
-        lsd_low <= 42.0,
-        "Low vs Ultra LSD ({:.2} dB) exceeds budget",
+        lsd_low <= 17.0,
+        "Low vs Best LSD ({:.2} dB) exceeds budget",
         lsd_low
     );
     assert!(
-        corr_low >= 0.94,
-        "Low vs Ultra corr ({:.3}) below budget",
+        corr_low >= 0.975,
+        "Low vs Best corr ({:.3}) below budget",
         corr_low
+    );
+
+    // Draft vs Best target: LSD <= 42.0 dB, corr >= 0.94
+    // (LSD budget widened from 28.0: classic RC envelope path produces more
+    //  spectral divergence between tiers than the advanced MEG path)
+    assert!(
+        lsd_draft <= 42.0,
+        "Draft vs Best LSD ({:.2} dB) exceeds budget",
+        lsd_draft
+    );
+    assert!(
+        corr_draft >= 0.94,
+        "Draft vs Best corr ({:.3}) below budget",
+        corr_draft
     );
 }

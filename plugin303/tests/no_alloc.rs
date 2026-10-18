@@ -49,10 +49,10 @@ fn voice_hot_path_is_alloc_free() {
 }
 
 #[test]
-fn ultra_voice_hot_path_is_alloc_free() {
+fn best_voice_hot_path_is_alloc_free() {
     ensure_lut_cache_warm();
     use plugin303::dsp::filter::Tier;
-    let mut voice = Voice::new(48_000.0); // full Ultra chain: VCO + 4× OS + nodal ladder
+    let mut voice = Voice::new(48_000.0); // full Best chain: VCO + 4× OS + nodal ladder
     voice.set_tier_immediate(Tier::Best);
     voice.set_cutoff(1_000.0);
     voice.set_reso(0.5);
@@ -71,15 +71,15 @@ fn ultra_voice_hot_path_is_alloc_free() {
     assert_eq!(
         violation_count(),
         0,
-        "Ultra voice.tick allocated on the audio path"
+        "Best voice.tick allocated on the audio path"
     );
 }
 
 #[test]
-fn high_voice_hot_path_is_alloc_free() {
+fn low_voice_hot_path_is_alloc_free() {
     ensure_lut_cache_warm();
     use plugin303::dsp::filter::Tier;
-    let mut voice = Voice::new(48_000.0); // High chain: polyBLEP saw + 2× OS + nodal ladder
+    let mut voice = Voice::new(48_000.0); // Low chain: polyBLEP saw + 2× OS + nodal ladder
     voice.set_tier(Tier::Low);
     voice.set_cutoff(1_000.0);
     voice.set_reso(0.5);
@@ -98,7 +98,7 @@ fn high_voice_hot_path_is_alloc_free() {
     assert_eq!(
         violation_count(),
         0,
-        "High voice.tick allocated on the audio path"
+        "Low voice.tick allocated on the audio path"
     );
 }
 
@@ -123,7 +123,7 @@ fn tier_crossfade_hot_path_is_alloc_free() {
     }
     reset_violation_count();
     assert_no_alloc(|| {
-        voice.set_tier(Tier::Best); // kicks off Low→Ultra crossfade
+        voice.set_tier(Tier::Best); // kicks off Draft→Best crossfade
         let mut acc = 0.0f32;
         for _ in 0..4_096 {
             acc += voice.tick();

@@ -71,22 +71,22 @@ fn switch_test(from: Tier, to: Tier) {
 }
 
 #[test]
-fn low_to_high_is_click_free() {
+fn draft_to_low_is_click_free() {
     switch_test(Tier::Draft, Tier::Low);
 }
 
 #[test]
-fn high_to_ultra_is_click_free() {
+fn low_to_best_is_click_free() {
     switch_test(Tier::Low, Tier::Best);
 }
 
 #[test]
-fn low_to_ultra_is_click_free() {
+fn draft_to_best_is_click_free() {
     switch_test(Tier::Draft, Tier::Best);
 }
 
 #[test]
-fn ultra_to_low_is_click_free() {
+fn best_to_draft_is_click_free() {
     switch_test(Tier::Best, Tier::Draft);
 }
 

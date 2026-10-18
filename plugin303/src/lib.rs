@@ -38,7 +38,7 @@ pub struct Plugin303 {
     /// Monophonic synth voice.
     voice: Voice,
     /// Last latency reported to the host (samples). Tracked so we only notify on
-    /// change — Ultra/High oversampling adds group delay the host must PDC.
+    /// change — Best/Low oversampling adds group delay the host must PDC.
     reported_latency: u32,
     /// GUI Editor state for window sizing and scale factor persistence.
     #[cfg(feature = "gui")]
@@ -272,7 +272,7 @@ impl Plugin for Plugin303 {
         self.current_sample_pos = 0;
         self.prev_transport_sample = None;
         // Re-apply the persisted tier immediately (no fade) — otherwise the voice
-        // would silently revert to Low and the next block would crossfade up to
+        // would silently revert to Draft and the next block would crossfade up to
         // the user's tier on every transport start / loop-jump.
         self.voice.set_tier_immediate(self.params.tier.value());
     }

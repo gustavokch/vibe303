@@ -203,7 +203,7 @@ impl Default for Os4x {
 /// 8× = three 2× stages in series (each inner stage processes its input stream
 /// sequentially, like `Os4x`).
 ///
-/// NOT on any current ship path — F5 fixed OS per tier (High 2×, Ultra 4×) and
+/// NOT on any current ship path — F5 fixed OS per tier (Low 2×, Best 4×) and
 /// dropped the OS-switch param. Retained + exercised by `tests/ladder_alias.rs`
 /// as the 8× alias-rejection reference and as headroom for a future 8× tier.
 pub struct Os8x {

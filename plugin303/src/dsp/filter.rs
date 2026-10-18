@@ -38,7 +38,7 @@ pub enum Tier {
 
 impl Tier {
     /// Parses a CLI tier name (`draft`, `low`, `high`, `best`), ASCII
-    /// case-insensitive. Anything else, including the retired `ultra` names and
+    /// case-insensitive. Anything else, including retired tier names and
     /// bare indices, is `None`.
     pub fn parse(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
@@ -76,7 +76,7 @@ mod tests {
         assert_eq!(Tier::parse("HIGH"), Some(Tier::High));
         assert_eq!(Tier::parse("best"), Some(Tier::Best));
         // Retired names and bare indices must fail, not map to a different tier.
-        for retired in ["ultra", "ultra2x", "0", "2", ""] {
+        for retired in ["0", "2", ""] {
             assert_eq!(Tier::parse(retired), None, "{retired:?}");
         }
     }

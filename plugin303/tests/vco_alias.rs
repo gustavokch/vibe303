@@ -1,6 +1,6 @@
 //! VCO alias-reduction regression tests (Option B 2-tap BLEP fix, aliasing-fix plan §Step 3).
 //!
-//! The Ultra-tier nodal VCO (`Vco303`) produces a relaxation oscillator with a hard
+//! The Best-tier nodal VCO (`Vco303`) produces a relaxation oscillator with a hard
 //! JFET reset edge that, at base-rate sampling, creates a single-sample discontinuity
 //! — the dominant alias source. The 2-tap first-order BLEP correction in
 //! `Vco303::tick()` (exposed as `blep_now`) removes this by adding the first BLEP

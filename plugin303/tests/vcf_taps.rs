@@ -62,7 +62,7 @@ fn tpt_ladder_slopes() {
 #[test]
 fn nodal_ladder_slopes() {
     let sr = 192_000.0;
-    // We run it at high rate since oversampling runs it at ULTRA_OS_FACTOR
+    // We run it at high rate since oversampling runs it at BEST_OS_FACTOR
     let mut f = LadderVcf::new(sr);
 
     // Nodal filter poles are physically spread by diode loading (not textbook coincident),
