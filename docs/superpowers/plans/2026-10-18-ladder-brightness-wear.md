@@ -281,8 +281,8 @@ fn tier_rms(tier: Tier, bright: Option<f64>, note: u8, cutoff: f32, reso: f32) -
 /// (label, Low brightness, Best brightness). `None` = voice state.
 const COMBOS: [(&str, Option<f64>, Option<f64>); 4] = [
     ("voice state", None, None),
-    ("plugin today (1.00/1.00)", Some(1.00), Some(1.00)),
-    ("tests today (0.50/1.00)", Some(0.50), Some(1.00)),
+    ("pre-fix plugin (1.00/1.00)", Some(1.00), Some(1.00)),
+    ("pre-fix tests (0.50/1.00)", Some(0.50), Some(1.00)),
     ("intended (0.50/0.70)", Some(0.50), Some(0.70)),
 ];
 
@@ -341,7 +341,7 @@ fn d_parity_vs_best() {
 ```bash
 cd .worktrees/ladder-brightness-wear
 cargo test -p plugin303 --release --test brightness_audit -- --ignored --nocapture --test-threads=1 2>&1 \
-  | grep -E "^(test [A-Za-z_]+ \.\.\. )?(==|intended|Voice|after|plugin|reset|Low|High|Best|Draft|voice|tests|cal )" \
+  | grep -E "^(test [A-Za-z_]+ \.\.\. )?(==|intended|pre-fix|Voice|after|plugin|reset|Low|High|Best|Draft|voice|tests|cal )" \
   > eval/303/results/2026-10-18-brightness-audit-before.txt
 cat eval/303/results/2026-10-18-brightness-audit-before.txt
 ```
@@ -660,7 +660,7 @@ If `LOW_LEVEL_TRIM` changed, add to the commit body: `Re-trim LOW_LEVEL_TRIM <ol
 
 ```bash
 cargo test -p plugin303 --release --test brightness_audit -- --ignored --nocapture --test-threads=1 2>&1 \
-  | grep -E "^(test [A-Za-z_]+ \.\.\. )?(==|intended|Voice|after|plugin|reset|Low|High|Best|Draft|voice|tests|cal )" \
+  | grep -E "^(test [A-Za-z_]+ \.\.\. )?(==|intended|pre-fix|Voice|after|plugin|reset|Low|High|Best|Draft|voice|tests|cal )" \
   > eval/303/results/2026-10-18-brightness-audit-after.txt
 ```
 

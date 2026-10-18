@@ -17,8 +17,8 @@ use plugin303::dsp::voice::Voice;
 // F6.5: active Q9 resonance (F6.3) + re-tuned brightness (CIRCUIT_BRIGHT = 0.70)
 // dropped the gold-power-weighted LSD from 4.42 → 3.87 dB. The gate renders
 // the voice's own brightness, so it measures what the plugin plays.
-const LSD_BUDGET_DB: f32 = 4.0; // achieved 3.87 dB (deterministic render) + margin
-const CORR_MIN: f32 = 0.95; // achieved corr 0.979; spectra share their shape
+const LSD_BUDGET_DB: f32 = 4.0; // achieved 3.15 dB (deterministic render) + margin
+const CORR_MIN: f32 = 0.95; // achieved corr 0.988; spectra share their shape
 
 fn render_best(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: Option<f64>) -> Vec<f32> {
     let mut v = Voice::new(sr);
@@ -67,14 +67,7 @@ fn best_voice_spectral_match() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let op = load_gold_op("voice_A2_mid.json");
 
-    let model = render_best(
-        op.sr,
-        op.cutoff,
-        op.reso,
-        op.note,
-        gold.len(),
-        None,
-    );
+    let model = render_best(op.sr, op.cutoff, op.reso, op.note, gold.len(), None);
     let (lsd, corr) = spectral_match(&gold, &model, op.sr);
     println!("Best spectral match: LSD = {lsd:.2} dB, corr = {corr:.3}");
     assert!(

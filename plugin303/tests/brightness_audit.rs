@@ -135,8 +135,8 @@ fn tier_rms(tier: Tier, bright: Option<f64>, note: u8, cutoff: f32, reso: f32) -
 /// (label, Low brightness, Best brightness). `None` = voice state.
 const COMBOS: [(&str, Option<f64>, Option<f64>); 4] = [
     ("voice state", None, None),
-    ("plugin today (1.00/1.00)", Some(1.00), Some(1.00)),
-    ("tests today (0.50/1.00)", Some(0.50), Some(1.00)),
+    ("pre-fix plugin (1.00/1.00)", Some(1.00), Some(1.00)),
+    ("pre-fix tests (0.50/1.00)", Some(0.50), Some(1.00)),
     ("intended (0.50/0.70)", Some(0.50), Some(0.70)),
 ];
 
