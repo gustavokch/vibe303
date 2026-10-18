@@ -85,14 +85,14 @@ def plot_waveform(ref: np.ndarray, draft: np.ndarray, low: np.ndarray, best: np.
     
     # Lag align for visualization
     r_n = norm_signal(ref)
-    l_n = norm_signal(draft)
-    h_n = norm_signal(low)
-    u_n = norm_signal(best)
+    d_n = norm_signal(draft)
+    lo_n = norm_signal(low)
+    b_n = norm_signal(best)
     
     # Get lags vs ref
-    lag_l = esr.best_lag(r_n, l_n)
-    lag_h = esr.best_lag(r_n, h_n)
-    lag_u = esr.best_lag(r_n, u_n)
+    lag_d = esr.best_lag(r_n, d_n)
+    lag_lo = esr.best_lag(r_n, lo_n)
+    lag_b = esr.best_lag(r_n, b_n)
     
     def align_slice(sig, lag):
         if lag > 0:
@@ -102,10 +102,10 @@ def plot_waveform(ref: np.ndarray, draft: np.ndarray, low: np.ndarray, best: np.
         return sig[:n_samples]
         
     ax.plot(t, r_n[:n_samples], label="SPICE Ref", color="black", alpha=0.8, linewidth=2)
-    ax.plot(t, align_slice(l_n, lag_l), label="Draft (TPT)", color="#e06666", alpha=0.7,
+    ax.plot(t, align_slice(d_n, lag_d), label="Draft (TPT)", color="#e06666", alpha=0.7,
             linestyle="--")
-    ax.plot(t, align_slice(h_n, lag_h), label="Low (Nodal 2x)", color="#6fa8dc", alpha=0.7)
-    ax.plot(t, align_slice(u_n, lag_u), label="Best (Nodal 4x)", color="#8e7cc3", alpha=0.8)
+    ax.plot(t, align_slice(lo_n, lag_lo), label="Low (Nodal 2x)", color="#6fa8dc", alpha=0.7)
+    ax.plot(t, align_slice(b_n, lag_b), label="Best (Nodal 4x)", color="#8e7cc3", alpha=0.8)
     
     ax.set_title(title)
     ax.set_xlabel("Time (ms)")
@@ -575,13 +575,13 @@ def main():
             low_val = r["metrics"]["Low"].get(key, 0.0)
             best_val = r["metrics"]["Best"].get(key, 0.0)
             
-            l_str = f"{draft_val:{fmt[1:]}}" if key in r["metrics"]["Draft"] else "N/A"
-            h_str = f"{low_val:{fmt[1:]}}" if key in r["metrics"]["Low"] else "N/A"
-            u_str = f"{best_val:{fmt[1:]}}" if key in r["metrics"]["Best"] else "N/A"
+            d_str = f"{draft_val:{fmt[1:]}}" if key in r["metrics"]["Draft"] else "N/A"
+            lo_str = f"{low_val:{fmt[1:]}}" if key in r["metrics"]["Low"] else "N/A"
+            b_str = f"{best_val:{fmt[1:]}}" if key in r["metrics"]["Best"] else "N/A"
             
             c_str = cond if first else ""
             report_lines.append(
-                f"{c_str:<25} | {label:<22} | {l_str:<12} | {h_str:<16} | {u_str:<16}"
+                f"{c_str:<25} | {label:<22} | {d_str:<12} | {lo_str:<16} | {b_str:<16}"
             )
             first = False
         report_lines.append("-" * 101)

@@ -64,7 +64,7 @@ if st.button("Run VCO Evaluation"):
     secs = 0.2
     
     errors_selected = []
-    errors_ultra = []
+    errors_best = []
     errors_spice = []
     
     progress = st.progress(0.0)
@@ -72,16 +72,16 @@ if st.button("Run VCO Evaluation"):
         # selected tier
         sig_selected = render_voice(note, 1000.0, 0.0, 0, selected_tier, sr, secs)
         # reference (Best)
-        sig_ultra = render_voice(note, 1000.0, 0.0, 0, "best", sr, secs)
+        sig_best = render_voice(note, 1000.0, 0.0, 0, "best", sr, secs)
         
         # Ideal freq
         ref_hz = 440.0 * (2.0 ** ((note - 69) / 12.0))
         
         err_sel = pitch_tracking_error_cents(ref_hz, sig_selected, sr)
-        err_ult = pitch_tracking_error_cents(ref_hz, sig_ultra, sr)
+        err_best = pitch_tracking_error_cents(ref_hz, sig_best, sr)
         
         errors_selected.append(err_sel)
-        errors_ultra.append(err_ult)
+        errors_best.append(err_best)
         
         if show_spice:
             # Measure SPICE VCO uncalibrated tracking error (no solve_cv, just raw circuit)
@@ -94,7 +94,7 @@ if st.button("Run VCO Evaluation"):
         
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.plot(notes, errors_selected, 'o-', label=f"{tier} Tier")
-    ax.plot(notes, errors_ultra, 'x--', label="Best Tier (Reference)")
+    ax.plot(notes, errors_best, 'x--', label="Best Tier (Reference)")
     if show_spice:
         ax.plot(notes, errors_spice, 's-.', label="SPICE VCO Reference (Uncalibrated)")
     ax.set_title("VCO Pitch Tracking Error (cents)")
@@ -111,15 +111,15 @@ if st.button("Run VCO Evaluation"):
     
     for i, note in enumerate(sweep_notes):
         sig_sel = render_voice(note, 1000.0, 0.0, 0, selected_tier, sr, secs)
-        sig_ult = render_voice(note, 1000.0, 0.0, 0, "best", sr, secs)
+        sig_best = render_voice(note, 1000.0, 0.0, 0, "best", sr, secs)
         
         p_sel = welch_pow(sig_sel)
-        p_ult = welch_pow(sig_ult)
+        p_best = welch_pow(sig_best)
         
         freqs = np.fft.rfftfreq(1024, 1 / sr)[:512]
         
         axes[i].plot(freqs, 10 * np.log10(p_sel + 1e-30), label=f"{tier}")
-        axes[i].plot(freqs, 10 * np.log10(p_ult + 1e-30), '--', label="Best")
+        axes[i].plot(freqs, 10 * np.log10(p_best + 1e-30), '--', label="Best")
         
         if show_spice:
             ref_hz = 440.0 * (2.0 ** ((note - 69) / 12.0))
@@ -141,14 +141,14 @@ if st.button("Run VCO Evaluation"):
     
     st.write("Waveform Plot Comparison (MIDI note 60, first 10ms)...")
     sig_sel = render_voice(60, 1000.0, 0.0, 0, selected_tier, sr, secs)
-    sig_ult = render_voice(60, 1000.0, 0.0, 0, "best", sr, secs)
+    sig_best = render_voice(60, 1000.0, 0.0, 0, "best", sr, secs)
     
     samples_10ms = int(0.01 * sr)
     t = np.arange(samples_10ms) / sr * 1000.0
     
     fig, ax = plt.subplots(figsize=(8, 3))
     ax.plot(t, sig_sel[:samples_10ms], label=f"{tier}")
-    ax.plot(t, sig_ult[:samples_10ms], '--', label="Best")
+    ax.plot(t, sig_best[:samples_10ms], '--', label="Best")
     
     if show_spice:
         ref_hz = 440.0 * (2.0 ** ((60 - 69) / 12.0))
@@ -171,16 +171,16 @@ if st.button("Run Filter/Env Evaluation"):
     
     # We trigger note 60 with a decay envelope
     sig_sel = render_voice(60, 2000.0, 0.5, 0, selected_tier, sr, secs)
-    sig_ult = render_voice(60, 2000.0, 0.5, 0, "best", sr, secs)
+    sig_best = render_voice(60, 2000.0, 0.5, 0, "best", sr, secs)
     
     env_sel = np.abs(hilbert(sig_sel))
-    env_ult = np.abs(hilbert(sig_ult))
+    env_best = np.abs(hilbert(sig_best))
     
     t60_sel = t60_decay_time(env_sel, sr)
-    t60_ult = t60_decay_time(env_ult, sr)
+    t60_best = t60_decay_time(env_best, sr)
     
     st.write(f"**T60 Decay Time ({tier}):** {t60_sel:.3f} s")
-    st.write(f"**T60 Decay Time (Best):** {t60_ult:.3f} s")
+    st.write(f"**T60 Decay Time (Best):** {t60_best:.3f} s")
     
     if show_spice:
         ref_hz = 440.0 * (2.0 ** ((60 - 69) / 12.0))
@@ -194,7 +194,7 @@ if st.button("Run Filter/Env Evaluation"):
     t = np.arange(len(env_sel)) / sr
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.plot(t, env_sel, label=f"{tier} Envelope")
-    ax.plot(t, env_ult, '--', label="Best Envelope")
+    ax.plot(t, env_best, '--', label="Best Envelope")
     if show_spice:
         ax.plot(t, env_sp, ':', label="SPICE Envelope")
     ax.set_title("Amplitude Decay Envelope")
@@ -206,13 +206,13 @@ if st.button("Run Filter/Env Evaluation"):
     
     st.write("Measuring DC Offset Drift...")
     dc_sel = dc_offset_drift(sig_sel, sr)
-    dc_ult = dc_offset_drift(sig_ult, sr)
+    dc_best = dc_offset_drift(sig_best, sr)
     if show_spice:
         dc_sp = dc_offset_drift(sig_sp, sr)
     
     fig, ax = plt.subplots(figsize=(8, 3))
     ax.plot(t, dc_sel, label=f"{tier} DC Drift")
-    ax.plot(t, dc_ult, '--', label="Best DC Drift")
+    ax.plot(t, dc_best, '--', label="Best DC Drift")
     if show_spice:
         ax.plot(t, dc_sp, ':', label="SPICE DC Drift")
     ax.set_title("DC Offset Drift (5Hz Lowpass)")
