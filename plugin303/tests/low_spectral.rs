@@ -1,6 +1,6 @@
 //! Low fidelity gate (F4.2, spectral).
 //!
-//! Low = polyBLEP saw → nodal diode-ladder VCF at 2× oversample. It skips the
+//! Low = polyBLEP saw → nodal diode-ladder VCF at 4× oversample. It skips the
 //! costly nodal circuit VCO (Best's dominant cost) but keeps the nonlinear
 //! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.27)
 //! and Best (circuit VCO→ladder, corr 0.977) on the same spectral metric.
@@ -11,10 +11,10 @@
 //! filter is identical. The gold-power-weighted LSD is large for any non-circuit
 //! saw (it concentrates on the gold's dominant bins), so Low's LSD lands far
 //! from Best's — but well below Draft's. Side-by-side at the gold op-point
-//! (`low_spectral_report`, note 57 / 1002 Hz / reso 0.85):
-//!     Draft    LSD 42.16 dB  corr 0.931
-//!     Low   LSD 28.78 dB  corr 0.971   <- between the two on both axes
-//!     Best  LSD  4.42 dB  corr 0.977
+//! (`low_spectral_report`, note 57 / 1002 Hz / reso 0.85), Draft and Low at 4×:
+//!     Draft LSD 41.58 dB  corr 0.935
+//!     Low   LSD 12.48 dB  corr 0.978   <- between the two on both axes
+//!     Best  LSD  3.15 dB  corr 0.988
 //! The gate proves Low is a genuine fidelity step over Draft: budgets sit below
 //! Draft's numbers so a regression to the TPT path would fail.
 
@@ -24,17 +24,22 @@ use common::{gold_dir, load_f32, load_gold_op, spectral_match};
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 
-// F6.5: shared LadderVcf gained active Q9 resonance (F6.3); Low re-tuned to
-// brightness 0.50 (corr-preserving) ⇒ LSD 28.78 → 28.35. Budget tightened below 32.
+// Low at 4× re-tuned to brightness 0.45 ⇒ LSD 28.82 → 12.48 (`low_brightness_sweep`).
+// The optimum is a narrow dip (0.50 gives 28.82), so the budget guards the tuning.
 // Low uses the polyBLEP saw (not the circuit VCO), so its LSD floor is set by the
 // VCO mismatch, not the filter — this gate is a discriminator (Draft fails worse).
-const LSD_BUDGET_DB: f32 = 29.0; // achieved 28.35 dB (deterministic) + margin
-const CORR_MIN: f32 = 0.95; // achieved 0.964; Draft's 0.931 fails → real discriminator
+const LSD_BUDGET_DB: f32 = 16.0; // achieved 12.48 dB (deterministic) + margin
+const CORR_MIN: f32 = 0.95; // achieved 0.978; Draft's 0.935 fails → real discriminator
 
-fn render_low(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize) -> Vec<f32> {
+/// Renders Low the way the gate does. `cal: Some(c)` overrides the brightness;
+/// `None` plays the voice's own (`LOW_BRIGHT`).
+fn render_low(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: Option<f64>) -> Vec<f32> {
     let mut v = Voice::new(sr);
     v.update_clipper_params_immediate(common::bypassed_clipper());
     v.set_tier_immediate(Tier::Low);
+    if let Some(cal) = cal {
+        v.set_low_brightness(cal);
+    }
     v.set_advanced_env(true);
     v.set_cutoff(cutoff);
     v.set_reso(reso);
@@ -64,14 +69,9 @@ fn render_tier(tier: Tier, op: &common::GoldOp, n: usize) -> Vec<f32> {
 fn low_brightness_sweep() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let op = load_gold_op("voice_A2_mid.json");
-    for cal in [0.4f64, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2] {
-        let mut v = Voice::new(op.sr);
-        v.set_tier_immediate(Tier::Low);
-        v.set_low_brightness(cal);
-        v.set_cutoff(op.cutoff);
-        v.set_reso(op.reso);
-        v.note_on(op.note);
-        let m: Vec<f32> = (0..gold.len()).map(|_| v.tick()).collect();
+    for i in 0..=14 {
+        let cal = 0.30 + 0.05 * i as f64;
+        let m = render_low(op.sr, op.cutoff, op.reso, op.note, gold.len(), Some(cal));
         let (lsd, corr) = spectral_match(&gold, &m, op.sr);
         println!("cal={cal:5.2}  LSD={lsd:.2} dB  corr={corr:.3}");
     }
@@ -137,7 +137,7 @@ fn low_voice_spectral_match() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let op = load_gold_op("voice_A2_mid.json");
 
-    let model = render_low(op.sr, op.cutoff, op.reso, op.note, gold.len());
+    let model = render_low(op.sr, op.cutoff, op.reso, op.note, gold.len(), None);
     let (lsd, corr) = spectral_match(&gold, &model, op.sr);
     println!("Low spectral match: LSD = {lsd:.2} dB, corr = {corr:.3}");
     assert!(

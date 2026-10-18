@@ -33,11 +33,13 @@ pub const VCO_GAIN: f32 = 2.607;
 /// Per-tier VCF brightness (cutoff→bias scale on the shared `LadderVcf`). With
 /// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
 /// gold sits *below* 1.0 — the resonance peak otherwise over-brightens. Tuned
-/// per tier (different OS rate ⇒ different optimum): Best (4×) at 0.70 minimises
-/// LSD to 3.87 dB; Low (4×) at 0.50 keeps corr ≥ 0.95 while beating its prior
-/// LSD. See `brightness_sweep`/`low_brightness_sweep` diagnostics (F6.5).
+/// per tier (different OS rate ⇒ different optimum): Best (4×) at 0.70 gives
+/// LSD 3.15 dB. Low (4×) at 0.45 gives LSD 12.48 dB, corr 0.978 (0.50: 28.82).
+/// Low's optimum is a narrow dip (0.43-0.46 stay under 15 dB): its resonance
+/// peak lines up with the gold's there. See `brightness_sweep` /
+/// `low_brightness_sweep` diagnostics.
 pub const CIRCUIT_BRIGHT: f64 = 0.70;
-pub const LOW_BRIGHT: f64 = 0.50;
+pub const LOW_BRIGHT: f64 = 0.45;
 /// Thermal-noise instance ids of the nodal ladders. A switch-in cold start
 /// reseeds with the same id, so the tier's noise restarts as on construction.
 const CIRCUIT_LADDER_ID: u32 = 3;
@@ -50,7 +52,7 @@ const LOW_LADDER_ID: u32 = 4;
 /// median tier-vs-Best level (Gate VCA, notes 33/45/57/69 × cutoffs
 /// 300/800/1500/3000 Hz per knot). High needs no trim (within 0.02 dB).
 const DRAFT_LEVEL_TRIM: [f32; 5] = [1.7081, 0.2783, 0.1565, 0.2063, 0.5623];
-const LOW_LEVEL_TRIM: [f32; 5] = [3.6099, 1.4355, 1.3001, 1.2532, 1.3412];
+const LOW_LEVEL_TRIM: [f32; 5] = [3.9445, 1.4438, 1.2956, 1.2051, 1.5399];
 
 /// Piecewise-linear lookup in a 5-knot trim table over resonance `0..=1`.
 #[inline]
