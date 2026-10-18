@@ -127,6 +127,7 @@ def process_all_states(qa_dir: Path):
         "accurate",
         "advanced",
         "running",
+        "running_note",
         "knobs",
         "quality_high",
         "generator",

@@ -24,15 +24,16 @@ use plugin303::gui::{
     qa_generator_params, qa_zoom_factor, render_editor, theme, GUI_HEIGHT, GUI_WIDTH, MARGIN,
 };
 use plugin303::params::Plugin303Params;
-use plugin303::QA_PLAYHEAD_STEP;
+use plugin303::qa_playhead_pin;
 
 /// `(VIBE303_QA_STATE, file stem)`. The stems are the ones the capture script
 /// writes: the default state is `latest`.
-const STATES: [(&str, &str); 8] = [
+const STATES: [(&str, &str); 9] = [
     ("default", "latest"),
     ("accurate", "accurate"),
     ("advanced", "advanced"),
     ("running", "running"),
+    ("running_note", "running_note"),
     ("knobs", "knobs"),
     ("quality_high", "quality_high"),
     ("generator", "generator"),
@@ -66,11 +67,7 @@ fn render(state: &str) -> Result<image::RgbaImage, String> {
     std::env::set_var("VIBE303_QA_STATE", state);
     let params = Plugin303Params::default();
     let mut gen_params = qa_generator_params(Some(state));
-    let playhead = AtomicU8::new(if state == "running" {
-        QA_PLAYHEAD_STEP
-    } else {
-        0
-    });
+    let playhead = AtomicU8::new(qa_playhead_pin(Some(state)).unwrap_or(0));
     let zoom = qa_zoom_factor(Some(state));
     let host = NoHost;
     let setter = ParamSetter::new(&host);
