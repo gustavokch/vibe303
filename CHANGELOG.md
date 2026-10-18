@@ -44,6 +44,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tiers also shared the 2x oversampler and the sub oscillator. Each tier now
   owns its oversampler and nodal ladder, and the circuit VCOs and sub
   oscillator tick once per sample, also during a High <-> Best fade.
+- Switching back to a tier resumed the filter, oversampler and delay state it
+  held when it last ran, often from another note. With resonance up, the
+  nodal ladder took about a second to forget it, so the returning tier sounded
+  wrong for that time. The incoming tier now starts from a cleared state on
+  every switch. At resonance 0.3 its error 100 ms after the fade drops from
+  0.67 to 0.09 relative RMS.
 
 ### Removed
 - The BA283 Neve-preamp product (plugin crate, WaveNet/LSTM model, WDF engine, training

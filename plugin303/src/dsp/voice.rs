@@ -37,6 +37,10 @@ pub const VCO_GAIN: f32 = 2.607;
 /// LSD. See `brightness_sweep`/`low_brightness_sweep` diagnostics (F6.5).
 pub const CIRCUIT_BRIGHT: f64 = 0.70;
 pub const LOW_BRIGHT: f64 = 0.50;
+/// Thermal-noise instance ids of the nodal ladders. A switch-in cold start
+/// reseeds with the same id, so the tier's noise restarts as on construction.
+const CIRCUIT_LADDER_ID: u32 = 3;
+const LOW_LADDER_ID: u32 = 4;
 const LOW_LEVEL_TRIM: f32 = 1.55; // +3.8 dB
 const XFADE_SECS: f32 = 0.010;
 const COMP_BUF: usize = 64;
@@ -413,13 +417,13 @@ impl Voice {
         // it is built at the oversampled clock its tier drives it at (see the
         // unit test pinning this below).
         let mut ladder_best = LadderVcf::new(sr * BEST_OS_FACTOR);
-        ladder_best.set_instance_id(3);
+        ladder_best.set_instance_id(CIRCUIT_LADDER_ID);
         ladder_best.set_cal(CIRCUIT_BRIGHT);
         let mut ladder_high = LadderVcf::new(sr * HIGH_OS_FACTOR);
-        ladder_high.set_instance_id(3);
+        ladder_high.set_instance_id(CIRCUIT_LADDER_ID);
         ladder_high.set_cal(CIRCUIT_BRIGHT);
         let mut ladder_low = LadderVcf::new(sr * LOW_OS_FACTOR);
-        ladder_low.set_instance_id(4);
+        ladder_low.set_instance_id(LOW_LADDER_ID);
         ladder_low.set_cal(LOW_BRIGHT);
 
         // Sub oscillators are always square waves
@@ -1063,7 +1067,7 @@ impl Voice {
     /// A change starts a short equal-power crossfade (F5.1) from the previous
     /// tier so the path switch is click-free — the tiers have different timbre
     /// and the incoming path starts cold, so a hard switch would pop. No
-    /// allocation, RT-safe (plain field writes).
+    /// allocation, RT-safe (field writes and fixed-size in-place state clears).
     pub fn set_tier(&mut self, tier: Tier) {
         if (tier == Tier::Best || tier == Tier::High) && self.vco_dirty {
             let tol_f64 = self.tolerance_f64();
@@ -1095,9 +1099,48 @@ impl Voice {
         if tier == self.tier {
             return;
         }
+        self.start_fade(tier);
+    }
+
+    /// Starts an equal-power crossfade from the current tier to `to`, with the
+    /// incoming path cold-started.
+    fn start_fade(&mut self, to: Tier) {
         self.xfade_from = Some(self.tier);
         self.xfade_pos = 0.0;
-        self.tier = tier;
+        self.tier = to;
+        self.reset_tier_path(to);
+    }
+
+    /// Clears one tier's filter, oversampler and latency-compensation state,
+    /// and reseeds its ladder's thermal noise. Without this a tier resumes the
+    /// state it held when it last ran, possibly on another note, and a
+    /// resonant nodal ladder takes about a second to forget it. Oscillators are
+    /// not touched. Alloc-free (in-place resets and fixed-array `new()`s).
+    fn reset_tier_path(&mut self, tier: Tier) {
+        match tier {
+            Tier::Draft => {
+                self.filter.reset();
+                self.comp_draft.reset();
+            }
+            Tier::Low => {
+                self.ladder_low.reset();
+                self.ladder_low.set_instance_id(LOW_LADDER_ID);
+                self.os2_low = Os2x::new();
+                self.comp_low.reset();
+            }
+            Tier::High => {
+                self.ladder_high.reset();
+                self.ladder_high.set_instance_id(CIRCUIT_LADDER_ID);
+                self.os2_high = Os2x::new();
+                self.comp_high.reset();
+            }
+            Tier::Best => {
+                self.ladder_best.reset();
+                self.ladder_best.set_instance_id(CIRCUIT_LADDER_ID);
+                self.os4_best = Os4x::new();
+                self.comp_best.reset();
+            }
+        }
     }
 
     /// Reported host latency is the tier alignment plus the constant 48-sample
@@ -1574,9 +1617,7 @@ impl Voice {
                     self.xfade_from = None;
                     if let Some(next) = self.pending_tier.take() {
                         if next != self.tier {
-                            self.xfade_from = Some(self.tier);
-                            self.xfade_pos = 0.0;
-                            self.tier = next;
+                            self.start_fade(next);
                         }
                     }
                 }
