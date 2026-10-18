@@ -52,7 +52,8 @@ fn a_brightness_state() {
 }
 
 /// Renders `tier` at the gold operating point the way the spectral gates do.
-/// `plugin` first applies the plugin's default param update (analog wear).
+/// `plugin` first applies the plugin's default param update: the whole default
+/// patch, including analog wear. `bright` then overrides only the brightness.
 fn render_gold_op(tier: Tier, bright: Option<f64>, plugin: bool, op: &GoldOp, n: usize) -> Vec<f32> {
     let mut v = Voice::new(op.sr);
     v.update_clipper_params_immediate(common::bypassed_clipper());
@@ -82,17 +83,23 @@ fn b_spectral_vs_gold() {
     println!("== B. Spectral match vs gold voice_A2_mid (LSD dB, corr, RMS dBFS) ==");
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let op = load_gold_op("voice_A2_mid.json");
-    let rows: [(Tier, &str, Option<f64>, bool); 12] = [
+    let rows: [(Tier, &str, Option<f64>, bool); 18] = [
         (Tier::Low, "voice state", None, false),
         (Tier::Low, "plugin defaults", None, true),
+        (Tier::Low, "plugin defaults, cal 0.50", Some(0.50), true),
+        (Tier::Low, "plugin defaults, cal 1.00", Some(1.00), true),
         (Tier::Low, "cal 0.50", Some(0.50), false),
         (Tier::Low, "cal 1.00", Some(1.00), false),
         (Tier::High, "voice state", None, false),
         (Tier::High, "plugin defaults", None, true),
+        (Tier::High, "plugin defaults, cal 0.70", Some(0.70), true),
+        (Tier::High, "plugin defaults, cal 1.00", Some(1.00), true),
         (Tier::High, "cal 0.70", Some(0.70), false),
         (Tier::High, "cal 1.00", Some(1.00), false),
         (Tier::Best, "voice state", None, false),
         (Tier::Best, "plugin defaults", None, true),
+        (Tier::Best, "plugin defaults, cal 0.70", Some(0.70), true),
+        (Tier::Best, "plugin defaults, cal 1.00", Some(1.00), true),
         (Tier::Best, "cal 0.70", Some(0.70), false),
         (Tier::Best, "cal 1.00", Some(1.00), false),
     ];

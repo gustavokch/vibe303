@@ -93,8 +93,8 @@ Append to `plugin303/tests/common/mod.rs` (the file already has `#![allow(dead_c
 ```rust
 /// Applies the default parameter set the way `Plugin303::process` does on every
 /// block (`lib.rs` `update_params` call), with `comp_age` overridden. Tests that
-/// skip this never trigger analog wear; the plugin always does on its first
-/// block (the `comp_seed` param defaults to 1337, `Voice::new` starts at 0).
+/// skip this never hit the first-block re-wear (`comp_seed` 1337 vs `Voice::new`'s
+/// 0) that resets the Low brightness.
 pub fn apply_plugin_defaults(v: &mut plugin303::dsp::voice::Voice, comp_age: i32) {
     let p = plugin303::params::Plugin303Params::default();
     v.update_params(
@@ -198,7 +198,8 @@ fn a_brightness_state() {
 }
 
 /// Renders `tier` at the gold operating point the way the spectral gates do.
-/// `plugin` first applies the plugin's default param update (analog wear).
+/// `plugin` first applies the plugin's default param update: the whole default
+/// patch, including analog wear. `bright` then overrides only the brightness.
 fn render_gold_op(tier: Tier, bright: Option<f64>, plugin: bool, op: &GoldOp, n: usize) -> Vec<f32> {
     let mut v = Voice::new(op.sr);
     v.update_clipper_params_immediate(common::bypassed_clipper());
@@ -228,17 +229,23 @@ fn b_spectral_vs_gold() {
     println!("== B. Spectral match vs gold voice_A2_mid (LSD dB, corr, RMS dBFS) ==");
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let op = load_gold_op("voice_A2_mid.json");
-    let rows: [(Tier, &str, Option<f64>, bool); 12] = [
+    let rows: [(Tier, &str, Option<f64>, bool); 18] = [
         (Tier::Low, "voice state", None, false),
         (Tier::Low, "plugin defaults", None, true),
+        (Tier::Low, "plugin defaults, cal 0.50", Some(0.50), true),
+        (Tier::Low, "plugin defaults, cal 1.00", Some(1.00), true),
         (Tier::Low, "cal 0.50", Some(0.50), false),
         (Tier::Low, "cal 1.00", Some(1.00), false),
         (Tier::High, "voice state", None, false),
         (Tier::High, "plugin defaults", None, true),
+        (Tier::High, "plugin defaults, cal 0.70", Some(0.70), true),
+        (Tier::High, "plugin defaults, cal 1.00", Some(1.00), true),
         (Tier::High, "cal 0.70", Some(0.70), false),
         (Tier::High, "cal 1.00", Some(1.00), false),
         (Tier::Best, "voice state", None, false),
         (Tier::Best, "plugin defaults", None, true),
+        (Tier::Best, "plugin defaults, cal 0.70", Some(0.70), true),
+        (Tier::Best, "plugin defaults, cal 1.00", Some(1.00), true),
         (Tier::Best, "cal 0.70", Some(0.70), false),
         (Tier::Best, "cal 1.00", Some(1.00), false),
     ];
@@ -334,7 +341,7 @@ fn d_parity_vs_best() {
 ```bash
 cd .worktrees/ladder-brightness-wear
 cargo test -p plugin303 --release --test brightness_audit -- --ignored --nocapture --test-threads=1 2>&1 \
-  | grep -E "^(==|intended|Voice|after|plugin|reset|Low|High|Best|Draft|voice|tests|cal )" \
+  | grep -E "^(test [A-Za-z_]+ \.\.\. )?(==|intended|Voice|after|plugin|reset|Low|High|Best|Draft|voice|tests|cal )" \
   > eval/303/results/2026-10-18-brightness-audit-before.txt
 cat eval/303/results/2026-10-18-brightness-audit-before.txt
 ```
@@ -653,7 +660,7 @@ If `LOW_LEVEL_TRIM` changed, add to the commit body: `Re-trim LOW_LEVEL_TRIM <ol
 
 ```bash
 cargo test -p plugin303 --release --test brightness_audit -- --ignored --nocapture --test-threads=1 2>&1 \
-  | grep -E "^(==|intended|Voice|after|plugin|reset|Low|High|Best|Draft|voice|tests|cal )" \
+  | grep -E "^(test [A-Za-z_]+ \.\.\. )?(==|intended|Voice|after|plugin|reset|Low|High|Best|Draft|voice|tests|cal )" \
   > eval/303/results/2026-10-18-brightness-audit-after.txt
 ```
 
@@ -668,7 +675,7 @@ plugin defaults, age 50              low 0.4625  high 0.6475  best 0.6475
 reset + plugin defaults              low 0.5000  high 0.7000  best 0.7000
 ```
 
-Expected section B: the "voice state" and "plugin defaults" rows of each tier now equal its intended-brightness row (Low = "cal 0.50", High/Best = "cal 0.70"). The fixed-brightness rows ("cal 0.50/0.70/1.00") are identical to the "before" file, which shows the instrument did not change.
+Expected section B: the "voice state" row of each tier equals its intended-brightness "cal" row (Low = "cal 0.50", High/Best = "cal 0.70"). The "plugin defaults" row of each tier equals its "plugin defaults, cal <intended>" control row. The explicit-brightness rows ("cal X" and "plugin defaults, cal X") are identical to the "before" file, which shows the instrument did not change.
 
 - [ ] **Step 2: Check the render fingerprints**
 
@@ -703,7 +710,9 @@ Fix: `LadderVcf::set_analog_wear` scales the tier brightness instead of replacin
 | High | 0.70 | | |
 | Best | 0.70 | | |
 
-## Spectral match vs SPICE gold (plugin defaults row, section B)
+## Spectral match vs SPICE gold (voice state row, section B)
+
+The "voice state" row changes brightness only, so it is the row compared here. The "plugin defaults" row is the full default patch (analog wear and all other default params); compare it with the "plugin defaults, cal <intended>" control row, not with the gold directly.
 
 | Tier | LSD before | LSD after | corr before | corr after | RMS before | RMS after |
 |---|---|---|---|---|---|---|
