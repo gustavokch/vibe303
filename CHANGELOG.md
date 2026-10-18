@@ -27,6 +27,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   this change: a saved Ultra (index 2) now loads as High; a saved Ultra 2x
   (index 3) now loads as Best. DAW automation lanes that stored index 2 or 3
   change the same way.
+- `eval/303/calibrate_vcf.py` fits the Draft and Low control maps against Best
+  and prints the `DRAFT_*_POLY` / `LOW_*_POLY` constants for `voice.rs`. Its
+  probe binary `vcf_sweep_helper` is restored and builds each tier's filter the
+  way the voice does (oversampling factor and brightness calibration).
+
+### Fixed
+- The High tier was padded for Best's 4x oversampling latency instead of its
+  own 2x latency, so its output came out 15 samples early (about 0.3 ms at
+  48 kHz) and a High crossfade blended misaligned paths. High now has its own
+  compensation delay, and every tier reaches the output at the reported
+  latency.
 
 ### Removed
 - The BA283 Neve-preamp product (plugin crate, WaveNet/LSTM model, WDF engine, training
