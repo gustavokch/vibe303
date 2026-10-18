@@ -49,7 +49,7 @@ def render_voice(note: int, cutoff_hz: float, reso_knob: float, wave_idx: int, t
 
 st.title("Analog Tier Voicing Harness")
 st.sidebar.markdown("### Settings")
-tier = st.sidebar.selectbox("Selected Tier", ["Draft", "Low", "Best"])
+tier = st.sidebar.selectbox("Selected Tier", ["Draft", "Low", "High", "Best"])
 selected_tier = tier.lower()
 
 # Sidebar checkbox to toggle slow SPICE transient reference runs
