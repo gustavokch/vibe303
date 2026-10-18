@@ -35,7 +35,7 @@ const STATES: [(&str, &str); 9] = [
     ("running", "running"),
     ("running_note", "running_note"),
     ("knobs", "knobs"),
-    ("quality_high", "quality_high"),
+    ("quality_low", "quality_low"),
     ("generator", "generator"),
     ("zoom75", "zoom75"),
 ];

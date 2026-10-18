@@ -35,7 +35,7 @@ class TestCropGuiSections(unittest.TestCase):
             "advanced",
             "running_note",
             "knobs",
-            "quality_high",
+            "quality_low",
             "generator",
             "zoom75",
         ]:
@@ -53,7 +53,7 @@ class TestCropGuiSections(unittest.TestCase):
             "crop_bottom_margin.png",
             "crop_state_diff.png",
             "generator_crop_header.png",
-            "quality_high_crop_voice.png",
+            "quality_low_crop_voice.png",
             "knobs_crop_voice.png",
             "advanced_crop_engine.png",
             "running_note_crop_header.png",

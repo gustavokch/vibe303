@@ -423,9 +423,9 @@ pub(crate) enum QaState {
     Advanced,
     Generator,
     Knobs,
+    QualityBest,
     QualityHigh,
-    QualityUltra,
-    QualityUltra2x,
+    QualityLow,
     Running,
     RunningNote,
     Zoom75,
@@ -439,9 +439,9 @@ impl QaState {
             "advanced" => Self::Advanced,
             "generator" => Self::Generator,
             "knobs" => Self::Knobs,
+            "quality_best" => Self::QualityBest,
             "quality_high" => Self::QualityHigh,
-            "quality_ultra" => Self::QualityUltra,
-            "quality_ultra2x" => Self::QualityUltra2x,
+            "quality_low" => Self::QualityLow,
             "running" => Self::Running,
             "running_note" => Self::RunningNote,
             "zoom75" => Self::Zoom75,
@@ -491,9 +491,9 @@ impl Default for Plugin303Params {
         let (default_tuning, default_cutoff) = if qa_knobs { (25.0, 0.75) } else { (0.0, 0.5) };
 
         let default_tier = match qa_state {
-            Some(QaState::QualityHigh) => Tier::Low,
-            Some(QaState::QualityUltra) => Tier::Best,
-            Some(QaState::QualityUltra2x) => Tier::High,
+            Some(QaState::QualityLow) => Tier::Low,
+            Some(QaState::QualityHigh) => Tier::High,
+            Some(QaState::QualityBest) => Tier::Best,
             _ => Tier::Draft,
         };
 

@@ -129,7 +129,7 @@ def process_all_states(qa_dir: Path):
         "running",
         "running_note",
         "knobs",
-        "quality_high",
+        "quality_low",
         "generator",
         "zoom75",
     ]:

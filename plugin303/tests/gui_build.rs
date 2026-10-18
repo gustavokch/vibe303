@@ -145,19 +145,23 @@ fn test_qa_running_state_keeps_default_pattern() {
 }
 
 #[test]
-fn test_qa_quality_high_state() {
+fn test_qa_quality_states_select_their_tier() {
     use plugin303::dsp::filter::Tier;
     use plugin303::params::Plugin303Params;
 
     let _lock = ENV_LOCK.lock().unwrap();
-    let _guard = EnvGuard::set("VIBE303_QA_STATE", "quality_high");
-
-    let params = Plugin303Params::default();
-    assert_eq!(
-        params.tier.value(),
-        Tier::Low,
-        "quality_high QA state must initialize Tier to High"
-    );
+    for (state, tier) in [
+        ("quality_low", Tier::Low),
+        ("quality_high", Tier::High),
+        ("quality_best", Tier::Best),
+    ] {
+        let _guard = EnvGuard::set("VIBE303_QA_STATE", state);
+        assert_eq!(
+            Plugin303Params::default().tier.value(),
+            tier,
+            "{state} must initialize the tier of the same name"
+        );
+    }
 }
 
 #[test]
