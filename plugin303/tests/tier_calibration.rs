@@ -79,9 +79,10 @@ fn voice_realized_hz(tier: Tier, topology: CircuitTopology, note: u8) -> f32 {
 fn test_pitch_parity_accurate() {
     // Under Accurate topology, playable range is 24..=72.
     // Each tier must realize the target MIDI pitch within tolerance.
-    // Draft/Low use polyBLEP + midi_to_freq() directly → tight budget.
-    // Best uses the circuit VCO via the per-note secant LUT → up to 1%
-    // Under Accurate topology, the circuit VCO range spans the authentic 3-octave TB-303 keyboard (notes 24 to 60).
+    // Draft and Low use polyBLEP + midi_to_freq() directly -> tight budget.
+    // Best and High use the circuit VCO via the per-note secant LUT -> up to 1%.
+    // The circuit VCO range spans the authentic 3-octave TB-303 keyboard
+    // (notes 24 to 60).
     for note in [24u8, 36, 48, 60] {
         let target = 440.0f32 * 2.0f32.powf((note as f32 - 69.0) / 12.0);
         let f_best = voice_realized_hz(Tier::Best, CircuitTopology::Accurate, note);
