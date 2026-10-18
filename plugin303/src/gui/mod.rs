@@ -118,13 +118,18 @@ pub fn render_editor(
     });
 }
 
-pub fn create_editor(
-    params: Arc<Plugin303Params>,
-    editor_state: Arc<EguiState>,
-    current_playing_step: Arc<AtomicU8>,
-) -> Option<Box<dyn Editor>> {
-    let gen_params = match std::env::var("VIBE303_QA_STATE").as_deref() {
-        Ok("generator") => crate::dsp::generator::GeneratorParams {
+/// Zoom factor of the `VIBE303_QA_STATE=zoom75` capture.
+pub fn qa_zoom_factor(state: Option<&str>) -> Option<f32> {
+    (state == Some("zoom75")).then_some(0.75)
+}
+
+/// Generator preset of a `VIBE303_QA_STATE` capture: every `generator` field
+/// moved off its default. Any other state gets `GeneratorParams::default()`.
+/// `create_editor` and the offscreen renderer (`tools/gui_render`) both read
+/// this, so a window capture and its offscreen render cannot drift.
+pub fn qa_generator_params(state: Option<&str>) -> GeneratorParams {
+    match state {
+        Some("generator") => GeneratorParams {
             root_note: 3, // D#
             scale: crate::dsp::generator::MusicalScale::Phrygian,
             // Narrower than GeneratorParams::default() (-1..=1) by product
@@ -146,19 +151,29 @@ pub fn create_editor(
             mutation_rate: 0.25,
             seed: 1337,
         },
-        _ => crate::dsp::generator::GeneratorParams::default(),
-    };
-    let gen_params_state = Arc::new(std::sync::Mutex::new(gen_params));
+        _ => GeneratorParams::default(),
+    }
+}
+
+pub fn create_editor(
+    params: Arc<Plugin303Params>,
+    editor_state: Arc<EguiState>,
+    current_playing_step: Arc<AtomicU8>,
+) -> Option<Box<dyn Editor>> {
+    let qa_state = std::env::var("VIBE303_QA_STATE").ok();
+    let gen_params_state = Arc::new(std::sync::Mutex::new(qa_generator_params(
+        qa_state.as_deref(),
+    )));
     // Read once at editor creation: the closure below runs every frame, and a
     // per-frame `env::var` is a syscall + alloc at repaint rate.
-    let qa_zoom = matches!(std::env::var("VIBE303_QA_STATE").as_deref(), Ok("zoom75"));
+    let qa_zoom = qa_zoom_factor(qa_state.as_deref());
 
     create_egui_editor(
         editor_state,
         (),
         move |egui_ctx, _| {
-            if qa_zoom {
-                egui_ctx.set_zoom_factor(0.75);
+            if let Some(zoom) = qa_zoom {
+                egui_ctx.set_zoom_factor(zoom);
             }
             egui_ctx.send_viewport_cmd(nih_plug_egui::egui::ViewportCommand::Title(
                 "TECHNEO 303".into(),
