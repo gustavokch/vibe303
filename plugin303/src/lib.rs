@@ -10,6 +10,9 @@ use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::{Voice, VoiceClipperParams};
 use params::Plugin303Params;
 
+/// Step the playhead is pinned to for `VIBE303_QA_STATE=running` captures.
+pub const QA_PLAYHEAD_STEP: u8 = 3;
+
 /// Convert sequencer step key (0..12) and octave (-2..2) to standard MIDI note number (0..127).
 pub fn seq_pitch_to_midi_note(key: i8, octave: i8) -> u8 {
     let note = 60 + key as i16 + (octave as i16 * 12);
@@ -60,8 +63,8 @@ impl Plugin303 {
         let current_playing_step = sequencer.current_step.clone();
         let qa_playhead_step = if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
             if state == "running" {
-                current_playing_step.store(3, std::sync::atomic::Ordering::Relaxed);
-                Some(3)
+                current_playing_step.store(QA_PLAYHEAD_STEP, std::sync::atomic::Ordering::Relaxed);
+                Some(QA_PLAYHEAD_STEP)
             } else {
                 None
             }

@@ -1,18 +1,31 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    epaint::Shape, pos2, style::WidgetVisuals, vec2, AboveOrBelow, Align, Button, ComboBox,
-    CornerRadius, DragValue, FontId, Frame, Layout, Margin, Rect, Sense, Stroke, StrokeKind, Ui,
+    epaint::Shape, style::WidgetVisuals, vec2, AboveOrBelow, Align, Button, ComboBox, DragValue,
+    FontId, Layout, Rect, RichText, Stroke, Ui,
 };
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::gui::theme;
+use crate::gui::widgets::panel::{DevicePanel, HEADER_H as PANEL_HEADER_H, PAD_Y as PANEL_PAD_Y};
 use crate::gui::widgets::piano_roll_popup::render_piano_roll_popup;
-use crate::gui::widgets::render_step_strip;
-use crate::gui::widgets::step_button::STRIP_HEIGHT;
+use crate::gui::widgets::step_button::{render_step_strip, STRIP_HEIGHT};
+use crate::gui::widgets::toggle::ToggleButton;
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
 
+/// Horizontal gap between adjacent step cells and grid rows vertically.
+pub const GRID_GAP: f32 = 3.0;
+
+/// Total device height for the sequencer and transport cards:
+/// 2 rows x STRIP_HEIGHT (198) + row gap (3) + header (22) + vertical padding (8) = 231.
+pub const SEQUENCER_H: f32 = 2.0 * STRIP_HEIGHT + GRID_GAP + PANEL_HEADER_H + 2.0 * PANEL_PAD_Y;
+
+/// Standard height of flat control tiles in the transport panel.
+const ROW_H: f32 = 28.0;
+/// Horizontal gap between the two slots in each transport row.
+const SLOT_GAP: f32 = 3.0;
+
 /// Custom ComboBox icon painter that always paints a downward-pointing triangle (▼).
-/// These two bottom-row dropdowns sit low enough in the window that egui flips the glyph
+/// These bottom-row dropdowns sit low enough in the window that egui flips the glyph
 /// when the popup opens upward; this painter keeps the glyph downward-pointing to match
 /// the app-wide dropdown convention.
 fn paint_combobox_down_arrow(
@@ -33,727 +46,558 @@ fn paint_combobox_down_arrow(
     ));
 }
 
-/// Width reserved for the transport/pattern column right of the step grid.
-const TRANSPORT_COLUMN_W: f32 = 280.0;
-/// Horizontal gap between adjacent step cells (and grid rows vertically).
-const GRID_GAP: f32 = 4.0;
-/// Total vertical height of the 2-row step grid (2 * STRIP_HEIGHT + GRID_GAP = 268.0).
-const GRID_TOTAL_H: f32 = 2.0 * STRIP_HEIGHT + GRID_GAP;
-/// Approximate painted height of the transport column title row, subtracted
-/// before the remaining column height is split across the transport rows
-/// (round-13 issue 4).
-const TRANSPORT_TITLE_H: f32 = 13.0;
-/// Number of transport rows sharing the column's vertical extent.
-const TRANSPORT_ROW_COUNT: f32 = 5.0;
-/// Vertical gap between the transport title and each transport row. Used by
-/// both `item_spacing` and `transport_row_height` so the stretch math always
-/// matches the painted spacing (PR#61 review).
-const TRANSPORT_ROW_GAP: f32 = 6.0;
-/// Minimum transport row height; below this the rows would look cramped.
-const TRANSPORT_ROW_MIN_H: f32 = 24.0;
-/// Half of the transport column's inner width: every transport row is laid out
-/// on a two-slot grid (slot, gap, slot) so all rows share left/right edges and
-/// reach the panel's right inner margin (round-11 items 4 and 21).
-const TRANSPORT_SLOT_W: f32 = 138.0;
-/// Vertical chrome subtracted from the pre-frame available height so the
-/// frame bottom reaches the window bottom without overflowing it:
-/// frame inner margins (top 4 + bottom 12 = 16) + frame stroke (1) + trailing
-/// item spacing (4) = 21.0. The extra bottom margin matches the visual padding
-/// above the first step row (round-11 item 23).
-const FRAME_VERT_CHROME_PX: f32 = 21.0;
-/// `add_space(8)` + separator widget (~7 with its margins) + `add_space(8)`
-/// between grid and transport column. Measured on-canvas: the run costs 23.1 px
-/// with item_spacing.x = 0 (round-11 item 4 fix).
-const SEPARATOR_CHROME_W: f32 = 24.0;
-/// Smallest usable step cell; below this the grid overflows instead of scrolling.
-const MIN_CELL_W: f32 = 72.0;
-
-/// Hit-rect width for the JITTER toggle: 15 px text offset + ~27 px for
-/// "JITTER" at 8 pt + 4 px margin, so the painted label never overflows onto
-/// the CLEAR button (PR#53 review).
-const JIT_HIT_W: f32 = 52.0;
-
-/// Panel-gap hierarchy (round-17 issue 2). The `panels` probe reports a 0 px
-/// gap above the transport row because the transport controls are not a
-/// separate framed panel: they are the right column of the same sequencer
-/// `Frame` as the step grid (GRID_GAP = 4 logical px separates grid rows and
-/// cells inside it). Top-level separation from the generator panel above is
-/// the uniform `PANEL_GAP` spacer at the top of
-/// `render_sequencer_and_transport`; do not add another spacer inside this
-/// frame.
-///
-/// Compute the adaptive minimum height for the sequencer frame.
-fn frame_min_height(avail_h: f32) -> f32 {
-    (avail_h - FRAME_VERT_CHROME_PX).max(GRID_TOTAL_H + 16.0)
-}
-
-/// Stretched height of each transport row: the five rows, the title and the
-/// gaps between them fill the column exactly, leaving no dead band below the
-/// last row (round-13 issue 4).
-fn transport_row_height(avail_h: f32) -> f32 {
-    ((avail_h - TRANSPORT_TITLE_H - TRANSPORT_ROW_COUNT * TRANSPORT_ROW_GAP) / TRANSPORT_ROW_COUNT)
-        .max(TRANSPORT_ROW_MIN_H)
-}
-
 /// Snap a dragged BPM value to a whole number so the `{:.0}` display always
 /// matches the stored value (PR#53 review).
 fn snap_tempo(v: f32) -> f32 {
     v.round()
 }
 
-/// Step cell width for a given inner available width.
-/// Returns `(cell_w, clamped)` — `clamped` is true when the window is too
-/// narrow and cells will overflow (surfaced by a debug assertion at call site).
-pub(crate) fn grid_cell_width(avail_w: f32) -> (f32, bool) {
-    let grid_avail_w = avail_w - TRANSPORT_COLUMN_W - SEPARATOR_CHROME_W;
-    let unclamped = (grid_avail_w - 7.0 * GRID_GAP) / 8.0;
-    if unclamped < MIN_CELL_W {
-        (MIN_CELL_W, true)
-    } else {
-        (unclamped, false)
-    }
+/// 16-step sequencer pattern grid: 2 rows x 8 step strips.
+pub fn render_sequencer_grid(ui: &mut Ui, params: &Plugin303Params, current_step: &AtomicU8) {
+    DevicePanel::new("SEQUENCER", SEQUENCER_H).show(
+        ui,
+        |_header_ui| {},
+        |ui| {
+            let body_w = ui.available_width();
+            let cell_w = (body_w - 7.0 * GRID_GAP) / 8.0;
+            let active_step = current_step.load(Ordering::Relaxed);
+            let is_running = params.seq_run.value();
+
+            if let Ok(mut pattern_guard) = params.pattern.write() {
+                ui.spacing_mut().item_spacing = vec2(GRID_GAP, GRID_GAP);
+
+                for row in 0..2 {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(GRID_GAP, 0.0);
+
+                        for col in 0..8 {
+                            let step_idx = row * 8 + col;
+                            let is_current = active_step as usize == step_idx;
+                            let step = &mut pattern_guard.steps[step_idx];
+
+                            render_step_strip(
+                                ui,
+                                step_idx,
+                                step,
+                                is_current,
+                                is_running,
+                                cell_w,
+                                STRIP_HEIGHT,
+                            );
+                        }
+                    });
+                }
+
+                render_piano_roll_popup(ui.ctx(), &mut pattern_guard);
+            }
+        },
+    );
 }
 
-pub fn render_sequencer_and_transport(
-    ui: &mut Ui,
-    params: &Plugin303Params,
-    gen_params: &mut crate::dsp::generator::GeneratorParams,
-    setter: &ParamSetter,
-    current_step_atomic: &AtomicU8,
-) {
-    let active_step = current_step_atomic.load(Ordering::Relaxed);
+/// Transport and pattern controls panel: 6 evenly distributed rows of flat tiles.
+pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
+    DevicePanel::new("TRANSPORT & PATTERN", SEQUENCER_H).show(
+        ui,
+        |_header_ui| {},
+        |ui| {
+            let body_w = ui.available_width();
+            let slot_w = ((body_w - SLOT_GAP) * 0.5).floor();
+            let row_gap = ((ui.available_height() - 6.0 * ROW_H) / 5.0).max(2.0);
 
-    super::generator_panel::render_generator_panel(ui, params, gen_params, setter);
-    // Same uniform gutter as the other five panel gaps (round-13 issue 11);
-    // the parent stack zeroes item_spacing.y, so this spacer is the whole gap.
-    ui.add_space(crate::gui::PANEL_GAP);
-
-    let frame_avail_h = ui.available_height();
-
-    Frame::new()
-        .fill(theme::PANEL_BG)
-        .stroke(theme::border_stroke())
-        .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin {
-            left: 8,
-            right: 8,
-            top: 4,
-            bottom: 12,
-        })
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.set_min_height(frame_min_height(frame_avail_h));
-
-            // Grid geometry: 2 rows x 8 columns; transport column on the right
-            let (cell_w, clamped) = grid_cell_width(ui.available_width());
-            debug_assert!(
-                !clamped,
-                "sequencer grid overflows available width; cells clamp to {MIN_CELL_W}px and squeeze the transport column"
-            );
-            let cell_h = STRIP_HEIGHT;
-
+            // Row 1: RUN / STOP and SYNC HOST / INT
             ui.horizontal(|ui| {
-                // item_spacing.x = 0: the grid→separator→transport run is
-                // spaced with explicit add_space(8) calls, so the real chrome
-                // matches SEPARATOR_CHROME_W (18) and the transport column
-                // gets its full reserved 280 px (round-11 item 4; the default
-                // 8 px spacing made the separator run ~49 px and squeezed the
-                // 280 px transport rows past the panel edge).
-                ui.spacing_mut().item_spacing.x = 0.0;
-                // 1. LEFT / MAIN: step pitch key columns in a 2x8 grid (steps 01-08 top, 09-16 bottom)
-                ui.vertical(|ui| {
-                    if let Ok(mut pattern_guard) = params.pattern.write() {
-                        let is_running = params.seq_run.value();
-                        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
 
-                        for row in 0..2 {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                let run_val = params.seq_run.value();
+                let (fill, text_color) = if run_val {
+                    (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
+                } else {
+                    (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
+                };
+                let run_btn = Button::new(
+                    RichText::new(if run_val { "STOP" } else { "RUN" })
+                        .font(FontId::proportional(8.5))
+                        .color(text_color),
+                )
+                .fill(fill)
+                .min_size(vec2(slot_w, ROW_H));
 
-                                for col in 0..8 {
-                                    let step_idx = row * 8 + col;
-                                    let is_current = active_step as usize == step_idx;
-                                    let step = &mut pattern_guard.steps[step_idx];
+                if ui.add(run_btn).clicked() {
+                    setter.begin_set_parameter(&params.seq_run);
+                    setter.set_parameter(&params.seq_run, !run_val);
+                    setter.end_set_parameter(&params.seq_run);
+                }
 
-                                    render_step_strip(ui, step_idx, step, is_current, is_running, cell_w, cell_h);
-                                }
-                            });
-                        }
+                let sync_val = params.seq_sync.value();
+                let (fill, text_color) = if sync_val {
+                    (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
+                } else {
+                    (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
+                };
+                let sync_btn = Button::new(
+                    RichText::new(if sync_val { "SYNC: HOST" } else { "SYNC: INT" })
+                        .font(FontId::proportional(8.5))
+                        .color(text_color),
+                )
+                .fill(fill)
+                .min_size(vec2(slot_w, ROW_H));
 
-                        render_piano_roll_popup(ui.ctx(), &mut pattern_guard);
-                    }
-                });
-
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
-
-                // 2. RIGHT COLUMN: Wide Transport & Pattern Controls
-                ui.vertical(|ui| {
-                    ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing = vec2(3.0, TRANSPORT_ROW_GAP);
-                    ui.spacing_mut().button_padding = vec2(3.0, 1.0);
-
-                    // Stretch the five transport rows across the column's full
-                    // height so no dead band remains below the last row
-                    // (round-13 issue 4). The frame's min height reaches the
-                    // window bottom, so available_height is the whole column.
-                    // Five rows plus five gaps (title→A … C→D) share it.
-                    let row_h = transport_row_height(ui.available_height());
-
-                    ui.label(
-                        nih_plug_egui::egui::RichText::new("TRANSPORT & PATTERN")
-                            .font(FontId::proportional(9.0))
-                            .strong()
-                            // Shared accent title colour (round-11 item 8).
-                            .color(theme::ACCENT_ORANGE),
-                    );
-
-                    // Row A: Run/Sync Buttons. Boolean state uses one encoding
-                    // across the transport panel: engaged = orange fill with
-                    // dark label, not engaged = dark well with muted label
-                    // (round-11 item 13).
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                        let run_val = params.seq_run.value();
-                        let run_btn = Button::new(
-                            nih_plug_egui::egui::RichText::new(if run_val {
-                                "STOP"
-                            } else {
-                                "RUN"
-                            })
-                            .font(FontId::proportional(9.0))
-                            .strong()
-                            .color(if run_val {
-                                theme::TEXT_ON_ACCENT
-                            } else {
-                                theme::TEXT_SECONDARY
-                            }),
-                        )
-                        .fill(if run_val {
-                            theme::ACCENT_ORANGE
-                        } else {
-                            theme::WELL_BG
-                        })
-                        .stroke(Stroke::new(1.0_f32, if run_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
-                        .corner_radius(CornerRadius::same(2));
-
-                        if ui.add(run_btn).clicked() {
-                            setter.begin_set_parameter(&params.seq_run);
-                            setter.set_parameter(&params.seq_run, !run_val);
-                            setter.end_set_parameter(&params.seq_run);
-                        }
-
-                        let sync_val = params.seq_sync.value();
-                        let sync_btn = Button::new(
-                            nih_plug_egui::egui::RichText::new(if sync_val {
-                                "SYNC: HOST"
-                            } else {
-                                "SYNC: INT"
-                            })
-                            .font(FontId::proportional(8.5))
-                            .strong()
-                            .color(if sync_val {
-                                theme::TEXT_ON_ACCENT
-                            } else {
-                                theme::TEXT_SECONDARY
-                            }),
-                        )
-                        .fill(if sync_val {
-                            theme::ACCENT_ORANGE
-                        } else {
-                            theme::WELL_BG
-                        })
-                        .stroke(Stroke::new(1.0_f32, if sync_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
-                        .corner_radius(CornerRadius::same(2));
-
-                        if ui.add(sync_btn).clicked() {
-                            setter.begin_set_parameter(&params.seq_sync);
-                            setter.set_parameter(&params.seq_sync, !sync_val);
-                            setter.end_set_parameter(&params.seq_sync);
-                        }
-                    });
-
-                    // Row: MIDI Out Toggle + Channel + Synth Bypass — same
-                    // two-slot grid; SYNTH follows the shared boolean encoding
-                    // (muted = not engaged, so it loses the ruby accent).
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-
-                        ui.allocate_ui_with_layout(
-                            vec2(TRANSPORT_SLOT_W, row_h),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-
-                                // MIDI OUT button
-                                let midi_val = params.midi_out.value();
-                                let midi_btn = Button::new(
-                                    nih_plug_egui::egui::RichText::new(if midi_val { "MIDI: ON" } else { "MIDI: OFF" })
-                                        .font(FontId::proportional(8.5))
-                                        .strong()
-                                        .color(if midi_val { theme::TEXT_ON_ACCENT } else { theme::TEXT_SECONDARY }),
-                                )
-                                .fill(if midi_val { theme::ACCENT_ORANGE } else { theme::WELL_BG })
-                                .stroke(Stroke::new(1.0_f32, if midi_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }))
-                                .min_size(vec2(70.0, row_h))
-                                .corner_radius(CornerRadius::same(2));
-
-                                if ui.add(midi_btn).on_hover_text("Toggle MIDI Output from 16-step sequencer").clicked() {
-                                    setter.begin_set_parameter(&params.midi_out);
-                                    setter.set_parameter(&params.midi_out, !midi_val);
-                                    setter.end_set_parameter(&params.midi_out);
-                                }
-
-                                // MIDI Channel selector. The field stretches to
-                                // the slot's right edge so the row leaves no
-                                // dead run on the right (round-13 issue 4).
-                                ui.label(
-                                    nih_plug_egui::egui::RichText::new("CH:")
-                                        .font(FontId::proportional(8.0))
-                                        .color(theme::TEXT_MUTED),
-                                );
-                                let mut ch_val = params.midi_out_channel.value();
-                                if ui
-                                    .add_sized(
-                                        vec2(ui.available_width(), row_h),
-                                        DragValue::new(&mut ch_val)
-                                            .range(1..=16)
-                                            .custom_formatter(|n, _| format!("{:02}", n as i32)),
-                                    )
-                                    .on_hover_text("MIDI Output Channel (1-16)")
-                                    .changed()
-                                {
-                                    setter.begin_set_parameter(&params.midi_out_channel);
-                                    setter.set_parameter(&params.midi_out_channel, ch_val);
-                                    setter.end_set_parameter(&params.midi_out_channel);
-                                }
-                            },
-                        );
-
-                        // SYNTH BYPASS button
-                        let bypass_val = params.synth_bypass.value();
-                        let bypass_btn = Button::new(
-                            nih_plug_egui::egui::RichText::new(if bypass_val { "SYNTH: MUTE" } else { "SYNTH: ON" })
-                                .font(FontId::proportional(8.5))
-                                .strong()
-                                .color(if bypass_val { theme::TEXT_SECONDARY } else { theme::TEXT_ON_ACCENT }),
-                        )
-                        .fill(if bypass_val { theme::WELL_BG } else { theme::ACCENT_ORANGE })
-                        .stroke(Stroke::new(1.0_f32, if bypass_val { theme::BORDER_DEFAULT } else { theme::ACCENT_ORANGE }))
-                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
-                        .corner_radius(CornerRadius::same(2));
-
-                        if ui.add(bypass_btn).on_hover_text("Bypass internal synth voice (outputs silence, 0% CPU)").clicked() {
-                            setter.begin_set_parameter(&params.synth_bypass);
-                            setter.set_parameter(&params.synth_bypass, !bypass_val);
-                            setter.end_set_parameter(&params.synth_bypass);
-                        }
-                    });
-
-                    // Row B: Cyclic Pattern Shift Controls (< SHIFT and > SHIFT)
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-
-                        let shift_left_btn = Button::new(
-                            nih_plug_egui::egui::RichText::new("< SHIFT")
-                                .font(FontId::proportional(8.5))
-                                .strong()
-                                .color(theme::TEXT_PRIMARY),
-                        )
-                        .fill(theme::SURFACE_ELEVATED)
-                        .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
-                        .corner_radius(CornerRadius::same(2));
-
-                        if ui.add(shift_left_btn).on_hover_text("Rotate pattern steps left (cyclic)").clicked() {
-                            if let Ok(mut pattern_guard) = params.pattern.write() {
-                                pattern_guard.steps.rotate_left(1);
-                            }
-                        }
-
-                        let shift_right_btn = Button::new(
-                            nih_plug_egui::egui::RichText::new("> SHIFT")
-                                .font(FontId::proportional(8.5))
-                                .strong()
-                                .color(theme::TEXT_PRIMARY),
-                        )
-                        .fill(theme::SURFACE_ELEVATED)
-                        .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                        .min_size(vec2(TRANSPORT_SLOT_W, row_h))
-                        .corner_radius(CornerRadius::same(2));
-
-                        if ui.add(shift_right_btn).on_hover_text("Rotate pattern steps right (cyclic)").clicked() {
-                            if let Ok(mut pattern_guard) = params.pattern.write() {
-                                pattern_guard.steps.rotate_right(1);
-                            }
-                        }
-                    });
-
-                    // Row C: BPM + Length on the two-slot grid. The -/+ steppers
-                    // share the field's dark well treatment with explicit label
-                    // color so neither glyph renders lighter than the other
-                    // (round-11 item 24).
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                        ui.allocate_ui_with_layout(
-                            vec2(TRANSPORT_SLOT_W, row_h),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-                                ui.label(
-                                    nih_plug_egui::egui::RichText::new("BPM:")
-                                        .font(FontId::proportional(8.0))
-                                        .color(theme::TEXT_MUTED),
-                                );
-                                let mut tempo_val = params.seq_tempo.value();
-
-                                let dn_btn = Button::new(
-                                    nih_plug_egui::egui::RichText::new("-")
-                                        .font(FontId::proportional(9.0))
-                                        .strong()
-                                        .color(theme::TEXT_PRIMARY),
-                                )
-                                .fill(theme::WELL_BG)
-                                .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                                .min_size(vec2(24.0, row_h))
-                                .corner_radius(CornerRadius::same(2));
-                                if ui.add(dn_btn).clicked() {
-                                    setter.begin_set_parameter(&params.seq_tempo);
-                                    setter.set_parameter(
-                                        &params.seq_tempo,
-                                        (tempo_val - 1.0).clamp(40.0, 300.0),
-                                    );
-                                    setter.end_set_parameter(&params.seq_tempo);
-                                }
-
-                                // The field fills the slot between the steppers
-                                // (24 px + 3 px gap on the right) so the row
-                                // reaches the shared right edge (round-13 issue 4).
-                                let dv_w = (ui.available_width() - 27.0).max(24.0);
-                                if ui
-                                    .add_sized(
-                                        vec2(dv_w, row_h),
-                                        DragValue::new(&mut tempo_val)
-                                            .range(40.0..=300.0)
-                                            .speed(0.1)
-                                            .custom_formatter(|n, _| format!("{:.0}", n)),
-                                    )
-                                    .changed()
-                                {
-                                    setter.begin_set_parameter(&params.seq_tempo);
-                                    setter.set_parameter(&params.seq_tempo, snap_tempo(tempo_val));
-                                    setter.end_set_parameter(&params.seq_tempo);
-                                }
-
-                                let up_btn = Button::new(
-                                    nih_plug_egui::egui::RichText::new("+")
-                                        .font(FontId::proportional(9.0))
-                                        .strong()
-                                        .color(theme::TEXT_PRIMARY),
-                                )
-                                .fill(theme::WELL_BG)
-                                .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                                .min_size(vec2(24.0, row_h))
-                                .corner_radius(CornerRadius::same(2));
-                                if ui.add(up_btn).clicked() {
-                                    setter.begin_set_parameter(&params.seq_tempo);
-                                    setter.set_parameter(
-                                        &params.seq_tempo,
-                                        (tempo_val + 1.0).clamp(40.0, 300.0),
-                                    );
-                                    setter.end_set_parameter(&params.seq_tempo);
-                                }
-                            },
-                        );
-
-                        ui.allocate_ui_with_layout(
-                            vec2(TRANSPORT_SLOT_W, row_h),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-                                ui.label(
-                                    nih_plug_egui::egui::RichText::new("LEN:")
-                                        .font(FontId::proportional(8.0))
-                                        .color(theme::TEXT_MUTED),
-                                );
-                                let mut len_val = params.seq_length.value();
-                                // The field fills the slot's remaining width so
-                                // the row reaches the shared right edge
-                                // (round-13 issue 4).
-                                if ui
-                                    .add_sized(
-                                        vec2(ui.available_width(), row_h),
-                                        DragValue::new(&mut len_val)
-                                            .range(1..=16)
-                                            .custom_formatter(|n, _| format!("{:02}", n as i32)),
-                                    )
-                                    .changed()
-                                {
-                                    setter.begin_set_parameter(&params.seq_length);
-                                    setter.set_parameter(&params.seq_length, len_val);
-                                    setter.end_set_parameter(&params.seq_length);
-                                }
-                            },
-                        );
-                    });
-
-                    // Row D: Timebase + Mode + Jitter + Clear. Shares the
-                    // stretched row height with the other four rows so the
-                    // column has no dead band below it (round-13 issue 4).
-                    // Two slots on the shared grid keep the row's right edge on
-                    // the column's right inner margin.
-                    ui.allocate_ui_with_layout(
-                        vec2(ui.available_width(), row_h),
-                        Layout::left_to_right(Align::Center),
-                        |ui| {
-                            ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                            ui.spacing_mut().button_padding = vec2(4.0, 3.0);
-
-                            ui.allocate_ui_with_layout(
-                                vec2(TRANSPORT_SLOT_W, row_h),
-                                Layout::left_to_right(Align::Center),
-                                |ui| {
-                                    ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-
-                                    let tb_val = params.seq_timebase.value();
-                                    ComboBox::from_id_salt("seq_tb_combo")
-                                        .icon(paint_combobox_down_arrow)
-                                        // Caption class (8.5 pt) like every
-                                        // button in this row; the default
-                                        // button style rendered these glyphs
-                                        // at h=19 next to h=11 captions
-                                        // (round-14 issue 5).
-                                        .selected_text(
-                                            nih_plug_egui::egui::RichText::new(match tb_val {
-                                                crate::params::Timebase::Straight => "16th",
-                                                crate::params::Timebase::Triplet => "12th",
-                                            })
-                                            .font(FontId::proportional(8.5)),
-                                        )
-                                        .width(48.0)
-                                        .show_ui(ui, |ui| {
-                                            if ui
-                                                .selectable_label(
-                                                    tb_val == crate::params::Timebase::Straight,
-                                                    nih_plug_egui::egui::RichText::new("16th")
-                                                        .font(FontId::proportional(8.5)),
-                                                )
-                                                .clicked()
-                                            {
-                                                setter.begin_set_parameter(&params.seq_timebase);
-                                                setter.set_parameter(
-                                                    &params.seq_timebase,
-                                                    crate::params::Timebase::Straight,
-                                                );
-                                                setter.end_set_parameter(&params.seq_timebase);
-                                            }
-                                            if ui
-                                                .selectable_label(
-                                                    tb_val == crate::params::Timebase::Triplet,
-                                                    nih_plug_egui::egui::RichText::new("12th")
-                                                        .font(FontId::proportional(8.5)),
-                                                )
-                                                .clicked()
-                                            {
-                                                setter.begin_set_parameter(&params.seq_timebase);
-                                                setter.set_parameter(
-                                                    &params.seq_timebase,
-                                                    crate::params::Timebase::Triplet,
-                                                );
-                                                setter.end_set_parameter(&params.seq_timebase);
-                                            }
-                                        });
-
-                                    let mode_val = params.seq_mode.value();
-                                    ComboBox::from_id_salt("seq_mode_combo")
-                                        .icon(paint_combobox_down_arrow)
-                                        .selected_text(
-                                            nih_plug_egui::egui::RichText::new(match mode_val {
-                                                crate::params::SequencerMode::DirectGrid => {
-                                                    "Direct"
-                                                }
-                                                crate::params::SequencerMode::DecoupledHardware => {
-                                                    "Decoupled"
-                                                }
-                                            })
-                                            .font(FontId::proportional(8.5)),
-                                        )
-                                        .width(80.0)
-                                        .show_ui(ui, |ui| {
-                                            if ui
-                                                .selectable_label(
-                                                    mode_val
-                                                        == crate::params::SequencerMode::DirectGrid,
-                                                    nih_plug_egui::egui::RichText::new("Direct")
-                                                        .font(FontId::proportional(8.5)),
-                                                )
-                                                .clicked()
-                                            {
-                                                setter.begin_set_parameter(&params.seq_mode);
-                                                setter.set_parameter(
-                                                    &params.seq_mode,
-                                                    crate::params::SequencerMode::DirectGrid,
-                                                );
-                                                setter.end_set_parameter(&params.seq_mode);
-                                            }
-                                            if ui
-                                                .selectable_label(
-                                                    mode_val
-                                                        == crate::params::SequencerMode::DecoupledHardware,
-                                                    nih_plug_egui::egui::RichText::new("Decoupled")
-                                                        .font(FontId::proportional(8.5)),
-                                                )
-                                                .clicked()
-                                            {
-                                                setter.begin_set_parameter(&params.seq_mode);
-                                                setter.set_parameter(
-                                                    &params.seq_mode,
-                                                    crate::params::SequencerMode::DecoupledHardware,
-                                                );
-                                                setter.end_set_parameter(&params.seq_mode);
-                                            }
-                                        });
-                                },
-                            );
-
-                            ui.allocate_ui_with_layout(
-                                vec2(TRANSPORT_SLOT_W, row_h),
-                                Layout::left_to_right(Align::Center),
-                                |ui| {
-                                    ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-
-                                    let mut jitter_val = params.seq_jitter.value();
-                                    let (jit_hit_rect, jit_resp) = ui.allocate_exact_size(
-                                        vec2(JIT_HIT_W, row_h),
-                                        Sense::click(),
-                                    );
-                                    let jit_resp = jit_resp
-                                        .on_hover_text("Clock jitter / micro-timing humanization");
-                                    if jit_resp.clicked() {
-                                        jitter_val = !jitter_val;
-                                        setter.begin_set_parameter(&params.seq_jitter);
-                                        setter.set_parameter(&params.seq_jitter, jitter_val);
-                                        setter.end_set_parameter(&params.seq_jitter);
-                                    }
-                                    if ui.is_rect_visible(jit_hit_rect) {
-                                        let p = ui.painter();
-                                        // 14pt (28px physical) filled square matching other checkboxes
-                                        let box_rect = nih_plug_egui::egui::Rect::from_center_size(
-                                            pos2(jit_hit_rect.left() + 7.0, jit_hit_rect.center().y),
-                                            vec2(14.0, 14.0),
-                                        );
-                                        p.rect_filled(box_rect, CornerRadius::same(2), if jitter_val { theme::ACCENT_ORANGE } else { theme::SURFACE_ELEVATED });
-                                        p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.0_f32, if jitter_val { theme::ACCENT_ORANGE } else { theme::BORDER_DEFAULT }), StrokeKind::Inside);
-                                        if jitter_val {
-                                            // Orange checkmark
-                                            p.line_segment(
-                                                [
-                                                    pos2(box_rect.left() + 3.0, box_rect.center().y),
-                                                    pos2(box_rect.left() + 6.0, box_rect.bottom() - 3.5),
-                                                ],
-                                                Stroke::new(1.5_f32, theme::TEXT_ON_ACCENT),
-                                            );
-                                            p.line_segment(
-                                                [
-                                                    pos2(box_rect.left() + 6.0, box_rect.bottom() - 3.5),
-                                                    pos2(box_rect.right() - 3.0, box_rect.top() + 3.5),
-                                                ],
-                                                Stroke::new(1.5_f32, theme::TEXT_ON_ACCENT),
-                                            );
-                                        }
-                                        p.text(pos2(jit_hit_rect.left() + 18.0, jit_hit_rect.center().y), nih_plug_egui::egui::Align2::LEFT_CENTER, "JITTER", FontId::proportional(8.5), if jitter_val { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY });
-                                    }
-
-                                    let clear_btn = Button::new(
-                                        nih_plug_egui::egui::RichText::new("CLEAR")
-                                            .font(FontId::proportional(8.0))
-                                            .strong()
-                                            .color(theme::TEXT_PRIMARY),
-                                    )
-                                    .fill(theme::SURFACE_ELEVATED)
-                                    .stroke(Stroke::new(1.0_f32, theme::BORDER_DEFAULT))
-                                    // CLEAR fills the slot remainder after
-                                    // JITTER (52) and the 4-px gap, plus the
-                                    // 3 px the centered slot layout leaves on
-                                    // the right, so Row D's right edge lands
-                                    // on the shared column edge like the other
-                                    // rows (round-13 issue 4).
-                                    .min_size(vec2(TRANSPORT_SLOT_W - JIT_HIT_W - 1.0, row_h))
-                                    .corner_radius(CornerRadius::same(2));
-
-                                    if ui.add(clear_btn).on_hover_text("Reset all steps to default C3 notes").clicked() {
-                                        if let Ok(mut pattern_guard) = params.pattern.write() {
-                                            for step in pattern_guard.steps.iter_mut() {
-                                                *step = SequencerStep {
-                                                    semitone: 0,
-                                                    octave: 0,
-                                                    gate: StepGate::Note,
-                                                    accent: false,
-                                                    slide: false,
-                                                    gate_len: 0.5,
-                                                    velocity: 0.7,
-                                                };
-                                            }
-                                        }
-                                    }
-                                },
-                            );
-                        },
-                    );
-                });
+                if ui.add(sync_btn).clicked() {
+                    setter.begin_set_parameter(&params.seq_sync);
+                    setter.set_parameter(&params.seq_sync, !sync_val);
+                    setter.end_set_parameter(&params.seq_sync);
+                }
             });
-        });
+
+            ui.add_space(row_gap);
+
+            // Row 2: MIDI OUT + Channel and SYNTH ON / MUTE
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
+
+                // Left slot: MIDI toggle + Channel field
+                ui.allocate_ui_with_layout(
+                    vec2(slot_w, ROW_H),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+
+                        let midi_val = params.midi_out.value();
+                        let (fill, text_color) = if midi_val {
+                            (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
+                        } else {
+                            (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
+                        };
+                        let midi_btn_w = (slot_w * 0.55).floor();
+                        let midi_btn = Button::new(
+                            RichText::new(if midi_val { "MIDI: ON" } else { "MIDI: OFF" })
+                                .font(FontId::proportional(8.5))
+                                .color(text_color),
+                        )
+                        .fill(fill)
+                        .min_size(vec2(midi_btn_w, ROW_H));
+
+                        if ui
+                            .add(midi_btn)
+                            .on_hover_text("Toggle MIDI Output from 16-step sequencer")
+                            .clicked()
+                        {
+                            setter.begin_set_parameter(&params.midi_out);
+                            setter.set_parameter(&params.midi_out, !midi_val);
+                            setter.end_set_parameter(&params.midi_out);
+                        }
+
+                        ui.label(
+                            RichText::new("CH:")
+                                .font(FontId::proportional(8.0))
+                                .color(theme::TEXT_SECONDARY),
+                        );
+
+                        let mut ch_val = params.midi_out_channel.value();
+                        let ch_w = ui.available_width();
+                        ui.scope(|ui| {
+                            theme::field_style(ui);
+                            if ui
+                                .add_sized(
+                                    vec2(ch_w, ROW_H),
+                                    DragValue::new(&mut ch_val)
+                                        .range(1..=16)
+                                        .custom_formatter(|n, _| format!("{:02}", n as i32)),
+                                )
+                                .on_hover_text("MIDI Output Channel (1-16)")
+                                .changed()
+                            {
+                                setter.begin_set_parameter(&params.midi_out_channel);
+                                setter.set_parameter(&params.midi_out_channel, ch_val);
+                                setter.end_set_parameter(&params.midi_out_channel);
+                            }
+                        });
+                    },
+                );
+
+                // Right slot: SYNTH voice on/off
+                let bypass_val = params.synth_bypass.value();
+                let synth_on = !bypass_val;
+                let (fill, text_color) = if synth_on {
+                    (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
+                } else {
+                    (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
+                };
+                let bypass_btn = Button::new(
+                    RichText::new(if synth_on { "SYNTH: ON" } else { "SYNTH: MUTE" })
+                        .font(FontId::proportional(8.5))
+                        .color(text_color),
+                )
+                .fill(fill)
+                .min_size(vec2(slot_w, ROW_H));
+
+                if ui
+                    .add(bypass_btn)
+                    .on_hover_text("Bypass internal synth voice (outputs silence, 0% CPU)")
+                    .clicked()
+                {
+                    setter.begin_set_parameter(&params.synth_bypass);
+                    setter.set_parameter(&params.synth_bypass, !bypass_val);
+                    setter.end_set_parameter(&params.synth_bypass);
+                }
+            });
+
+            ui.add_space(row_gap);
+
+            // Row 3: Cyclic Pattern Shift Controls (< SHIFT and > SHIFT)
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
+
+                let shift_left_btn = Button::new(
+                    RichText::new("< SHIFT")
+                        .font(FontId::proportional(8.5))
+                        .color(theme::TEXT_PRIMARY),
+                )
+                .fill(theme::SURFACE_ELEVATED)
+                .min_size(vec2(slot_w, ROW_H));
+
+                if ui
+                    .add(shift_left_btn)
+                    .on_hover_text("Rotate pattern steps left (cyclic)")
+                    .clicked()
+                {
+                    if let Ok(mut pattern_guard) = params.pattern.write() {
+                        pattern_guard.steps.rotate_left(1);
+                    }
+                }
+
+                let shift_right_btn = Button::new(
+                    RichText::new("> SHIFT")
+                        .font(FontId::proportional(8.5))
+                        .color(theme::TEXT_PRIMARY),
+                )
+                .fill(theme::SURFACE_ELEVATED)
+                .min_size(vec2(slot_w, ROW_H));
+
+                if ui
+                    .add(shift_right_btn)
+                    .on_hover_text("Rotate pattern steps right (cyclic)")
+                    .clicked()
+                {
+                    if let Ok(mut pattern_guard) = params.pattern.write() {
+                        pattern_guard.steps.rotate_right(1);
+                    }
+                }
+            });
+
+            ui.add_space(row_gap);
+
+            // Row 4: BPM -/field/+ and LEN -/field/+
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
+
+                // BPM slot
+                ui.allocate_ui_with_layout(
+                    vec2(slot_w, ROW_H),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+
+                        ui.label(
+                            RichText::new("BPM:")
+                                .font(FontId::proportional(8.0))
+                                .color(theme::TEXT_SECONDARY),
+                        );
+                        let mut tempo_val = params.seq_tempo.value();
+
+                        let dn_btn = Button::new(
+                            RichText::new("-")
+                                .font(FontId::proportional(9.0))
+                                .color(theme::TEXT_PRIMARY),
+                        )
+                        .fill(theme::SURFACE_ELEVATED)
+                        .min_size(vec2(22.0, ROW_H));
+                        if ui.add(dn_btn).clicked() {
+                            setter.begin_set_parameter(&params.seq_tempo);
+                            setter.set_parameter(
+                                &params.seq_tempo,
+                                (tempo_val - 1.0).clamp(40.0, 300.0),
+                            );
+                            setter.end_set_parameter(&params.seq_tempo);
+                        }
+
+                        let dv_w = (ui.available_width() - 25.0).max(20.0);
+                        ui.scope(|ui| {
+                            theme::field_style(ui);
+                            if ui
+                                .add_sized(
+                                    vec2(dv_w, ROW_H),
+                                    DragValue::new(&mut tempo_val)
+                                        .range(40.0..=300.0)
+                                        .speed(0.1)
+                                        .custom_formatter(|n, _| format!("{:.0}", n)),
+                                )
+                                .changed()
+                            {
+                                setter.begin_set_parameter(&params.seq_tempo);
+                                setter.set_parameter(&params.seq_tempo, snap_tempo(tempo_val));
+                                setter.end_set_parameter(&params.seq_tempo);
+                            }
+                        });
+
+                        let up_btn = Button::new(
+                            RichText::new("+")
+                                .font(FontId::proportional(9.0))
+                                .color(theme::TEXT_PRIMARY),
+                        )
+                        .fill(theme::SURFACE_ELEVATED)
+                        .min_size(vec2(22.0, ROW_H));
+                        if ui.add(up_btn).clicked() {
+                            setter.begin_set_parameter(&params.seq_tempo);
+                            setter.set_parameter(
+                                &params.seq_tempo,
+                                (tempo_val + 1.0).clamp(40.0, 300.0),
+                            );
+                            setter.end_set_parameter(&params.seq_tempo);
+                        }
+                    },
+                );
+
+                // LEN slot
+                ui.allocate_ui_with_layout(
+                    vec2(slot_w, ROW_H),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
+
+                        ui.label(
+                            RichText::new("LEN:")
+                                .font(FontId::proportional(8.0))
+                                .color(theme::TEXT_SECONDARY),
+                        );
+                        let mut len_val = params.seq_length.value();
+
+                        let dn_btn = Button::new(
+                            RichText::new("-")
+                                .font(FontId::proportional(9.0))
+                                .color(theme::TEXT_PRIMARY),
+                        )
+                        .fill(theme::SURFACE_ELEVATED)
+                        .min_size(vec2(22.0, ROW_H));
+                        if ui.add(dn_btn).clicked() {
+                            setter.begin_set_parameter(&params.seq_length);
+                            setter.set_parameter(&params.seq_length, (len_val - 1).clamp(1, 16));
+                            setter.end_set_parameter(&params.seq_length);
+                        }
+
+                        let dv_w = (ui.available_width() - 25.0).max(20.0);
+                        ui.scope(|ui| {
+                            theme::field_style(ui);
+                            if ui
+                                .add_sized(
+                                    vec2(dv_w, ROW_H),
+                                    DragValue::new(&mut len_val)
+                                        .range(1..=16)
+                                        .custom_formatter(|n, _| format!("{:02}", n as i32)),
+                                )
+                                .changed()
+                            {
+                                setter.begin_set_parameter(&params.seq_length);
+                                setter.set_parameter(&params.seq_length, len_val);
+                                setter.end_set_parameter(&params.seq_length);
+                            }
+                        });
+
+                        let up_btn = Button::new(
+                            RichText::new("+")
+                                .font(FontId::proportional(9.0))
+                                .color(theme::TEXT_PRIMARY),
+                        )
+                        .fill(theme::SURFACE_ELEVATED)
+                        .min_size(vec2(22.0, ROW_H));
+                        if ui.add(up_btn).clicked() {
+                            setter.begin_set_parameter(&params.seq_length);
+                            setter.set_parameter(&params.seq_length, (len_val + 1).clamp(1, 16));
+                            setter.end_set_parameter(&params.seq_length);
+                        }
+                    },
+                );
+            });
+
+            ui.add_space(row_gap);
+
+            // Row 5: Timebase (16th/12th) and Mode (Direct/Decoupled) Dropdowns
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
+
+                // Timebase combo
+                ui.allocate_ui_with_layout(
+                    vec2(slot_w, ROW_H),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.scope(|ui| {
+                            theme::field_style(ui);
+                            ui.spacing_mut().interact_size.y = ROW_H;
+                            let tb_val = params.seq_timebase.value();
+                            ComboBox::from_id_salt("seq_tb_combo")
+                                .icon(paint_combobox_down_arrow)
+                                .selected_text(
+                                    RichText::new(match tb_val {
+                                        crate::params::Timebase::Straight => "16th",
+                                        crate::params::Timebase::Triplet => "12th",
+                                    })
+                                    .font(FontId::proportional(8.5)),
+                                )
+                                .width(slot_w)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(
+                                            tb_val == crate::params::Timebase::Straight,
+                                            RichText::new("16th").font(FontId::proportional(8.5)),
+                                        )
+                                        .clicked()
+                                    {
+                                        setter.begin_set_parameter(&params.seq_timebase);
+                                        setter.set_parameter(
+                                            &params.seq_timebase,
+                                            crate::params::Timebase::Straight,
+                                        );
+                                        setter.end_set_parameter(&params.seq_timebase);
+                                    }
+                                    if ui
+                                        .selectable_label(
+                                            tb_val == crate::params::Timebase::Triplet,
+                                            RichText::new("12th").font(FontId::proportional(8.5)),
+                                        )
+                                        .clicked()
+                                    {
+                                        setter.begin_set_parameter(&params.seq_timebase);
+                                        setter.set_parameter(
+                                            &params.seq_timebase,
+                                            crate::params::Timebase::Triplet,
+                                        );
+                                        setter.end_set_parameter(&params.seq_timebase);
+                                    }
+                                });
+                        });
+                    },
+                );
+
+                // Mode combo
+                ui.allocate_ui_with_layout(
+                    vec2(slot_w, ROW_H),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.scope(|ui| {
+                            theme::field_style(ui);
+                            ui.spacing_mut().interact_size.y = ROW_H;
+                            let mode_val = params.seq_mode.value();
+                            ComboBox::from_id_salt("seq_mode_combo")
+                                .icon(paint_combobox_down_arrow)
+                                .selected_text(
+                                    RichText::new(match mode_val {
+                                        crate::params::SequencerMode::DirectGrid => "Direct",
+                                        crate::params::SequencerMode::DecoupledHardware => {
+                                            "Decoupled"
+                                        }
+                                    })
+                                    .font(FontId::proportional(8.5)),
+                                )
+                                .width(slot_w)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(
+                                            mode_val == crate::params::SequencerMode::DirectGrid,
+                                            RichText::new("Direct").font(FontId::proportional(8.5)),
+                                        )
+                                        .clicked()
+                                    {
+                                        setter.begin_set_parameter(&params.seq_mode);
+                                        setter.set_parameter(
+                                            &params.seq_mode,
+                                            crate::params::SequencerMode::DirectGrid,
+                                        );
+                                        setter.end_set_parameter(&params.seq_mode);
+                                    }
+                                    if ui
+                                        .selectable_label(
+                                            mode_val
+                                                == crate::params::SequencerMode::DecoupledHardware,
+                                            RichText::new("Decoupled")
+                                                .font(FontId::proportional(8.5)),
+                                        )
+                                        .clicked()
+                                    {
+                                        setter.begin_set_parameter(&params.seq_mode);
+                                        setter.set_parameter(
+                                            &params.seq_mode,
+                                            crate::params::SequencerMode::DecoupledHardware,
+                                        );
+                                        setter.end_set_parameter(&params.seq_mode);
+                                    }
+                                });
+                        });
+                    },
+                );
+            });
+
+            ui.add_space(row_gap);
+
+            // Row 6: JITTER ToggleButton and CLEAR Button
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
+
+                ui.allocate_ui_with_layout(
+                    vec2(slot_w, ROW_H),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        let mut jitter_val = params.seq_jitter.value();
+                        if ui
+                            .add(
+                                ToggleButton::new(&mut jitter_val, "JITTER")
+                                    .min_width(slot_w)
+                                    .height(ROW_H),
+                            )
+                            .on_hover_text("Clock jitter / micro-timing humanization")
+                            .changed()
+                        {
+                            setter.begin_set_parameter(&params.seq_jitter);
+                            setter.set_parameter(&params.seq_jitter, jitter_val);
+                            setter.end_set_parameter(&params.seq_jitter);
+                        }
+                    },
+                );
+
+                let clear_btn = Button::new(
+                    RichText::new("CLEAR")
+                        .font(FontId::proportional(8.5))
+                        .color(theme::TEXT_PRIMARY),
+                )
+                .fill(theme::SURFACE_ELEVATED)
+                .min_size(vec2(slot_w, ROW_H));
+
+                if ui
+                    .add(clear_btn)
+                    .on_hover_text("Reset all steps to default C3 notes")
+                    .clicked()
+                {
+                    if let Ok(mut pattern_guard) = params.pattern.write() {
+                        for step in pattern_guard.steps.iter_mut() {
+                            *step = SequencerStep {
+                                semitone: 0,
+                                octave: 0,
+                                gate: StepGate::Note,
+                                accent: false,
+                                slide: false,
+                                gate_len: 0.5,
+                                velocity: 0.7,
+                            };
+                        }
+                    }
+                }
+            });
+        },
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn grid_cells_fill_available_width_when_not_clamped() {
-        // avail exactly fits 8 cells of 90 px + 7 gaps after transport + separator chrome
-        let avail = TRANSPORT_COLUMN_W + SEPARATOR_CHROME_W + 8.0 * 90.0 + 7.0 * GRID_GAP;
-        let (cell_w, clamped) = grid_cell_width(avail);
-        assert!((cell_w - 90.0).abs() < 1e-4);
-        assert!(!clamped);
-    }
-
-    #[test]
-    fn grid_cell_width_clamps_to_minimum() {
-        let (cell_w, clamped) = grid_cell_width(100.0);
-        assert_eq!(cell_w, MIN_CELL_W);
-        assert!(clamped);
-    }
-
-    #[test]
-    fn transport_slots_fill_column_width() {
-        // The two-slot grid spans the full transport column: slot + gap + slot.
-        assert_eq!(TRANSPORT_SLOT_W * 2.0 + 4.0, TRANSPORT_COLUMN_W);
-    }
-
-    #[test]
-    fn transport_row_height_fills_column_and_clamps() {
-        // Title + rows + gaps consume the column exactly (no dead band).
-        let avail = 268.0;
-        let row_h = transport_row_height(avail);
-        let total = TRANSPORT_TITLE_H
-            + TRANSPORT_ROW_COUNT * row_h
-            + TRANSPORT_ROW_COUNT * TRANSPORT_ROW_GAP;
-        assert!((total - avail).abs() < 1e-4);
-        // Tiny heights clamp to the minimum row height instead of going negative.
-        assert_eq!(transport_row_height(0.0), TRANSPORT_ROW_MIN_H);
-    }
-
-    #[test]
-    fn jitter_button_dimensions_accommodate_label() {
-        // "JITTER" at 8 pt proportional is ~27 px wide; painted from a 15 px
-        // offset. The hit rect must cover the full painted text plus margin so
-        // no glyph pixels land on the CLEAR button's hit zone.
-        const { assert!(JIT_HIT_W >= 15.0 + 27.0 + 2.0) };
-    }
 
     #[test]
     fn tempo_snaps_to_integer() {
@@ -763,32 +607,5 @@ mod tests {
         assert_eq!(snap_tempo(120.5), 121.0);
         assert_eq!(snap_tempo(40.0), 40.0);
         assert_eq!(snap_tempo(299.9), 300.0);
-    }
-
-    #[test]
-    fn row_d_clear_button_reaches_slot_right_edge() {
-        // Row D's second slot is JITTER + gap + CLEAR; the CLEAR button fills
-        // the slot remainder so the row's right edge lands on the column's
-        // right inner margin.
-        let clear_w = TRANSPORT_SLOT_W - JIT_HIT_W - 6.0;
-        assert!(clear_w >= 36.0, "CLEAR must keep a usable hit target");
-        assert_eq!(JIT_HIT_W + 3.0 + clear_w, TRANSPORT_SLOT_W - 3.0);
-    }
-
-    #[test]
-    fn frame_min_height_adapts_and_clamps_to_floor() {
-        let min_floor = GRID_TOTAL_H + 16.0; // 284.0
-        assert_eq!(min_floor, 284.0);
-
-        // When available height is smaller than floor + chrome, floor wins
-        assert_eq!(frame_min_height(0.0), 284.0);
-        assert_eq!(frame_min_height(100.0), 284.0);
-        assert_eq!(frame_min_height(280.0), 284.0);
-        assert_eq!(frame_min_height(280.0 + FRAME_VERT_CHROME_PX), 284.0);
-
-        // When available height exceeds floor + chrome, chrome is subtracted
-        let extra = 50.0;
-        let avail = 284.0 + FRAME_VERT_CHROME_PX + extra;
-        assert_eq!(frame_min_height(avail), 284.0 + extra);
     }
 }

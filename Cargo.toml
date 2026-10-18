@@ -1,8 +1,11 @@
 # Cargo.toml
 [workspace]
 # `xtask` is the nih-plug bundler runner; `plugin303` is the TB-303 voice
-# (Phase-2 plan, docs/plans/2026-06-26-phase2-303-voice-implementation-plan.md).
-members = ["xtask", "plugin303"]
+# (Phase-2 plan, docs/plans/2026-06-26-phase2-303-voice-implementation-plan.md);
+# `tools/gui_render` renders the editor offscreen for GUI QA.
+members = ["xtask", "plugin303", "tools/gui_render"]
+# gui_render pulls in wgpu. Plain `cargo build/test` skips it; use `-p gui_render`.
+default-members = ["xtask", "plugin303"]
 resolver = "2"
 
 [profile.release]

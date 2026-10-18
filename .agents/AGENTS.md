@@ -22,6 +22,7 @@ plugin303/            Rust nih-plug crate (VST3/CLAP synth, the product)
 tools/circuitgen/     Python — IR → SPICE / ACME emitters + drift guard
 tools/schemagen/      Python — schematic image → draft IR (experimental)
 tools/gen_fir_coeffs.py  FIR coefficient generator for the oversampler
+tools/gui_render/     Rust — offscreen editor renderer for GUI QA (wgpu; opt-in `-p gui_render`)
 eval/303/             Python + ngspice validation harnesses (ground truth)
 eval/acme_vs_spice/   Julia ACME.jl project environment (NO-GO, historical)
 tests/circuitgen/     Python drift-guard tests (IR ↔ generated backends)
@@ -71,6 +72,10 @@ uv run --no-project --with PySpice --with numpy python eval/303/run_vcf303_spice
 
 # Python — whole-voice comparison (ESR table, ~3 min)
 uv run --no-project --with PySpice --with numpy python eval/303/compare_voice.py
+
+# GUI QA — render every QA state offscreen (no window, no Screen Recording permission)
+# into target/gui-qa-offscreen with the same file names as capture_standalone_gui.sh
+bash scripts/render_gui_offscreen.sh
 
 # macOS local build + install
 bash scripts/build-macos-arm64.sh

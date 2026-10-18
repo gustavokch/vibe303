@@ -1,185 +1,119 @@
 use nih_plug::prelude::ParamSetter;
-use nih_plug_egui::egui::{vec2, Button, CornerRadius, FontId, Frame, Margin, Stroke, Ui};
+use nih_plug_egui::egui::{vec2, Align, Button, FontId, Layout, RichText, Ui};
 
 use crate::gui::theme;
+use crate::gui::widgets::panel::DevicePanel;
 use crate::gui::widgets::{Knob303, SlideSwitch};
 use crate::params::{CircuitTopology, Plugin303Params};
-
-pub const SOUPED_INNER_HEIGHT: f32 = 131.0;
-
-/// Panel-gap hierarchy (round-17 issue 2). The central stack in
-/// `gui/mod.rs` separates the six top-level panels with uniform
-/// `PANEL_GAP` spacers (4 logical px = 8 physical). The gaps the QA
-/// `panels` probe reports *inside* this drawer (0 px above the toggles
-/// row, ~43 px above the knob row) are not inter-panel gutters: they
-/// are the drawer's own framed content — a title row + toggle strip +
-/// separator + knob strip inside one `Frame`. Sub-panel spacing is the
-/// `2.0` px separators below; do not insert `PANEL_GAP` here.
-///
-/// Height the shared panel title row consumes (10-pt label + the 3-px space
-/// under it) before either branch renders its content.
-const TITLE_ROW_H: f32 = 17.0;
-
-/// Vertical padding above the ACCURATE placeholder card so it stays centred in
-/// the height that remains under the title row (round-14 issue 4).
-fn accurate_card_pad(card_h: f32) -> f32 {
-    ((SOUPED_INNER_HEIGHT - TITLE_ROW_H - card_h) * 0.5).max(0.0)
-}
 
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
 
-    Frame::new()
-        .fill(theme::PANEL_BG_SOUPED)
-        .stroke(theme::border_stroke())
-        .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::symmetric(10, 8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.set_min_height(SOUPED_INNER_HEIGHT);
+    DevicePanel::new("SOUPED-UP ENGINE", crate::gui::BANK_ROW_H)
+        .dimmed(is_accurate)
+        .show(
+            ui,
+            |header_ui| {
+                if !is_accurate {
+                    // Header runs right-to-left: add VCA ENV first, then VCF TAPS.
+                    header_ui.add(
+                        SlideSwitch::new(&params.vca_env_mode, setter, "VCA ENV", &["GATE", "ENV"])
+                            .caption_left(),
+                    );
+                    header_ui.add(
+                        SlideSwitch::new(
+                            &params.vcf_taps,
+                            setter,
+                            "VCF TAPS",
+                            &["2-POLE", "3-POLE", "4-POLE"],
+                        )
+                        .caption_left(),
+                    );
+                }
+            },
+            |body_ui| {
+                if is_accurate {
+                    // Vertically and horizontally centered single-row banner in the 50 px body
+                    let pad_y = ((body_ui.available_height()
+                        - crate::gui::widgets::toggle::TOGGLE_H)
+                        * 0.5)
+                        .max(0.0);
+                    body_ui.add_space(pad_y);
 
-            // Panel title in BOTH states: the bypass placeholder used to drop
-            // it, so the section lost its identity and its extent in ACCURATE
-            // (round-14 issue 4). Faded ACCENT_ORANGE measures ≈2.5:1, so the
-            // bypassed title uses the secondary token instead.
-            ui.horizontal(|ui| {
-                ui.label(
-                    nih_plug_egui::egui::RichText::new("SOUPED-UP ENGINE & ANALOG DRAWER")
-                        .font(FontId::new(
-                            10.0,
-                            nih_plug_egui::egui::FontFamily::Proportional,
-                        ))
-                        .strong()
-                        .color(if is_accurate {
-                            theme::TEXT_SECONDARY
-                        } else {
-                            theme::ACCENT_ORANGE
-                        }),
-                );
-            });
+                    let font_title = FontId::proportional(10.5);
+                    let font_sub = FontId::proportional(8.5);
+                    let text_title = "ACCURATE MODE ACTIVE";
+                    let text_sub = "Souped-up engine is bypassed";
+                    let btn_text = "ENABLE FUN MODE";
+                    let btn_w = 120.0;
+                    let spacing = 12.0;
 
-            ui.add_space(3.0);
-
-            if is_accurate {
-                // Centered overlay card when bypassed with zero ghost rendering
-                let total_w = ui.available_width();
-                // Guard against narrow drawer: clamp the available width slice so
-                // card_w never underflows to 0 (which would collapse the Frame).
-                const MIN_CARD_W: f32 = 120.0;
-                let card_w = 300.0_f32.min((total_w - 20.0).max(MIN_CARD_W));
-                let card_h = 72.0_f32;
-                let pad = accurate_card_pad(card_h);
-
-                ui.vertical(|ui| {
-                    ui.add_space(pad);
-                    ui.vertical_centered(|ui| {
-                        Frame::new()
-                            .fill(theme::SURFACE_ELEVATED)
-                            .stroke(Stroke::new(1.0_f32, theme::BORDER_FOCUS))
-                            .corner_radius(CornerRadius::same(3))
-                            .inner_margin(Margin::symmetric(16, 6))
-                            .show(ui, |ui| {
-                                ui.set_width(card_w);
-                                ui.set_min_height(card_h);
-                                ui.vertical_centered(|ui| {
-                                    ui.label(
-                                        nih_plug_egui::egui::RichText::new("ACCURATE MODE ACTIVE")
-                                            .font(FontId::new(
-                                                10.5,
-                                                nih_plug_egui::egui::FontFamily::Proportional,
-                                            ))
-                                            .strong()
-                                            .color(theme::TEXT_PRIMARY),
-                                    );
-                                    ui.add_space(2.0);
-                                    ui.label(
-                                        nih_plug_egui::egui::RichText::new(
-                                            "Souped-up engine is bypassed",
-                                        )
-                                        .font(FontId::new(
-                                            8.5,
-                                            nih_plug_egui::egui::FontFamily::Proportional,
-                                        ))
-                                        .color(theme::TEXT_SECONDARY),
-                                    );
-                                    ui.add_space(6.0);
-
-                                    let btn = Button::new(
-                                        nih_plug_egui::egui::RichText::new("ENABLE FUN MODE")
-                                            .font(FontId::new(
-                                                9.0,
-                                                nih_plug_egui::egui::FontFamily::Proportional,
-                                            ))
-                                            .strong()
-                                            .color(theme::TEXT_ON_ACCENT),
-                                    )
-                                    .fill(theme::ACCENT_ORANGE)
-                                    .min_size(vec2(130.0, 20.0))
-                                    .corner_radius(CornerRadius::same(2));
-
-                                    if ui.add(btn).clicked() {
-                                        setter.begin_set_parameter(&params.topology);
-                                        setter
-                                            .set_parameter(&params.topology, CircuitTopology::Fun);
-                                        setter.end_set_parameter(&params.topology);
-
-                                        setter.begin_set_parameter(&params.reso_comp);
-                                        setter.set_parameter_normalized(&params.reso_comp, 0.5);
-                                        setter.end_set_parameter(&params.reso_comp);
-                                    }
-                                });
-                            });
-                    });
-                });
-            } else {
-                ui.vertical(|ui| {
-                    // Row 1: Selectors & Mode Toggles — stretched across the
-                    // full band so no dead run remains beside the switches
-                    // (round-13 issue 5). Split matches option count: 3 slots
-                    // for VCF TAPS, 2 for VCA ENV.
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(10.0, 0.0);
-                        let total_w = ui.available_width();
-                        let taps_w = (total_w * 0.6 - 5.0).max(160.0);
-                        let vca_w = (total_w * 0.4 - 5.0).max(90.0);
-
-                        ui.add(
-                            SlideSwitch::new(
-                                &params.vcf_taps,
-                                setter,
-                                "VCF TAPS",
-                                &["2-POLE", "3-POLE", "4-POLE"],
+                    let (w_title, w_sub) = body_ui.fonts(|f| {
+                        (
+                            f.layout_no_wrap(
+                                text_title.to_string(),
+                                font_title.clone(),
+                                theme::TEXT_PRIMARY,
                             )
-                            .with_width(taps_w),
+                            .size()
+                            .x,
+                            f.layout_no_wrap(
+                                text_sub.to_string(),
+                                font_sub.clone(),
+                                theme::TEXT_SECONDARY,
+                            )
+                            .size()
+                            .x,
+                        )
+                    });
+                    let total_row_w = w_title + spacing + w_sub + spacing + btn_w;
+                    let pad_x = ((body_ui.available_width() - total_row_w) * 0.5).max(0.0);
+
+                    body_ui.horizontal(|ui| {
+                        ui.add_space(pad_x);
+                        ui.spacing_mut().item_spacing.x = spacing;
+
+                        ui.label(
+                            RichText::new(text_title)
+                                .font(font_title)
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.label(
+                            RichText::new(text_sub)
+                                .font(font_sub)
+                                .color(theme::TEXT_SECONDARY),
                         );
 
-                        ui.add(
-                            SlideSwitch::new(
-                                &params.vca_env_mode,
-                                setter,
-                                "VCA ENV",
-                                &["GATE", "ENV"],
-                            )
-                            .with_width(vca_w),
-                        );
+                        let btn = Button::new(
+                            RichText::new(btn_text)
+                                .font(FontId::proportional(8.5))
+                                .color(theme::TEXT_ON_ACCENT),
+                        )
+                        .fill(theme::ACCENT_ORANGE)
+                        .min_size(vec2(btn_w, crate::gui::widgets::toggle::TOGGLE_H));
+
+                        if ui.add(btn).clicked() {
+                            setter.begin_set_parameter(&params.topology);
+                            setter.set_parameter(&params.topology, CircuitTopology::Fun);
+                            setter.end_set_parameter(&params.topology);
+
+                            setter.begin_set_parameter(&params.reso_comp);
+                            setter.set_parameter_normalized(&params.reso_comp, 0.5);
+                            setter.end_set_parameter(&params.reso_comp);
+                        }
                     });
-
-                    ui.add_space(2.0);
-                    ui.separator();
-                    ui.add_space(2.0);
-
-                    // Row 2: Engine Rotary Dials (9 equal columns across full width)
-                    ui.horizontal(|ui| {
+                } else {
+                    // Row of 9 MEDIUM knobs filling the full 50 px body, top-aligned
+                    body_ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                         let total_w = ui.available_width();
                         let col_w = total_w / 9.0;
+                        let col_h = ui.available_height();
 
                         let mut render_knob = |knob: Knob303<'_, _>| {
                             ui.allocate_ui_with_layout(
-                                vec2(col_w, 64.0),
-                                nih_plug_egui::egui::Layout::top_down(
-                                    nih_plug_egui::egui::Align::Center,
-                                ),
+                                vec2(col_w, col_h),
+                                Layout::top_down(Align::Center),
                                 |ui| {
                                     ui.add(knob);
                                 },
@@ -241,37 +175,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             theme::KNOB_RADIUS_MEDIUM,
                         ));
                     });
-                });
-            }
-        });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn souped_panel_height_pinned() {
-        assert_eq!(SOUPED_INNER_HEIGHT, 131.0);
-    }
-
-    #[test]
-    fn accurate_card_centering_geometry() {
-        let card_h = 72.0_f32;
-        let pad = accurate_card_pad(card_h);
-        assert_eq!(pad, 21.0);
-        // Title row + padded card fill the pinned inner height exactly.
-        assert_eq!(TITLE_ROW_H + pad * 2.0 + card_h, SOUPED_INNER_HEIGHT);
-
-        const MIN_CARD_W: f32 = 120.0;
-        for total_w in [50.0_f32, 100.0, 200.0, 300.0, 600.0, 1346.0] {
-            let card_w = 300.0_f32.min((total_w - 20.0).max(MIN_CARD_W));
-            assert!((MIN_CARD_W..=300.0).contains(&card_w));
-        }
-    }
-
-    #[test]
-    fn accurate_card_pad_never_negative_for_a_tall_card() {
-        assert_eq!(accurate_card_pad(SOUPED_INNER_HEIGHT), 0.0);
-    }
+                }
+            },
+        );
 }

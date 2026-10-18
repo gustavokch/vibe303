@@ -2,30 +2,134 @@ pub mod panels;
 pub mod theme;
 pub mod widgets;
 
-use nih_plug::prelude::Editor;
-use nih_plug_egui::egui::{CornerRadius, Frame, Margin, Stroke};
+use nih_plug::prelude::{Editor, ParamSetter};
+use nih_plug_egui::egui::{
+    pos2, vec2, Align, CentralPanel, Frame, Layout, Margin, Rect, Ui, UiBuilder,
+};
 use nih_plug_egui::{create_egui_editor, EguiState};
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 
+use crate::dsp::generator::GeneratorParams;
 use crate::params::Plugin303Params;
 
-pub const GUI_WIDTH: u32 = 1366;
-pub const GUI_HEIGHT: u32 = 960;
+/// Window size in logical px. The aspect ratio is 19:10 (wide and short, like a
+/// device chain), so `GUI_WIDTH * 10 == GUI_HEIGHT * 19`.
+pub const GUI_WIDTH: u32 = 1216;
+pub const GUI_HEIGHT: u32 = 640;
+const _: () = assert!(GUI_WIDTH * 10 == GUI_HEIGHT * 19, "window must stay 19:10");
 
-/// Uniform inter-panel gutter in logical px. Every gap in the central panel
-/// stack is an explicit `add_space(PANEL_GAP)` with the automatic
-/// `item_spacing.y` zeroed, so all six gutters measure identically
-/// (round-13 issue 11).
-pub(crate) const PANEL_GAP: f32 = 4.0;
+/// Window margin in logical px: the chassis plane showing around the devices.
+pub const MARGIN: f32 = 4.0;
 
-pub fn create_editor(
-    params: Arc<Plugin303Params>,
-    editor_state: Arc<EguiState>,
-    current_playing_step: Arc<AtomicU8>,
-) -> Option<Box<dyn Editor>> {
-    let gen_params = match std::env::var("VIBE303_QA_STATE").as_deref() {
-        Ok("generator") => crate::dsp::generator::GeneratorParams {
+/// Uniform gutter between devices, horizontal and vertical. Every gap in the
+/// stack is an explicit `add_space(PANEL_GAP)` or a column split of this width,
+/// with the automatic `item_spacing.y` zeroed.
+pub const PANEL_GAP: f32 = 3.0;
+
+/// Height of the app bar at the top of the window.
+pub const HEADER_BAR_H: f32 = 24.0;
+
+/// Device height for a row of LARGE knobs: header strip + knob + padding.
+pub const VOICE_ROW_H: f32 = 100.0;
+
+/// Device height for a row of MEDIUM knobs.
+pub const BANK_ROW_H: f32 = 80.0;
+
+/// The tweaks device spans the two knob-bank rows beside it.
+pub const TWEAKS_H: f32 = 2.0 * BANK_ROW_H + PANEL_GAP;
+
+/// Share of the row the left column takes. Every row below the app bar splits
+/// at this one seam, so device edges line up down the whole window.
+const LEFT_COLUMN_FRACTION: f32 = 2.0 / 3.0;
+
+/// Left and right column widths for a row `total` wide.
+pub fn split_columns(total: f32) -> (f32, f32) {
+    let left = ((total - PANEL_GAP) * LEFT_COLUMN_FRACTION).round();
+    (left, total - PANEL_GAP - left)
+}
+
+/// Lay out one row as two columns on the shared seam. `add` receives the left
+/// and right column Uis; each column stacks its devices top-down. The parent's
+/// cursor advances past whichever column ran longer.
+fn columns(ui: &mut Ui, id: &'static str, add: impl FnOnce(&mut Ui, &mut Ui)) {
+    let (left_w, right_w) = split_columns(ui.available_width());
+    let origin = ui.cursor().min;
+    let height = ui.available_height();
+    let left_rect = Rect::from_min_size(origin, vec2(left_w, height));
+    let right_rect = Rect::from_min_size(
+        pos2(origin.x + left_w + PANEL_GAP, origin.y),
+        vec2(right_w, height),
+    );
+    let mut left = ui.new_child(
+        UiBuilder::new()
+            .id_salt((id, "left"))
+            .max_rect(left_rect)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    let mut right = ui.new_child(
+        UiBuilder::new()
+            .id_salt((id, "right"))
+            .max_rect(right_rect)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    add(&mut left, &mut right);
+    ui.advance_cursor_after_rect(left.min_rect().union(right.min_rect()));
+}
+
+/// The whole editor: every device from the app bar down. The production editor
+/// and the layout test both render through this, so they cannot diverge.
+pub fn render_editor(
+    ui: &mut Ui,
+    params: &Plugin303Params,
+    setter: &ParamSetter,
+    gen_params: &mut GeneratorParams,
+    current_step: &AtomicU8,
+) {
+    // Zero the automatic widget spacing: the gutters are explicit PANEL_GAP only.
+    ui.spacing_mut().item_spacing.y = 0.0;
+
+    panels::header_bar::render_header(ui, params, setter);
+    ui.add_space(PANEL_GAP);
+
+    columns(ui, "voice", |left, right| {
+        panels::top_controls::render_voice_panel(left, params, setter);
+        panels::top_controls::render_envelope_panel(right, params, setter);
+    });
+    ui.add_space(PANEL_GAP);
+
+    columns(ui, "engine", |left, right| {
+        panels::souped_panel::render_souped_panel(left, params, setter);
+        left.add_space(PANEL_GAP);
+        panels::output_clipper::render_output_clipper(left, params, setter);
+        panels::tweaks_panel::render_tweaks_panel(right, params, setter);
+    });
+    ui.add_space(PANEL_GAP);
+
+    columns(ui, "generator", |left, right| {
+        panels::generator_panel::render_generator_panel(left, gen_params);
+        panels::generator_panel::render_generation_panel(right, params, gen_params, setter);
+    });
+    ui.add_space(PANEL_GAP);
+
+    columns(ui, "sequencer", |left, right| {
+        panels::sequencer_panel::render_sequencer_grid(left, params, current_step);
+        panels::sequencer_panel::render_transport_panel(right, params, setter);
+    });
+}
+
+/// Zoom factor of the `VIBE303_QA_STATE=zoom75` capture.
+pub fn qa_zoom_factor(state: Option<&str>) -> Option<f32> {
+    (state == Some("zoom75")).then_some(0.75)
+}
+
+/// Generator preset of a `VIBE303_QA_STATE` capture: every `generator` field
+/// moved off its default. Any other state gets `GeneratorParams::default()`.
+/// `create_editor` and the offscreen renderer (`tools/gui_render`) both read
+/// this, so a window capture and its offscreen render cannot drift.
+pub fn qa_generator_params(state: Option<&str>) -> GeneratorParams {
+    match state {
+        Some("generator") => GeneratorParams {
             root_note: 3, // D#
             scale: crate::dsp::generator::MusicalScale::Phrygian,
             // Narrower than GeneratorParams::default() (-1..=1) by product
@@ -47,105 +151,45 @@ pub fn create_editor(
             mutation_rate: 0.25,
             seed: 1337,
         },
-        _ => crate::dsp::generator::GeneratorParams::default(),
-    };
-    let gen_params_state = Arc::new(std::sync::Mutex::new(gen_params));
+        _ => GeneratorParams::default(),
+    }
+}
+
+pub fn create_editor(
+    params: Arc<Plugin303Params>,
+    editor_state: Arc<EguiState>,
+    current_playing_step: Arc<AtomicU8>,
+) -> Option<Box<dyn Editor>> {
+    let qa_state = std::env::var("VIBE303_QA_STATE").ok();
+    let gen_params_state = Arc::new(std::sync::Mutex::new(qa_generator_params(
+        qa_state.as_deref(),
+    )));
     // Read once at editor creation: the closure below runs every frame, and a
     // per-frame `env::var` is a syscall + alloc at repaint rate.
-    let qa_zoom = matches!(std::env::var("VIBE303_QA_STATE").as_deref(), Ok("zoom75"));
+    let qa_zoom = qa_zoom_factor(qa_state.as_deref());
 
     create_egui_editor(
         editor_state,
         (),
         move |egui_ctx, _| {
-            if qa_zoom {
-                egui_ctx.set_zoom_factor(0.75);
+            if let Some(zoom) = qa_zoom {
+                egui_ctx.set_zoom_factor(zoom);
             }
             egui_ctx.send_viewport_cmd(nih_plug_egui::egui::ViewportCommand::Title(
                 "TECHNEO 303".into(),
             ));
-            egui_ctx.set_visuals(nih_plug_egui::egui::Visuals::dark());
-            // One font rule (round-11 item 12): every numeric readout — every
-            // DragValue — renders in the monospace face at the compact size;
-            // word-valued controls keep the proportional face.
-            egui_ctx.style_mut(|style| {
-                style.text_styles.insert(
-                    nih_plug_egui::egui::TextStyle::Monospace,
-                    nih_plug_egui::egui::FontId::monospace(9.0),
-                );
-                style.drag_value_text_style = nih_plug_egui::egui::TextStyle::Monospace;
-
-                // Widget text defaults to egui's greys (#B4B4B4 inactive,
-                // #999999 on combo buttons — neither is a theme token, and the
-                // combo value measured 3.87:1). Point them at the palette so
-                // every DragValue, Button and ComboBox that does not set its
-                // own colour still lands on a token (round-14 issue 7).
-                let widgets = &mut style.visuals.widgets;
-                widgets.noninteractive.fg_stroke.color = theme::TEXT_SECONDARY;
-                widgets.inactive.fg_stroke.color = theme::TEXT_SECONDARY;
-                widgets.inactive.bg_fill = theme::FIELD_FILL;
-                widgets.hovered.fg_stroke.color = theme::TEXT_PRIMARY;
-                widgets.hovered.bg_fill = theme::FIELD_FILL_HOVER;
-                widgets.active.fg_stroke.color = theme::TEXT_PRIMARY;
-                widgets.active.bg_fill = theme::FIELD_FILL_ACTIVE;
-                widgets.open.fg_stroke.color = theme::TEXT_PRIMARY;
-                widgets.open.bg_fill = theme::FIELD_FILL_HOVER;
-
-                // Checkbox styling: unified 14pt (28px physical) filled square, orange checkmark
-                widgets.inactive.corner_radius = CornerRadius::same(2);
-                widgets.active.corner_radius = CornerRadius::same(2);
-                widgets.hovered.corner_radius = CornerRadius::same(2);
-                widgets.inactive.bg_stroke = Stroke::new(1.0_f32, theme::BORDER_DEFAULT);
-                widgets.active.bg_stroke = Stroke::new(1.0_f32, theme::BORDER_DEFAULT);
-                widgets.hovered.bg_stroke = Stroke::new(1.0_f32, theme::BORDER_FOCUS);
-                style.visuals.selection.bg_fill = theme::ACCENT_ORANGE;
-                style.visuals.selection.stroke = Stroke::new(1.0_f32, theme::ACCENT_ORANGE);
-            });
+            theme::apply(egui_ctx);
         },
         move |egui_ctx, setter, _state| {
-            nih_plug_egui::egui::CentralPanel::default()
+            CentralPanel::default()
                 .frame(
                     Frame::new()
                         .fill(theme::CHASSIS_BG)
-                        .inner_margin(Margin::same(10)),
+                        .inner_margin(Margin::same(MARGIN as i8)),
                 )
                 .show(egui_ctx, |ui| {
-                    ui.set_min_height(600.0);
-                    // Zero the automatic widget spacing: the gutters below are
-                    // explicit PANEL_GAP spacers only (round-13 issue 11).
-                    ui.spacing_mut().item_spacing.y = 0.0;
                     let mut gen_params = gen_params_state.lock().unwrap();
-
-                    // 1. Header Bar
-                    panels::header_bar::render_header(ui, &params, setter);
-                    ui.add_space(PANEL_GAP);
-
-                    // 2. Classic 303 Control Panel (includes integrated WAVE selector)
-                    panels::top_controls::render_top_controls(ui, &params, setter);
-                    ui.add_space(PANEL_GAP);
-
-                    // 3. Souped-Up Engine Drawer Panel
-                    panels::souped_panel::render_souped_panel(ui, &params, setter);
-                    ui.add_space(PANEL_GAP);
-
-                    // 4. Output Clipper + Tweaks Panel
-                    // Clipper and tweaks stacked vertically to fill height and eliminate dead band
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        panels::output_clipper::render_output_clipper(ui, &params, setter);
-                        ui.add_space(PANEL_GAP);
-                        panels::tweaks_panel::render_tweaks_panel(ui, &params, setter);
-                    });
-                    ui.add_space(PANEL_GAP);
-
-                    // 5. Bottom Sequencer Grid & Transport Column
-                    panels::sequencer_panel::render_sequencer_and_transport(
-                        ui,
-                        &params,
-                        &mut gen_params,
-                        setter,
-                        &current_playing_step,
-                    );
+                    render_editor(ui, &params, setter, &mut gen_params, &current_playing_step);
                 });
         },
     )

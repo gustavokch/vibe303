@@ -12,13 +12,13 @@ Usage:
     scripts/gui_qa_measure.py report    target/gui-qa
     scripts/gui_qa_measure.py knobs     target/gui-qa/latest.png
     scripts/gui_qa_measure.py colors    target/gui-qa/accurate.png
-    scripts/gui_qa_measure.py text      target/gui-qa/latest.png --box 2555,110,2680,160
+    scripts/gui_qa_measure.py text      target/gui-qa/latest.png --box 2200,10,2420,40
     scripts/gui_qa_measure.py accent    target/gui-qa/latest.png target/gui-qa/accurate.png
     scripts/gui_qa_measure.py deadspace target/gui-qa/latest.png --min 600
     scripts/gui_qa_measure.py diff      target/gui-qa/latest.png target/gui-qa/running.png
-    scripts/gui_qa_measure.py edges     target/gui-qa/latest.png --box 2110,1418,2711,1702
-    scripts/gui_qa_measure.py strokes   target/gui-qa/running.png --box 800,1370,1070,1660
-    scripts/gui_qa_measure.py crop      target/gui-qa/latest.png --box 1440,190,1980,380 --scale 2 -o /tmp/env.png
+    scripts/gui_qa_measure.py edges     target/gui-qa/latest.png --box 1620,820,2420,1270
+    scripts/gui_qa_measure.py strokes   target/gui-qa/running.png --box 20,830,1600,1270
+    scripts/gui_qa_measure.py crop      target/gui-qa/latest.png --box 1620,70,2420,270 --scale 2 -o /tmp/env.png
 
 Every command accepts --json to emit machine-readable output instead of text.
 """
@@ -45,13 +45,14 @@ DEFAULT_THEME_RS = "plugin303/src/gui/theme.rs"
 # copy of the palette drifts silently, and a stale entry turns a genuine palette
 # drift finding into "matches a token".
 THEME_FALLBACK = {
-    "PANEL_BG": (0x1A, 0x1A, 0x1E),
-    "WELL_BG": (0x16, 0x16, 0x19),
-    "SURFACE_ELEVATED": (0x22, 0x22, 0x28),
-    "BORDER_DEFAULT": (0x2B, 0x2B, 0x34),
-    "TEXT_PRIMARY": (0xFF, 0xFF, 0xFF),
-    "TEXT_MUTED": (0x8F, 0x8F, 0xA4),
-    "ACCENT_ORANGE": (0xFF, 0x7A, 0x00),
+    "CHASSIS_BG": (0x15, 0x15, 0x15),
+    "WELL_BG": (0x1A, 0x1A, 0x1A),
+    "PANEL_BG": (0x26, 0x26, 0x26),
+    "PANEL_HEADER_BG": (0x2F, 0x2F, 0x2F),
+    "SURFACE_ELEVATED": (0x3A, 0x3A, 0x3A),
+    "TEXT_PRIMARY": (0xEC, 0xEC, 0xEC),
+    "TEXT_MUTED": (0x8F, 0x8F, 0x8F),
+    "ACCENT_ORANGE": (0xF6, 0x66, 0x1E),
 }
 
 THEME = dict(THEME_FALLBACK)
@@ -81,28 +82,24 @@ def load_theme_tokens(path: str = DEFAULT_THEME_RS):
 SWEEP_MIN_DEG = -135.0
 SWEEP_MAX_DEG = 135.0
 
-EXPECTED_WIDTH = 2732  # a wrong window id silently yields a different width
+EXPECTED_WIDTH = 2432  # a wrong window id silently yields a different width
 
 # Tokens that name a surface, a fill or a frame. Contrast floors apply to
 # foreground colours only, so these are listed but never flagged.
 SURFACE_TOKENS = {
     "CHASSIS_BG",
-    "PANEL_BG",
-    "PANEL_BG_SOUPED",
     "WELL_BG",
+    "PANEL_BG",
+    "PANEL_HEADER_BG",
     "SURFACE_ELEVATED",
     "SURFACE_HOVER",
-    "BORDER_DEFAULT",
-    "BORDER_SUBTLE",
-    "BORDER_FOCUS",
-    "FIELD_FILL",
-    "FIELD_FILL_HOVER",
-    "FIELD_FILL_ACTIVE",
-    "KNOB_TRACK_ARC",
-    "ACCENT_SLATE",
-    # Partial-coverage antialiased edge blend of the NOTE gate pill
-    # (theme::GATE_NOTE_INACTIVE_EDGE): a fill, not foreground text.
-    "GATE_NOTE_INACTIVE_EDGE",
+    "SURFACE_PRESSED",
+    "KNOB_TRACK",
+    # Lit fills that carry dark TEXT_ON_ACCENT text.
+    "ACCENT_ORANGE_HOVER",
+    "ACCENT_BLUE",
+    "GATE_NOTE_FILL",
+    "GATE_TIE_FILL",
 }
 
 
@@ -158,106 +155,96 @@ def runs_of_zero(values: np.ndarray, min_len: int):
 # ---------------------------------------------------------------------------
 
 
-def find_panels(arr: np.ndarray, top_skip: int = 75, coverage: float = 0.85):
-    """Detect panel frames from full-width border rows and full-height border cols.
+def _runs(mask: np.ndarray):
+    """Half-open [start, end) runs of True in a 1-D bool array."""
+    padded = np.concatenate(([False], mask, [False]))
+    edges = np.flatnonzero(padded[1:] != padded[:-1])
+    return list(zip(edges[::2].tolist(), edges[1::2].tolist(), strict=True))
 
-    Returns a list of dicts with the panel's bounding box and interior box.
+
+def find_panels(arr: np.ndarray, min_size: int = 40):
+    """Detect the flat device cards.
+
+    The editor draws each device as a filled card on the CHASSIS_BG plane, with
+    a chassis gutter between cards and no outline. A recursive XY cut on rows
+    and columns that are pure chassis isolates every card. Window chrome above
+    the first all-chassis row (the macOS title bar) is ignored. Bounds are
+    half-open: arr[top:bottom, left:right] is the card. `interior` excludes the
+    PANEL_HEADER_BG title strip.
     """
-    lum = arr.max(axis=2)
-    height, width = lum.shape
-    border = (lum > 40) & (lum < 130)
-
-    row_hits = border[top_skip:].mean(axis=1)
-    border_rows = [y + top_skip for y, frac in enumerate(row_hits) if frac > coverage]
-
-    # Collapse adjacent rows (frames are 2 physical px at 2x DPI).
-    grouped = []
-    for y in border_rows:
-        if grouped and y - grouped[-1][-1] <= 2:
-            grouped[-1].append(y)
-        else:
-            grouped.append([y])
-    edges = [g[0] for g in grouped]
-
-    # Group edges into panels. A gutter (the blank strip the layout puts between
-    # panels) ends a panel. Panels that share a single border line with no gutter
-    # are split by their background colour instead, which differs per panel.
-    def bg_at(y0, y1):
-        band = arr[max(0, y0) : max(1, y1), :]
-        return np.median(band.reshape(-1, 3), axis=0)
-
-    spans = []
-    current = [edges[0]]
-    for prev, nxt in zip(edges, edges[1:]):
-        if nxt - prev <= 20:  # gutter: panel ends at prev, next starts at nxt
-            spans.append(current + [prev] if current[-1] != prev else current)
-            current = [nxt]
-        else:
-            current.append(nxt)
-    spans.append(current)
-
+    chassis = np.array(THEME["CHASSIS_BG"], dtype=np.int16)
+    header = np.array(THEME["PANEL_HEADER_BG"], dtype=np.int16)
+    bg = np.abs(arr.astype(np.int16) - chassis).max(axis=2) <= 2
+    full_rows = np.flatnonzero(bg.all(axis=1))
+    if full_rows.size == 0:
+        return []
+    height, width = bg.shape
     panels = []
-    for group in spans:
-        if len(group) < 2:
-            continue
-        # Split the group wherever the panel background colour changes.
-        cut_points = [0]
-        for idx in range(1, len(group) - 1):
-            e = group[idx]
-            above = bg_at(e - 14, e - 4)
-            below = bg_at(e + 4, e + 14)
-            if np.abs(above - below).max() > 1.5:
-                cut_points.append(idx)
-        cut_points.append(len(group) - 1)
 
-        for a, b in zip(cut_points, cut_points[1:]):
-            top, bottom = group[a], group[b]
-            h_dividers = group[a + 1 : b]
-            if bottom - top < 40:
-                continue
-            band = border[top:bottom]
-            col_hits = band.mean(axis=0)
-            cols = [x for x, frac in enumerate(col_hits) if frac > coverage]
-            if len(cols) < 2:
-                continue
-            panels.append(
-                {
-                    "top": top,
-                    "bottom": bottom,
-                    "left": cols[0],
-                    "right": cols[-1],
-                    "height": bottom - top,
-                    "interior": [cols[0] + 8, top + 8, cols[-1] - 8, bottom - 8],
-                    "inner_dividers": [x for x in cols[1:-1] if cols[0] + 4 < x < cols[-1] - 4],
-                    "horizontal_dividers": h_dividers,
-                }
-            )
+    def leaf(top, bottom, left, right):
+        if bottom - top < min_size or right - left < min_size:
+            return
+        hdr = top
+        while hdr < bottom and np.abs(np.median(arr[hdr, left:right], axis=0) - header).max() <= 2:
+            hdr += 1
+        body_top = hdr + 8 if bottom - hdr > 16 else top + 8
+        panels.append(
+            {
+                "top": top,
+                "bottom": bottom,
+                "left": left,
+                "right": right,
+                "height": bottom - top,
+                "header_bottom": hdr,
+                "interior": [left + 8, body_top, right - 8, bottom - 8],
+                "inner_dividers": [],
+                "horizontal_dividers": [],
+            }
+        )
+
+    def cut(y0, y1, x0, x1):
+        sub = ~bg[y0:y1, x0:x1]
+        rows = _runs(sub.any(axis=1))
+        cols = _runs(sub.any(axis=0))
+        if len(rows) == 1 and len(cols) == 1:
+            (ry0, ry1), (cx0, cx1) = rows[0], cols[0]
+            if (ry0, ry1, cx0, cx1) == (0, y1 - y0, 0, x1 - x0):
+                leaf(y0, y1, x0, x1)
+            else:
+                cut(y0 + ry0, y0 + ry1, x0 + cx0, x0 + cx1)
+        elif len(rows) > 1:
+            for ry0, ry1 in rows:
+                cut(y0 + ry0, y0 + ry1, x0, x1)
+        else:
+            for cx0, cx1 in cols:
+                cut(y0, y1, x0 + cx0, x0 + cx1)
+
+    cut(int(full_rows[0]), height, 0, width)
     return panels
 
 
 def cmd_panels(args):
     arr = load(args.image)
-    panels = find_panels(arr)
+    panels = sorted(find_panels(arr), key=lambda p: (p["top"], p["left"]))
     if args.json:
         print(json.dumps(panels, indent=2))
         return
     print(f"{len(panels)} panels in {os.path.basename(args.image)}")
-    prev_bottom = None
+    # Cards in different columns share a top edge, so a gap only means
+    # something against the previous card in the same column.
+    prev_bottom = {}
+    gaps = []
     for p in panels:
-        gap = "" if prev_bottom is None else f"  gap_above={p['top'] - prev_bottom}"
-        div = f"  v-dividers={p['inner_dividers']}" if p["inner_dividers"] else ""
-        hdiv = f"  h-dividers={p['horizontal_dividers']}" if p["horizontal_dividers"] else ""
+        above = prev_bottom.get(p["left"])
+        gap = ""
+        if above is not None:
+            gaps.append(p["top"] - above)
+            gap = f"  gap_above={p['top'] - above}"
         print(
             f"  y {p['top']:5d}-{p['bottom']:5d}  x {p['left']:5d}-{p['right']:5d}"
-            f"  h={p['height']:4d}{gap}{div}{hdiv}"
+            f"  h={p['height']:4d}{gap}"
         )
-        prev_bottom = p["bottom"]
-    gaps = []
-    prev = None
-    for p in panels:
-        if prev is not None:
-            gaps.append(p["top"] - prev)
-        prev = p["bottom"]
+        prev_bottom[p["left"]] = p["bottom"]
     if gaps and len(set(gaps)) > 1:
         print(f"  INCONSISTENT inter-panel gaps: {gaps}")
 

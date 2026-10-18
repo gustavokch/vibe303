@@ -27,17 +27,18 @@ def parse_gui_dimensions() -> dict:
 
 
 def get_crop_definitions(width: int, height: int):
-    # Dynamic vertical bounds scaled to logical height
-    scale_y = height / 720.0
+    # Row bounds in logical px for the 1216x640 layout (gui/mod.rs row stack):
+    # app bar, voice+envelopes, engine (souped/clipper/tweaks), generator, sequencer.
+    scale_y = height / 640.0
     sections = {
-        "crop_header": (0, int(52 * scale_y)),
-        "crop_classic": (int(48 * scale_y), int(245 * scale_y)),
-        "crop_souped": (int(190 * scale_y), int(385 * scale_y)),
-        "crop_clipper_tweaks": (int(385 * scale_y), int(520 * scale_y)),
-        "crop_sequencer": (int(515 * scale_y), height),
-        "zone_top": (0, int(245 * scale_y)),
-        "zone_mid": (int(190 * scale_y), int(520 * scale_y)),
-        "zone_bottom": (int(515 * scale_y), height),
+        "crop_header": (0, int(31 * scale_y)),
+        "crop_voice": (int(31 * scale_y), int(134 * scale_y)),
+        "crop_engine": (int(134 * scale_y), int(300 * scale_y)),
+        "crop_generator": (int(300 * scale_y), int(405 * scale_y)),
+        "crop_sequencer": (int(405 * scale_y), height),
+        "zone_top": (0, int(134 * scale_y)),
+        "zone_mid": (int(134 * scale_y), int(405 * scale_y)),
+        "zone_bottom": (int(405 * scale_y), height),
     }
     return sections
 
@@ -97,8 +98,8 @@ def generate_boundary_and_diff_crops(output_dir: Path, dims: dict):
         w, h = img_lat.size
         scale = w / float(dims["width"])
         titlebar_h = int(32 * scale) if h > int(dims["height"] * scale) else 0
-        y_mid_start = titlebar_h + int(190 * scale)
-        y_mid_end = titlebar_h + int(520 * scale)
+        y_mid_start = titlebar_h + int(134 * scale)
+        y_mid_end = titlebar_h + int(405 * scale)
 
         mid_lat = img_lat.crop((0, y_mid_start, w, y_mid_end))
         mid_acc = img_acc.crop((0, y_mid_start, w, y_mid_end))

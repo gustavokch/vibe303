@@ -31,7 +31,13 @@ before Phase 2 — it says what each number means and which readings lie.
 Run `scripts/capture_standalone_gui.sh`. It builds the standalone binary and
 captures one PNG per `VIBE303_QA_STATE` (see `plugin303/src/params.rs`).
 
-**Verify every capture is 2732 px wide.** A wrong window id silently yields a
+No Screen Recording permission (`screencapture -l` fails with "could not create
+image from window")? Run `scripts/render_gui_offscreen.sh` instead. It draws the
+real editor offscreen (`tools/gui_render`, wgpu) into `target/gui-qa-offscreen`
+with the same file names. The frame has no title bar and is not the GL window,
+so say so in the report and do not audit window chrome from it.
+
+**Verify every capture is 2432 px wide.** A wrong window id silently yields a
 different width and every coordinate below becomes meaningless. `report` checks
 this first and says so.
 
