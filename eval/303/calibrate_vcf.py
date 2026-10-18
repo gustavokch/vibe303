@@ -1,18 +1,36 @@
+"""Fit the Draft and Low VCF control maps to the Best tier's filter response.
+
+For each (cutoff, resonance) grid point, Nelder-Mead finds the Draft/Low
+cutoff and resonance whose magnitude response best matches Best's. A cubic 2D
+polynomial in (log2(fc_best), reso_best) is then fitted to the results and
+printed as the `*_FC_POLY` / `*_RESO_POLY` constants in
+`plugin303/src/dsp/voice.rs`.
+
+Build the probe first:
+    cargo build --release -p plugin303 --bin vcf_sweep_helper
+Run:
+    uv run --no-project --with numpy --with scipy python eval/303/calibrate_vcf.py
+"""
+
 import subprocess
 import sys
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 from scipy.optimize import minimize
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
-from parallel import run_parallel_with_fallback
+from parallel import run_parallel_with_fallback  # noqa: E402
 
 HELPER = ROOT / "target" / "release" / "vcf_sweep_helper"
 
 if not HELPER.exists():
-    print(f"Error: helper binary not found at {HELPER}. Run 'cargo build --bin vcf_sweep_helper --release' first.")
+    print(
+        f"Error: helper binary not found at {HELPER}. Run "
+        "'cargo build --release -p plugin303 --bin vcf_sweep_helper' first."
+    )
     sys.exit(1)
 
 def get_response(tier: str, fc: float, reso: float) -> np.ndarray:
@@ -39,7 +57,7 @@ def optimize_tier(tier: str):
             tasks.append((fc_u, reso_u))
             
     def solve_point(fc_u: float, reso_u: float):
-        target = get_response("ultra", fc_u, reso_u)
+        target = get_response("best", fc_u, reso_u)
         
         def loss(params):
             fc_val, reso_val = params
@@ -48,7 +66,9 @@ def optimize_tier(tier: str):
             actual = get_response(tier, fc_val, reso_val)
             return np.mean((target - actual) ** 2)
             
-        res = minimize(loss, [fc_u, reso_u], method='Nelder-Mead', options={'xatol': 1e-3, 'fatol': 1e-3})
+        res = minimize(
+            loss, [fc_u, reso_u], method="Nelder-Mead", options={"xatol": 1e-3, "fatol": 1e-3}
+        )
         fc_opt, reso_opt = res.x
         return fc_u, reso_u, fc_opt, reso_opt, res.fun
 
@@ -60,12 +80,12 @@ def optimize_tier(tier: str):
     )
     
     # Fit 2D Polynomials:
-    # Inputs: X = log2(fc_ultra), Y = reso_ultra
+    # Inputs: X = log2(fc_best), Y = reso_best
     # Outputs: Z_fc = log2(fc_opt), Z_reso = reso_opt
     pts_clean = []
     for pt in data_points:
-        fc_u, reso_u, fc_o, reso_o, l = pt
-        if tier == "low" and (fc_o > 8000.0 or reso_o > 1.05):
+        _fc_u, _reso_u, fc_o, reso_o, _loss = pt
+        if tier == "draft" and (fc_o > 8000.0 or reso_o > 1.05):
             continue # Skip non-physical fits where TPT runs out of headroom
         pts_clean.append(pt)
         
@@ -96,35 +116,18 @@ def optimize_tier(tier: str):
     err_reso = np.abs(Z_reso - fit_reso)
     
     print(f"\n--- Fit Results for {tier.upper()} Tier (Degree 3 Polynomial) ---")
-    print("Coefficients for log2(fc_opt):")
-    print(f"  c0 (const) = {coeffs_fc[0]:.12e}")
-    print(f"  c1 (x)     = {coeffs_fc[1]:.12e}")
-    print(f"  c2 (y)     = {coeffs_fc[2]:.12e}")
-    print(f"  c3 (x^2)   = {coeffs_fc[3]:.12e}")
-    print(f"  c4 (x*y)   = {coeffs_fc[4]:.12e}")
-    print(f"  c5 (y^2)   = {coeffs_fc[5]:.12e}")
-    print(f"  c6 (x^3)   = {coeffs_fc[6]:.12e}")
-    print(f"  c7 (x^2*y) = {coeffs_fc[7]:.12e}")
-    print(f"  c8 (x*y^2) = {coeffs_fc[8]:.12e}")
-    print(f"  c9 (y^3)   = {coeffs_fc[9]:.12e}")
     print(f"Max fc fit error: {np.max(err_fc_hz):.2f} Hz, mean: {np.mean(err_fc_hz):.2f} Hz")
-    
-    print("\nCoefficients for reso_opt:")
-    print(f"  d0 (const) = {coeffs_reso[0]:.12e}")
-    print(f"  d1 (x)     = {coeffs_reso[1]:.12e}")
-    print(f"  d2 (y)     = {coeffs_reso[2]:.12e}")
-    print(f"  d3 (x^2)   = {coeffs_reso[3]:.12e}")
-    print(f"  d4 (x*y)   = {coeffs_reso[4]:.12e}")
-    print(f"  d5 (y^2)   = {coeffs_reso[5]:.12e}")
-    print(f"  d6 (x^3)   = {coeffs_reso[6]:.12e}")
-    print(f"  d7 (x^2*y) = {coeffs_reso[7]:.12e}")
-    print(f"  d8 (x*y^2) = {coeffs_reso[8]:.12e}")
-    print(f"  d9 (y^3)   = {coeffs_reso[9]:.12e}")
     print(f"Max reso fit error: {np.max(err_reso):.4f}, mean: {np.mean(err_reso):.4f}")
+    print("Terms: [1, x, y, x^2, x*y, y^2, x^3, x^2*y, x*y^2, y^3]; paste into voice.rs:\n")
+    for suffix, coeffs in (("FC_POLY", coeffs_fc), ("RESO_POLY", coeffs_reso)):
+        print(f"const {tier.upper()}_{suffix}: [f64; 10] = [")
+        for c in coeffs:
+            print(f"    {c:.12e},")
+        print("];")
 
 def main():
+    optimize_tier("draft")
     optimize_tier("low")
-    optimize_tier("high")
 
 if __name__ == "__main__":
     main()

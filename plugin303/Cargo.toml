@@ -68,3 +68,7 @@ test = false
 [[bin]]
 name = "vco_pitch_sweep"
 test = false
+
+[[bin]]
+name = "vcf_sweep_helper"
+test = false
