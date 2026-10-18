@@ -172,9 +172,9 @@ pub fn bypassed_clipper() -> plugin303::dsp::voice::VoiceClipperParams {
 }
 
 /// Applies the default parameter set the way `Plugin303::process` does on every
-/// block (`lib.rs` `update_params` call), with `comp_age` overridden. Tests that
-/// skip this never hit the first-block re-wear (`comp_seed` 1337 vs `Voice::new`'s
-/// 0) that resets the Low brightness.
+/// block (`lib.rs` `update_params` call), with `comp_age` overridden. The plugin
+/// re-applies analog wear on its first block (`comp_seed` 1337 vs `Voice::new`'s
+/// 0) and after each host reset; tests that skip this never see that re-wear.
 pub fn apply_plugin_defaults(v: &mut plugin303::dsp::voice::Voice, comp_age: i32) {
     let p = plugin303::params::Plugin303Params::default();
     v.update_params(

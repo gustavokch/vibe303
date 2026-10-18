@@ -120,9 +120,13 @@ pub struct LadderVcf {
     diode: Diode1N4148,
     /// Bias (tail) current; sets the diode operating point ⇒ corner.
     i0: f64,
-    /// Brightness calibration on the cutoff→bias map (spectral V5). Default 1.0
-    /// keeps the F3.3 ladder tests in their tracking regime; the voice raises it
-    /// to brighten the corner toward the SPICE envelope.
+    /// Tier brightness on the cutoff→bias map (spectral V5), set by `set_cal`.
+    /// Default 1.0 keeps the F3.3 ladder tests in their tracking regime; the
+    /// voice sets a per-tier value (`LOW_BRIGHT`, `CIRCUIT_BRIGHT`).
+    brightness: f64,
+    /// Analog-wear BJT age factor (1.0 = new), set by `set_analog_wear`.
+    age_factor: f64,
+    /// Effective brightness `brightness * age_factor`; sets the bias current.
     cal: f64,
     /// Last cutoff (Hz), so `set_cal` can recompute `i0`.
     fc: f64,
@@ -168,6 +172,8 @@ impl LadderVcf {
             sr: sr as f64,
             diode: Diode1N4148::new(),
             i0: 0.0,
+            brightness: CAL,
+            age_factor: 1.0,
             cal: CAL,
             fc: 1_000.0,
             reso: 0.0,
@@ -202,10 +208,17 @@ impl LadderVcf {
         self.reso_gain = g;
     }
 
-    /// Brightness calibration on the cutoff→bias map (spectral V5). Recomputes
-    /// the bias at the current cutoff.
+    /// Tier brightness on the cutoff→bias map (spectral V5). Analog wear scales
+    /// it (see `set_analog_wear`). Recomputes the bias at the current cutoff.
     pub fn set_cal(&mut self, cal: f64) {
-        self.cal = cal;
+        self.brightness = cal;
+        self.update_bias();
+    }
+
+    /// Recomputes the effective brightness and the bias current at the current
+    /// cutoff and diode temperature.
+    fn update_bias(&mut self) {
+        self.cal = self.brightness * self.age_factor;
         self.i0 = self.diode.n_vt * TAU * self.fc * C_REF * self.cal;
     }
 
@@ -246,8 +259,8 @@ impl LadderVcf {
         let systematic_c = -0.05 * (age as f64 / 100.0) * recalibration_scale;
         let bjt_age_factor = 1.0 - 0.15 * (age as f64 / 100.0) * recalibration_scale;
 
-        self.cal = CAL * bjt_age_factor;
-        self.set_cal(self.cal);
+        self.age_factor = bjt_age_factor;
+        self.update_bias();
 
         let sigma = tolerance / 3.0;
         for m in self.c_mults.iter_mut() {
@@ -260,7 +273,7 @@ impl LadderVcf {
         self.thermal_noise = thermal_noise;
         let temp_c = 20.0 + 20.0 * (thermal_noise as f64 / 100.0);
         self.diode.set_temp(temp_c);
-        self.set_cal(self.cal); // Recalculate i0
+        self.update_bias(); // diode n_vt changed with temperature
     }
 
     /// Assemble the MNA system `(G, b)` at iterate `v`, fixed cap companions, the
@@ -939,5 +952,26 @@ mod tests {
             (-26.0..=-15.0).contains(&db_per_oct),
             "slope {db_per_oct} dB/oct not four-pole-ish (corner {c})"
         );
+    }
+
+    /// Analog wear scales the tier brightness set by `set_cal`; it must not
+    /// replace it. Order of the two calls must not matter, and a thermal
+    /// update must not change the brightness.
+    #[test]
+    fn analog_wear_scales_brightness_instead_of_replacing_it() {
+        let age_50 = 1.0 - 0.15 * 0.5; // bjt_age_factor at age 50, full recalibration
+        let mut f = LadderVcf::new(192_000.0);
+        f.set_cal(0.70);
+        f.set_analog_wear(0.0, 50, 1, 1.0);
+        assert!((f.cal() - 0.70 * age_50).abs() < 1e-12, "wear after brightness: {}", f.cal());
+
+        f.set_thermal(20);
+        assert!((f.cal() - 0.70 * age_50).abs() < 1e-12, "thermal changed brightness: {}", f.cal());
+
+        f.set_cal(0.50);
+        assert!((f.cal() - 0.50 * age_50).abs() < 1e-12, "brightness after wear: {}", f.cal());
+
+        f.set_analog_wear(0.0, 0, 1, 1.0);
+        assert!((f.cal() - 0.50).abs() < 1e-12, "age 0 must give back the brightness: {}", f.cal());
     }
 }
