@@ -216,6 +216,12 @@ impl LadderVcf {
         self.sr
     }
 
+    /// Diagnostic: effective brightness on the cutoff→bias map (the value that
+    /// sets the bias current in `set_cutoff`).
+    pub fn cal(&self) -> f64 {
+        self.cal
+    }
+
     pub fn set_analog_wear(
         &mut self,
         tolerance: f64,

@@ -1,0 +1,50 @@
+test a_brightness_state ... == A. Effective brightness (cal) ==
+intended (age 0)                     low 0.5000  high 0.7000  best 0.7000
+Voice::new                           low 0.5000  high 1.0000  best 1.0000
+after set_tier_immediate Low/High/Best low 0.5000  high 1.0000  best 1.0000
+plugin defaults (seed 1337, age 0)   low 1.0000  high 1.0000  best 1.0000
+plugin defaults, age 50              low 0.9250  high 0.9250  best 0.9250
+reset + plugin defaults              low 1.0000  high 1.0000  best 1.0000
+test b_spectral_vs_gold ... == B. Spectral match vs gold voice_A2_mid (LSD dB, corr, RMS dBFS) ==
+Low   voice state      LSD  28.62  corr 0.978  rms  -26.9
+Low   plugin defaults  LSD  63.26  corr 0.866  rms  -23.5
+Low   cal 0.50         LSD  28.62  corr 0.978  rms  -26.9
+Low   cal 1.00         LSD  39.28  corr 0.940  rms  -27.3
+High  voice state      LSD   9.34  corr 0.984  rms  -26.6
+High  plugin defaults  LSD  28.98  corr 0.904  rms  -24.3
+High  cal 0.70         LSD   3.07  corr 0.988  rms  -25.0
+High  cal 1.00         LSD   9.34  corr 0.984  rms  -26.6
+Best  voice state      LSD   9.59  corr 0.984  rms  -26.6
+Best  plugin defaults  LSD  29.61  corr 0.905  rms  -24.2
+Best  cal 0.70         LSD   3.15  corr 0.988  rms  -25.0
+Best  cal 1.00         LSD   9.59  corr 0.984  rms  -26.6
+test c_low_vs_best_level ... == C. Low vs Best level, dB (tier_levels::low_tracks_best_level window ±2.5) ==
+voice state                ["+1.19", "+1.44", "+0.96", "+2.02"]  mean +1.40
+plugin today (1.00/1.00)   ["+1.27", "+1.52", "+1.03", "+1.60"]  mean +1.35
+tests today (0.50/1.00)    ["+1.19", "+1.44", "+0.96", "+2.02"]  mean +1.40
+intended (0.50/0.70)       ["+1.16", "+1.45", "+0.91", "+1.58"]  mean +1.27
+test d_parity_vs_best ... == D. Parity vs Best, envelope sweep (budgets: Low LSD<=17 corr>=0.975; Draft LSD<=42 corr>=0.94) ==
+voice state                Low LSD  15.63 corr 0.993 | Draft LSD  20.41 corr 0.970
+plugin today (1.00/1.00)   Low LSD  10.29 corr 0.986 | Draft LSD  20.41 corr 0.970
+tests today (0.50/1.00)    Low LSD  15.63 corr 0.993 | Draft LSD  20.41 corr 0.970
+intended (0.50/0.70)       Low LSD  10.56 corr 0.995 | Draft LSD  24.81 corr 0.962
+7096ce8c7033e93aa300b4eb72a4a3b674ddfeb3  /tmp/bright_before_best_0.f32
+8e639c7b34dd79f16dfd85a78ed6cdbfa43690a3  /tmp/bright_before_best_1.f32
+c75365aa6ce9f38d73353a88e920df781a964c5a  /tmp/bright_before_draft_0.f32
+3a020f4420942601be0722423e77dd62b47ffd41  /tmp/bright_before_draft_1.f32
+3d4f48b5046854db5fcf1180a02b33a124bace6c  /tmp/bright_before_high_0.f32
+46074a2dcafe97369acaec5b1d1b92b184ac3663  /tmp/bright_before_high_1.f32
+a90c1b803b539632a217ae86924f7d706494ce22  /tmp/bright_before_low_0.f32
+b21738816b058161988b57a474e4a88298f8a73d  /tmp/bright_before_low_1.f32
+Best spectral match: LSD = 3.15 dB, corr = 0.988
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 9.56s
+Low spectral match: LSD = 28.62 dB, corr = 0.978
+test result: ok. 1 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 8.90s
+Low vs Best: LSD = 15.63 dB, corr = 0.993
+Draft vs Best: LSD = 20.41 dB, corr = 0.970
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.78s
+note45 fc1500 r0.3  Low vs Best = +1.2 dB
+note33 fc800 r0.5  Low vs Best = +1.4 dB
+note57 fc3000 r0.2  Low vs Best = +1.0 dB
+note57 fc1002 r0.85  Low vs Best = +2.0 dB
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 12.08s
