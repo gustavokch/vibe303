@@ -14,18 +14,20 @@ use common::{gold_dir, load_f32, load_gold_op, spectral_match};
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 
-// F6.5: active Q9 resonance (F6.3) + re-tuned brightness (0.70) dropped the
-// gold-power-weighted LSD from 4.42 → 3.87 dB. Budget tightened below the old 5.5.
+// F6.5: active Q9 resonance (F6.3) + re-tuned brightness (CIRCUIT_BRIGHT = 0.70)
+// dropped the gold-power-weighted LSD from 4.42 → 3.87 dB. The gate renders
+// the voice's own brightness, so it measures what the plugin plays.
 const LSD_BUDGET_DB: f32 = 4.0; // achieved 3.87 dB (deterministic render) + margin
 const CORR_MIN: f32 = 0.95; // achieved corr 0.979; spectra share their shape
-const BEST_BRIGHTNESS: f64 = 0.70; // re-tuned VCF brightness (resonance-active LSD min)
 
-fn render_best(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: f64) -> Vec<f32> {
+fn render_best(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: Option<f64>) -> Vec<f32> {
     let mut v = Voice::new(sr);
     v.update_clipper_params_immediate(common::bypassed_clipper());
     v.set_tier_immediate(Tier::Best);
     v.set_advanced_env(true);
-    v.set_circuit_brightness(cal);
+    if let Some(cal) = cal {
+        v.set_circuit_brightness(cal);
+    }
     v.set_cutoff(cutoff);
     v.set_reso(reso);
     v.note_on(note);
@@ -41,7 +43,7 @@ fn brightness_sweep() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let op = load_gold_op("voice_A2_mid.json");
     for cal in [0.64f64, 0.66, 0.68, 0.70, 0.72, 0.74, 0.76] {
-        let m = render_best(op.sr, op.cutoff, op.reso, op.note, gold.len(), cal);
+        let m = render_best(op.sr, op.cutoff, op.reso, op.note, gold.len(), Some(cal));
         let (lsd, corr) = spectral_match(&gold, &m, op.sr);
         println!("cal={cal:5.2}  LSD={lsd:.2} dB  corr={corr:.3}");
     }
@@ -71,7 +73,7 @@ fn best_voice_spectral_match() {
         op.reso,
         op.note,
         gold.len(),
-        BEST_BRIGHTNESS,
+        None,
     );
     let (lsd, corr) = spectral_match(&gold, &model, op.sr);
     println!("Best spectral match: LSD = {lsd:.2} dB, corr = {corr:.3}");
