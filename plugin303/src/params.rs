@@ -816,12 +816,12 @@ impl Default for Plugin303Params {
             pattern: std::sync::RwLock::new({
                 let mut p = SequencerPattern::default();
                 // QA capture state only: `running_note` runs the sequencer
-                // with every step set to NOTE, so wherever the playhead
-                // happens to be when the screenshot is taken it is framing a
-                // bright cyan cell. The default pattern's rests and ties make
-                // the playhead's position a lottery, which left round-19
-                // issue 9 — does the playhead frame read on a bright step? —
-                // unverifiable from a capture. Shipped default is unchanged.
+                // with every step set to NOTE. `qa_playhead_pin` fixes the
+                // playhead at step 3, a REST in the default pattern, so the
+                // default pattern leaves the playhead frame on an empty cell
+                // and round-19 issue 9 — does the playhead frame read on a
+                // bright step? — cannot be checked from a capture. Shipped
+                // default is unchanged.
                 if qa_state == Some(QaState::RunningNote) {
                     for step in p.steps.iter_mut() {
                         step.gate = StepGate::Note;

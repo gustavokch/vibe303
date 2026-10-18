@@ -596,10 +596,10 @@ impl Plugin for Plugin303 {
         self.current_sample_pos += buffer.samples() as u64;
 
         // QA captures only: pin the playhead to the requested step every block
-        // so `VIBE303_QA_STATE=running` screenshots always show a deterministic
-        // middle step (the init-time pin is overwritten as soon as the
-        // sequencer ticks). Audio path is untouched — this only freezes the
-        // shared UI counter.
+        // so the sequencer-running QA states (`running`, `running_note`) always
+        // show a deterministic middle step (the init-time pin is overwritten as
+        // soon as the sequencer ticks). Audio path is untouched — this only
+        // freezes the shared UI counter.
         if let Some(step) = self.qa_playhead_step {
             self.current_playing_step
                 .store(step, std::sync::atomic::Ordering::Relaxed);

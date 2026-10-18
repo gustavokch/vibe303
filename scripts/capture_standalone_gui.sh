@@ -123,7 +123,7 @@ capture_single_state "knobs" "$OUTPUT_DIR/knobs.png"
 # Quality tier selection (High WDF-lite tier)
 # Additional tiers (quality_ultra, quality_ultra2x) are supported by
 # VIBE303_QA_STATE in plugin303/src/params.rs but captured manually only —
-# not part of the automated 8-state suite.
+# not part of the automated suite.
 capture_single_state "quality_high" "$OUTPUT_DIR/quality_high.png"
 # Generative sequence parameters modified
 capture_single_state "generator" "$OUTPUT_DIR/generator.png"
