@@ -31,6 +31,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and prints the `DRAFT_*_POLY` / `LOW_*_POLY` constants for `voice.rs`. Its
   probe binary `vcf_sweep_helper` is restored and builds each tier's filter the
   way the voice does (oversampling factor and brightness calibration).
+- The Draft and Low tiers run their filter at 4x oversampling, like Best
+  (was 1x and 2x). Draft moves from 46.39 to 41.58 dB LSD against the SPICE
+  gold. Low's brightness is re-tuned for 4x from 0.50 to 0.45, which moves
+  Low from 28.62 to 12.47 dB LSD; the Low gate budget tightens from 29 to
+  16 dB. Draft and Low match Best's level through a resonance-dependent
+  output trim, applied before the output clipper (median 0.0 dB vs Best at
+  every resonance point). Draft costs about 1.5% and Low about 8% of one core
+  per voice at 48 kHz (was 0.9% and 4.5%).
+- Draft's cutoff and resonance maps (`DRAFT_FC_POLY`, `DRAFT_RESO_POLY`) are
+  re-fitted against Best at its calibrated brightness (0.70) and at Draft's 4x
+  filter rate; they were fitted against Best at brightness 1.0 and Draft at
+  1x. Draft-to-Best parity moves from 25.87 (Draft at 4x) to 12.37 dB LSD (corr
+  0.965 to 0.982), and Draft against the SPICE gold from 41.58 to 33.62 dB (corr 0.935
+  to 0.959). `DRAFT_LEVEL_TRIM` is re-derived, so Draft's median level again
+  matches Best at every resonance point; the spread around the median grows
+  (41 of 80 settings within ±1.5 dB of Best before the output clipper, was
+  57). The maps are evaluated inside the fitted cutoff range (200–4000 Hz) and
+  extended by octaves above and below it, so high cutoffs do not drive Draft into
+  self-oscillation. `eval/303/calibrate_vcf.py` takes `--tiers` to fit one tier.
 
 ### Fixed
 - The High tier was padded for Best's 4x oversampling latency instead of its

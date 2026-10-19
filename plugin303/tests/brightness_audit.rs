@@ -178,7 +178,7 @@ fn render_sweep(tier: Tier, bright: Option<f64>, n: usize) -> Vec<f32> {
 #[test]
 #[ignore = "diagnostic: Low and Draft vs Best parity (tier_calibration sweep)"]
 fn d_parity_vs_best() {
-    println!("== D. Parity vs Best, envelope sweep (budgets: Low LSD<=17 corr>=0.975; Draft LSD<=42 corr>=0.94) ==");
+    println!("== D. Parity vs Best, envelope sweep (budgets: Low LSD<=17 corr>=0.975; Draft LSD<=15 corr>=0.97) ==");
     for (label, low_c, best_c) in COMBOS {
         let best = render_sweep(Tier::Best, best_c, 48_000);
         let low = render_sweep(Tier::Low, low_c, 48_000);

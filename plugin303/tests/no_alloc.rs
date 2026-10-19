@@ -79,7 +79,7 @@ fn best_voice_hot_path_is_alloc_free() {
 fn low_voice_hot_path_is_alloc_free() {
     ensure_lut_cache_warm();
     use plugin303::dsp::filter::Tier;
-    let mut voice = Voice::new(48_000.0); // Low chain: polyBLEP saw + 2× OS + nodal ladder
+    let mut voice = Voice::new(48_000.0); // Low chain: polyBLEP saw + 4× OS + nodal ladder
     voice.set_tier(Tier::Low);
     voice.set_cutoff(1_000.0);
     voice.set_reso(0.5);

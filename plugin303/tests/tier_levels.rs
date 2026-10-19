@@ -15,13 +15,15 @@
 //!
 //! Residual differences that are NOT this bug (and are not asserted tightly):
 //!   - Depressed/rate-dependent VCF corner: the nodal ladder's effective corner
-//!     sits below the set cutoff and shifts with the oversample rate (Low 2× vs
-//!     Best 4×), so on bright patches the nodal tiers pass less/more harmonic
+//!     sits below the set cutoff and shifts with the oversample rate (Low and
+//!     Best both 4×), so on bright patches the nodal tiers pass less/more harmonic
 //!     energy than TPT. Closing this needs the active stages (deferred).
 //!   - Resonance passband loss: the calibrated Q9 loop (`RESO_GAIN`) sheds
 //!     passband as resonance rises, more than the TPT feedback does.
 //! These are spectral-shape mismatches no single makeup gain can erase; the
 //! level anchor is therefore the resonance-free passband.
+
+mod common;
 
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
@@ -89,12 +91,11 @@ fn tiers_match_at_passband() {
 /// tier switch is a timbre change, not a volume jump — **in the resonant regime
 /// a 303 actually plays in** (reso ≳ 0.2). Low's polyBLEP-saw path sits below
 /// Best's nodal-VCO path through the depressed-corner ladder by a
-/// resonance-dependent amount; `LOW_LEVEL_TRIM` (voice.rs) is centred on the
-/// resonant regime, landing ±1.5 dB there. The gap widens to a few dB only at
-/// literally reso = 0 (no peak to dominate — the source/OS-rate passband
-/// difference is exposed); that is irreducible without a reso-dependent makeup
-/// and is the darkest, least-used setting, so it is intentionally not gated
-/// tightly (the passband test bounds it loosely vs Draft instead).
+/// resonance-dependent amount; `LOW_LEVEL_TRIM` (voice.rs) is a reso-dependent
+/// makeup table that matches the median level per resonance knot. The residual
+/// spread is the filter-shape difference (largest at reso = 0 with the cutoff
+/// near the fundamental), so it is not gated tightly at reso = 0 (the passband
+/// test bounds it loosely vs Draft instead).
 #[test]
 fn low_tracks_best_level() {
     for &(note, cutoff, reso) in &[
@@ -167,5 +168,55 @@ fn no_tier_collapses_in_level_exhaustive() {
                 );
             }
         }
+    }
+}
+
+/// Gate-mode RMS of one tier with the output clipper bypassed: the level the
+/// `*_LEVEL_TRIM` tables in `voice.rs` match (the trims sit before the clipper).
+fn pre_clipper_rms(tier: Tier, note: u8, cutoff: f32, reso: f32) -> f32 {
+    let mut v = Voice::new(48_000.0);
+    v.update_clipper_params_immediate(common::bypassed_clipper());
+    v.set_tier_immediate(tier);
+    v.set_vca_env_mode(VcaEnvMode::Gate);
+    v.set_cutoff(cutoff);
+    v.set_reso(reso);
+    v.set_gate(true, true, false, false);
+    v.note_on(note);
+    for _ in 0..400 {
+        v.tick();
+    }
+    let n = 8_000;
+    let acc: f64 = (0..n).map(|_| (v.tick() as f64).powi(2)).sum();
+    (acc / n as f64).sqrt() as f32
+}
+
+/// Re-derives `DRAFT_LEVEL_TRIM` (voice.rs): per resonance knot, the median
+/// Draft-vs-Best level over notes 33/45/57/69 × cutoffs 300/800/1500/3000 Hz,
+/// before the output clipper. A matched table prints medians near 0.0 dB;
+/// otherwise multiply each knot's trim by the printed factor.
+#[test]
+#[ignore = "diagnostic: re-derive DRAFT_LEVEL_TRIM"]
+fn draft_level_trim_report() {
+    for (k, reso) in [0.0f32, 0.25, 0.5, 0.75, 1.0].into_iter().enumerate() {
+        let mut dbs: Vec<f32> = [33u8, 45, 57, 69]
+            .into_iter()
+            .flat_map(|note| {
+                [300.0f32, 800.0, 1_500.0, 3_000.0].map(|fc| {
+                    let draft = pre_clipper_rms(Tier::Draft, note, fc, reso);
+                    let best = pre_clipper_rms(Tier::Best, note, fc, reso);
+                    20.0 * (draft / best).log10()
+                })
+            })
+            .collect();
+        dbs.sort_by(f32::total_cmp);
+        let median = 0.5 * (dbs[7] + dbs[8]);
+        let within = dbs.iter().filter(|d| d.abs() <= 1.5).count();
+        println!(
+            "knot {k} reso {reso:.2}: median {median:+.2} dB  factor {:.4}  \
+             range {:+.2}..{:+.2}  within ±1.5 dB {within}/16",
+            10f32.powf(-median / 20.0),
+            dbs[0],
+            dbs[15]
+        );
     }
 }

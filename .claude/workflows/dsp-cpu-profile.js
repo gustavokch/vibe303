@@ -72,8 +72,8 @@ phase("Baseline Timing");
 // Run all 4 timing configurations in parallel
 const tierConfigs = [
   { name: "best",  tierFlag: "--tier best",  desc: "Best (circuit VCO + nodal ladder 4× OS)" },
-  { name: "low",   tierFlag: "--tier low",   desc: "Low (polyBLEP + nodal ladder 2× OS)" },
-  { name: "draft", tierFlag: "--tier draft", desc: "Draft (polyBLEP + TPT ladder, no OS)" },
+  { name: "low",   tierFlag: "--tier low",   desc: "Low (polyBLEP + nodal ladder 4× OS)" },
+  { name: "draft", tierFlag: "--tier draft", desc: "Draft (polyBLEP + TPT ladder, 4× OS)" },
   { name: "sweep", tierFlag: "",          desc: "Tier sweep (all tiers, topology cycling)" },
 ];
 

@@ -126,8 +126,8 @@ circuit/vcf303.toml ──┤
 
 | Tier      | VCO                    | VCF                              | OS   | Cost         | Status                  |
 | --------- | ---------------------- | -------------------------------- | ---- | ------------ | ----------------------- |
-| **Draft** | polyBLEP saw           | TPT ladder                       | None | Cheapest     | RT-viable, ships        |
-| **Low**   | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 2×   | ~42% core    | RT-viable               |
+| **Draft** | polyBLEP saw           | TPT ladder                       | 4×   | Cheapest     | RT-viable, ships        |
+| **Low**   | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 4×   | ~42% core    | RT-viable               |
 | **High**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 2×   | not profiled | Not profiled            |
 | **Best**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 4×   | ~147% core   | Offline-grade per voice |
 

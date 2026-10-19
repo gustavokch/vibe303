@@ -22,8 +22,8 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
 
 |Tier|Oscillator|Filter|Oversampling|
 |---|---|---|---|
-|**Draft**|PolyBLEP saw|TPT diode-ladder approximation|none|
-|**Low**|PolyBLEP saw|Nodal diode ladder with active Q9 resonance|2x|
+|**Draft**|PolyBLEP saw|TPT diode-ladder approximation|4x|
+|**Low**|PolyBLEP saw|Nodal diode ladder with active Q9 resonance|4x|
 |**High**|Nodal relaxation VCO at the base rate|Nodal diode ladder|2x|
 |**Best**|Nodal relaxation VCO (21 nodes)|Nodal diode ladder with active Q9 resonance|4x|
 

@@ -8,10 +8,15 @@ printed as the `*_FC_POLY` / `*_RESO_POLY` constants in
 
 Build the probe first:
     cargo build --release -p plugin303 --bin vcf_sweep_helper
-Run:
+Run (both tiers, or a subset with --tiers):
     uv run --no-project --with numpy --with scipy python eval/303/calibrate_vcf.py
+    uv run --no-project --with numpy --with scipy python eval/303/calibrate_vcf.py --tiers draft
+The probe is read from $CARGO_TARGET_DIR/release when CARGO_TARGET_DIR is set,
+else from target/release.
 """
 
+import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -24,7 +29,7 @@ ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 from parallel import run_parallel_with_fallback  # noqa: E402
 
-HELPER = ROOT / "target" / "release" / "vcf_sweep_helper"
+HELPER = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "release" / "vcf_sweep_helper"
 
 if not HELPER.exists():
     print(
@@ -44,7 +49,8 @@ def get_response(tier: str, fc: float, reso: float) -> np.ndarray:
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return np.array([float(x) for x in res.stdout.strip().split()])
 
-# Grid for calibration
+# Grid for calibration. Its cutoff range must match voice.rs DRAFT_FIT_LOG2_FC_MIN/MAX:
+# the Draft maps clamp their cutoff input to this range (log2 of 200 and 4000 Hz).
 FC_GRID = np.logspace(np.log10(200.0), np.log10(4000.0), 8)
 RESO_GRID = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 0.9])
 
@@ -126,8 +132,16 @@ def optimize_tier(tier: str):
         print("];")
 
 def main():
-    optimize_tier("draft")
-    optimize_tier("low")
+    parser = argparse.ArgumentParser(description="Fit the Draft/Low VCF control maps to Best.")
+    parser.add_argument(
+        "--tiers",
+        nargs="+",
+        choices=("draft", "low"),
+        default=["draft", "low"],
+        help="tiers to fit (default: both)",
+    )
+    for tier in parser.parse_args().tiers:
+        optimize_tier(tier)
 
 if __name__ == "__main__":
     main()

@@ -1,8 +1,12 @@
 mod common;
 
 use common::spectral_match;
-use plugin303::dsp::filter::Tier;
+use plugin303::dsp::filter::{Filter303, Tier};
+use plugin303::dsp::ladder::TptLadder;
+use plugin303::dsp::ladder_wdf::LadderVcf;
+use plugin303::dsp::oversample::Os4x;
 use plugin303::dsp::voice::Voice;
+use plugin303::dsp::voice::{BEST_OS_FACTOR, CIRCUIT_BRIGHT, DRAFT_OS_FACTOR};
 use plugin303::params::CircuitTopology;
 
 const SR: f32 = 48_000.0;
@@ -215,17 +219,119 @@ fn test_voicing_parity_sweeps() {
         corr_low
     );
 
-    // Draft vs Best target: LSD <= 42.0 dB, corr >= 0.94
-    // (LSD budget widened from 28.0: classic RC envelope path produces more
-    //  spectral divergence between tiers than the advanced MEG path)
+    // Draft vs Best target: LSD <= 15.0 dB, corr >= 0.97.
+    // Draft's maps (DRAFT_*_POLY) are fitted against Best at CIRCUIT_BRIGHT and
+    // at Draft's 4x filter rate: measured 12.37 dB / 0.982 (25.87 / 0.965 with
+    // the maps fitted against Best at brightness 1.0 and Draft at 1x). The
+    // budget guards that fit; a re-fit that loses it fails here.
     assert!(
-        lsd_draft <= 42.0,
+        lsd_draft <= 15.0,
         "Draft vs Best LSD ({:.2} dB) exceeds budget",
         lsd_draft
     );
     assert!(
-        corr_draft >= 0.94,
+        corr_draft >= 0.97,
         "Draft vs Best corr ({:.3}) below budget",
         corr_draft
     );
+}
+
+/// Measures the peak gain (dB, relative to 50 Hz passband) of one tier's filter
+/// path given target Best cutoff and resonance. For Draft, the parameters are
+/// evaluated through the voice's control map (`Voice::map_draft_vcf`).
+fn filter_peak_gain_db(tier: Tier, fc: f32, reso: f32) -> f32 {
+    let amp = 0.02f32;
+    let mut process: Box<dyn FnMut(f32) -> f32> = match tier {
+        Tier::Draft => {
+            let (mapped_fc, mapped_reso) = Voice::map_draft_vcf((fc as f64).log2(), reso);
+            let mut f = TptLadder::new(SR * DRAFT_OS_FACTOR);
+            f.set_poles(4);
+            f.set_cutoff(mapped_fc);
+            f.set_reso(mapped_reso);
+            let mut os = Os4x::new();
+            Box::new(move |x| {
+                let up = os.up(x);
+                os.down([f.tick(up[0]), f.tick(up[1]), f.tick(up[2]), f.tick(up[3])])
+            })
+        }
+        _ => {
+            let mut f = LadderVcf::new(SR * BEST_OS_FACTOR);
+            f.set_cal(CIRCUIT_BRIGHT);
+            f.set_poles(4);
+            f.set_cutoff(fc);
+            f.set_reso(reso);
+            let mut os = Os4x::new();
+            Box::new(move |x| {
+                let up = os.up(x);
+                os.down([f.tick(up[0]), f.tick(up[1]), f.tick(up[2]), f.tick(up[3])])
+            })
+        }
+    };
+
+    let measure_freq = |process: &mut Box<dyn FnMut(f32) -> f32>, freq: f32| -> f32 {
+        let warmup = 6_000;
+        let n_samples = 12_000;
+        let mut ph = 0.0f32;
+        let mut acc = 0.0f32;
+        let inc = freq / SR;
+        for i in 0..(warmup + n_samples) {
+            let y = process(amp * (std::f32::consts::TAU * ph).sin());
+            if i >= warmup {
+                acc += y * y;
+            }
+            ph += inc;
+            if ph >= 1.0 {
+                ph -= 1.0;
+            }
+        }
+        (acc / (n_samples as f32 * 0.5 * amp * amp))
+            .max(1e-12)
+            .log10()
+            * 10.0
+    };
+
+    let g50 = measure_freq(&mut process, 50.0);
+    let lo = 50.0f32;
+    let hi = 20_000.0f32;
+    let n = 60;
+    let mut max_gain = -100.0f32;
+    for i in 0..n {
+        let freq = lo * (hi / lo).powf(i as f32 / (n - 1) as f32);
+        let g = measure_freq(&mut process, freq) - g50;
+        if g > max_gain {
+            max_gain = g;
+        }
+    }
+    max_gain
+}
+
+#[test]
+fn test_draft_high_cutoff_resonance_headroom() {
+    // Guards against resonance runaway at high cutoff points above the fitted
+    // grid (200..4000 Hz) where unconstrained polynomial extrapolation can
+    // flatten the cutoff and drive Draft resonance into self-oscillation (k=4).
+    // Tested at Best operating points:
+    //   - 8 kHz, reso 0.65
+    //   - 12 kHz, reso 0.50
+    // Measured with the unconstrained cubic:
+    //   8 kHz / 0.65: Best peak +13.38 dB, Draft peak +34.07 dB (diff +20.69 dB)
+    //   12 kHz / 0.50: Best peak +7.38 dB, Draft peak +34.74 dB (diff +27.36 dB)
+    // Fixed with input-clamping to fitted range + extra octaves added to fc:
+    //   8 kHz / 0.65: Best peak +13.38 dB, Draft peak +13.89 dB (diff +0.51 dB)
+    //   12 kHz / 0.50: Best peak +7.38 dB, Draft peak +9.46 dB (diff +2.08 dB)
+    // Budget: 3.5 dB gives ~1.4 dB margin over the worst-case fixed difference.
+    const BUDGET_DB: f32 = 3.5;
+
+    for &(fc, reso) in &[(8000.0f32, 0.65f32), (12000.0f32, 0.50f32)] {
+        let peak_best = filter_peak_gain_db(Tier::Best, fc, reso);
+        let peak_draft = filter_peak_gain_db(Tier::Draft, fc, reso);
+        let diff = peak_draft - peak_best;
+        println!(
+            "High-cutoff point fc={fc:.0} Hz, reso={reso:.2}: Best peak = {peak_best:+.2} dB, Draft peak = {peak_draft:+.2} dB, diff = {diff:+.2} dB"
+        );
+        assert!(
+            diff <= BUDGET_DB,
+            "Draft resonance runaway at fc={fc:.0} Hz, reso={reso:.2}: Draft peak ({peak_draft:+.2} dB) exceeds Best ({peak_best:+.2} dB) by {diff:.2} dB (budget {BUDGET_DB:.1} dB)"
+        );
+    }
 }
