@@ -413,9 +413,10 @@ impl Plugin303Params {
 
 /// QA capture states that drive parameter defaults. The string contract is
 /// shared with `scripts/capture_standalone_gui.sh`, which sets
-/// `VIBE303_QA_STATE` — that script is the other half of this contract, and
-/// the two must stay in sync. `QaState::parse` is the only place in the crate
-/// that knows the state names.
+/// `VIBE303_QA_STATE`. The state names are also hand-listed in
+/// `scripts/crop_gui_sections.py` and the `STATES` table in `tools/gui_render`.
+/// All three must stay in sync with each other and with `QaState::parse`, the
+/// only place in the crate that knows the state names.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum QaState {
     Accurate,
