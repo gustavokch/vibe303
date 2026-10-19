@@ -19,8 +19,8 @@ pub trait Filter303 {
 ///
 /// | Tier  | Oscillator            | Filter             | Oversampling |
 /// |-------|-----------------------|--------------------|--------------|
-/// | Draft | polyBLEP saw          | TPT ladder         | none         |
-/// | Low   | polyBLEP saw          | nodal diode ladder | 2x           |
+/// | Draft | polyBLEP saw          | TPT ladder         | 4x           |
+/// | Low   | polyBLEP saw          | nodal diode ladder | 4x           |
 /// | High  | nodal circuit VCO     | nodal diode ladder | 2x           |
 /// | Best  | nodal circuit VCO     | nodal diode ladder | 4x           |
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
