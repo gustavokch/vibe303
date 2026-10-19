@@ -6,7 +6,7 @@ use plugin303::dsp::filter::Tier;
 use plugin303::params::Plugin303Params;
 
 #[test]
-fn tier_param_defaults_low() {
+fn tier_param_defaults_draft() {
     let p = Plugin303Params::default();
     assert_eq!(p.tier.value(), Tier::Draft);
 }
