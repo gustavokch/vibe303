@@ -31,7 +31,14 @@ class TestCropGuiSections(unittest.TestCase):
 
     def test_generate_all_crops(self):
         # Create all extended QA state mock images
-        for stem in ["advanced", "knobs", "quality_high", "generator", "zoom75"]:
+        for stem in [
+            "advanced",
+            "running_note",
+            "knobs",
+            "quality_high",
+            "generator",
+            "zoom75",
+        ]:
             img = Image.new("RGBA", (2432, 1280), color=(30, 30, 30, 255))
             img.save(self.test_dir / f"{stem}.png")
 
@@ -49,6 +56,7 @@ class TestCropGuiSections(unittest.TestCase):
             "quality_high_crop_voice.png",
             "knobs_crop_voice.png",
             "advanced_crop_engine.png",
+            "running_note_crop_header.png",
         ]
         for f in expected_files:
             p = self.test_dir / f
