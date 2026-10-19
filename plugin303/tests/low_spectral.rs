@@ -2,7 +2,7 @@
 //!
 //! Low = polyBLEP saw → nodal diode-ladder VCF at 4× oversample. It skips the
 //! costly nodal circuit VCO (Best's dominant cost) but keeps the nonlinear
-//! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.935 at 4×)
+//! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.959 at 4×)
 //! and Best (circuit VCO→ladder, corr 0.977) on the same spectral metric.
 //!
 //! Same Welch LSD + dB-spectrum-corr metric as Best (`tests/common/mod.rs`).
@@ -12,11 +12,12 @@
 //! saw (it concentrates on the gold's dominant bins), so Low's LSD lands far
 //! from Best's — but well below Draft's. Side-by-side at the gold op-point
 //! (`low_spectral_report`, note 57 / 1002 Hz / reso 0.85), Draft and Low at 4×:
-//!     Draft LSD 41.58 dB  corr 0.935
-//!     Low   LSD 12.48 dB  corr 0.978   <- between the two on both axes
+//!     Draft LSD 33.62 dB  corr 0.959
+//!     Low   LSD 12.47 dB  corr 0.978   <- between the two on both axes
 //!     Best  LSD  3.15 dB  corr 0.988
-//! The gate proves Low is a genuine fidelity step over Draft: budgets sit below
-//! Draft's numbers so a regression to the TPT path would fail.
+//! The gate proves Low is a genuine fidelity step over Draft: the LSD budget
+//! sits below Draft's LSD, so a regression to the TPT path fails. Draft's corr
+//! (0.959) passes `CORR_MIN`, so corr alone does not discriminate.
 
 mod common;
 
@@ -29,7 +30,7 @@ use plugin303::dsp::voice::Voice;
 // Low uses the polyBLEP saw (not the circuit VCO), so its LSD floor is set by the
 // VCO mismatch, not the filter — this gate is a discriminator (Draft fails worse).
 const LSD_BUDGET_DB: f32 = 16.0; // achieved 12.48 dB (deterministic) + margin
-const CORR_MIN: f32 = 0.95; // achieved 0.978; Draft's 0.935 fails → real discriminator
+const CORR_MIN: f32 = 0.95; // achieved 0.978; Draft's 0.959 also passes, LSD discriminates
 
 /// Renders Low the way the gate does. `cal: Some(c)` overrides the brightness;
 /// `None` plays the voice's own (`LOW_BRIGHT`).

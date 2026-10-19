@@ -215,16 +215,18 @@ fn test_voicing_parity_sweeps() {
         corr_low
     );
 
-    // Draft vs Best target: LSD <= 42.0 dB, corr >= 0.94
-    // (LSD budget widened from 28.0: classic RC envelope path produces more
-    //  spectral divergence between tiers than the advanced MEG path)
+    // Draft vs Best target: LSD <= 15.0 dB, corr >= 0.97.
+    // Draft's maps (DRAFT_*_POLY) are fitted against Best at CIRCUIT_BRIGHT and
+    // at Draft's 4x filter rate: measured 12.37 dB / 0.982 (25.87 / 0.965 with
+    // the maps fitted against Best at brightness 1.0 and Draft at 1x). The
+    // budget guards that fit; a re-fit that loses it fails here.
     assert!(
-        lsd_draft <= 42.0,
+        lsd_draft <= 15.0,
         "Draft vs Best LSD ({:.2} dB) exceeds budget",
         lsd_draft
     );
     assert!(
-        corr_draft >= 0.94,
+        corr_draft >= 0.97,
         "Draft vs Best corr ({:.3}) below budget",
         corr_draft
     );

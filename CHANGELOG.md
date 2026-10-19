@@ -39,6 +39,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   output trim, applied before the output clipper (median 0.0 dB vs Best at
   every resonance point). Draft costs about 1.5% and Low about 8% of one core
   per voice at 48 kHz (was 0.9% and 4.5%).
+- Draft's cutoff and resonance maps (`DRAFT_FC_POLY`, `DRAFT_RESO_POLY`) are
+  re-fitted against Best at its calibrated brightness (0.70) and at Draft's 4x
+  filter rate; they were fitted against Best at brightness 1.0 and Draft at
+  1x. Draft-to-Best parity moves from 25.87 to 12.37 dB LSD (corr 0.965 to
+  0.982), and Draft against the SPICE gold from 41.58 to 33.62 dB (corr 0.935
+  to 0.959). `DRAFT_LEVEL_TRIM` is re-derived, so Draft's median level again
+  matches Best at every resonance point; the spread around the median grows
+  (41 of 80 settings within ±1.5 dB of Best before the output clipper, was
+  57). `eval/303/calibrate_vcf.py` takes `--tiers` to fit one tier.
 
 ### Fixed
 - The High tier was padded for Best's 4x oversampling latency instead of its
