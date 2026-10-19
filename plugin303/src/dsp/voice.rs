@@ -552,7 +552,7 @@ impl Voice {
         // `update_params` does on every later change.
         let tol = voice.tolerance_f64();
         for ladder in [&mut voice.ladder_high, &mut voice.ladder_best] {
-            ladder.set_thermal(voice.ladder_thermal_state);
+            ladder.set_thermal(voice.thermal_noise);
             ladder.set_analog_wear(
                 tol,
                 voice.age,
