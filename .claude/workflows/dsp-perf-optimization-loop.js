@@ -30,7 +30,7 @@ const baselineResult = await agent(
    Command:
      ${PROFILE_BIN} --secs ${secs} --seed ${seed}
 
-   Parse the output for Low, High, Ultra, and Sweep tiers.
+   Parse the output for Draft, Low, Best, and Sweep tiers.
    Extract:
    - Throughput (kS/s)
    - Realtime ratio (x)
@@ -43,21 +43,21 @@ const baselineResult = await agent(
     schema: {
       type: "object",
       properties: {
-        ultra_ratio: { type: "number" },
-        ultra_ksps: { type: "number" },
-        high_ratio: { type: "number" },
-        high_ksps: { type: "number" },
+        best_ratio: { type: "number" },
+        best_ksps: { type: "number" },
         low_ratio: { type: "number" },
         low_ksps: { type: "number" },
+        draft_ratio: { type: "number" },
+        draft_ksps: { type: "number" },
         sweep_ratio: { type: "number" },
         sweep_ksps: { type: "number" }
       },
-      required: ["ultra_ratio", "ultra_ksps", "high_ratio", "high_ksps", "low_ratio", "low_ksps"]
+      required: ["best_ratio", "best_ksps", "low_ratio", "low_ksps", "draft_ratio", "draft_ksps"]
     }
   }
 );
 
-log(`Baseline Ultra: ${baselineResult.ultra_ratio}x realtime (${baselineResult.ultra_ksps} kS/s)`);
+log(`Baseline Best: ${baselineResult.best_ratio}x realtime (${baselineResult.best_ksps} kS/s)`);
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Phase 2: Candidate Design — select optimization and verify invariants
@@ -152,7 +152,7 @@ const gateChecks = [
   },
   {
     name: "spectral-gold",
-    cmd: "cargo test -p plugin303 --test ultra_spectral --test high_spectral",
+    cmd: "cargo test -p plugin303 --test best_spectral --test low_spectral",
     desc: "Spectral LSD vs SPICE gold (LSD <= 4.0 dB, corr >= 0.95)"
   },
   {
@@ -202,7 +202,7 @@ if (allGatesPassed) {
      Command:
        ${PROFILE_BIN} --secs ${secs} --seed ${seed}
 
-     Parse Low, High, Ultra, and Sweep results.
+     Parse Draft, Low, Best, and Sweep results.
      Extract throughput and realtime ratios.`,
     {
       label: "benchmark:differential",
@@ -210,25 +210,25 @@ if (allGatesPassed) {
       schema: {
         type: "object",
         properties: {
-          ultra_ratio: { type: "number" },
-          ultra_ksps: { type: "number" },
-          high_ratio: { type: "number" },
-          high_ksps: { type: "number" },
+          best_ratio: { type: "number" },
+          best_ksps: { type: "number" },
           low_ratio: { type: "number" },
-          low_ksps: { type: "number" }
+          low_ksps: { type: "number" },
+          draft_ratio: { type: "number" },
+          draft_ksps: { type: "number" }
         },
-        required: ["ultra_ratio", "ultra_ksps", "high_ratio", "high_ksps", "low_ratio", "low_ksps"]
+        required: ["best_ratio", "best_ksps", "low_ratio", "low_ksps", "draft_ratio", "draft_ksps"]
       }
     }
   );
 } else {
   postResult = {
-    ultra_ratio: 0.0,
-    ultra_ksps: 0.0,
-    high_ratio: 0.0,
-    high_ksps: 0.0,
+    best_ratio: 0.0,
+    best_ksps: 0.0,
     low_ratio: 0.0,
-    low_ksps: 0.0
+    low_ksps: 0.0,
+    draft_ratio: 0.0,
+    draft_ksps: 0.0
   };
 }
 
@@ -250,7 +250,7 @@ const synthesisResult = await agent(
    ${JSON.stringify(gateResults, null, 2)}
 
    Decision Criteria:
-   - "GO (Ship)": All quality gates passed AND Ultra realtime ratio improved (delta > 0).
+   - "GO (Ship)": All quality gates passed AND Best realtime ratio improved (delta > 0).
    - "NO-GO (Revert)": Any quality gate failed OR performance regressed (delta <= 0).
 
    Update ${REPORT_PATH} under a new section for this iteration:
@@ -269,18 +269,18 @@ const synthesisResult = await agent(
       type: "object",
       properties: {
         decision: { type: "string", enum: ["GO", "NO_GO"] },
-        ultra_speedup_pct: { type: "number" },
-        baseline_ultra_ratio: { type: "number" },
-        post_ultra_ratio: { type: "number" },
+        best_speedup_pct: { type: "number" },
+        baseline_best_ratio: { type: "number" },
+        post_best_ratio: { type: "number" },
         summary: { type: "string" },
         revert_performed: { type: "boolean" }
       },
-      required: ["decision", "ultra_speedup_pct", "baseline_ultra_ratio", "post_ultra_ratio", "summary"]
+      required: ["decision", "best_speedup_pct", "baseline_best_ratio", "post_best_ratio", "summary"]
     }
   }
 );
 
-log(`Final Synthesis Decision: ${synthesisResult.decision} (${synthesisResult.ultra_speedup_pct.toFixed(2)}% Ultra speedup)`);
+log(`Final Synthesis Decision: ${synthesisResult.decision} (${synthesisResult.best_speedup_pct.toFixed(2)}% Best speedup)`);
 
 return {
   candidate: targetCandidate,

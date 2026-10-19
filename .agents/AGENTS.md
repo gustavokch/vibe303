@@ -5,7 +5,7 @@
 vibe303 is a circuit-grounded emulation of the Roland TB-303 synthesizer, built as a **nih-plug VST3/CLAP monosynth** (Rust) backed by a validated SPICE circuit model (Python + ngspice). The project has two phases:
 
 - **Phase 1 (COMPLETE):** Analog circuit model — VCO and VCF modelled as circuit IR (`circuit/*.toml`), emitted to SPICE + ACME via `tools/circuitgen`, and ngspice-validated under `eval/303/`.
-- **Phase 2 (IN PROGRESS):** nih-plug voice — a 3-tier fidelity axis (Low / High / Ultra) plugin crate (`plugin303`), with the fidelity tiers complete and gated. Remaining: DAW smoke-test, accent/glide/decay levers, GUI.
+- **Phase 2 (IN PROGRESS):** nih-plug voice — a 4-tier fidelity axis (Draft / Low / High / Best) plugin crate (`plugin303`), with the fidelity tiers complete and gated. Remaining: DAW smoke-test, accent/glide/decay levers, GUI.
 
 ---
 
@@ -58,7 +58,7 @@ cargo xtask bundle plugin303 --release
 
 # Rust — headless render (for offline eval / gold generation)
 cargo run --bin render303 -p plugin303 -- --note 57 --sr 48000 --secs 0.5 \
-    --cutoff 1000 --reso 85 --tier 2 --out /tmp/render.f32
+    --cutoff 1000 --reso 85 --tier best --out /tmp/render.f32
 
 # Python — regenerate all backends from circuit IR (drift guard)
 uv run --no-project python -m tools.circuitgen [--check]
@@ -107,11 +107,11 @@ circuit/vcf303.toml ──┤
 - **`lib.rs`** — `Plugin303` struct, implements `Plugin` / `Vst3Plugin` / `ClapPlugin`. Reads params block-rate, processes MIDI sample-accurately.
 - **`params.rs`** — `Plugin303Params` with `#[derive(Params)]`. Currently only `tier: EnumParam<Tier>`.
 - **`dsp/voice.rs`** — `Voice` struct: the monophonic synth voice. Owns per-tier oscillators, filters, oversamplers, and envelope. Tier-switching uses equal-power crossfade.
-- **`dsp/filter.rs`** — `Filter303` trait + `Tier` enum (Low/High/Ultra).
-- **`dsp/ladder.rs`** — `TptLadder`: zero-delay-feedback TPT 4-pole ladder (Low tier).
-- **`dsp/ladder_wdf.rs`** — `LadderVcf`: nodal MNA diode-ladder VCF with Newton solver, active Q9 resonance (High + Ultra tiers).
-- **`dsp/osc.rs`** — `Saw`: polyBLEP sawtooth oscillator (Low + High tiers).
-- **`dsp/vco.rs`** — `Vco303`: 21-node nodal relaxation oscillator modeling the circuit VCO (Ultra tier). Per-note pitch LUT with process-global per-sr cache.
+- **`dsp/filter.rs`** — `Filter303` trait + `Tier` enum (Draft/Low/High/Best).
+- **`dsp/ladder.rs`** — `TptLadder`: zero-delay-feedback TPT 4-pole ladder (Draft tier).
+- **`dsp/ladder_wdf.rs`** — `LadderVcf`: nodal MNA diode-ladder VCF with Newton solver, active Q9 resonance (Low + High + Best tiers).
+- **`dsp/osc.rs`** — `Saw`: polyBLEP sawtooth oscillator (Draft + Low tiers).
+- **`dsp/vco.rs`** — `Vco303`: 21-node nodal relaxation oscillator modeling the circuit VCO (High + Best tiers). Per-note pitch LUT with process-global per-sr cache.
 - **`dsp/oversample.rs`** — `Os2x` / `Os4x` / `Os8x`: polyphase FIR (Kaiser-sinc L=65), zero-alloc.
 - **`dsp/bjt.rs`** — Gummel-Poon NPN/PNP BJT model.
 - **`dsp/diode.rs`** — 1N4148 diode model with batched stamp.
@@ -124,15 +124,16 @@ circuit/vcf303.toml ──┤
 
 ### Fidelity Tiers
 
-| Tier      | VCO                    | VCF                              | OS   | Cost       | Status                  |
-| --------- | ---------------------- | -------------------------------- | ---- | ---------- | ----------------------- |
-| **Low**   | polyBLEP saw           | TPT ladder                       | None | Cheapest   | RT-viable, ships        |
-| **High**  | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 2×   | ~42% core  | RT-viable               |
-| **Ultra** | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 4×   | ~147% core | Offline-grade per voice |
+| Tier      | VCO                    | VCF                              | OS   | Cost         | Status                  |
+| --------- | ---------------------- | -------------------------------- | ---- | ------------ | ----------------------- |
+| **Draft** | polyBLEP saw           | TPT ladder                       | None | Cheapest     | RT-viable, ships        |
+| **Low**   | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 2×   | ~42% core    | RT-viable               |
+| **High**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 2×   | not profiled | Not profiled            |
+| **Best**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 4×   | ~147% core   | Offline-grade per voice |
 
 - Oversampling is **tier-intrinsic** (not a separate param). Each tier's ladder is calibrated to its OS rate.
 - Tier switches use a **10 ms equal-power crossfade** (click-free). Mid-fade changes are queued (no clobbering).
-- **PDC** is constant across tiers — every tier is padded to the max OS group delay (Ultra's 4×), so the host never needs to re-init its graph.
+- **PDC** is constant across tiers — every tier is padded to the max OS group delay (Best's 4×), so the host never needs to re-init its graph.
 
 ---
 
@@ -178,20 +179,20 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 
 | Test file            | Purpose                                                                     |
 | -------------------- | --------------------------------------------------------------------------- |
-| `ultra_spectral.rs`  | **Binding spectral gate** — Welch LSD ≤ 4.0, corr ≥ 0.95 vs SPICE gold      |
-| `high_spectral.rs`   | High-tier spectral gate — LSD ≤ 29, corr ≥ 0.95                             |
-| `voice_esr.rs`       | Low-tier ESR regression guard (budget 3.5 dB)                               |
+| `best_spectral.rs`   | **Binding spectral gate** — Welch LSD ≤ 4.0, corr ≥ 0.95 vs SPICE gold      |
+| `low_spectral.rs`    | Low-tier spectral gate — LSD ≤ 29, corr ≥ 0.95                             |
+| `voice_esr.rs`       | Draft-tier ESR regression guard (budget 3.5 dB)                             |
 | `tier_levels.rs`     | Per-tier level parity                                                       |
 | `tier_switch.rs`     | Click-free crossfade: switch-window step ≤ 2.5× steady                      |
 | `vcf_resonance.rs`   | Active Q9 reso peak frequency tracking vs ngspice fixture                   |
 | `vco_pitch.rs`       | VCO per-note pitch accuracy (< 0.3% at 110/220/440 Hz)                      |
 | `no_alloc.rs`        | Zero-allocation gate on the audio path (all tiers)                          |
-| `ultra_stability.rs` | NaN/bounded sweep guard for Ultra                                           |
+| `best_stability.rs`  | NaN/bounded sweep guard for Best                                            |
 | `newton_iters.rs`    | Newton convergence budget for the nodal solver                              |
 | `ladder_alias.rs`    | Oversampled ladder anti-aliasing verification                               |
 | `vcf303_fit.rs`      | TPT ladder fit to ngspice gold                                              |
 | `params_tier.rs`     | Tier enum nih-plug param wiring                                             |
-| `ultra_esr.rs`       | **(#[ignore])** Informational — sample-exact ESR vs ngspice is NOT the gate |
+| `best_esr.rs`        | **(#[ignore])** Informational — sample-exact ESR vs ngspice is NOT the gate |
 
 - Tests starting with `#[ignore]` are **diagnostics**, not gates. They exist for investigative sweeps and are not expected to pass as acceptance criteria.
 - **Gold files** live in `eval/303/gold/`. Regenerate with `eval/303/gen_gold.py`.
@@ -220,11 +221,11 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 
 2. **VCO pitch cal `CV_FIT` is fit to THIS solver** (not SPICE). Re-run `characterize_freq_cv` if the VCO solver changes.
 
-3. **Sample-exact ESR vs ngspice is NOT the acceptance gate** for Ultra. It's structurally unreachable for a real-time bespoke chain vs ngspice's adaptive solver. The gate is **spectral** (Welch LSD + dB-spectrum correlation).
+3. **Sample-exact ESR vs ngspice is NOT the acceptance gate** for Best. It's structurally unreachable for a real-time bespoke chain vs ngspice's adaptive solver. The gate is **spectral** (Welch LSD + dB-spectrum correlation).
 
-4. **Calibrating Low/TPT cutoff/reso to SPICE is a wash** — the gap is topological (polyBLEP + TPT vs circuit saw + diode ladder), not parametric. Low's gate is a regression guard, not a fidelity target.
+4. **Calibrating Draft/TPT cutoff/reso to SPICE is a wash** — the gap is topological (polyBLEP + TPT vs circuit saw + diode ladder), not parametric. Draft's gate is a regression guard, not a fidelity target.
 
-5. **Ultra is ~147% of one core** (offline-grade per voice). High is ~42% (RT-viable). If Ultra-at-RT is ever required, the active stages could ship High-only.
+5. **Best is ~147% of one core** (offline-grade per voice). Low is ~42% (RT-viable). If Best-at-RT is ever required, the active stages could ship Low-only.
 
 6. **ADAA "at 2×" test ≈ 0 dB** (the 2× FIR already removes that alias). Test ADAA at 1× near Nyquist/2 (f0=11 kHz).
 
@@ -307,7 +308,7 @@ The handoff document is `HANDOFF.md` (root) — the definitive status snapshot. 
 
 ## Current Status & Next Steps
 
-**F1–F6 DONE.** The three-tier fidelity axis is complete, gated, click-free, PDC-reported, with active Q9 resonance + per-note VCO pitch.
+**F1–F6 DONE.** The four-tier fidelity axis is complete, gated, click-free, PDC-reported, with active Q9 resonance + per-note VCO pitch.
 
 Remaining work:
 

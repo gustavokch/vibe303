@@ -411,47 +411,90 @@ impl Plugin303Params {
     }
 }
 
+/// QA capture states that drive parameter defaults. The string contract is
+/// shared with `scripts/capture_standalone_gui.sh`, which sets
+/// `VIBE303_QA_STATE`. The state names are also hand-listed in
+/// `scripts/crop_gui_sections.py` and the `STATES` table in `tools/gui_render`.
+/// All three must stay in sync with each other and with `QaState::parse`, the
+/// only place in the crate that knows the state names.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum QaState {
+    Accurate,
+    Advanced,
+    Generator,
+    Knobs,
+    QualityBest,
+    QualityHigh,
+    QualityLow,
+    Running,
+    RunningNote,
+    Zoom75,
+}
+
+impl QaState {
+    /// `None` for an unknown name.
+    pub(crate) fn parse(var: &str) -> Option<Self> {
+        Some(match var {
+            "accurate" => Self::Accurate,
+            "advanced" => Self::Advanced,
+            "generator" => Self::Generator,
+            "knobs" => Self::Knobs,
+            "quality_best" => Self::QualityBest,
+            "quality_high" => Self::QualityHigh,
+            "quality_low" => Self::QualityLow,
+            "running" => Self::Running,
+            "running_note" => Self::RunningNote,
+            "zoom75" => Self::Zoom75,
+            _ => return None,
+        })
+    }
+
+    /// The state named by `VIBE303_QA_STATE`; `None` if unset or unknown.
+    pub(crate) fn from_env() -> Option<Self> {
+        std::env::var("VIBE303_QA_STATE")
+            .ok()
+            .as_deref()
+            .and_then(Self::parse)
+    }
+
+    /// States that start the sequencer. The playhead is pinned in exactly
+    /// these (`qa_playhead_pin`), so the two cannot drift.
+    pub(crate) fn runs_sequencer(self) -> bool {
+        matches!(self, Self::Running | Self::RunningNote)
+    }
+}
+
 impl Default for Plugin303Params {
     fn default() -> Self {
-        let default_topology = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-            if s == "accurate" {
-                CircuitTopology::Accurate
-            } else {
-                CircuitTopology::Fun
-            }
+        // `QaState::from_env` is the one read of VIBE303_QA_STATE for the
+        // defaults below; they match on the enum, never on a bare string.
+        let qa_state = QaState::from_env();
+
+        let default_topology = if qa_state == Some(QaState::Accurate) {
+            CircuitTopology::Accurate
         } else {
             CircuitTopology::Fun
         };
 
-        let default_seq_run = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-            s == "running"
-        } else {
-            false
-        };
+        let default_seq_run = qa_state.is_some_and(QaState::runs_sequencer);
 
         // QA capture state only: `advanced` starts with the ADV ENV tier
         // engaged so the MEG/VEG ADSR banks render enabled for screenshots.
         // Shipped default stays false.
-        let default_advanced_env = if let Ok(s) = std::env::var("VIBE303_QA_STATE") {
-            s == "advanced"
-        } else {
-            false
-        };
+        let default_advanced_env = qa_state == Some(QaState::Advanced);
 
         // QA capture state only: `knobs` starts with one bipolar knob off its
         // centre detent and one unipolar knob off its default so the
         // range-derived arc polarity (round-13 issue 1) is verifiable in a
         // screenshot. Shipped defaults stay 0.0 ct / 0.5.
-        let qa_knobs = std::env::var("VIBE303_QA_STATE")
-            .map(|s| s == "knobs")
-            .unwrap_or(false);
+        let qa_knobs = qa_state == Some(QaState::Knobs);
         let (default_tuning, default_cutoff) = if qa_knobs { (25.0, 0.75) } else { (0.0, 0.5) };
 
-        let default_tier = match std::env::var("VIBE303_QA_STATE").as_deref() {
-            Ok("quality_high") => Tier::High,
-            Ok("quality_ultra") => Tier::Ultra,
-            Ok("quality_ultra2x") => Tier::Ultra2x,
-            _ => Tier::Low,
+        let default_tier = match qa_state {
+            Some(QaState::QualityLow) => Tier::Low,
+            Some(QaState::QualityHigh) => Tier::High,
+            Some(QaState::QualityBest) => Tier::Best,
+            _ => Tier::Draft,
         };
 
         Self {
@@ -771,7 +814,22 @@ impl Default for Plugin303Params {
             )
             .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
 
-            pattern: std::sync::RwLock::new(SequencerPattern::default()),
+            pattern: std::sync::RwLock::new({
+                let mut p = SequencerPattern::default();
+                // QA capture state only: `running_note` runs the sequencer
+                // with every step set to NOTE. `qa_playhead_pin` fixes the
+                // playhead at step 3, a REST in the default pattern, so the
+                // default pattern leaves the playhead frame on an empty cell
+                // and round-19 issue 9 — does the playhead frame read on a
+                // bright step? — cannot be checked from a capture. Shipped
+                // default is unchanged.
+                if qa_state == Some(QaState::RunningNote) {
+                    for step in p.steps.iter_mut() {
+                        step.gate = StepGate::Note;
+                    }
+                }
+                p
+            }),
         }
     }
 }

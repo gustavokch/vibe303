@@ -8,10 +8,20 @@ pub mod gui;
 pub mod params;
 use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::{Voice, VoiceClipperParams};
-use params::Plugin303Params;
+use params::{Plugin303Params, QaState};
 
-/// Step the playhead is pinned to for `VIBE303_QA_STATE=running` captures.
-pub const QA_PLAYHEAD_STEP: u8 = 3;
+/// Step the playhead is pinned to in the `running` and `running_note` QA states.
+const QA_PLAYHEAD_STEP: u8 = 3;
+
+/// Step a `VIBE303_QA_STATE` capture pins the playhead to, if the state runs the
+/// sequencer. `Plugin303` and the offscreen renderer (`tools/gui_render`) both
+/// read this, so a window capture and its offscreen render cannot drift.
+pub fn qa_playhead_pin(state: Option<&str>) -> Option<u8> {
+    state
+        .and_then(QaState::parse)
+        .is_some_and(QaState::runs_sequencer)
+        .then_some(QA_PLAYHEAD_STEP)
+}
 
 /// Convert sequencer step key (0..12) and octave (-2..2) to standard MIDI note number (0..127).
 pub fn seq_pitch_to_midi_note(key: i8, octave: i8) -> u8 {
@@ -28,7 +38,7 @@ pub struct Plugin303 {
     /// Monophonic synth voice.
     voice: Voice,
     /// Last latency reported to the host (samples). Tracked so we only notify on
-    /// change — Ultra/High oversampling adds group delay the host must PDC.
+    /// change — Best/Low oversampling adds group delay the host must PDC.
     reported_latency: u32,
     /// GUI Editor state for window sizing and scale factor persistence.
     #[cfg(feature = "gui")]
@@ -61,16 +71,10 @@ impl Plugin303 {
             .compile(params.seq_length.value() as u8, params.seq_mode.value());
         let sequencer = Sequencer::new(sample_rate as f64);
         let current_playing_step = sequencer.current_step.clone();
-        let qa_playhead_step = if let Ok(state) = std::env::var("VIBE303_QA_STATE") {
-            if state == "running" {
-                current_playing_step.store(QA_PLAYHEAD_STEP, std::sync::atomic::Ordering::Relaxed);
-                Some(QA_PLAYHEAD_STEP)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let qa_playhead_step = qa_playhead_pin(std::env::var("VIBE303_QA_STATE").ok().as_deref());
+        if let Some(step) = qa_playhead_step {
+            current_playing_step.store(step, std::sync::atomic::Ordering::Relaxed);
+        }
         Self {
             params,
             sample_rate,
@@ -268,7 +272,7 @@ impl Plugin for Plugin303 {
         self.current_sample_pos = 0;
         self.prev_transport_sample = None;
         // Re-apply the persisted tier immediately (no fade) — otherwise the voice
-        // would silently revert to Low and the next block would crossfade up to
+        // would silently revert to Draft and the next block would crossfade up to
         // the user's tier on every transport start / loop-jump.
         self.voice.set_tier_immediate(self.params.tier.value());
     }
@@ -592,10 +596,10 @@ impl Plugin for Plugin303 {
         self.current_sample_pos += buffer.samples() as u64;
 
         // QA captures only: pin the playhead to the requested step every block
-        // so `VIBE303_QA_STATE=running` screenshots always show a deterministic
-        // middle step (the init-time pin is overwritten as soon as the
-        // sequencer ticks). Audio path is untouched — this only freezes the
-        // shared UI counter.
+        // so the sequencer-running QA states (`running`, `running_note`) always
+        // show a deterministic middle step (the init-time pin is overwritten as
+        // soon as the sequencer ticks). Audio path is untouched — this only
+        // freezes the shared UI counter.
         if let Some(step) = self.qa_playhead_step {
             self.current_playing_step
                 .store(step, std::sync::atomic::Ordering::Relaxed);

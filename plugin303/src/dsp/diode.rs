@@ -145,7 +145,7 @@ impl Diode1N4148 {
     ///
     /// Not wired into the current ladder solver (its cap companions come from the
     /// explicit shunt `CAPS`, not diode junction caps). Retained + unit-tested as
-    /// a validated model for the deferred active-stage Ultra headroom.
+    /// a validated model for the deferred active-stage Best headroom.
     #[inline]
     pub fn charge(&self, v: f64) -> (f64, f64) {
         const FC: f64 = 0.5;

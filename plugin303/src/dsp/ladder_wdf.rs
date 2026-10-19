@@ -1,4 +1,4 @@
-//! Nodal diode-ladder VCF solver — Ultra tier core (F3.3).
+//! Nodal diode-ladder VCF solver — shared by the Low, High and Best tiers (F3.3).
 //!
 //! Per-sample **nodal MNA + Newton-Raphson** of the vcf303 4-rung diode ladder
 //! (8× 1N4148 + 4 shunt caps), biased by the cutoff tail current. Trapezoidal
@@ -73,7 +73,7 @@ const TOL: f64 = 1e-9;
 /// still 10× tighter than the VCO's absolute floor.
 const TOL_ABS: f64 = 1e-10;
 /// Relative tolerance for convergence (document eq. 3.30: ε_rel). Recalibrated
-/// from 1e-9 (VCO uses 1e-7); guarded by the ultra_spectral LSD gate.
+/// from 1e-9 (VCO uses 1e-7); guarded by the best_spectral LSD gate.
 const TOL_REL: f64 = 1e-8;
 const DENORM: f64 = 1e-30;
 /// Always-on leakage so reverse-biased nodes never float the matrix.
@@ -108,13 +108,13 @@ const RESO_HP_HZ: f64 = 2.0;
 /// (with `vscale = 0.02`). Measured ~0.0401 and cutoff-independent (the
 /// depressed dominant pole rolls off above the corner, but the DC anchor is
 /// flat). `out_gain` is set to its reciprocal so the nodal ladder presents a
-/// **unity DC passband**, matching the Low/TPT path (also unity-DC) — without it
-/// Ultra/High sit ~28 dB below Low. Residual musical-level difference above the
+/// **unity DC passband**, matching the Draft/TPT path (also unity-DC) — without it
+/// Best/Low sit ~28 dB below Draft. Residual musical-level difference above the
 /// corner is the depressed-corner limitation (active stages, deferred), not a
 /// gain-staging bug.
 const LADDER_DC_GAIN: f64 = 0.040_13;
 
-/// Ultra-tier nodal diode-ladder filter.
+/// Nodal diode-ladder filter shared by the Low, High and Best tiers.
 pub struct LadderVcf {
     sr: f64,
     diode: Diode1N4148,
@@ -174,7 +174,7 @@ impl LadderVcf {
             reso_gain: RESO_GAIN,
             g_drive: 1e-3,
             vscale: 0.02,
-            out_gain: 1.0 / LADDER_DC_GAIN, // unity DC passband (matches Low/TPT)
+            out_gain: 1.0 / LADDER_DC_GAIN, // unity DC passband (matches Draft/TPT)
             v: [0.0; N],
             vc_prev: [0.0; 4],
             i_prev: [0.0; 4],

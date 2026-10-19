@@ -1,4 +1,4 @@
-//! Ultra aliasing decision bench (F3.4) — resolves F1.5's "OS is mandatory;
+//! Best aliasing decision bench (F3.4) — resolves F1.5's "OS is mandatory;
 //! pick the residual trimmer".
 //!
 //! Drives the F3.3 nodal ladder with a hot tone near Nyquist/2 (worst case for a
@@ -161,7 +161,7 @@ fn os_factor_alias_decision() {
         ("4x OS", render_4x),
         ("8x OS", render_8x),
     ];
-    println!("\n  Ultra alias bench: {F0:.0} Hz sine, drive {DRIVE}, cutoff wide-open");
+    println!("\n  Best alias bench: {F0:.0} Hz sine, drive {DRIVE}, cutoff wide-open");
     println!(
         "  {:<12} {:>14} {:>14}",
         "path", "alias/total dB", "alias energy"

@@ -1,7 +1,7 @@
-//! Ultra fidelity gate (F3.5): the nodal diode-ladder voice vs the whole-voice
-//! SPICE gold. The SPICE reference *is* the diode-ladder truth, so the Ultra gold
-//! is the SAME `voice_reference(...)` waveform the Low gate uses — the gate is:
-//! render the Ultra voice, ESR vs that gold ≤ −30 dB.
+//! Best fidelity gate (F3.5): the nodal diode-ladder voice vs the whole-voice
+//! SPICE gold. The SPICE reference *is* the diode-ladder truth, so the Best gold
+//! is the SAME `voice_reference(...)` waveform the Draft gate uses — the gate is:
+//! render the Best voice, ESR vs that gold ≤ −30 dB.
 //!
 //! Lag-aligned, RMS-normalised ESR (Rust port of `eval/303/esr.py::metrics`);
 //! shares the alignment math with `voice_esr.rs`.
@@ -10,7 +10,7 @@ use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 use std::path::PathBuf;
 
-const ULTRA_BUDGET_DB: f32 = -30.0;
+const BEST_BUDGET_DB: f32 = -30.0;
 
 fn gold_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../eval/303/gold")
@@ -70,12 +70,12 @@ fn esr_db(reference: &[f32], model: &[f32]) -> f32 {
 
 // Informational only. Sample-exact ESR vs ngspice is structurally out of reach for
 // a real-time bespoke chain (design doc F3-VCO V4): pitch/reset timing and the VCF
-// corner ceiling differ from ngspice's adaptive solver. The BINDING Ultra gate is
-// the spectral character match in `ultra_spectral.rs` (LSD + correlation). Kept
+// corner ceiling differ from ngspice's adaptive solver. The BINDING Best gate is
+// the spectral character match in `best_spectral.rs` (LSD + correlation). Kept
 // ignored as a measurement of where the sample-exact number lands.
-#[ignore = "superseded by ultra_spectral.rs; sample-exact ESR vs ngspice not the gate"]
+#[ignore = "superseded by best_spectral.rs; sample-exact ESR vs ngspice not the gate"]
 #[test]
-fn ultra_voice_esr_within_budget() {
+fn best_voice_esr_within_budget() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
     let sidecar = std::fs::read_to_string(gold_dir().join("voice_A2_mid.json")).unwrap();
     let sc: serde_json::Value = serde_json::from_str(&sidecar).unwrap();
@@ -85,16 +85,16 @@ fn ultra_voice_esr_within_budget() {
     let sr = sc["sr"].as_f64().unwrap() as f32;
 
     let mut v = Voice::new(sr);
-    v.set_tier_immediate(Tier::Ultra);
+    v.set_tier_immediate(Tier::Best);
     v.set_cutoff(cutoff);
     v.set_reso(reso);
     v.note_on(note);
     let model: Vec<f32> = (0..gold.len()).map(|_| v.tick()).collect();
 
     let e = esr_db(&gold, &model);
-    println!("Ultra voice ESR = {e:.2} dB (budget {ULTRA_BUDGET_DB} dB)");
+    println!("Best voice ESR = {e:.2} dB (budget {BEST_BUDGET_DB} dB)");
     assert!(
-        e <= ULTRA_BUDGET_DB,
-        "Ultra voice ESR {e:.2} dB exceeds budget {ULTRA_BUDGET_DB} dB"
+        e <= BEST_BUDGET_DB,
+        "Best voice ESR {e:.2} dB exceeds budget {BEST_BUDGET_DB} dB"
     );
 }

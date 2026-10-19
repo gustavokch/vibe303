@@ -18,18 +18,18 @@ The editor is 1216x640 points. The image above is rendered offscreen from the re
 
 ### 1. Circuit modeling and quality tiers
 
-The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, and checked against ngspice. The two higher tiers solve the circuit as a nodal system (MNA with a Newton solver in `f64`), not as a wave digital filter.
+The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, and checked against ngspice. Low, High, and Best solve the filter as a nodal system (MNA with a Newton solver in `f64`), not as a wave digital filter. High and Best also solve the oscillator from the circuit.
 
 |Tier|Oscillator|Filter|Oversampling|
 |---|---|---|---|
-|**Low**|PolyBLEP saw|TPT diode-ladder approximation|none|
-|**High**|PolyBLEP saw|Nodal diode ladder with active Q9 resonance|2x|
-|**Ultra**|Nodal relaxation VCO (21 nodes)|Nodal diode ladder with active Q9 resonance|4x|
-|**Ultra 2x**|Nodal relaxation VCO at the base rate|Nodal diode ladder|2x|
+|**Draft**|PolyBLEP saw|TPT diode-ladder approximation|none|
+|**Low**|PolyBLEP saw|Nodal diode ladder with active Q9 resonance|2x|
+|**High**|Nodal relaxation VCO at the base rate|Nodal diode ladder|2x|
+|**Best**|Nodal relaxation VCO (21 nodes)|Nodal diode ladder with active Q9 resonance|4x|
 
 - Tier switches use a 10 ms equal-power crossfade, so they do not click.
 - Plugin delay compensation is the same for every tier. The host never has to rebuild its graph when you change tier.
-- Ultra tiers cost far more CPU than Low and High. Use Low or High for tracking, Ultra for bounces.
+- Measured CPU per voice: Best ~147% of one core (offline-grade), Low ~42%. High is not profiled. Use Draft or Low for tracking, Best for bounces.
 
 ### 2. Topology: Accurate and Fun
 
@@ -173,7 +173,7 @@ After a build, `docs/DAW_SMOKE_TEST.md` lists the manual host checks.
 ### Headless render
 ```bash
 cargo run --release --bin render303 -p plugin303 -- --note 57 --sr 48000 --secs 0.5 \
-    --cutoff 1000 --reso 85 --tier 2 --out /tmp/render.f32
+    --cutoff 1000 --reso 85 --tier best --out /tmp/render.f32
 ```
 
 ### GUI screenshots

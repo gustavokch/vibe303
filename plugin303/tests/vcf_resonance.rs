@@ -1,11 +1,11 @@
-//! Ultra VCF active-resonance gate (F6.3): the inverting AC-coupled Q9 feedback
+//! Best VCF active-resonance gate (F6.3): the inverting AC-coupled Q9 feedback
 //! into `in_r` must produce an fc-tracking peak matching the ngspice reference
 //! (VCF_MAP §11, fixture `eval/303/vcf303_reso_gold.json`). Replaces the old
 //! 1-sample-delayed `k_reso·out_prev` hack (which peaked near DC, no fc tracking).
 use plugin303::dsp::filter::Filter303;
 use plugin303::dsp::ladder_wdf::LadderVcf;
 
-const SR: f32 = 192_000.0; // Ultra runs the ladder at 4×48k.
+const SR: f32 = 192_000.0; // Best runs the ladder at 4×48k.
 const TAU: f32 = std::f32::consts::TAU;
 
 /// Small-signal AC gain at `freq`: RMS(out)/RMS(in) over steady state.

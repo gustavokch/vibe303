@@ -25,7 +25,7 @@ fn realized_hz(buf: &[f32], sr: f32) -> f32 {
 
 fn test_voice(sr: f32) {
     println!("=== Testing Voice at sample rate {} Hz ===", sr);
-    for tier in &[Tier::Low, Tier::High, Tier::Ultra] {
+    for tier in &[Tier::Draft, Tier::Low, Tier::Best] {
         let mut v = Voice::new(sr);
         v.set_tier_immediate(*tier);
         // Turn off resonance and set cutoff high so we get a clean oscillator signal

@@ -17,6 +17,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (VCO 1 V/oct; VCF 4-pole LP, bias-tracking cutoff, active-Q9 resonance, tap-select poles).
 - Phase 2 — TB-303 nih-plug voice design + implementation plan under `docs/plans/`.
 
+### Changed
+- Quality tiers renamed in fidelity order: Draft (was Low), Low (was High),
+  High (was Ultra 2x), Best (was Ultra). The GUI QUALITY switch, the host
+  parameter value names, `render303 --tier` and `profile_voice --tier` use the
+  new names; `--tier` takes names only (`draft|low|high|best`), not indices.
+  The QA state `quality_high` now selects the High tier; the capture suite uses
+  `quality_low` for what `quality_high` captured before. Sessions saved before
+  this change: a saved Ultra (index 2) now loads as High; a saved Ultra 2x
+  (index 3) now loads as Best. DAW automation lanes that stored index 2 or 3
+  change the same way.
+- `eval/303/calibrate_vcf.py` fits the Draft and Low control maps against Best
+  and prints the `DRAFT_*_POLY` / `LOW_*_POLY` constants for `voice.rs`. Its
+  probe binary `vcf_sweep_helper` is restored and builds each tier's filter the
+  way the voice does (oversampling factor and brightness calibration).
+
+### Fixed
+- The High tier was padded for Best's 4x oversampling latency instead of its
+  own 2x latency, so its output came out 15 samples early (about 0.3 ms at
+  48 kHz) and a High crossfade blended misaligned paths. High now has its own
+  compensation delay, and every tier reaches the output at the reported
+  latency.
+- A crossfade between tiers that shared DSP state ticked that state twice per
+  sample for the 10 ms fade. High <-> Best ran the circuit VCO at double rate
+  (an audible pitch jump, then a phase offset); Low <-> High and the circuit
+  tiers also shared the 2x oversampler and the sub oscillator. Each tier now
+  owns its oversampler and nodal ladder, and the circuit VCOs and sub
+  oscillator tick once per sample, also during a High <-> Best fade.
+- Switching back to a tier resumed the filter, oversampler and delay state it
+  held when it last ran, often from another note. With resonance up, the
+  nodal ladder took about a second to forget it, so the returning tier sounded
+  wrong for that time. The incoming tier now starts from a cleared state on
+  every switch. At resonance 0.3 its error 100 ms after the fade drops from
+  0.67 to 0.09 relative RMS.
+
 ### Removed
 - The BA283 Neve-preamp product (plugin crate, WaveNet/LSTM model, WDF engine, training
   and data-generation pipelines, colab notebooks, datasets, ba283 eval suites and docs).

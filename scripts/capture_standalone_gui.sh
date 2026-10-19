@@ -114,14 +114,17 @@ capture_single_state "default" "$OUTPUT_DIR/latest.png"
 capture_single_state "accurate" "$OUTPUT_DIR/accurate.png"
 capture_single_state "advanced" "$OUTPUT_DIR/advanced.png"
 capture_single_state "running" "$OUTPUT_DIR/running.png"
+# Every step NOTE, playhead pinned to step 3: the playhead sits on a NOTE cell
+# (in the running state step 3 is a REST).
+capture_single_state "running_note" "$OUTPUT_DIR/running_note.png"
 # Bipolar knob off detent + unipolar knob off default (round-13 issue 1
 # verification state).
 capture_single_state "knobs" "$OUTPUT_DIR/knobs.png"
-# Quality tier selection (High WDF-lite tier)
-# Additional tiers (quality_ultra, quality_ultra2x) are supported by
+# Quality tier selection (Low tier: 2x nodal ladder, polyBLEP saw)
+# The other non-default tiers (quality_high, quality_best) are supported by
 # VIBE303_QA_STATE in plugin303/src/params.rs but captured manually only —
-# not part of the automated 8-state suite.
-capture_single_state "quality_high" "$OUTPUT_DIR/quality_high.png"
+# not part of the automated suite.
+capture_single_state "quality_low" "$OUTPUT_DIR/quality_low.png"
 # Generative sequence parameters modified
 capture_single_state "generator" "$OUTPUT_DIR/generator.png"
 # Scaling / Zoom state (75% zoom factor)
@@ -135,8 +138,9 @@ REQUIRED_CROPS=(
     "accurate.png"
     "advanced.png"
     "running.png"
+    "running_note.png"
     "knobs.png"
-    "quality_high.png"
+    "quality_low.png"
     "generator.png"
     "zoom75.png"
     "crop_header.png"

@@ -29,7 +29,11 @@ fn main() {
     let secs = arg("--secs", 0.5);
     let cutoff = arg("--cutoff", 1_000.0);
     let reso = arg("--reso", 0.0);
-    let tier = arg("--tier", 0.0) as i32; // 0=Low 1=High 2=Ultra; default keeps F2 golds valid
+    let tier_name = arg_s("--tier", "draft"); // draft|low|high|best; default keeps F2 golds valid
+    let tier = Tier::parse(&tier_name).unwrap_or_else(|| {
+        eprintln!("render303: unknown --tier {tier_name:?} (expected draft, low, high or best)");
+        std::process::exit(2);
+    });
     let wave = arg("--wave", 0.0) as i32; // 0=Saw, 1=Square, 2=Sweep
     let out = arg_s("--out", "render.f32");
 
@@ -37,11 +41,7 @@ fn main() {
     let env_mod = arg("--env-mod", 0.0); // Default to 0.0 if not specified to allow static cutoff
 
     let mut v = Voice::new(sr);
-    v.set_tier_immediate(match tier {
-        1 => Tier::High,
-        2 => Tier::Ultra,
-        _ => Tier::Low,
-    });
+    v.set_tier_immediate(tier);
     let wave_mode = match wave {
         1 => OscWave::Square,
         2 => OscWave::Sweep,

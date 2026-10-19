@@ -26,7 +26,7 @@ fn realized_hz(buf: &[f32], sr: f32) -> f32 {
 fn test_live_tweaks_during_playback() {
     let sr = 48000.0;
     let mut v = Voice::new(sr);
-    v.set_tier_immediate(Tier::Ultra);
+    v.set_tier_immediate(Tier::Best);
     v.set_wave(OscWave::Saw);
     v.set_cutoff(4000.0);
     v.set_reso(0.0);

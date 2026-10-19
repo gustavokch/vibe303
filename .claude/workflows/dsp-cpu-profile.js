@@ -15,13 +15,12 @@ const PROFILE_BIN_TARGET = "plugin303/src/bin/profile_voice.rs";
 const CARGO_TOML = "plugin303/Cargo.toml";
 const REPORT_PATH = "docs/profiling/cpu-profile-report.md";
 
-// Clamp to bounded integers before any shell-string interpolation.
-const tierRaw = args?.tier ?? -1;
+// Allowlist the tier name before any shell-string interpolation.
+const TIER_NAMES = ["draft", "low", "high", "best"];
+const tierRaw = String(args?.tier ?? "").toLowerCase();
 const secsRaw = args?.secs ?? 10;
 const samply = args?.samply !== false;
-const tier = Number.isFinite(Number(tierRaw))
-  ? Math.max(-1, Math.min(2, Math.round(Number(tierRaw))))
-  : -1;
+const tier = TIER_NAMES.includes(tierRaw) ? tierRaw : "best";
 const secs = Number.isFinite(Number(secsRaw))
   ? Math.max(1, Math.min(300, Math.round(Number(secsRaw))))
   : 10;
@@ -72,9 +71,9 @@ phase("Baseline Timing");
 
 // Run all 4 timing configurations in parallel
 const tierConfigs = [
-  { name: "ultra", tierFlag: "--tier 2", desc: "Ultra (nodal VCO + 4× OS ladder)" },
-  { name: "high",  tierFlag: "--tier 1", desc: "High (polyBLEP + 2× OS nodal ladder)" },
-  { name: "low",   tierFlag: "--tier 0", desc: "Low (polyBLEP + TPT ladder)" },
+  { name: "best",  tierFlag: "--tier best",  desc: "Best (circuit VCO + nodal ladder 4× OS)" },
+  { name: "low",   tierFlag: "--tier low",   desc: "Low (polyBLEP + nodal ladder 2× OS)" },
+  { name: "draft", tierFlag: "--tier draft", desc: "Draft (polyBLEP + TPT ladder, no OS)" },
   { name: "sweep", tierFlag: "",          desc: "Tier sweep (all tiers, topology cycling)" },
 ];
 
@@ -119,7 +118,7 @@ log(`Timing results: ${JSON.stringify(timingResults, null, 2)}`);
 // ═══════════════════════════════════════════════════════════════════════════
 phase("Profiled Run");
 
-const profileTier = tier >= 0 ? `--tier ${tier}` : "--tier 2"; // default profile Ultra (heaviest)
+const profileTier = `--tier ${tier}`; // default profile Best (heaviest)
 const profileSecs = Math.max(secs, 30); // at least 30s for good sample coverage
 
 let profileResult;
@@ -163,10 +162,10 @@ const analysisResult = await agent(
 
    ## Context
 
-   The voice architecture (plugin303/src/dsp/voice.rs) is a monophonic synth with 3 fidelity tiers:
+   The voice architecture (plugin303/src/dsp/voice.rs) is a monophonic synth with 4 fidelity tiers:
 
-   ### Tier::Ultra (heaviest)
-   - **VCO** (vco.rs): Nodal MNA + Newton solver, 17-unknown 6-BJT + JFET relaxation oscillator.
+   ### Tier::Best (heaviest)
+   - **VCO** (vco.rs): Circuit VCO: nodal MNA + Newton solver, 17-unknown 6-BJT + JFET relaxation oscillator.
      Per-sample: stamp 17×17 Jacobian, LU solve, Newton iterations (up to 100, typically 3-8).
      Has pitch LUT (37-point secant-calibrated) rebuilt on age/tolerance changes.
    - **LadderVcf** (ladder_wdf.rs): Nodal 12-node diode-ladder, 8× 1N4148 diodes + 4 shunt caps.
@@ -176,12 +175,16 @@ const analysisResult = await agent(
    - **WarmClipper** (warm_clipper.rs): 4-stage Germanium/JFET output clipper with internal 2×/4× OS.
 
    ### Tier::High
+   - Same circuit VCO as Best, feeding **LadderVcf** at 2× OS (2 ladder.tick() calls per sample).
+   - **Os2x**: Kaiser FIR at 2×.
+
+   ### Tier::Low
    - **BlepOsc** (osc.rs): polyBLEP oscillator (cheap).
    - **LadderVcf** at 2× OS (2 ladder.tick() calls per sample).
    - **Os2x**: Kaiser FIR at 2×.
 
-   ### Tier::Low
-   - **BlepOsc** + **TptLadder** (ladder.rs): textbook TPT, no Newton, very cheap.
+   ### Tier::Draft
+   - **BlepOsc** + **TptLadder** (ladder.rs): textbook TPT, no Newton, no oversampling, very cheap.
 
    ### Common per-sample work
    - Envelope chain: DecayEnv, LeakyIntegrator, AccentSweep, RcEnv (rc_env.rs)
@@ -217,7 +220,7 @@ const analysisResult = await agent(
 
    2. **Estimate the per-sample cost breakdown** for each tier based on:
       - Newton iteration counts × linear solve size (17×17 for VCO, 12×12 for ladder)
-      - Oversampling factor (4× for Ultra ladder means 4 Newton solves per sample)
+      - Oversampling factor (4× for Best ladder means 4 Newton solves per sample)
       - Number of exp/log/powf transcendental calls per sample
       - FIR filter tap counts in the oversampler
 

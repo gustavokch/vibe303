@@ -1,10 +1,10 @@
-//! Diagnostic (ignored): Newton iterations-per-sample histogram for the Ultra
+//! Diagnostic (ignored): Newton iterations-per-sample histogram for the Best
 //! signal chain (nodal VCO + 4× nodal diode-ladder VCF). Sizes optimization lever
 //! #4 (iter count multiplies every per-iter cost). Not a gate.
 //!
 //! Run: `cargo test -p plugin303 --test newton_iters -- --ignored --nocapture`.
-//! Mirrors `Voice::render_tier(Ultra)`: VCO saw ×2.0 gain → Os4x.up → 4× ladder
-//! tick → Os4x.down, ladder built at 4×sr with the Ultra brightness (0.70).
+//! Mirrors `Voice::render_tier(Best)`: VCO saw ×2.0 gain → Os4x.up → 4× ladder
+//! tick → Os4x.down, ladder built at 4×sr with the Best brightness (0.70).
 
 use plugin303::dsp::filter::Filter303;
 use plugin303::dsp::ladder_wdf::LadderVcf;
@@ -38,8 +38,8 @@ fn dump(label: &str, hist: &[u64], total: u64, homotopy: u64) {
 }
 
 #[test]
-#[ignore = "diagnostic: Newton iters/sample histogram for the Ultra chain"]
-fn ultra_newton_iter_histogram() {
+#[ignore = "diagnostic: Newton iters/sample histogram for the Best chain"]
+fn best_newton_iter_histogram() {
     let sr = 48_000.0f32;
     let note = 45u8; // A1 ≈ 110 Hz
     let cutoff = 1_200.0f32;

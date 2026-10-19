@@ -1,5 +1,5 @@
 //! Voice DSP profiling harness.
-//! Measures throughput (samples/sec) and real-time speedup factor across Low, High, Ultra tiers.
+//! Measures throughput (samples/sec) and real-time speedup factor across Draft, Low, Best tiers.
 
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::sequencer::SeqEvent;
@@ -31,23 +31,28 @@ fn arg_u64(flag: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-fn has_flag(flag: &str) -> bool {
-    std::env::args().any(|s| s == flag)
+/// What `--tier` selected: one tier, or the tier-switching sweep.
+enum Target {
+    One(Tier),
+    Sweep,
 }
 
-fn arg_tier(flag: &str) -> Option<i32> {
+fn arg_target(flag: &str) -> Option<Target> {
     let args: Vec<String> = std::env::args().collect();
     let val = args
         .iter()
         .position(|s| s == flag)
         .and_then(|i| args.get(i + 1))?;
 
-    match val.to_ascii_lowercase().as_str() {
-        "0" | "low" => Some(0),
-        "1" | "high" => Some(1),
-        "2" | "ultra" => Some(2),
-        "3" | "sweep" => Some(3),
-        _ => val.parse::<i32>().ok(),
+    if val.eq_ignore_ascii_case("sweep") {
+        return Some(Target::Sweep);
+    }
+    match Tier::parse(val) {
+        Some(tier) => Some(Target::One(tier)),
+        None => {
+            eprintln!("profile_voice: unknown {flag} {val:?} (expected draft, low, high, best or sweep)");
+            std::process::exit(2);
+        }
     }
 }
 
@@ -156,7 +161,7 @@ fn run_tier(name: &str, tier: Tier, secs: f32, sr: f32, seed: u64) -> (f64, f64,
 fn run_sweep(secs: f32, sr: f32, _seed: u64) -> (f64, f64, f64, bool) {
     let num_samples = (secs * sr) as usize;
     let mut voice = Voice::new(sr);
-    voice.set_tier_immediate(Tier::Ultra);
+    voice.set_tier_immediate(Tier::Best);
     voice.set_cutoff(800.0);
     voice.set_reso(0.75);
     voice.set_env_mod(0.6);
@@ -166,7 +171,7 @@ fn run_sweep(secs: f32, sr: f32, _seed: u64) -> (f64, f64, f64, bool) {
     let start = Instant::now();
     let mut sum = 0.0f32;
     let samples_per_step = (sr * 60.0 / (130.0 * 4.0)) as usize;
-    let tiers = [Tier::Ultra, Tier::High, Tier::Low, Tier::Ultra];
+    let tiers = [Tier::Best, Tier::Low, Tier::Draft, Tier::Best];
 
     for i in 0..num_samples {
         let step = (i / samples_per_step) % 16;
@@ -247,8 +252,6 @@ fn main() {
     let secs = arg_f32("--secs", 10.0);
     let sr = arg_f32("--sr", 48_000.0);
     let seed = arg_u64("--seed", 0xAC1D);
-    let has_tier_flag = has_flag("--tier");
-    let target_tier = arg_tier("--tier");
 
     let header = format!(
         "== Voice DSP Profile ({} seconds @ {} Hz, seed: 0x{:X}) ==",
@@ -257,26 +260,17 @@ fn main() {
     println!("{}", header);
     eprintln!("{}", header);
 
-    match target_tier {
-        Some(0) => {
-            run_tier("low", Tier::Low, secs, sr, seed);
+    match arg_target("--tier") {
+        Some(Target::One(tier)) => {
+            run_tier(&format!("{tier:?}").to_ascii_lowercase(), tier, secs, sr, seed);
         }
-        Some(1) => {
-            run_tier("high", Tier::High, secs, sr, seed);
-        }
-        Some(2) => {
-            run_tier("ultra", Tier::Ultra, secs, sr, seed);
-        }
-        Some(3) => {
+        Some(Target::Sweep) => {
             run_sweep(secs, sr, seed);
         }
-        _ if has_tier_flag => {
-            run_sweep(secs, sr, seed);
-        }
-        _ => {
+        None => {
+            run_tier("draft", Tier::Draft, secs, sr, seed);
             run_tier("low", Tier::Low, secs, sr, seed);
-            run_tier("high", Tier::High, secs, sr, seed);
-            run_tier("ultra", Tier::Ultra, secs, sr, seed);
+            run_tier("best", Tier::Best, secs, sr, seed);
             run_sweep(secs, sr, seed);
         }
     }

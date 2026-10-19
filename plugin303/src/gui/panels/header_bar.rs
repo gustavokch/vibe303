@@ -100,7 +100,7 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
                 &params.tier,
                 setter,
                 "QUALITY",
-                &["LOW", "HIGH", "ULTRA", "ULTRA 2X"],
+                &["DRAFT", "LOW", "HIGH", "BEST"],
             )
             .caption_left(),
         )
