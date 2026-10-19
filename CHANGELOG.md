@@ -31,6 +31,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and prints the `DRAFT_*_POLY` / `LOW_*_POLY` constants for `voice.rs`. Its
   probe binary `vcf_sweep_helper` is restored and builds each tier's filter the
   way the voice does (oversampling factor and brightness calibration).
+- The Draft and Low tiers run their filter at 4x oversampling, like Best
+  (was 1x and 2x). Draft moves from 46.39 to 41.58 dB LSD against the SPICE
+  gold. Low's brightness is re-tuned for 4x from 0.50 to 0.45, which moves
+  Low from 28.62 to 12.47 dB LSD; the Low gate budget tightens from 29 to
+  16 dB. Draft and Low match Best's level through a resonance-dependent
+  output trim, applied before the output clipper (median 0.0 dB vs Best at
+  every resonance point). Draft costs about 1.5% and Low about 8% of one core
+  per voice at 48 kHz (was 0.9% and 4.5%).
 
 ### Fixed
 - The High tier was padded for Best's 4x oversampling latency instead of its
