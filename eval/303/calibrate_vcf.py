@@ -49,7 +49,8 @@ def get_response(tier: str, fc: float, reso: float) -> np.ndarray:
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return np.array([float(x) for x in res.stdout.strip().split()])
 
-# Grid for calibration
+# Grid for calibration. Its cutoff range must match voice.rs DRAFT_FIT_LOG2_FC_MIN/MAX:
+# the Draft maps clamp their cutoff input to this range (log2 of 200 and 4000 Hz).
 FC_GRID = np.logspace(np.log10(200.0), np.log10(4000.0), 8)
 RESO_GRID = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 0.9])
 

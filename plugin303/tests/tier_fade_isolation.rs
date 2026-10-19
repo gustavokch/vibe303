@@ -93,7 +93,7 @@ fn render_switch(from: Tier, to: Tier, sub_vol: f32, resonance: f32, total: usiz
 /// Low polyBLEP oscillators, and `sub_vol = 0` removes the shared sub from the
 /// mix. The post-fade output must therefore be bit-identical.
 ///
-/// Fails when Low and High share one 2x oversampler: the outgoing tier's
+/// Fails when Low and High share oversampler or ladder state: the outgoing tier's
 /// signal enters the incoming tier's FIR history and, through the nodal
 /// ladder's memory, persists after the fade.
 #[test]
