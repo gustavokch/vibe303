@@ -20,7 +20,7 @@
 
 mod common;
 
-use common::{gold_dir, load_f32, load_gold_op, spectral_match};
+use common::{gold_dir, load_f32, load_gold_op, render_plugin_path, spectral_match};
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 
@@ -147,5 +147,30 @@ fn low_voice_spectral_match() {
     assert!(
         corr >= CORR_MIN,
         "Low spectral corr {corr:.3} below {CORR_MIN}"
+    );
+}
+
+/// Same gate through the plugin's parameter path (`common::render_plugin_path`):
+/// the default patch with first-block analog wear and Env Mod at 0. Measured
+/// 10.50 dB / 0.977 (`low_voice_spectral_match`: 12.47 dB). With analog wear
+/// resetting the brightness to 1.0, or with the `ladder_low` brightness forced
+/// to 1.0 inside `update_params`, it reads 39.56 dB, while
+/// `low_voice_spectral_match` still passes (12.47 dB): `Voice::new` does not
+/// wear the Low ladder, so only this gate sees it.
+#[test]
+fn low_plugin_path_spectral_match() {
+    let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
+    let op = load_gold_op("voice_A2_mid.json");
+
+    let model = render_plugin_path(Tier::Low, &op, gold.len());
+    let (lsd, corr) = spectral_match(&gold, &model, op.sr);
+    println!("Low plugin-path spectral match: LSD = {lsd:.2} dB, corr = {corr:.3}");
+    assert!(
+        lsd <= LSD_BUDGET_DB,
+        "Low plugin-path LSD {lsd:.2} dB exceeds budget {LSD_BUDGET_DB} dB"
+    );
+    assert!(
+        corr >= CORR_MIN,
+        "Low plugin-path spectral corr {corr:.3} below {CORR_MIN}"
     );
 }
