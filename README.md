@@ -29,7 +29,6 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
 
 - Tier switches use a 10 ms equal-power crossfade, so they do not click.
 - Plugin delay compensation is the same for every tier. The host never has to rebuild its graph when you change tier.
-- Measured CPU per voice: Best ~147% of one core (offline-grade), Low ~42%. High is not profiled. Use Draft or Low for tracking, Best for bounces.
 
 ### 2. Topology: Accurate and Fun
 
