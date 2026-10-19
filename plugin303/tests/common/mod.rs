@@ -176,6 +176,14 @@ pub fn bypassed_clipper() -> plugin303::dsp::voice::VoiceClipperParams {
 /// re-applies analog wear on its first block (`comp_seed` 1337 vs `Voice::new`'s
 /// 0) and after each host reset; tests that skip this never see that re-wear.
 pub fn apply_plugin_defaults(v: &mut plugin303::dsp::voice::Voice, comp_age: i32) {
+    let env_mod = plugin303::params::Plugin303Params::default()
+        .env_mod
+        .value();
+    apply_plugin_patch(v, comp_age, env_mod);
+}
+
+/// [`apply_plugin_defaults`] with the Env Mod knob overridden as well.
+fn apply_plugin_patch(v: &mut plugin303::dsp::voice::Voice, comp_age: i32, env_mod: f32) {
     let p = plugin303::params::Plugin303Params::default();
     v.update_params(
         p.tuning.value(),
@@ -187,7 +195,7 @@ pub fn apply_plugin_defaults(v: &mut plugin303::dsp::voice::Voice, comp_age: i32
         p.sub_vol.value(),
         p.cutoff.value(),
         p.resonance.value(),
-        p.env_mod.value(),
+        env_mod,
         p.decay.value(),
         p.accent.value(),
         p.volume.value(),
@@ -214,4 +222,27 @@ pub fn apply_plugin_defaults(v: &mut plugin303::dsp::voice::Voice, comp_age: i32
         p.reso_comp.value(),
         p.recalibration_scale.value() as f64,
     );
+}
+
+/// Renders `tier` at gold operating point `op` through the plugin's parameter
+/// path, then plays the note the way the spectral gates do (bypassed clipper,
+/// advanced envelopes, 48 warm-up samples). The path is the default patch (Fun
+/// topology, component seed 1337, drift 0.1, first-block analog wear) with Env
+/// Mod at 0: the gold holds its cutoff still, and the default Env Mod (0.5)
+/// sweeps it, which alone moves Best from 3.5 to 22 dB LSD. A bare `Voice::new`
+/// render never runs `update_params`, so only this render sees an update that
+/// overrides a tier's calibrated voicing.
+pub fn render_plugin_path(tier: plugin303::dsp::filter::Tier, op: &GoldOp, n: usize) -> Vec<f32> {
+    let mut v = plugin303::dsp::voice::Voice::new(op.sr);
+    v.update_clipper_params_immediate(bypassed_clipper());
+    v.set_tier_immediate(tier);
+    apply_plugin_patch(&mut v, 0, 0.0);
+    v.set_advanced_env(true);
+    v.set_cutoff(op.cutoff);
+    v.set_reso(op.reso);
+    v.note_on(op.note);
+    for _ in 0..48 {
+        v.tick();
+    }
+    (0..n).map(|_| v.tick()).collect()
 }

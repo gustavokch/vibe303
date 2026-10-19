@@ -7,10 +7,14 @@
 //!
 //! The Welch LSD + dB-spectrum-corr metric lives in `tests/common/mod.rs`
 //! (shared with the Low gate, F4.2).
+//!
+//! Two renders: `render_best` plays a bare `Voice`; `common::render_plugin_path`
+//! first runs the plugin's default parameter update, so its gate also covers an
+//! update that overrides the calibrated voicing.
 
 mod common;
 
-use common::{gold_dir, load_f32, load_gold_op, spectral_match};
+use common::{gold_dir, load_f32, load_gold_op, render_plugin_path, spectral_match};
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 
@@ -77,5 +81,30 @@ fn best_voice_spectral_match() {
     assert!(
         corr >= CORR_MIN,
         "Best spectral corr {corr:.3} below {CORR_MIN}"
+    );
+}
+
+/// Same gate through the plugin's parameter path (`common::render_plugin_path`):
+/// the default patch with first-block analog wear and Env Mod at 0. Measured
+/// 3.50 dB / 0.989. With analog wear resetting the brightness to 1.0 (the bug
+/// fixed in `29936e7`) it reads 10.16 dB; `best_voice_spectral_match` fails too
+/// (9.59 dB), because `Voice::new` applies analog wear. Only this gate sees an
+/// override inside `update_params`: an override placed there fails this gate
+/// (10.16 dB) and passes the bare one (3.15 dB).
+#[test]
+fn best_plugin_path_spectral_match() {
+    let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));
+    let op = load_gold_op("voice_A2_mid.json");
+
+    let model = render_plugin_path(Tier::Best, &op, gold.len());
+    let (lsd, corr) = spectral_match(&gold, &model, op.sr);
+    println!("Best plugin-path spectral match: LSD = {lsd:.2} dB, corr = {corr:.3}");
+    assert!(
+        lsd <= LSD_BUDGET_DB,
+        "Best plugin-path LSD {lsd:.2} dB exceeds budget {LSD_BUDGET_DB} dB"
+    );
+    assert!(
+        corr >= CORR_MIN,
+        "Best plugin-path spectral corr {corr:.3} below {CORR_MIN}"
     );
 }

@@ -56,10 +56,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   brightness instead of scaling it. Wear now scales it. Against the SPICE gold,
   Best's brightness-only render moves from 9.59 to 3.15 dB LSD; the full default
   patch moves from 29.61 to 22.24 dB. High's full default patch moves from 28.98
-  to 21.58 dB. Low, High and Best sound darker than before (in the plugin, Low's
-  VCF brightness goes from 1.0 to 0.50 and High/Best from 1.0 to 0.70); sessions
-  keep their settings. Draft-to-Best parity moves apart (20.41 to 24.81 dB LSD),
-  because Best is darker.
+  to 21.58 dB. The rest of the default patch's distance is its Env Mod (0.5),
+  which sweeps the cutoff that the gold holds still; with Env Mod at 0 the
+  default patch measures 3.50 dB for Best. Low, High and Best sound darker than
+  before (in the plugin, Low's VCF brightness goes from 1.0 to 0.50 and
+  High/Best from 1.0 to 0.70); sessions keep their settings. Draft-to-Best
+  parity moves apart (20.41 to 24.81 dB LSD), because Best is darker.
 
 ### Removed
 - The BA283 Neve-preamp product (plugin crate, WaveNet/LSTM model, WDF engine, training
