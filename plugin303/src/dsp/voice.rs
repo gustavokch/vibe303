@@ -1708,6 +1708,12 @@ impl Voice {
         self.ladder_best.set_reso_gain(g);
     }
 
+    /// Diagnostic: effective brightness of the Low, High and Best nodal ladders.
+    #[doc(hidden)]
+    pub fn dbg_ladder_cals(&self) -> [f64; 3] {
+        [self.ladder_low.cal(), self.ladder_high.cal(), self.ladder_best.cal()]
+    }
+
     pub fn set_topology(&mut self, topology: CircuitTopology) {
         if self.topology != topology {
             self.topology = topology;
