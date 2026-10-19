@@ -15,8 +15,8 @@
 //!
 //! Residual differences that are NOT this bug (and are not asserted tightly):
 //!   - Depressed/rate-dependent VCF corner: the nodal ladder's effective corner
-//!     sits below the set cutoff and shifts with the oversample rate (Low 2× vs
-//!     Best 4×), so on bright patches the nodal tiers pass less/more harmonic
+//!     sits below the set cutoff and shifts with the oversample rate (Low and
+//!     Best both 4×), so on bright patches the nodal tiers pass less/more harmonic
 //!     energy than TPT. Closing this needs the active stages (deferred).
 //!   - Resonance passband loss: the calibrated Q9 loop (`RESO_GAIN`) sheds
 //!     passband as resonance rises, more than the TPT feedback does.

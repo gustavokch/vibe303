@@ -2,7 +2,7 @@
 //!
 //! Low = polyBLEP saw → nodal diode-ladder VCF at 4× oversample. It skips the
 //! costly nodal circuit VCO (Best's dominant cost) but keeps the nonlinear
-//! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.27)
+//! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.935 at 4×)
 //! and Best (circuit VCO→ladder, corr 0.977) on the same spectral metric.
 //!
 //! Same Welch LSD + dB-spectrum-corr metric as Best (`tests/common/mod.rs`).
