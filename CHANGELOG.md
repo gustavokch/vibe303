@@ -53,10 +53,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The High and Best tiers played their VCF at brightness 1.0 instead of the
   calibrated 0.70, and the Low tier lost its 0.50 brightness on the plugin's
   first block: analog wear (`LadderVcf::set_analog_wear`) replaced the tier
-  brightness instead of scaling it. Wear now scales it. Best moves from
-  9.59 to 3.15 dB LSD against the SPICE gold. Low, High and Best sound darker
-  than before (in the plugin, Low's VCF brightness goes from 1.0 to 0.50 and
-  High/Best from 1.0 to 0.70); sessions keep their settings.
+  brightness instead of scaling it. Wear now scales it. Against the SPICE gold,
+  Best's brightness-only render moves from 9.59 to 3.15 dB LSD; the full default
+  patch moves from 29.61 to 22.24 dB. High's full default patch moves from 28.98
+  to 21.58 dB. Low, High and Best sound darker than before (in the plugin, Low's
+  VCF brightness goes from 1.0 to 0.50 and High/Best from 1.0 to 0.70); sessions
+  keep their settings. Draft-to-Best parity moves apart (20.41 to 24.81 dB LSD),
+  because Best is darker.
 
 ### Removed
 - The BA283 Neve-preamp product (plugin crate, WaveNet/LSTM model, WDF engine, training
