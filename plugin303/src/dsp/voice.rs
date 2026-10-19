@@ -1090,7 +1090,7 @@ impl Voice {
     }
 
     /// Select the fidelity tier. Draft routes to the TPT path; Low routes to the
-    /// nodal diode-ladder inside the 2× oversampler (polyBLEP saw, F4.1); High routes
+    /// nodal diode-ladder inside the 4× oversampler (`os4_low`, polyBLEP saw, F4.1); High routes
     /// to the circuit VCO → nodal ladder at 2×; Best routes to the same at 4× (F3.5).
     ///
     /// A change starts a short equal-power crossfade (F5.1) from the previous
@@ -1619,17 +1619,20 @@ impl Voice {
         self.final_reso = final_reso;
 
         // Apply to filters
-        let (draft_fc, draft_reso) = Self::map_draft_vcf(final_cutoff_hz, final_reso);
+        let log2_cutoff = (final_cutoff_hz as f64).log2();
+        let (draft_fc, draft_reso) = Self::map_draft_vcf(log2_cutoff, final_reso);
         let draft_fc =
             (draft_fc as f64 * self.draft_cutoff_mult).clamp(20.0, (self.sr * 0.45) as f64);
+        // The raw Draft reso can exceed 1.0 at high cutoff. The age multiplier must
+        // scale that raw value before the clamp, not an already-clamped 1.0.
         let draft_reso = (draft_reso * self.draft_reso_mult as f32).clamp(0.0, 1.0);
 
-        let (low_fc, low_reso) = Self::map_low_vcf(final_cutoff_hz, final_reso);
+        let (low_fc, low_reso) = Self::map_low_vcf(log2_cutoff, final_reso);
         let low_fc = (low_fc as f64).clamp(20.0, (self.sr * 0.45) as f64);
         self.filter.set_cutoff(draft_fc as f32);
-        self.filter.set_reso(draft_reso as f32);
+        self.filter.set_reso(draft_reso);
         self.ladder_low.set_cutoff(low_fc as f32);
-        self.ladder_low.set_reso(low_reso as f32);
+        self.ladder_low.set_reso(low_reso);
 
         for ladder in [&mut self.ladder_high, &mut self.ladder_best] {
             ladder.set_cutoff(final_cutoff_hz as f32);
@@ -1764,22 +1767,22 @@ impl Voice {
     const DRAFT_FIT_LOG2_FC_MIN: f64 = 7.643856189774724; // (200.0_f64).log2()
     const DRAFT_FIT_LOG2_FC_MAX: f64 = 11.965784284662087; // (4000.0_f64).log2()
 
-    /// Evaluates the Draft VCF control map (cutoff and resonance) given the
-    /// target (Best) cutoff in Hz and resonance in [0, 1].
-    pub fn map_draft_vcf(cutoff_hz: f32, reso: f32) -> (f32, f32) {
-        let x = (cutoff_hz as f64).log2();
+    /// Evaluates the Draft VCF control map given `x`, the log2 of the target (Best)
+    /// cutoff in Hz, and resonance in [0, 1]. Returns the Draft cutoff in Hz and the
+    /// resonance before clamping: the polynomial exceeds 1.0 at high cutoff, and the
+    /// caller clamps after the component-age multiplier.
+    pub fn map_draft_vcf(x: f64, reso: f32) -> (f32, f32) {
         let y = reso as f64;
         let x_clamped = x.clamp(Self::DRAFT_FIT_LOG2_FC_MIN, Self::DRAFT_FIT_LOG2_FC_MAX);
         let x_extra = x - x_clamped;
         let draft_fc = 2.0f64.powf(eval_poly3(x_clamped, y, &DRAFT_FC_POLY) + x_extra);
-        let draft_reso = eval_poly3(x_clamped, y, &DRAFT_RESO_POLY).clamp(0.0, 1.0);
+        let draft_reso = eval_poly3(x_clamped, y, &DRAFT_RESO_POLY);
         (draft_fc as f32, draft_reso as f32)
     }
 
-    /// Evaluates the Low VCF control map (cutoff and resonance) given the
-    /// target (Best) cutoff in Hz and resonance in [0, 1].
-    pub fn map_low_vcf(cutoff_hz: f32, reso: f32) -> (f32, f32) {
-        let x = (cutoff_hz as f64).log2();
+    /// Evaluates the Low VCF control map given `x`, the log2 of the target (Best)
+    /// cutoff in Hz, and resonance in [0, 1]. Returns the Low cutoff in Hz and resonance.
+    pub fn map_low_vcf(x: f64, reso: f32) -> (f32, f32) {
         let y = reso as f64;
         let low_fc = 2.0f64.powf(eval_poly3(x, y, &LOW_FC_POLY));
         let low_reso = eval_poly3(x, y, &LOW_RESO_POLY).clamp(0.0, 1.0);

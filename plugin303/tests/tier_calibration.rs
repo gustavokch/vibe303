@@ -243,7 +243,7 @@ fn filter_peak_gain_db(tier: Tier, fc: f32, reso: f32) -> f32 {
     let amp = 0.02f32;
     let mut process: Box<dyn FnMut(f32) -> f32> = match tier {
         Tier::Draft => {
-            let (mapped_fc, mapped_reso) = Voice::map_draft_vcf(fc, reso);
+            let (mapped_fc, mapped_reso) = Voice::map_draft_vcf((fc as f64).log2(), reso);
             let mut f = TptLadder::new(SR * DRAFT_OS_FACTOR);
             f.set_poles(4);
             f.set_cutoff(mapped_fc);
