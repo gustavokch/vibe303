@@ -34,14 +34,14 @@ voice state                Low LSD  15.63 corr 0.993 | Draft LSD  20.41 corr 0.9
 plugin today (1.00/1.00)   Low LSD  10.29 corr 0.986 | Draft LSD  20.41 corr 0.970
 tests today (0.50/1.00)    Low LSD  15.63 corr 0.993 | Draft LSD  20.41 corr 0.970
 intended (0.50/0.70)       Low LSD  10.56 corr 0.995 | Draft LSD  24.81 corr 0.962
-7096ce8c7033e93aa300b4eb72a4a3b674ddfeb3  /tmp/bright_before_best_0.f32
-8e639c7b34dd79f16dfd85a78ed6cdbfa43690a3  /tmp/bright_before_best_1.f32
-c75365aa6ce9f38d73353a88e920df781a964c5a  /tmp/bright_before_draft_0.f32
-3a020f4420942601be0722423e77dd62b47ffd41  /tmp/bright_before_draft_1.f32
-3d4f48b5046854db5fcf1180a02b33a124bace6c  /tmp/bright_before_high_0.f32
-46074a2dcafe97369acaec5b1d1b92b184ac3663  /tmp/bright_before_high_1.f32
-a90c1b803b539632a217ae86924f7d706494ce22  /tmp/bright_before_low_0.f32
-b21738816b058161988b57a474e4a88298f8a73d  /tmp/bright_before_low_1.f32
+7096ce8c7033e93aa300b4eb72a4a3b674ddfeb3  bright_before_best_0.f32
+8e639c7b34dd79f16dfd85a78ed6cdbfa43690a3  bright_before_best_1.f32
+c75365aa6ce9f38d73353a88e920df781a964c5a  bright_before_draft_0.f32
+3a020f4420942601be0722423e77dd62b47ffd41  bright_before_draft_1.f32
+3d4f48b5046854db5fcf1180a02b33a124bace6c  bright_before_high_0.f32
+46074a2dcafe97369acaec5b1d1b92b184ac3663  bright_before_high_1.f32
+a90c1b803b539632a217ae86924f7d706494ce22  bright_before_low_0.f32
+b21738816b058161988b57a474e4a88298f8a73d  bright_before_low_1.f32
 Best spectral match: LSD = 3.15 dB, corr = 0.988
 test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 11.32s
 Low spectral match: LSD = 28.62 dB, corr = 0.978
