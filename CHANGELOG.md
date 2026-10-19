@@ -47,7 +47,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to 0.959). `DRAFT_LEVEL_TRIM` is re-derived, so Draft's median level again
   matches Best at every resonance point; the spread around the median grows
   (41 of 80 settings within ±1.5 dB of Best before the output clipper, was
-  57). `eval/303/calibrate_vcf.py` takes `--tiers` to fit one tier.
+  57). The maps are evaluated inside the fitted cutoff range (200–4000 Hz) and
+  extended by octaves above and below it, so high cutoffs do not drive Draft into
+  self-oscillation. `eval/303/calibrate_vcf.py` takes `--tiers` to fit one tier.
 
 ### Fixed
 - The High tier was padded for Best's 4x oversampling latency instead of its

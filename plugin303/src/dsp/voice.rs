@@ -1619,19 +1619,13 @@ impl Voice {
         self.final_reso = final_reso;
 
         // Apply to filters
-        let x = (final_cutoff_hz as f64).log2();
-        let y = final_reso as f64;
+        let (draft_fc, draft_reso) = Self::map_draft_vcf(final_cutoff_hz, final_reso);
+        let draft_fc =
+            (draft_fc as f64 * self.draft_cutoff_mult).clamp(20.0, (self.sr * 0.45) as f64);
+        let draft_reso = (draft_reso * self.draft_reso_mult as f32).clamp(0.0, 1.0);
 
-        let draft_fc = (2.0f64.powf(eval_poly3(x, y, &DRAFT_FC_POLY)) * self.draft_cutoff_mult)
-            .clamp(20.0, (self.sr * 0.45) as f64);
-        let draft_reso =
-            (eval_poly3(x, y, &DRAFT_RESO_POLY) * self.draft_reso_mult).clamp(0.0, 1.0);
-
-        let low_fc = 2.0f64
-            .powf(eval_poly3(x, y, &LOW_FC_POLY))
-            .clamp(20.0, (self.sr * 0.45) as f64);
-        let low_reso = eval_poly3(x, y, &LOW_RESO_POLY).clamp(0.0, 1.0);
-
+        let (low_fc, low_reso) = Self::map_low_vcf(final_cutoff_hz, final_reso);
+        let low_fc = (low_fc as f64).clamp(20.0, (self.sr * 0.45) as f64);
         self.filter.set_cutoff(draft_fc as f32);
         self.filter.set_reso(draft_reso as f32);
         self.ladder_low.set_cutoff(low_fc as f32);
@@ -1759,6 +1753,37 @@ impl Voice {
     #[doc(hidden)]
     pub fn dbg_ladder_cals(&self) -> [f64; 3] {
         [self.ladder_low.cal(), self.ladder_high.cal(), self.ladder_best.cal()]
+    }
+
+    // The Draft cubic polynomials were fitted by calibrate_vcf.py on the grid
+    // [200 Hz, 4000 Hz] x [0.0, 0.9]. Above ~6 kHz the unconstrained cubic
+    // flattens and drives reso to 1.0 (self-oscillation). Clamping the cutoff input
+    // to [log2(200), log2(4000)] for both polys and adding the clamped octaves
+    // back onto the mapped cutoff keeps the cutoff monotone and prevents resonance
+    // runaway above 4 kHz.
+    const DRAFT_FIT_LOG2_FC_MIN: f64 = 7.643856189774724; // (200.0_f64).log2()
+    const DRAFT_FIT_LOG2_FC_MAX: f64 = 11.965784284662087; // (4000.0_f64).log2()
+
+    /// Evaluates the Draft VCF control map (cutoff and resonance) given the
+    /// target (Best) cutoff in Hz and resonance in [0, 1].
+    pub fn map_draft_vcf(cutoff_hz: f32, reso: f32) -> (f32, f32) {
+        let x = (cutoff_hz as f64).log2();
+        let y = reso as f64;
+        let x_clamped = x.clamp(Self::DRAFT_FIT_LOG2_FC_MIN, Self::DRAFT_FIT_LOG2_FC_MAX);
+        let x_extra = x - x_clamped;
+        let draft_fc = 2.0f64.powf(eval_poly3(x_clamped, y, &DRAFT_FC_POLY) + x_extra);
+        let draft_reso = eval_poly3(x_clamped, y, &DRAFT_RESO_POLY).clamp(0.0, 1.0);
+        (draft_fc as f32, draft_reso as f32)
+    }
+
+    /// Evaluates the Low VCF control map (cutoff and resonance) given the
+    /// target (Best) cutoff in Hz and resonance in [0, 1].
+    pub fn map_low_vcf(cutoff_hz: f32, reso: f32) -> (f32, f32) {
+        let x = (cutoff_hz as f64).log2();
+        let y = reso as f64;
+        let low_fc = 2.0f64.powf(eval_poly3(x, y, &LOW_FC_POLY));
+        let low_reso = eval_poly3(x, y, &LOW_RESO_POLY).clamp(0.0, 1.0);
+        (low_fc as f32, low_reso as f32)
     }
 
     pub fn set_topology(&mut self, topology: CircuitTopology) {
