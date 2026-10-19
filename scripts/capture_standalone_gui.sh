@@ -120,7 +120,7 @@ capture_single_state "running_note" "$OUTPUT_DIR/running_note.png"
 # Bipolar knob off detent + unipolar knob off default (round-13 issue 1
 # verification state).
 capture_single_state "knobs" "$OUTPUT_DIR/knobs.png"
-# Quality tier selection (Low tier: 2x nodal ladder, polyBLEP saw)
+# Quality tier selection (Low tier: 4x nodal ladder, polyBLEP saw)
 # The other non-default tiers (quality_high, quality_best) are supported by
 # VIBE303_QA_STATE in plugin303/src/params.rs but captured manually only —
 # not part of the automated suite.
