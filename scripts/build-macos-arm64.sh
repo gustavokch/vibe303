@@ -99,7 +99,7 @@ fi
 echo ">> ensuring rust target $TARGET"
 rustup target add "$TARGET" 2>/dev/null || true
 
-echo ">> RUSTFLAGS: $RUSTFLAGS  (deployment target $MACOSX_DEPLOYMENT_TARGET)"
+echo ">> RUSTFLAGS: ${RUSTFLAGS:-<unset>}  (deployment target $MACOSX_DEPLOYMENT_TARGET)"
 echo ">> bundling $PKG ($PROFILE, $TARGET, name: $VIBE303_NAME)"
 cargo xtask bundle "$PKG" --profile "$PROFILE" --target "$TARGET"
 
