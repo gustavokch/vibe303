@@ -97,7 +97,14 @@ if [ -n "$CPU" ]; then
 fi
 
 echo ">> ensuring rust target $TARGET"
-rustup target add "$TARGET" 2>/dev/null || true
+rustup target add "$TARGET"
+# A non-rustup rustc (e.g. Homebrew) earlier on PATH has no cross-target std;
+# put the rustup toolchain first so the target just added is the one used.
+export PATH="$(dirname "$(rustup which rustc)"):$PATH"
+if [ ! -d "$(rustc --print sysroot)/lib/rustlib/$TARGET" ]; then
+  echo "!! rustc ($(command -v rustc)) has no std for $TARGET" >&2
+  exit 1
+fi
 
 echo ">> RUSTFLAGS: ${RUSTFLAGS:-<unset>}  (deployment target $MACOSX_DEPLOYMENT_TARGET)"
 echo ">> bundling $PKG ($PROFILE, $TARGET, name: $VIBE303_NAME)"
