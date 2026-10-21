@@ -11,7 +11,7 @@ audit and the agent's confirmation.
 ---
 
 ```markdown
-# <App> — GUI remediation prompt, round <N>
+# TECHNEO 303 — GUI remediation prompt, round <N>
 
 Source audit: `docs/superpowers/plans/<date>-gui-audit-round<N>-report.md`.
 Issue numbers below match that report exactly. Keep them stable in your
@@ -21,16 +21,29 @@ confirmation.
 
 ## Context
 
-<What the app is, what framework the editor uses, and where the source lives.>
-The window captures at <W>x<H> physical pixels (<scale>x DPI, so <w>x<h>
-logical). All coordinates in this prompt are **physical** pixels from the
-captures in `<dir>`.
+The editor is an egui UI (nih_plug_egui) in `plugin303/src/gui/`: tokens in
+`theme.rs`, layout in `mod.rs`, components in `widgets/`, devices in
+`panels/`. The window is 1216 x 640 pt; the captures are 2432 x 1280
+physical px (2x), from `<dir>`. All coordinates in this prompt are physical
+pixels in those captures.
 
-### UI regions, top to bottom
+### Devices, top to bottom (left | right)
 
-1. **<Region>** (y <top>-<bottom>) — <contents>. Source: `<path>`.
+1. **<Device>** (x …, y …): <contents>. Source: `<path>`.
 
 ---
+
+## Design contract
+
+The flat device-chain design is the current direction, not a finished design.
+Restore its rules where the render drifted. Change a rule only where a design
+issue below says so (the user selected those), and update
+`.claude/skills/gui-visual-audit/references/design-contract.md` in the same
+change. The rules that bear on these fixes:
+
+- <each contract rule an issue touches, stated as a testable condition>
+- No strokes, outlines, shadows or gradients, and no new hue or token, unless
+  an issue asks for one. Reuse the existing widgets and tokens.
 
 ## Guardrails
 
@@ -38,11 +51,13 @@ captures in `<dir>`.
   formatting, persistence>. A control that reads `X` must still read `X`.
 - Do not add, remove, or reorder controls except where an issue explicitly asks
   (issues <n>, <n>).
-- Do not regress any earlier fix. In particular: <the specific invariants
-  previous rounds established, each stated as a testable condition>.
+- Do not regress any earlier fix. In particular: <the invariants previous
+  rounds established, each stated as a testable condition>.
 - Prefer fixing the shared widget or token over patching each call site, except
   where the issue names specific call sites.
-- Keep <formatter> and <linter> clean. Existing tests must pass.
+- Keep `cargo fmt` and `cargo clippy` clean. `cargo test -p plugin303 --release`
+  must pass, including `tests/gui_layout_test.rs` (window filled, no overflow,
+  transport seam) and the theme and widget unit tests.
 
 ---
 
@@ -53,7 +68,7 @@ captures in `<dir>`.
 **Symptom.** The observed behaviour with its measurements, the source line if
 known, and what the reader would see in which capture.
 
-**Required fix.** The acceptance criteria. Not "fix X" — what correct looks
+**Required fix.** The acceptance criteria. Not "fix X": what correct looks
 like, and what must stay unchanged beside it. Where a decision has cases,
 enumerate them:
 
@@ -73,23 +88,29 @@ stated so it can be measured in a re-render.
 
 ## Verification
 
-Re-render the full capture set after the changes, at <W>x<H>, and confirm the
-width is <W> — a wrong window id silently produces a different width.
+Re-render the full set with `scripts/render_gui_offscreen.sh` and confirm
+every capture is 2432 px wide. Use `scripts/capture_standalone_gui.sh` as well
+when an issue concerns the window itself (title bar, zoom, GL text).
 
 **States to capture:**
 
-1. <existing state> — the baseline.
-2. **New:** <state that exposes issue N directly> — without it the fix is
-   unverifiable.
+1. <existing state>: the baseline.
+2. **New:** <state that exposes issue N directly>: without it the fix is
+   unverifiable. Add it to `QaState` (`plugin303/src/params.rs`), the
+   `STATES` table in `tools/gui_render/src/main.rs`,
+   `scripts/capture_standalone_gui.sh` and `scripts/crop_gui_sections.py`;
+   they must stay in sync.
 
 **Per-issue confirmation.** Report each issue number with what you changed and
 the measurement that proves it, or state explicitly that you did not fix it and
 why:
 
-- **<n>** — <the specific number or region that settles it>.
+- **<n>**: <the specific number or region that settles it>.
 
-**Regression checks.** Confirm in the new captures that <each invariant from
-Guardrails still holds>, and that <formatter>, <linter> and the test suite pass.
+**Regression checks.** Confirm in the new captures that the design contract and
+<each guardrail invariant> still hold, and that `python3
+scripts/gui_qa_measure.py report <dir>` shows 10 cards with 6 px gutters and
+no new knob mismatch.
 ```
 
 ---
@@ -106,5 +127,6 @@ Guardrails still holds>, and that <formatter>, <linter> and the test suite pass.
   an edit.
 - **Group the requests, not the symptoms.** Several instances of one root cause
   are one issue with a table, not five issues.
-- **Never ask for a behaviour change in a presentation-only prompt.** If a
-  finding needs one, say so explicitly and let the user decide.
+- **Never ask for a behaviour change in a presentation-only prompt, and
+  include a design change only if the user selected it.** If a finding needs
+  either, say so explicitly and let the user decide.
