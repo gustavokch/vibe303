@@ -8,17 +8,17 @@ pixel diffs.
 
 Dependencies: numpy and Pillow only.
 
-Usage:
-    scripts/gui_qa_measure.py report    target/gui-qa
-    scripts/gui_qa_measure.py knobs     target/gui-qa/latest.png
-    scripts/gui_qa_measure.py colors    target/gui-qa/accurate.png
-    scripts/gui_qa_measure.py text      target/gui-qa/latest.png --box 2200,10,2420,40
-    scripts/gui_qa_measure.py accent    target/gui-qa/latest.png target/gui-qa/accurate.png
-    scripts/gui_qa_measure.py deadspace target/gui-qa/latest.png --min 600
-    scripts/gui_qa_measure.py diff      target/gui-qa/latest.png target/gui-qa/running.png
-    scripts/gui_qa_measure.py edges     target/gui-qa/latest.png --box 1620,820,2420,1270
-    scripts/gui_qa_measure.py strokes   target/gui-qa/running.png --box 20,830,1600,1270
-    scripts/gui_qa_measure.py crop      target/gui-qa/latest.png --box 1620,70,2420,270 --scale 2 -o /tmp/env.png
+Usage (D=target/gui-qa-offscreen):
+    scripts/gui_qa_measure.py report    $D
+    scripts/gui_qa_measure.py knobs     $D/knobs.png
+    scripts/gui_qa_measure.py colors    $D/accurate.png
+    scripts/gui_qa_measure.py text      $D/latest.png --box 235,203,335,227
+    scripts/gui_qa_measure.py accent    $D/latest.png $D/accurate.png
+    scripts/gui_qa_measure.py deadspace $D/latest.png --min 600
+    scripts/gui_qa_measure.py diff      $D/latest.png $D/running.png
+    scripts/gui_qa_measure.py edges     $D/latest.png --box 1628,320,1960,540
+    scripts/gui_qa_measure.py strokes   $D/running.png --box 616,856,808,880 --color ACCENT_ORANGE
+    scripts/gui_qa_measure.py crop      $D/latest.png --box 1620,62,2424,262 --scale 2 -o /tmp/env.png
 
 Every command accepts --json to emit machine-readable output instead of text.
 """
@@ -50,6 +50,8 @@ THEME_FALLBACK = {
     "PANEL_BG": (0x26, 0x26, 0x26),
     "PANEL_HEADER_BG": (0x2F, 0x2F, 0x2F),
     "SURFACE_ELEVATED": (0x3A, 0x3A, 0x3A),
+    "SURFACE_HOVER": (0x49, 0x49, 0x49),
+    "KNOB_TRACK": (0x40, 0x40, 0x40),
     "TEXT_PRIMARY": (0xEC, 0xEC, 0xEC),
     "TEXT_MUTED": (0x8F, 0x8F, 0x8F),
     "ACCENT_ORANGE": (0xF6, 0x66, 0x1E),
@@ -57,24 +59,57 @@ THEME_FALLBACK = {
 
 THEME = dict(THEME_FALLBACK)
 
+# Knob size tiers (theme.rs KNOB_RADIUS_*): outer radius in points.
+KNOB_RADII = {"LARGE": 21.0, "MEDIUM": 12.0}
+
 
 def load_theme_tokens(path: str = DEFAULT_THEME_RS):
-    """Parse `pub const NAME: Color32 = Color32::from_rgb(..)` out of theme.rs."""
-    global THEME
+    """Parse the Color32 tokens and the KNOB_RADIUS_* tiers out of theme.rs."""
+    global THEME, KNOB_RADII
     if not os.path.exists(path):
         return THEME
+    with open(path) as handle:
+        source = handle.read()
     pattern = re.compile(
         r"pub const (\w+): Color32 = Color32::from_rgb\(\s*"
         r"(0x[0-9a-fA-F]+|\d+),\s*(0x[0-9a-fA-F]+|\d+),\s*(0x[0-9a-fA-F]+|\d+)\s*\)"
     )
-    parsed = {}
-    with open(path) as handle:
-        for match in pattern.finditer(handle.read()):
-            name = match.group(1)
-            parsed[name] = tuple(int(match.group(i), 0) for i in (2, 3, 4))
+    parsed = {
+        match.group(1): tuple(int(match.group(i), 0) for i in (2, 3, 4))
+        for match in pattern.finditer(source)
+    }
     if parsed:
         THEME = parsed
+    radii = {
+        match.group(1): float(match.group(2))
+        for match in re.finditer(r"pub const KNOB_RADIUS_(\w+): f32 = ([0-9.]+);", source)
+    }
+    if radii:
+        KNOB_RADII = radii
     return THEME
+
+
+# Window width in points (gui/mod.rs GUI_WIDTH). Window captures and the
+# tools/gui_render frames are both 2x, so a capture is 2 * GUI_WIDTH px wide.
+GUI_WIDTH = 1216
+CAPTURE_SCALE = 2
+
+
+def load_gui_width(theme_path: str = DEFAULT_THEME_RS) -> int:
+    """Read GUI_WIDTH from the gui/mod.rs beside theme.rs."""
+    global GUI_WIDTH
+    mod_rs = os.path.join(os.path.dirname(theme_path), "mod.rs")
+    if os.path.exists(mod_rs):
+        with open(mod_rs) as handle:
+            match = re.search(r"pub const GUI_WIDTH: u32 = (\d+);", handle.read())
+        if match:
+            GUI_WIDTH = int(match.group(1))
+    return GUI_WIDTH
+
+
+def expected_width() -> int:
+    """Capture width in px. A wrong window id silently yields a different one."""
+    return GUI_WIDTH * CAPTURE_SCALE
 
 
 # The knob sweep runs from 135 deg to 405 deg in egui screen space, which is
@@ -82,7 +117,9 @@ def load_theme_tokens(path: str = DEFAULT_THEME_RS):
 SWEEP_MIN_DEG = -135.0
 SWEEP_MAX_DEG = 135.0
 
-EXPECTED_WIDTH = 2432  # a wrong window id silently yields a different width
+# States rendered at a non-default egui zoom. Their layout differs from every
+# other state, so pixel diffs and per-panel tables against them mean nothing.
+ZOOM_SCALED_STATES = {"zoom75"}
 
 # Tokens that name a surface, a fill or a frame. Contrast floors apply to
 # foreground colours only, so these are listed but never flagged.
@@ -128,11 +165,6 @@ def contrast_ratio(fg, bg) -> float:
     return (l1 + 0.05) / (l2 + 0.05)
 
 
-def angle_from_12(dx: float, dy: float) -> float:
-    """Degrees clockwise from 12 o'clock, in (-180, 180]. Screen y grows down."""
-    return (math.degrees(math.atan2(dx, -dy)) + 540.0) % 360.0 - 180.0
-
-
 def runs_of_zero(values: np.ndarray, min_len: int):
     """Yield (start_index, length) for each run of zeros at least min_len long."""
     out = []
@@ -162,7 +194,7 @@ def _runs(mask: np.ndarray):
     return list(zip(edges[::2].tolist(), edges[1::2].tolist(), strict=True))
 
 
-def find_panels(arr: np.ndarray, min_size: int = 40):
+def find_panels(arr: np.ndarray, min_size: int = 32):
     """Detect the flat device cards.
 
     The editor draws each device as a filled card on the CHASSIS_BG plane, with
@@ -182,6 +214,7 @@ def find_panels(arr: np.ndarray, min_size: int = 40):
     panels = []
 
     def leaf(top, bottom, left, right):
+        # 32, not more: the app bar at zoom 75% is 36 px tall.
         if bottom - top < min_size or right - left < min_size:
             return
         hdr = top
@@ -334,6 +367,11 @@ def cmd_deadspace(args):
         for label, box in regions:
             r = analyze_region(arr, box, args.min, args.min_rows)
             r["label"] = label
+            # The app bar is one header strip with no body: brand left,
+            # controls right, an empty middle by design.
+            if p["bottom"] - p["header_bottom"] <= 16:
+                for band in r["bands"]:
+                    band["title_row"] = True
             entry["regions"].append(r)
         results.append(entry)
 
@@ -365,162 +403,238 @@ def cmd_deadspace(args):
 # ---------------------------------------------------------------------------
 
 
-def detect_knob_centers(arr: np.ndarray, radii, threshold: float = 0.55, samples: int = 72):
-    """Ring-template Hough over the border-coloured mask.
+# Knob303 (widgets/knob.rs), for a knob of outer radius r points:
+#   value ring: a stroke arc_w = clamp(0.14 r, 2, 3) wide centred on
+#               r - arc_w / 2; KNOB_TRACK over the whole sweep, the value arc
+#               on top (ACCENT_ORANGE, TEXT_MUTED when disabled);
+#   body disc:  KNOB_BODY (= SURFACE_ELEVATED, SURFACE_HOVER when hovered),
+#               radius 0.68 r, ringed by a gap of panel background;
+#   pointer:    TEXT_PRIMARY (TEXT_MUTED when disabled), from 0.35 of the body
+#               radius out to its edge.
+BODY_FRACTION = 0.68
+POINTER_INNER = 0.35
+# A fill origin within this distance of -135 deg or 0 deg, measured along the
+# ring, counts as min or centre. Antialiasing spreads an arc end by up to 2 px.
+ORIGIN_TOL_PX = 2.5
+# Arc tip and pointer further apart than this along the ring disagree.
+MISMATCH_PX = 2.0
 
-    Each knob is painted as circle_stroke(radius, BORDER_DEFAULT), so a ring of
-    that radius scores near 1.0 at the true centre. Sampling the ring at a fixed
-    number of angles keeps this to a few array adds per radius.
 
-    The border colour band also covers button fills, so a ring drawn anywhere
-    inside a large button would score 1.0 too. The second accumulator, at
-    radius + 5, rejects those: outside a real knob stroke is panel background,
-    while outside a ring inside a button fill is more button fill.
-    """
-    lum = arr.max(axis=2)
-    sat = arr.max(axis=2) - arr.min(axis=2)
-    mask = ((lum > 38) & (lum < 105) & (sat < 40)).astype(np.float32)
+def knob_arc_width(radius_pt: float) -> float:
+    return min(max(0.14 * radius_pt, 2.0), 3.0)
+
+
+def _circle_mean(mask: np.ndarray, radius: float, samples: int = 72) -> np.ndarray:
+    """Mean of `mask` on a circle of `radius` around every pixel."""
     height, width = mask.shape
+    acc = np.zeros(mask.shape, np.float32)
+    for k in range(samples):
+        a = 2.0 * math.pi * k / samples
+        dx = round(radius * math.sin(a))
+        dy = round(-radius * math.cos(a))
+        ys0, ys1 = max(0, dy), min(height, height + dy)
+        xs0, xs1 = max(0, dx), min(width, width + dx)
+        acc[ys0 - dy : ys1 - dy, xs0 - dx : xs1 - dx] += mask[ys0:ys1, xs0:xs1]
+    return acc / samples
 
-    def ring_accumulator(radius):
-        acc = np.zeros_like(mask)
-        for k in range(samples):
-            a = 2.0 * math.pi * k / samples
-            dx = int(round(radius * math.sin(a)))
-            dy = int(round(-radius * math.cos(a)))
-            ys0, ys1 = max(0, dy), min(height, height + dy)
-            xs0, xs1 = max(0, dx), min(width, width + dx)
-            acc[ys0 - dy : ys1 - dy, xs0 - dx : xs1 - dx] += mask[ys0:ys1, xs0:xs1]
-        return acc / samples
 
+def detect_knob_centers(arr: np.ndarray, radii_pt, scale: float, threshold: float = 0.7):
+    """Find knob body discs. Returns (score, x, y, radius_pt) per knob.
+
+    A circle just inside the disc edge lies on body colour; one just outside it,
+    in the gap before the value ring, lies on panel background. Buttons share
+    the body colour but score zero: both circles land on the same fill. Real
+    knobs score 0.94-1.0.
+    """
+    body = np.zeros(arr.shape[:2], bool)
+    for token in ("SURFACE_ELEVATED", "SURFACE_HOVER"):
+        body |= np.abs(arr - np.array(THEME[token])).max(axis=2) <= 2
+    body = body.astype(np.float32)
     found = []
-    for radius in radii:
-        on_ring = ring_accumulator(radius)
-        outside = ring_accumulator(radius + 5)
-        # The stroke score is what separates a knob from any other round-ish
-        # shape: on the ring, border colour; five pixels out, panel background.
-        # Real knobs score 0.65-1.0 here; button corners and pill gaps score
-        # below 0.45.
-        stroke = on_ring - outside
-        cand = np.argwhere(stroke >= threshold)
-        for y, x in cand:
-            found.append((float(stroke[y, x]), int(x), int(y), int(radius)))
-
-    # Non-maximum suppression. Prefer the LARGEST radius in a neighbourhood: the
-    # inactive arc track is itself a ring at 0.75 * radius and scores well, so a
-    # score-first sort would report every knob at three quarters of its size and
-    # then look for the arc in the wrong band.
-    found.sort(key=lambda f: (-f[3], -f[0]))
+    for radius_pt in radii_pt:
+        body_r = BODY_FRACTION * radius_pt * scale
+        score = _circle_mean(body, body_r - 3) - _circle_mean(body, body_r + 2.5)
+        for y, x in np.argwhere(score >= threshold):
+            found.append((float(score[y, x]), int(x), int(y), radius_pt))
+    found.sort(key=lambda f: -f[0])
     kept = []
-    for score, x, y, radius in found:
-        if any(abs(x - kx) < radius and abs(y - ky) < radius for _, kx, ky, _ in kept):
+    for score, x, y, radius_pt in found:
+        reach = radius_pt * scale
+        if any(abs(x - kx) < reach and abs(y - ky) < reach for _, kx, ky, _ in kept):
             continue
-        kept.append((score, x, y, radius))
+        kept.append((score, x, y, radius_pt))
     kept.sort(key=lambda k: (k[2] // 40, k[1]))
     return kept
 
 
-def measure_knob(arr: np.ndarray, cx: int, cy: int, radius: int):
-    reach = radius + 8
-    sub = arr[cy - reach : cy + reach + 1, cx - reach : cx + reach + 1]
-    if sub.shape[0] != 2 * reach + 1 or sub.shape[1] != 2 * reach + 1:
+def _window(arr: np.ndarray, cx: float, cy: float, half: int):
+    """Square window around (cx, cy) plus its pixel coordinates, or None at the edge."""
+    x0, y0 = round(cx) - half, round(cy) - half
+    side = 2 * half + 1
+    if x0 < 0 or y0 < 0 or y0 + side > arr.shape[0] or x0 + side > arr.shape[1]:
         return None
-    yy, xx = np.mgrid[-reach : reach + 1, -reach : reach + 1]
-    dist = np.hypot(xx, yy)
-    r, g, b = sub[..., 0], sub[..., 1], sub[..., 2]
+    yy, xx = np.mgrid[y0 : y0 + side, x0 : x0 + side]
+    return arr[y0 : y0 + side, x0 : x0 + side], xx, yy
 
-    arc_r = radius * 0.75
-    orange = (r > 150) & ((r - b) > 90) & (g < 190)
-    white = (r > 170) & (g > 170) & (b > 170)
-    arc_mask = orange & (dist >= arc_r - 6) & (dist <= arc_r + 6)
-    needle_mask = white & (dist >= 5) & (dist <= radius - 6)
 
-    def extent(mask):
-        if mask.sum() < 3:
+def refine_knob_center(arr: np.ndarray, x: int, y: int, radius_pt: float, scale: float):
+    """Coverage-weighted centroid of the body disc alone.
+
+    The window stops inside the gap between disc and ring, so neither the value
+    ring nor the label below can pull the centre; a window that reaches the
+    label drags it 10 deg or more off. Pointer pixels count as body, so the
+    pointer does not push the centre away from itself.
+    """
+    lo, hi = max(THEME["PANEL_BG"]), max(THEME["SURFACE_ELEVATED"])
+    body_r = BODY_FRACTION * radius_pt * scale
+    cx, cy = float(x), float(y)
+    for _ in range(3):
+        win = _window(arr, cx, cy, int(body_r + 4))
+        if win is None:
             return None
-        angles = np.array([angle_from_12(x, y) for x, y in zip(xx[mask], yy[mask])])
-        # Rotate into the sweep's own frame so the 180 deg wrap is outside it.
-        shifted = np.sort((angles + 180.0) % 360.0) - 180.0
-        return float(shifted[0]), float(shifted[-1]), int(mask.sum())
+        sub, xx, yy = win
+        weight = np.clip((sub.max(axis=2) - lo) / (hi - lo), 0.0, 1.0)
+        weight[np.hypot(xx - cx, yy - cy) > body_r + 2.5] = 0.0
+        total = weight.sum()
+        if total == 0:
+            return None
+        cx, cy = float((weight * xx).sum() / total), float((weight * yy).sum() / total)
+    return cx, cy
 
-    arc = extent(arc_mask)
-    needle = extent(needle_mask)
-    out = {"center": [cx, cy], "radius": radius}
-    if needle is not None:
-        out["needle_deg"] = round((needle[0] + needle[1]) / 2.0, 1)
+
+def measure_knob(arr: np.ndarray, cx: float, cy: float, radius_pt: float, scale: float):
+    radius = radius_pt * scale
+    arc_w = knob_arc_width(radius_pt) * scale
+    ring_r = radius - arc_w / 2
+    body_r = BODY_FRACTION * radius
+    win = _window(arr, cx, cy, int(radius + 3))
+    if win is None:
+        return None
+    sub, xx, yy = win
+    dx, dy = xx - cx, yy - cy
+    dist = np.hypot(dx, dy)
+    red, blue = sub[..., 0], sub[..., 2]
+    lum = sub.max(axis=2)
+    sat = lum - sub.min(axis=2)
+
+    band = np.abs(dist - ring_r) <= arc_w / 2 + 1
+    accent = band & (red - blue > 40) & (red > 80)
+    muted = band & (sat < 20) & (lum >= 95)
+    pointer = (
+        (dist >= POINTER_INNER * body_r - 2) & (dist <= body_r + 0.5) & (sat < 30) & (lum >= 100)
+    )
+
+    out = {"center": [round(cx, 1), round(cy, 1)], "radius_pt": radius_pt}
+    if pointer.sum() >= 3:
+        # The direction of the pointer's long axis, not the angle of its pixels
+        # seen from the centre: egui snaps lines to the pixel grid, and a 1 px
+        # sideways offset tilts that angle by up to 6 deg on a MEDIUM knob.
+        px, py = dx[pointer], dy[pointer]
+        mx, my = px.mean(), py.mean()
+        values, vectors = np.linalg.eigh(np.cov(np.vstack([px - mx, py - my])))
+        vx, vy = vectors[:, np.argmax(values)]
+        if vx * mx + vy * my < 0:
+            vx, vy = -vx, -vy
+        needle = math.degrees(math.atan2(vx, -vy))
+        out["needle_deg"] = round(needle, 1)
         out["needle_fraction"] = round(
-            (out["needle_deg"] - SWEEP_MIN_DEG) / (SWEEP_MAX_DEG - SWEEP_MIN_DEG), 3
+            (needle - SWEEP_MIN_DEG) / (SWEEP_MAX_DEG - SWEEP_MIN_DEG), 3
         )
-    if arc is not None:
-        out["arc_start_deg"] = round(arc[0], 1)
-        out["arc_end_deg"] = round(arc[1], 1)
-        out["arc_px"] = arc[2]
-        if "needle_deg" in out:
-            # A unipolar arc runs min -> needle; a bipolar arc runs centre -> needle.
-            # Either way the arc end nearest the needle must coincide with it.
-            delta = min(
-                abs(out["arc_end_deg"] - out["needle_deg"]),
-                abs(out["arc_start_deg"] - out["needle_deg"]),
-            )
-            out["arc_needle_delta_deg"] = round(delta, 1)
-            out["fills_from"] = (
-                "min"
-                if abs(out["arc_start_deg"] - SWEEP_MIN_DEG) < 6
-                else "centre"
-                if abs(out["arc_start_deg"]) < 6
-                else "other"
-            )
-    else:
+
+    arc = accent if accent.sum() >= muted.sum() else muted
+    if arc.sum() < 3:
         out["arc_px"] = 0
+        return out
+    # Degrees clockwise from 12 o'clock; the sweep's gap sits at 180, so the
+    # -135..135 sweep never wraps.
+    angles = np.sort(np.degrees(np.arctan2(dx[arc], -dy[arc])))
+    start, end = float(angles[0]), float(angles[-1])
+    out["arc_start_deg"] = round(start, 1)
+    out["arc_end_deg"] = round(end, 1)
+    out["arc_px"] = int(arc.sum())
+    out["arc_color"] = "accent" if arc is accent else "muted"
+    if "needle_deg" in out:
+        needle = out["needle_deg"]
+        # The arc end nearest the pointer is its tip; the other end is where
+        # the fill starts. A bipolar knob below centre fills from 0 down to the
+        # pointer, so "the start" is not always the origin.
+        tip, origin = (start, end) if abs(start - needle) <= abs(end - needle) else (end, start)
+        tolerance = math.degrees(ORIGIN_TOL_PX / ring_r)
+        if abs(origin - SWEEP_MIN_DEG) <= tolerance:
+            out["fills_from"] = "min"
+        elif abs(origin) <= tolerance:
+            out["fills_from"] = "centre"
+        else:
+            out["fills_from"] = "other"
+        delta = abs(tip - needle)
+        out["arc_needle_delta_deg"] = round(delta, 1)
+        out["arc_needle_delta_px"] = round(math.radians(delta) * ring_r, 1)
     return out
+
+
+def knob_scale(arr: np.ndarray, override):
+    """Pixels per point: 2 for every 100% capture, 1.5 for zoom75."""
+    return override if override else arr.shape[1] / GUI_WIDTH
 
 
 def cmd_knobs(args):
     arr = load(args.image)
+    scale = knob_scale(arr, args.scale)
     radii = parse_radii(args.radii)
-    centers = detect_knob_centers(arr, radii, threshold=args.threshold)
+    tier = {r: name for name, r in KNOB_RADII.items()}
     knobs = []
-    for score, x, y, radius in centers:
-        m = measure_knob(arr, x, y, radius)
+    for score, x, y, radius_pt in detect_knob_centers(arr, radii, scale, args.threshold):
+        centre = refine_knob_center(arr, x, y, radius_pt, scale)
+        if centre is None:
+            continue
+        m = measure_knob(arr, *centre, radius_pt, scale)
         if m is None:
             continue
-        m["ring_score"] = round(score, 3)
+        m["tier"] = tier.get(radius_pt, f"r={radius_pt:g}pt")
+        m["disc_score"] = round(score, 3)
         knobs.append(m)
     if args.json:
         print(json.dumps(knobs, indent=2))
         return
-    print(f"{len(knobs)} knobs in {os.path.basename(args.image)}  (sweep {SWEEP_MIN_DEG}..{SWEEP_MAX_DEG} deg)")
+    tiers = sorted({k["tier"] for k in knobs})
+    counts = ", ".join(f"{sum(k['tier'] == t for k in knobs)} {t}" for t in tiers)
+    print(
+        f"{len(knobs)} knobs in {os.path.basename(args.image)} ({counts}; {scale:g} px/pt;"
+        f" sweep {SWEEP_MIN_DEG:g}..{SWEEP_MAX_DEG:g} deg)"
+    )
     no_arc = 0
     for k in knobs:
-        needle = f"{k['needle_deg']:7.1f}" if "needle_deg" in k else "   none"
-        frac = k.get("needle_fraction", "-")
+        head = f"  ({k['center'][0]:7.1f},{k['center'][1]:7.1f}) {k['tier']:6s}"
+        needle = (
+            f"needle={k['needle_deg']:7.1f} ({k['needle_fraction']:.3f})"
+            if "needle_deg" in k
+            else "needle=   none        "
+        )
         if k["arc_px"] == 0:
             no_arc += 1
-            print(
-                f"  ({k['center'][0]:5d},{k['center'][1]:5d}) r={k['radius']:2d}"
-                f"  needle={needle} ({frac})  arc=NONE"
-            )
-        else:
-            flag = "  <-- ARC/NEEDLE MISMATCH" if k.get("arc_needle_delta_deg", 0) > 4 else ""
-            print(
-                f"  ({k['center'][0]:5d},{k['center'][1]:5d}) r={k['radius']:2d}"
-                f"  needle={needle} ({frac})"
-                f"  arc=[{k['arc_start_deg']:7},{k['arc_end_deg']:7}] from={k['fills_from']}"
-                f"  delta={k.get('arc_needle_delta_deg')}{flag}"
-            )
+            print(f"{head}  {needle}  arc=NONE")
+            continue
+        arc = f"arc=[{k['arc_start_deg']:7.1f},{k['arc_end_deg']:7.1f}] {k['arc_color']}"
+        if "fills_from" not in k:
+            print(f"{head}  {needle}  {arc}")
+            continue
+        flag = "  <-- ARC/NEEDLE MISMATCH" if k["arc_needle_delta_px"] > MISMATCH_PX else ""
+        print(
+            f"{head}  {needle}  {arc} from={k['fills_from']:6s}"
+            f" delta={k['arc_needle_delta_deg']}deg/{k['arc_needle_delta_px']}px{flag}"
+        )
     if no_arc:
         print(
-            f"  {no_arc}/{len(knobs)} knobs draw no value arc. Expected only for knobs at a"
-            f" true zero-length fill; investigate if a unipolar knob sits away from its minimum."
+            f"  {no_arc}/{len(knobs)} knobs draw no value arc. Correct only at a zero-length"
+            f" fill: a unipolar knob at its minimum, a bipolar knob on its centre detent."
         )
 
 
-def parse_radii(spec: str):
-    if "-" in spec:
-        rng, _, step = spec.partition(":")
-        lo, _, hi = rng.partition("-")
-        return list(range(int(lo), int(hi) + 1, int(step or 2)))
-    return [int(part) for part in spec.split(",")]
+def parse_radii(spec):
+    """Comma list of knob outer radii in points; None means the theme's tiers."""
+    if not spec:
+        return sorted(KNOB_RADII.values(), reverse=True)
+    return [float(part) for part in spec.split(",")]
 
 
 # ---------------------------------------------------------------------------
@@ -737,7 +851,14 @@ def accent_counts(arr: np.ndarray, panels):
         sub = arr[y0:y1, x0:x1]
         r, g, b = sub[..., 0], sub[..., 1], sub[..., 2]
         mask = (r > 150) & ((r - b) > 90)
-        out.append({"top": p["top"], "bottom": p["bottom"], "accent_px": int(mask.sum())})
+        out.append(
+            {
+                "top": p["top"],
+                "bottom": p["bottom"],
+                "left": p["left"],
+                "accent_px": int(mask.sum()),
+            }
+        )
     return out
 
 
@@ -750,34 +871,33 @@ def cmd_accent(args):
             # One control group rather than whole panels: use when a panel's
             # count drops without reaching zero, which means one group inside
             # it lost its indicator.
-            regions = [{"top": box[1], "bottom": box[3], "interior": list(box)}]
+            regions = [{"top": box[1], "bottom": box[3], "left": box[0], "interior": list(box)}]
         else:
-            regions = find_panels(arr)
+            regions = sorted(find_panels(arr), key=lambda p: (p["top"], p["left"]))
         per_image[os.path.basename(path)] = accent_counts(arr, regions)
     if args.json:
         print(json.dumps(per_image, indent=2))
         return
     names = list(per_image)
+    if len({len(v) for v in per_image.values()}) > 1:
+        print("  WARNING: panel counts differ between images, so rows do not line up.")
+        print("  Compare one group with --box instead, or drop the zoom-scaled capture.")
     rows = max(len(v) for v in per_image.values())
-    print("accent pixels per panel (a panel that has accent in one state and 0 in another")
-    print("has probably lost its selection indicator rather than its selection)")
-    header = "  panel".ljust(22) + "".join(n.ljust(18) for n in names)
+    print("accent pixels per panel. A disabled control drops the accent by design; flag")
+    print("accent on a disabled control, or no accent where an enabled selection exists.")
+    header = "  panel".ljust(30) + "".join(n.ljust(18) for n in names)
     print(header)
+    first = per_image[names[0]]
     for i in range(rows):
-        cells = []
-        label = ""
-        for n in names:
-            entries = per_image[n]
-            if i < len(entries):
-                label = f"y {entries[i]['top']}-{entries[i]['bottom']}"
-                cells.append(str(entries[i]["accent_px"]))
-            else:
-                cells.append("-")
+        label = "-"
+        if i < len(first):
+            label = f"y {first[i]['top']}-{first[i]['bottom']} x {first[i]['left']}"
+        cells = [str(per_image[n][i]["accent_px"]) if i < len(per_image[n]) else "-" for n in names]
         flag = ""
         numeric = [int(c) for c in cells if c.isdigit()]
         if numeric and min(numeric) == 0 and max(numeric) > 0:
-            flag = "  <-- ACCENT LOST IN ONE STATE"
-        print("  " + label.ljust(20) + "".join(c.ljust(18) for c in cells) + flag)
+            flag = "  <-- ACCENT IN SOME STATES ONLY"
+        print("  " + label.ljust(28) + "".join(c.ljust(18) for c in cells) + flag)
 
 
 # ---------------------------------------------------------------------------
@@ -979,17 +1099,26 @@ def cmd_report(args):
         print(f"no top-level capture PNGs in {directory}", file=sys.stderr)
         return 1
 
+    def stem(path):
+        return os.path.splitext(os.path.basename(path))[0]
+
     print("=" * 78)
     print("CAPTURE SET")
     print("=" * 78)
+    width = expected_width()
     for path in images:
         with Image.open(path) as im:
             w, h = im.size
-        flag = "" if w == EXPECTED_WIDTH else f"  <-- WIDTH {w}, EXPECTED {EXPECTED_WIDTH}"
-        print(f"  {os.path.basename(path):20s} {w}x{h}{flag}")
+        flag = "" if w == width else f"  <-- WIDTH {w}, EXPECTED {width}"
+        scaled = stem(path) in ZOOM_SCALED_STATES
+        note = "  (zoom-scaled: skipped in DIFF and ACCENT)" if scaled else ""
+        print(f"  {os.path.basename(path):20s} {w}x{h}{flag}{note}")
 
-    base = next((i for i in images if os.path.basename(i) == args.base), images[0])
-    for path in images[1:]:
+    comparable = [i for i in images if stem(i) not in ZOOM_SCALED_STATES]
+    base = next((i for i in comparable if os.path.basename(i) == args.base), comparable[0])
+    for path in comparable:
+        if path == base:
+            continue
         print()
         print("=" * 78)
         print(f"DIFF  {os.path.basename(base)} vs {os.path.basename(path)}")
@@ -1011,19 +1140,23 @@ def cmd_report(args):
             )
         )
 
-    print()
-    print("=" * 78)
-    print("KNOBS  (first capture only; re-run per state if knob values differ)")
-    print("=" * 78)
-    cmd_knobs(
-        argparse.Namespace(image=base, radii=args.radii, threshold=0.55, json=False)
-    )
+    # The base shows every knob at its default; `knobs` moves one bipolar and
+    # one unipolar knob off it, which is the only way to test arc polarity.
+    knob_states = [base] + [i for i in comparable if stem(i) == "knobs" and i != base]
+    for path in knob_states:
+        print()
+        print("=" * 78)
+        print(f"KNOBS  {os.path.basename(path)}")
+        print("=" * 78)
+        cmd_knobs(
+            argparse.Namespace(image=path, radii=args.radii, scale=None, threshold=0.7, json=False)
+        )
 
     print()
     print("=" * 78)
     print("ACCENT / SELECTION PRESENCE")
     print("=" * 78)
-    cmd_accent(argparse.Namespace(images=images, box=None, json=False))
+    cmd_accent(argparse.Namespace(images=comparable, box=None, json=False))
     return 0
 
 
@@ -1037,7 +1170,9 @@ def main(argv=None):
     p = sub.add_parser("report", help="run every check over a capture directory")
     p.add_argument("directory")
     p.add_argument("--base", default="latest.png", help="capture every other state is diffed against")
-    p.add_argument("--radii", default="20-44:2")
+    p.add_argument(
+        "--radii", default=None, help="knob outer radii in points, comma list (default: theme)"
+    )
     p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("panels", help="detect panel frames and inter-panel gaps")
@@ -1052,8 +1187,13 @@ def main(argv=None):
 
     p = sub.add_parser("knobs", help="knob centres, arc extent, needle angle")
     p.add_argument("image")
-    p.add_argument("--radii", default="20-44:2", help="lo-hi:step or comma list")
-    p.add_argument("--threshold", type=float, default=0.55, help="minimum ring stroke score")
+    p.add_argument(
+        "--radii", default=None, help="outer radii in points, comma list (default: theme tiers)"
+    )
+    p.add_argument(
+        "--scale", type=float, default=None, help="px per point (default: width / GUI_WIDTH)"
+    )
+    p.add_argument("--threshold", type=float, default=0.7, help="minimum body-disc score")
     p.set_defaults(func=cmd_knobs)
 
     p = sub.add_parser("text", help="glyph height and contrast for one probe box")
@@ -1111,6 +1251,7 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     load_theme_tokens(args.theme)
+    load_gui_width(args.theme)
     return args.func(args) or 0
 
 
