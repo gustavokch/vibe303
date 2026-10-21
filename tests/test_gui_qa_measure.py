@@ -74,5 +74,84 @@ class TestFindPanels(unittest.TestCase):
         self.assertEqual(qa.find_panels(img), [])
 
 
+def flat_knob(pointer, arc, radius_pt=21.0, centre=(120.3, 110.6), button=False):
+    """2x render of one Knob303 (widgets/knob.rs) on the device body.
+
+    `pointer` and `arc` are positions in the sweep (0 = min, 1 = max); `arc` is
+    the (from, to) span of the value fill, None for a zero-length fill.
+    """
+    def deg(fraction):
+        return qa.SWEEP_MIN_DEG + fraction * (qa.SWEEP_MAX_DEG - qa.SWEEP_MIN_DEG)
+
+    img = np.zeros((240, 320, 3), np.int16)
+    img[:] = BODY
+    yy, xx = np.mgrid[0:240, 0:320]
+    dx, dy = xx - centre[0], yy - centre[1]
+    dist = np.hypot(dx, dy)
+    angle = np.degrees(np.arctan2(dx, -dy))
+    radius = radius_pt * S
+    arc_w = qa.knob_arc_width(radius_pt) * S
+    band = np.abs(dist - (radius - arc_w / 2)) <= arc_w / 2
+    img[band & (np.abs(angle) <= 135)] = qa.THEME_FALLBACK["KNOB_TRACK"]
+    if arc:
+        lit = (angle >= deg(arc[0])) & (angle <= deg(arc[1]))
+        img[band & lit] = qa.THEME_FALLBACK["ACCENT_ORANGE"]
+    body_r = qa.BODY_FRACTION * radius
+    img[dist <= body_r] = qa.THEME_FALLBACK["SURFACE_ELEVATED"]
+    a = np.radians(deg(pointer))
+    along = dx * np.sin(a) - dy * np.cos(a)
+    across = dx * np.cos(a) + dy * np.sin(a)
+    on_pointer = (np.abs(across) <= S) & (along >= qa.POINTER_INNER * body_r)
+    on_pointer &= along <= body_r - S
+    img[on_pointer] = qa.THEME_FALLBACK["TEXT_PRIMARY"]
+    if button:
+        # A raised button shares the knob body colour.
+        img[180:228, 200:310] = qa.THEME_FALLBACK["SURFACE_ELEVATED"]
+    return img
+
+
+def measure_only_knob(img, radius_pt=21.0):
+    found = qa.detect_knob_centers(img, [radius_pt], S)
+    assert len(found) == 1, found
+    _, x, y, r = found[0]
+    return qa.measure_knob(img, *qa.refine_knob_center(img, x, y, r, S), r, S)
+
+
+class TestKnobs(unittest.TestCase):
+    def test_buttons_in_the_body_colour_are_not_knobs(self):
+        img = flat_knob(0.75, (0.0, 0.75), button=True)
+        found = qa.detect_knob_centers(img, [21.0, 12.0], S)
+        self.assertEqual(len(found), 1)
+        centre = qa.refine_knob_center(img, found[0][1], found[0][2], 21.0, S)
+        self.assertAlmostEqual(centre[0], 120.3, delta=0.5)
+        self.assertAlmostEqual(centre[1], 110.6, delta=0.5)
+
+    def test_unipolar_arc_fills_from_min_to_the_pointer(self):
+        for radius_pt in (21.0, 12.0):
+            with self.subTest(radius_pt=radius_pt):
+                k = measure_only_knob(flat_knob(0.75, (0.0, 0.75), radius_pt), radius_pt)
+                self.assertAlmostEqual(k["needle_fraction"], 0.75, delta=0.01)
+                self.assertEqual(k["fills_from"], "min")
+                self.assertLessEqual(k["arc_needle_delta_px"], qa.MISMATCH_PX)
+
+    def test_bipolar_arc_below_centre_fills_from_centre(self):
+        # A full-negative bipolar arc spans -135..0 like a unipolar arc at 50 %;
+        # the pointer decides which end is the origin.
+        for pointer in (0.3, 0.0):
+            with self.subTest(pointer=pointer):
+                k = measure_only_knob(flat_knob(pointer, (pointer, 0.5)))
+                self.assertEqual(k["fills_from"], "centre")
+                self.assertLessEqual(k["arc_needle_delta_px"], qa.MISMATCH_PX)
+
+    def test_arc_that_stops_short_of_the_pointer_is_a_mismatch(self):
+        k = measure_only_knob(flat_knob(0.75, (0.0, 0.5)))
+        self.assertGreater(k["arc_needle_delta_px"], qa.MISMATCH_PX)
+
+    def test_zero_length_fill_draws_no_arc(self):
+        k = measure_only_knob(flat_knob(0.5, None))
+        self.assertEqual(k["arc_px"], 0)
+        self.assertAlmostEqual(k["needle_fraction"], 0.5, delta=0.01)
+
+
 if __name__ == "__main__":
     unittest.main()
