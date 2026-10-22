@@ -24,6 +24,14 @@ const ROW_H: f32 = 28.0;
 /// Horizontal gap between the two slots in each transport row.
 const SLOT_GAP: f32 = 3.0;
 
+/// How long a first CLEAR click stays armed, in seconds.
+const CLEAR_CONFIRM_S: f64 = 3.0;
+
+/// Whether CLEAR, armed at `armed_at`, is still armed at `now`.
+fn clear_armed(armed_at: Option<f64>, now: f64) -> bool {
+    armed_at.is_some_and(|t| now - t <= CLEAR_CONFIRM_S)
+}
+
 /// Custom ComboBox icon painter that always paints a downward-pointing triangle (▼).
 /// These bottom-row dropdowns sit low enough in the window that egui flips the glyph
 /// when the popup opens upward; this painter keeps the glyph downward-pointing to match
@@ -536,31 +544,46 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     },
                 );
 
+                // CLEAR wipes the pattern: the first click arms it, a second
+                // click within CLEAR_CONFIRM_S clears (round-20 #9).
+                let clear_id = ui.id().with("clear_armed_at");
+                let now = ui.input(|i| i.time);
+                let armed_at = ui.ctx().data(|d| d.get_temp::<f64>(clear_id));
+                let armed = clear_armed(armed_at, now);
                 let clear_btn = Button::new(
-                    RichText::new("CLEAR")
+                    RichText::new(if armed { "CONFIRM CLEAR" } else { "CLEAR" })
                         .font(FontId::proportional(8.5))
                         .color(theme::TEXT_PRIMARY),
                 )
-                .fill(theme::SURFACE_ELEVATED)
+                .fill(if armed {
+                    theme::SURFACE_HOVER
+                } else {
+                    theme::SURFACE_ELEVATED
+                })
                 .min_size(vec2(slot_w, ROW_H));
 
                 if ui
                     .add(clear_btn)
-                    .on_hover_text("Reset all steps to default C3 notes")
+                    .on_hover_text("Reset all 16 steps to C3 notes. Click twice to confirm.")
                     .clicked()
                 {
-                    if let Ok(mut pattern_guard) = params.pattern.write() {
-                        for step in pattern_guard.steps.iter_mut() {
-                            *step = SequencerStep {
-                                semitone: 0,
-                                octave: 0,
-                                gate: StepGate::Note,
-                                accent: false,
-                                slide: false,
-                                gate_len: 0.5,
-                                velocity: 0.7,
-                            };
+                    if armed {
+                        ui.ctx().data_mut(|d| d.remove::<f64>(clear_id));
+                        if let Ok(mut pattern_guard) = params.pattern.write() {
+                            for step in pattern_guard.steps.iter_mut() {
+                                *step = SequencerStep {
+                                    semitone: 0,
+                                    octave: 0,
+                                    gate: StepGate::Note,
+                                    accent: false,
+                                    slide: false,
+                                    gate_len: 0.5,
+                                    velocity: 0.7,
+                                };
+                            }
                         }
+                    } else {
+                        ui.ctx().data_mut(|d| d.insert_temp(clear_id, now));
                     }
                 }
             });
@@ -580,5 +603,21 @@ mod tests {
         assert_eq!(snap_tempo(120.5), 121.0);
         assert_eq!(snap_tempo(40.0), 40.0);
         assert_eq!(snap_tempo(299.9), 300.0);
+    }
+
+    /// CLEAR wipes all 16 steps, so one click only arms it; a second click
+    /// within CLEAR_CONFIRM_S clears. After the window the next click re-arms.
+    #[test]
+    fn clear_confirms_within_the_window_only() {
+        assert!(!clear_armed(None, 10.0), "a first click must only arm");
+        assert!(clear_armed(Some(10.0), 12.0));
+        assert!(
+            clear_armed(Some(10.0), 10.0 + CLEAR_CONFIRM_S),
+            "boundary is inclusive"
+        );
+        assert!(
+            !clear_armed(Some(10.0), 13.5),
+            "an expired arm must not clear"
+        );
     }
 }
