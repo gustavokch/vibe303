@@ -47,7 +47,7 @@ Prints changed-region clusters as `y … x … n=…`. Expected scopes against
 
 | State | Changes only in |
 |---|---|
-| `accurate` | app bar (TOPOLOGY, QUALITY), SOUPED-UP ENGINE body (banner), ANALOG TWEAKS |
+| `accurate` | app bar (TOPOLOGY, QUALITY), SOUPED-UP ENGINE body (banner), ANALOG TWEAKS, the ADV ENV tile |
 | `advanced` | ENVELOPES (both ADSR banks, ADV ENV tile) |
 | `knobs` | TUNING and CUTOFF |
 | `quality_low` | the QUALITY bar |

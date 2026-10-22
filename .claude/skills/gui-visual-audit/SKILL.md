@@ -79,7 +79,7 @@ dimensions as given.
 | File | Exercises |
 |---|---|
 | `latest.png` | defaults: FUN, QUALITY DRAFT, stopped |
-| `accurate.png` | ACCURATE: SOUPED-UP banner, ANALOG TWEAKS and QUALITY disabled |
+| `accurate.png` | ACCURATE: SOUPED-UP banner, ANALOG TWEAKS, QUALITY and the ADV ENV tile disabled |
 | `advanced.png` | ADV ENV on: both ADSR banks enabled |
 | `running.png` | running, playhead pinned on step 04, a REST step |
 | `running_note.png` | running, every step NOTE: the playhead over a lit gate |
