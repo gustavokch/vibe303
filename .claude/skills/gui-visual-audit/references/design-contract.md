@@ -81,6 +81,8 @@ Light fills: `TEXT_ON_ACCENT` on orange 6.00, on blue 7.27, on NOTE 7.75;
 - Below 3:1 is a hard defect in every state. The usual cause is a plain
   egui widget (Label, DragValue, ComboBox) inside `add_enabled_ui(false)`:
   egui's fade dims it on top of its token.
+  `plugin303/tests/gui_text_contrast.rs` fails on any text outside the text
+  tokens.
 - `TEXT_MUTED` on `SURFACE_ELEVATED` or `SURFACE_HOVER` as enabled text is
   drift. `theme.rs` names `CHASSIS_BG`, `WELL_BG` and `PANEL_BG` as its safe
   planes.
@@ -97,12 +99,20 @@ The custom widgets clear the fade (`set_fade_to_color(None)`) and paint:
 | Knob | arc, pointer and label `TEXT_MUTED`; the value stays `TEXT_PRIMARY` |
 | Fader | fill `TEXT_MUTED`, value `TEXT_SECONDARY` |
 | DevicePanel `.dimmed(true)` | title `TEXT_SECONDARY` |
+| Readout (`widgets/readout.rs`) | always `WELL_BG` well, `TEXT_SECONDARY` 9 pt monospace; a disabled group's labels turn `TEXT_MUTED` |
+
+Inside a disabled group, a built-in egui widget (Label, DragValue,
+ComboBox, Button) is drift: egui fades it. Values become `Readout`s;
+labels are painted with the fade cleared; an action the mode cannot use is
+hidden.
 
 Disabled groups (`add_enabled_ui(false, …)`): QUALITY in ACCURATE, the MEG
 ADSR bank without ADV ENV, the OUTPUT CLIPPER body and header switches when
-it is off, the ANALOG TWEAKS header and body in ACCURATE, and the read-only
-SEED field in GENERATION. In ACCURATE the SOUPED-UP ENGINE body is replaced
-by a banner that says why, with an ENABLE FUN MODE action.
+it is off, and the ANALOG TWEAKS body in ACCURATE: its fields become
+Readouts, its status reads FUN MODE ONLY, and its header hides CALIBRATE.
+GENERATION SEED is a Readout in every mode. In ACCURATE the SOUPED-UP
+ENGINE body is replaced by a banner that says why, with an ENABLE FUN MODE
+action.
 
 - Orange on a disabled control is a defect: orange claims "live".
 - A disabled selection must still show which option is selected.
@@ -117,7 +127,7 @@ by a banner that says why, with an ENABLE FUN MODE action.
 | Boolean | `widgets/toggle.rs` `ToggleButton` | every on/off (ADV ENV, LINK, ON, SLD CHAIN, JITTER) is a tile: orange when on, `SURFACE_ELEVATED` when off; 18 pt tall (28 pt in TRANSPORT). An egui checkbox is drift |
 | Knob | `widgets/knob.rs` `Knob303` | two tiers only: LARGE r 21 pt (VOICE, DRIFT, RECAL), MEDIUM r 12 pt (SOUPED-UP ENGINE, OUTPUT CLIPPER). `KNOB_TRACK` ring over the whole -135°..+135° sweep; orange arc from the minimum, or from 0 when the range's plain minimum is below 0 (TUNING, VOLUME, PITCH1/2, IN, OUT, TILT); `KNOB_BODY` disc at 0.68 r; `TEXT_PRIMARY` pointer; label 8.5 pt caps; value 8 pt monospace in an 11 pt `WELL_BG` pill, 52 / 38 pt wide by tier |
 | Fader | `widgets/fader.rs` `MiniFader` | 12 pt `WELL_BG` track filled from the bottom in the accent; no thumb; label 8.5 pt above, value 7.5 pt monospace below |
-| Value field | `theme::field_style` | DragValue: 9 pt monospace in a well. ComboBox: a well with a ▼; the TRANSPORT combos keep ▼ even when the popup opens upward |
+| Value field | `theme::field_style` | DragValue: 9 pt monospace in a well. ComboBox: a well with a ▼; the TRANSPORT combos keep ▼ even when the popup opens upward. A value that cannot be edited is a `Readout`. The ANALOG TWEAKS fields share one width, `FIELD_W` = 80 pt |
 | Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt label. A lit action is an orange fill with `TEXT_ON_ACCENT` |
 | Step column | `widgets/step_button.rs` | top down: 3 pt LED bar, 12 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted |
 | Playhead | `step_button.rs` | the current step's column gets a `PANEL_HEADER_BG` plate; while the sequencer runs, its LED turns orange and its number `TEXT_PRIMARY`. No frame, no outline |

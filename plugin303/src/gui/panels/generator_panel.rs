@@ -5,7 +5,7 @@ use nih_plug_egui::egui::{
 
 use crate::dsp::generator::{AcidGenerator, GeneratorParams, MusicalScale};
 use crate::gui::theme;
-use crate::gui::widgets::{DevicePanel, ToggleButton};
+use crate::gui::widgets::{DevicePanel, Readout, ToggleButton};
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
 
 /// Device height for both generator cards in the generator row.
@@ -353,15 +353,8 @@ pub fn render_generation_panel(
                     ui.add_space(16.0);
 
                     field_label(ui, "SEED:", 36.0);
-                    let mut seed_val = (gen_params.seed % 10000) as i32;
-                    ui.add_enabled_ui(false, |ui| {
-                        field_drag(
-                            ui,
-                            DragValue::new(&mut seed_val)
-                                .custom_formatter(|v, _| format!("{:04}", v as i32)),
-                            G_FIELD_W,
-                        );
-                    });
+                    let seed_text = format!("{:04}", gen_params.seed % 10000);
+                    ui.add(Readout::new(&seed_text, G_FIELD_W, G_ROW_H));
                 });
             });
 
