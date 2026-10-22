@@ -168,6 +168,8 @@ pub fn create_editor(
                 "TECHNEO 303".into(),
             ));
             theme::apply(egui_ctx);
+            // The window cannot follow egui's zoom, so Cmd/Ctrl +/- would leave a dead band.
+            egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         },
         move |egui_ctx, setter, _state| {
             CentralPanel::default()
