@@ -110,6 +110,33 @@ impl Rig {
         }
     }
 
+    /// One frame `dt` seconds after the previous one, fed `events`. Returns the
+    /// text runs it painted.
+    fn frame(
+        &mut self,
+        dt: f64,
+        events: Vec<egui::Event>,
+        add: &mut dyn FnMut(&mut Ui),
+    ) -> Vec<(String, Color32)> {
+        self.time += dt;
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
+            time: Some(self.time),
+            events,
+            ..Default::default()
+        };
+        let out = self.ctx.run(input, |ctx| {
+            CentralPanel::default()
+                .frame(Frame::new())
+                .show(ctx, |ui| add(ui));
+        });
+        let mut found = Vec::new();
+        out.shapes
+            .iter()
+            .for_each(|c| collect_texts(&c.shape, &mut found));
+        found
+    }
+
     /// Run `frames` frames, 0.5 s apart, with the pointer at `pointer` (or gone).
     /// Returns the text runs of the last frame.
     pub fn run(
@@ -120,27 +147,33 @@ impl Rig {
     ) -> Vec<(String, Color32)> {
         let mut found = Vec::new();
         for _ in 0..frames {
-            self.time += 0.5;
-            let mut input = RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
-                time: Some(self.time),
-                ..Default::default()
-            };
-            input.events.push(match pointer {
+            let at = match pointer {
                 Some(p) => egui::Event::PointerMoved(p),
                 None => egui::Event::PointerGone,
-            });
-            let out = self.ctx.run(input, |ctx| {
-                CentralPanel::default()
-                    .frame(Frame::new())
-                    .show(ctx, |ui| add(ui));
-            });
-            found.clear();
-            out.shapes
-                .iter()
-                .for_each(|c| collect_texts(&c.shape, &mut found));
+            };
+            found = self.frame(0.5, vec![at], add);
         }
         found
+    }
+
+    /// Jump the frame clock to `time` seconds; the next frame lands one `dt` after it.
+    pub fn set_time(&mut self, time: f64) {
+        self.time = time;
+    }
+
+    /// Click the primary button at `at`: move, press, release, then one frame
+    /// to settle, 10 ms apart. Returns the text runs of the last frame.
+    pub fn click(&mut self, at: Pos2, add: &mut dyn FnMut(&mut Ui)) -> Vec<(String, Color32)> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame(0.01, vec![egui::Event::PointerMoved(at)], add);
+        self.frame(0.01, vec![button(true)], add);
+        self.frame(0.01, vec![button(false)], add);
+        self.frame(0.01, vec![], add)
     }
 
     /// Widgets laid out in the last frame.
