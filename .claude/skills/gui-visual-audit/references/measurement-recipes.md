@@ -121,10 +121,20 @@ Triage every flag before it becomes a finding:
   an egui default leaking through. A handful of antialiasing neighbours is
   normal.
 - **`<-- BELOW 3:1`** on real text is a hard defect in any state.
+- **Faded text hidden as a surface.** egui's disabled fade turns a
+  `TEXT_SECONDARY` label on `PANEL_BG` into #6C6C6C (2.9:1). That grey snaps
+  to `GATE_TIE_FILL`, a surface token, so `colors` never lists it. Matching
+  surfaces exactly does not help: glyph antialiasing then floods every card
+  with sub-3:1 greys. Probe every label in a disabled group with `text --box`.
 
 Run it on **every** state. The disabled palettes (`accurate`, and the MEG bank
 in every state without ADV ENV) are where the 3:1 floor gets breached.
 Surfaces, fills and gate colours are hidden unless you pass `--show-surfaces`.
+
+`report` scales the pixel floor to the capture's pixels per point: 150 at
+2 px/pt, 84 for `zoom75` at 1.5 px/pt. At 150 a `zoom75` card of 8 pt text
+reads "no foreground colours". Pass the same `--min-pixels 84` when you run
+`colors` on `zoom75` by hand.
 
 ## `accent`: live state where it belongs
 

@@ -117,9 +117,26 @@ def expected_width() -> int:
 SWEEP_MIN_DEG = -135.0
 SWEEP_MAX_DEG = 135.0
 
-# States rendered at a non-default egui zoom. Their layout differs from every
-# other state, so pixel diffs and per-panel tables against them mean nothing.
-ZOOM_SCALED_STATES = {"zoom75"}
+# States rendered at a non-default egui zoom, with their pixels per point. Their
+# layout differs from every other state, so pixel diffs and per-panel tables
+# against them mean nothing.
+ZOOM_SCALED_STATES = {"zoom75": 1.5}
+
+# `colors` pixel floor for a 2 px/pt capture.
+COLORS_MIN_PIXELS = 150
+
+
+def colors_min_pixels(path) -> int:
+    """`colors` pixel floor for one capture.
+
+    Glyph area scales with the square of pixels per point. At the 2 px/pt floor
+    a 1.5 px/pt card of 8 pt text falls below it and reads as having no
+    foreground at all.
+    """
+    state = os.path.splitext(os.path.basename(path))[0]
+    ppt = ZOOM_SCALED_STATES.get(state, 2.0)
+    return round(COLORS_MIN_PIXELS * (ppt / 2.0) ** 2)
+
 
 # Tokens that name a surface, a fill or a frame. Contrast floors apply to
 # foreground colours only, so these are listed but never flagged.
@@ -1136,7 +1153,11 @@ def cmd_report(args):
         print()
         cmd_colors(
             argparse.Namespace(
-                image=path, min_pixels=150, top=12, show_surfaces=False, json=False
+                image=path,
+                min_pixels=colors_min_pixels(path),
+                top=12,
+                show_surfaces=False,
+                json=False,
             )
         )
 
@@ -1203,7 +1224,7 @@ def main(argv=None):
 
     p = sub.add_parser("colors", help="colour inventory per panel, snapped to theme tokens")
     p.add_argument("image")
-    p.add_argument("--min-pixels", dest="min_pixels", type=int, default=150)
+    p.add_argument("--min-pixels", dest="min_pixels", type=int, default=COLORS_MIN_PIXELS)
     p.add_argument("--top", type=int, default=14, help="foreground colours listed per panel")
     p.add_argument("--show-surfaces", dest="show_surfaces", action="store_true")
     p.set_defaults(func=cmd_colors)
