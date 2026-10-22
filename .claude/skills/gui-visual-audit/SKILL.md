@@ -64,7 +64,7 @@ tooltip artifacts.
 
 Use the window capture, `scripts/capture_standalone_gui.sh` →
 `target/gui-qa/`, when the round must judge what a host shows: the title bar,
-GL text rasterisation, hover under a real pointer, the window under ZOOM. It
+GL text rasterisation, hover under a real pointer. It
 needs Screen Recording permission. Its frames carry the title bar on top, so
 subtract it before you compare coordinates with the offscreen set. Say in the
 report which source each finding came from.
@@ -86,13 +86,9 @@ dimensions as given.
 | `knobs.png` | TUNING +25 ct (bipolar, off its detent), CUTOFF 0.75 |
 | `quality_low.png` | QUALITY LOW |
 | `generator.png` | every generator field off its default, SLD CHAIN on |
-| `zoom75.png` | egui zoom 0.75 in the fixed window: the layout on a 1621 × 853 pt canvas at 1.5 px/pt |
 
 `quality_high` and `quality_best` exist in `QaState`, but neither script
-renders them; capture them by hand when a round needs them. In the offscreen
-`zoom75` the ZOOM combo reads `100%`: the harness applies the zoom through
-pixels-per-point, so `ctx.zoom_factor()` stays 1.0. That is a harness
-artifact; judge the label in a window capture.
+renders them; capture them by hand when a round needs them.
 
 **A state you cannot capture is a defect you cannot find.** Before auditing,
 list what the set does not cover and put it in the report. Standing gaps:
@@ -196,6 +192,5 @@ design, update the contract in the same change.
 | Filing a grey that `colors` snapped to `TEXT_MUTED` | It is often a label's antialiased edge; `text --box` decides |
 | Treating two captures of one screen as redundant | State-comparison defects go unfound |
 | Reporting `arc=NONE` without reading the value | The arc is correctly absent at a zero-length fill |
-| Diffing or accent-tabling `zoom75` against 100% states | Every pixel differs; the numbers mean nothing |
 | Asserting intent from a screenshot alone | Grep the source: a disabled group is often deliberate, its unreadable text is not |
 | Renumbering issues in the fix prompt | The agent's confirmation no longer maps to the audit |

@@ -148,7 +148,7 @@ egui's 14 pt default (about 20 px) never got the theme font.
 - Window margin 4 pt. One gutter, 3 pt, horizontal and vertical. Every gap
   is an explicit `PANEL_GAP`; `item_spacing.y` is zeroed.
 - App bar 24 pt: identity on the left, engine-wide modes on the right
-  (TOPOLOGY, QUALITY, ZOOM); the empty middle is by design.
+  (TOPOLOGY, QUALITY); the empty middle is by design.
 - Below the app bar, four rows split at one seam: left
   `round((1208 - 3) × 2/3)` = 803 pt, right 402 pt. Device edges line up down
   the whole window.

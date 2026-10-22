@@ -127,8 +127,6 @@ capture_single_state "knobs" "$OUTPUT_DIR/knobs.png"
 capture_single_state "quality_low" "$OUTPUT_DIR/quality_low.png"
 # Generative sequence parameters modified
 capture_single_state "generator" "$OUTPUT_DIR/generator.png"
-# Scaling / Zoom state (75% zoom factor)
-capture_single_state "zoom75" "$OUTPUT_DIR/zoom75.png"
 
 echo "Extracting dynamic section crops, margins, and diff composites..."
 python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
@@ -142,7 +140,6 @@ REQUIRED_CROPS=(
     "knobs.png"
     "quality_low.png"
     "generator.png"
-    "zoom75.png"
     "crop_header.png"
     "crop_voice.png"
     "crop_engine.png"

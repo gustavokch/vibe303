@@ -73,7 +73,6 @@ fn qa_playhead_pin_follows_sequencer_states_only() {
         Some("default"),
         Some("accurate"),
         Some("knobs"),
-        Some("zoom75"),
         Some("runing"), // typo: an unknown state must not pin
     ] {
         assert_eq!(
@@ -186,7 +185,7 @@ fn test_qa_knobs_state() {
 
 #[cfg(feature = "gui")]
 #[test]
-fn test_qa_generator_and_zoom_state_editor_build() {
+fn test_qa_generator_state_editor_build() {
     use plugin303::params::Plugin303Params;
     use std::sync::atomic::AtomicU8;
     use std::sync::Arc;
@@ -199,17 +198,9 @@ fn test_qa_generator_and_zoom_state_editor_build() {
         nih_plug_egui::EguiState::from_size(plugin303::gui::GUI_WIDTH, plugin303::gui::GUI_HEIGHT);
     let current_step = Arc::new(AtomicU8::new(255));
 
-    let editor = plugin303::gui::create_editor(params.clone(), state.clone(), current_step.clone());
+    let editor = plugin303::gui::create_editor(params, state, current_step);
     assert!(
         editor.is_some(),
         "Editor must build cleanly under generator QA state"
-    );
-    drop(_guard_gen);
-
-    let _guard_zoom = EnvGuard::set("VIBE303_QA_STATE", "zoom75");
-    let editor_zoom = plugin303::gui::create_editor(params, state, current_step);
-    assert!(
-        editor_zoom.is_some(),
-        "Editor must build cleanly under zoom75 QA state"
     );
 }

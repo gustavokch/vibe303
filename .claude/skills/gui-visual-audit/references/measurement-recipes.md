@@ -6,7 +6,7 @@ which readings lie on this GUI. Read before Phase 2.
 All coordinates are **physical** pixels. The offscreen render is 2432 × 1280,
 the 1216 × 640 pt window at 2x. A window capture adds the macOS title bar on
 top (`crop_gui_sections.py` assumes 32 pt); subtract it before you compare a
-y with the contract's landmarks. `zoom75` draws at 1.5 px/pt.
+y with the contract's landmarks.
 
 At startup the tool parses `plugin303/src/gui/theme.rs` (colour tokens and the
 `KNOB_RADIUS_*` tiers) and `GUI_WIDTH` from `gui/mod.rs`, so token names, knob
@@ -22,12 +22,10 @@ run it as `uv run --no-project --with numpy --with pillow python scripts/gui_qa_
 python3 scripts/gui_qa_measure.py report target/gui-qa-offscreen
 ```
 
-About 15 s for the nine states on an idle machine; `colors` takes most of
+About 15 s for the eight states on an idle machine; `colors` takes most of
 it. It prints, in audit order: the capture set, diffs against `latest`, per
 capture the geometry, dead space and colours, knobs in `latest` and `knobs`,
-then the accent table. `zoom75` gets geometry and colours only: its layout
-differs from every other state, so a diff or an accent row against it means
-nothing.
+then the accent table.
 
 Each section below is the focused version of one part of the report.
 
@@ -75,9 +73,6 @@ exactly 10 (the app bar and nine devices), every `gap_above=6`, and the
 column seam at x 1614 | 1620; the contract's landmark table names each box.
 Any other count or gap is a layout change. `header_bottom` marks the end of
 the 44 px header strip; `interior` starts 8 px below it.
-
-In `zoom75` the gutter is 3 pt × 1.5 = 4.5 px, so `INCONSISTENT inter-panel
-gaps: [4, 4, 5, …]` there is rounding, not a defect.
 
 ## `deadspace`: where the layout gave up
 
@@ -130,11 +125,6 @@ Triage every flag before it becomes a finding:
 Run it on **every** state. The disabled palettes (`accurate`, and the MEG bank
 in every state without ADV ENV) are where the 3:1 floor gets breached.
 Surfaces, fills and gate colours are hidden unless you pass `--show-surfaces`.
-
-`report` scales the pixel floor to the capture's pixels per point: 150 at
-2 px/pt, 84 for `zoom75` at 1.5 px/pt. At 150 a `zoom75` card of 8 pt text
-reads "no foreground colours". Pass the same `--min-pixels 84` when you run
-`colors` on `zoom75` by hand.
 
 ## `accent`: live state where it belongs
 
@@ -200,8 +190,6 @@ Detection notes:
   angle of its pixels seen from the centre. egui snaps lines to the pixel
   grid, and a 1 px sideways shift tilts the from-centre angle by up to 6° on
   a MEDIUM knob.
-- `zoom75`: pass `--scale 1.5`. `--radii` takes outer radii in points and
-  defaults to the theme's tiers.
 
 ## `text --box`: glyph sizes and real text colour
 
@@ -261,7 +249,7 @@ Both capture scripts already run `scripts/crop_gui_sections.py`, which writes
 `<state>_crop_{header,voice,engine,generator,sequencer}.png` per state (the
 `latest` set also without the prefix), `crop_right_margin.png`,
 `crop_bottom_margin.png`, and `crop_state_diff.png` (the engine rows of
-`latest`, `accurate` and `running` stacked). It skips `zoom75`.
+`latest`, `accurate` and `running` stacked).
 
 ---
 

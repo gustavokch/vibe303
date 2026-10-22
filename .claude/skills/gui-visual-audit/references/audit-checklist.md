@@ -19,7 +19,6 @@ device card so the report can be located in the source.
 - A child box wider or taller than its parent.
 - Content flush against a card edge that elsewhere has the 8 pt / 4 pt body
   inset.
-- Content that only fits at 100% zoom.
 - A scrollbar where the layout should have fit.
 
 ## B. Dead space and balance

@@ -1,14 +1,8 @@
-import argparse
-import contextlib
-import io
-import json
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import gui_qa_measure as qa
@@ -157,39 +151,6 @@ class TestKnobs(unittest.TestCase):
         k = measure_only_knob(flat_knob(0.5, None))
         self.assertEqual(k["arc_px"], 0)
         self.assertAlmostEqual(k["needle_fraction"], 0.5, delta=0.01)
-
-
-def colors_report(img, name):
-    """Run `colors --json` on an in-memory capture saved as `<name>.png`."""
-    out = io.StringIO()
-    with tempfile.TemporaryDirectory() as tmp:
-        path = str(Path(tmp) / f"{name}.png")
-        Image.fromarray(img.astype(np.uint8)).save(path)
-        args = argparse.Namespace(
-            image=path,
-            min_pixels=qa.colors_min_pixels(path),
-            top=12,
-            show_surfaces=False,
-            json=True,
-        )
-        with contextlib.redirect_stdout(out):
-            qa.cmd_colors(args)
-    return json.loads(out.getvalue())
-
-
-def foreground_of(report, top):
-    card = next(r for r in report if r["panel"]["top"] == top)
-    return {c["hex"]: c for c in card["colors"] if c["foreground"]}
-
-
-class TestColors(unittest.TestCase):
-    def test_zoom_scaled_card_keeps_its_small_text(self):
-        # zoom75 draws at 1.5 px/pt: a card of 8 pt text emits about 120 glyph
-        # pixels per colour, below the 2 px/pt floor of 150.
-        img, cards = flat_editor(titlebar_pt=0)
-        y0, _, x0, _ = cards[3]  # SOUPED-UP ENGINE
-        img[y0 + 60 : y0 + 70, x0 + 40 : x0 + 52] = qa.THEME_FALLBACK["TEXT_PRIMARY"]
-        self.assertIn("#ECECEC", foreground_of(colors_report(img, "zoom75"), y0))
 
 
 if __name__ == "__main__":

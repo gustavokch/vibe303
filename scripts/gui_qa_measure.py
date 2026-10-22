@@ -117,25 +117,8 @@ def expected_width() -> int:
 SWEEP_MIN_DEG = -135.0
 SWEEP_MAX_DEG = 135.0
 
-# States rendered at a non-default egui zoom, with their pixels per point. Their
-# layout differs from every other state, so pixel diffs and per-panel tables
-# against them mean nothing.
-ZOOM_SCALED_STATES = {"zoom75": 1.5}
-
 # `colors` pixel floor for a 2 px/pt capture.
 COLORS_MIN_PIXELS = 150
-
-
-def colors_min_pixels(path) -> int:
-    """`colors` pixel floor for one capture.
-
-    Glyph area scales with the square of pixels per point. At the 2 px/pt floor
-    a 1.5 px/pt card of 8 pt text falls below it and reads as having no
-    foreground at all.
-    """
-    state = os.path.splitext(os.path.basename(path))[0]
-    ppt = ZOOM_SCALED_STATES.get(state, 2.0)
-    return round(COLORS_MIN_PIXELS * (ppt / 2.0) ** 2)
 
 
 # Tokens that name a surface, a fill or a frame. Contrast floors apply to
@@ -231,7 +214,7 @@ def find_panels(arr: np.ndarray, min_size: int = 32):
     panels = []
 
     def leaf(top, bottom, left, right):
-        # 32, not more: the app bar at zoom 75% is 36 px tall.
+        # Below min_size a region is a gutter or a control, not a card.
         if bottom - top < min_size or right - left < min_size:
             return
         hdr = top
@@ -590,7 +573,7 @@ def measure_knob(arr: np.ndarray, cx: float, cy: float, radius_pt: float, scale:
 
 
 def knob_scale(arr: np.ndarray, override):
-    """Pixels per point: 2 for every 100% capture, 1.5 for zoom75."""
+    """Pixels per point: capture width over GUI_WIDTH, unless --scale overrides it."""
     return override if override else arr.shape[1] / GUI_WIDTH
 
 
@@ -898,7 +881,7 @@ def cmd_accent(args):
     names = list(per_image)
     if len({len(v) for v in per_image.values()}) > 1:
         print("  WARNING: panel counts differ between images, so rows do not line up.")
-        print("  Compare one group with --box instead, or drop the zoom-scaled capture.")
+        print("  Compare one group with --box instead.")
     rows = max(len(v) for v in per_image.values())
     print("accent pixels per panel. A disabled control drops the accent by design; flag")
     print("accent on a disabled control, or no accent where an enabled selection exists.")
@@ -1127,11 +1110,9 @@ def cmd_report(args):
         with Image.open(path) as im:
             w, h = im.size
         flag = "" if w == width else f"  <-- WIDTH {w}, EXPECTED {width}"
-        scaled = stem(path) in ZOOM_SCALED_STATES
-        note = "  (zoom-scaled: skipped in DIFF and ACCENT)" if scaled else ""
-        print(f"  {os.path.basename(path):20s} {w}x{h}{flag}{note}")
+        print(f"  {os.path.basename(path):20s} {w}x{h}{flag}")
 
-    comparable = [i for i in images if stem(i) not in ZOOM_SCALED_STATES]
+    comparable = images
     base = next((i for i in comparable if os.path.basename(i) == args.base), comparable[0])
     for path in comparable:
         if path == base:
@@ -1154,7 +1135,7 @@ def cmd_report(args):
         cmd_colors(
             argparse.Namespace(
                 image=path,
-                min_pixels=colors_min_pixels(path),
+                min_pixels=COLORS_MIN_PIXELS,
                 top=12,
                 show_surfaces=False,
                 json=False,

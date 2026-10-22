@@ -20,15 +20,13 @@ use std::sync::atomic::AtomicU8;
 use egui_kittest::Harness;
 use nih_plug::prelude::{GuiContext, ParamPtr, ParamSetter, PluginApi, PluginState};
 use nih_plug_egui::egui::{vec2, CentralPanel, Frame, Margin};
-use plugin303::gui::{
-    qa_generator_params, qa_zoom_factor, render_editor, theme, GUI_HEIGHT, GUI_WIDTH, MARGIN,
-};
+use plugin303::gui::{qa_generator_params, render_editor, theme, GUI_HEIGHT, GUI_WIDTH, MARGIN};
 use plugin303::params::Plugin303Params;
 use plugin303::qa_playhead_pin;
 
 /// `(VIBE303_QA_STATE, file stem)`. The stems are the ones the capture script
 /// writes: the default state is `latest`.
-const STATES: [(&str, &str); 9] = [
+const STATES: [(&str, &str); 8] = [
     ("default", "latest"),
     ("accurate", "accurate"),
     ("advanced", "advanced"),
@@ -37,7 +35,6 @@ const STATES: [(&str, &str); 9] = [
     ("knobs", "knobs"),
     ("quality_low", "quality_low"),
     ("generator", "generator"),
-    ("zoom75", "zoom75"),
 ];
 
 /// Retina window captures are 2x, so the renders are too.
@@ -68,20 +65,13 @@ fn render(state: &str) -> Result<image::RgbaImage, String> {
     let params = Plugin303Params::default();
     let mut gen_params = qa_generator_params(Some(state));
     let playhead = AtomicU8::new(qa_playhead_pin(Some(state)).unwrap_or(0));
-    let zoom = qa_zoom_factor(Some(state));
     let host = NoHost;
     let setter = ParamSetter::new(&host);
 
-    // The window keeps its pixel size when zoomed out: egui sees a larger
-    // point area at a smaller pixels-per-point. The harness pins
-    // pixels_per_point, which overrides `Context::set_zoom_factor`, so the
-    // zoom goes into the pixels-per-point value instead.
-    let zoom = zoom.unwrap_or(1.0);
-    let points = vec2(GUI_WIDTH as f32, GUI_HEIGHT as f32) / zoom;
     let mut first_frame = true;
     let mut harness = Harness::builder()
-        .with_size(points)
-        .with_pixels_per_point(PIXELS_PER_POINT * zoom)
+        .with_size(vec2(GUI_WIDTH as f32, GUI_HEIGHT as f32))
+        .with_pixels_per_point(PIXELS_PER_POINT)
         .wgpu()
         .build(|ctx| {
             if std::mem::take(&mut first_frame) {

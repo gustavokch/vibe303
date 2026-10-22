@@ -428,7 +428,6 @@ pub(crate) enum QaState {
     QualityLow,
     Running,
     RunningNote,
-    Zoom75,
 }
 
 impl QaState {
@@ -444,7 +443,6 @@ impl QaState {
             "quality_low" => Self::QualityLow,
             "running" => Self::Running,
             "running_note" => Self::RunningNote,
-            "zoom75" => Self::Zoom75,
             _ => return None,
         })
     }
