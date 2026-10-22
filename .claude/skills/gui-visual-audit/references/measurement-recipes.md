@@ -52,7 +52,7 @@ Prints changed-region clusters as `y … x … n=…`. Expected scopes against
 | `knobs` | TUNING and CUTOFF |
 | `quality_low` | the QUALITY bar |
 | `generator` | ACID EUCLIDEAN GENERATOR body, the GENERATION SEED value |
-| `running` | SEQUENCER steps 01-04 (plate, LED, number), the RUN tile |
+| `running` | SEQUENCER step 04 (plate, LED, number), the RUN tile |
 | `running_note` | as `running`, plus every gate and pitch cell |
 
 - **IDENTICAL** means the harness produced two captures of one state. That
