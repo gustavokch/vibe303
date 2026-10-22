@@ -42,8 +42,8 @@ The highest-value class. Read the *displayed value* and compare it to the
 - An arc filling from the wrong origin: a range whose plain minimum is 0
   fills from the minimum, a range below 0 fills from 0.
 - A fader fill height disagreeing with its value.
-- A segment, toggle or lit action whose fill contradicts its label (`STOP`
-  lit while stopped, `SYNTH: ON` unlit while on).
+- A segment or lit action whose fill contradicts its label, or a toggle LED
+  that contradicts its state (RUN unlit while running, SYNTH lit while muted).
 - A playhead plate or LED on a step other than the one playing.
 
 ## D. State correctness

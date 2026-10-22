@@ -105,7 +105,7 @@ against the tile fill, not the body.
 Triage every flag before it becomes a finding:
 
 - **`ACCENT_ORANGE <-- below 4.5:1`** with thousands of pixels is a lit fill
-  (segment, tile, GENERATE): a non-text mark with a 3:1 floor. Orange text
+  (selected segment, lit action): a non-text mark with a 3:1 floor. Orange text
   exists only in the CALIBRATE status line. Check text on an orange fill with
   `text --box`.
 - **An antialiasing grey snapped to the wrong token.** At 8.5 pt, the edge

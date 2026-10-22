@@ -115,7 +115,7 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                             .min_width(slot_w)
                             .height(ROW_H),
                     )
-                    .on_hover_text("Lit: the internal sequencer runs.")
+                    .on_hover_text("Lit: the sequencer runs (with SYNC lit, while the host plays).")
                     .changed()
                 {
                     setter.begin_set_parameter(&params.seq_run);

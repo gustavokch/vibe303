@@ -53,8 +53,8 @@ Hover lifts a raised control to `SURFACE_HOVER`; press drops it to
 | `ACCENT_BLUE` | a lit SLD step. Nothing else |
 | `GATE_NOTE_FILL` > `GATE_TIE_FILL` > `WELL_BG` | NOTE > TIE > REST gate brightness, neutral on purpose so orange and blue stay free |
 | `TEXT_ON_ACCENT` | text on every light fill: orange, blue, NOTE |
-| `TEXT_PRIMARY` | values, readouts, the knob pointer, the playing step number |
-| `TEXT_SECONDARY` | captions, labels, the text on an unlit tile |
+| `TEXT_PRIMARY` | values, readouts, the knob pointer, the playing step number, the label of an on or hovered toggle |
+| `TEXT_SECONDARY` | captions, labels, the text on an unlit tile, an off toggle's label at rest |
 | `TEXT_MUTED` | disabled text and marks, REST text |
 
 A third hue, orange that means something other than "live", or blue anywhere
