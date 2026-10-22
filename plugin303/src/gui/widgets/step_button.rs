@@ -6,8 +6,8 @@ use nih_plug_egui::egui::{pos2, vec2, CornerRadius, FontFamily, FontId, Rect, Se
 /// drawn *before* the children (paint order within the layer decides stacking),
 /// so its height cannot be measured after layout — it must be derived from the
 /// same constants as the child allocations. Keep every allocation on these consts.
-pub const LED_H: f32 = 3.0;
-pub const HEADER_H: f32 = 12.0;
+pub const LED_H: f32 = 4.0;
+pub const HEADER_H: f32 = 11.0;
 /// 21 px hit rows (19 px pills with 2 px vertical gap) for the compact 1216x640 layout.
 pub const CONTROL_ROW_H: f32 = 21.0;
 pub const STRIP_HEIGHT: f32 = LED_H + HEADER_H + 4.0 * CONTROL_ROW_H;
@@ -42,13 +42,14 @@ pub fn render_step_strip(
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
         let strip_min = ui.cursor().min;
 
-        // Column background: strip plate is none at rest, PANEL_HEADER_BG when active or current.
+        // The plate marks the playing step only: while stopped no step plays,
+        // so none is marked (round-20 #6).
         let strip_rect = Rect::from_min_size(strip_min, vec2(width, cell_height));
-        if is_current && ui.is_rect_visible(strip_rect) {
+        if is_active && ui.is_rect_visible(strip_rect) {
             ui.painter()
                 .rect_filled(strip_rect, theme::radius(), theme::PANEL_HEADER_BG);
         }
-        // 1. Step LED strip (LED_H flat bar at top; ACCENT_ORANGE when playing, WELL_BG otherwise)
+        // 1. Step LED: a LED_H bar across the column; ACCENT_ORANGE on the playing step, WELL_BG otherwise.
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, LED_H), Sense::hover());
         let _ = led_resp.on_hover_text("Step LED strip");
         if ui.is_rect_visible(led_rect) {

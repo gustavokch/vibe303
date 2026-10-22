@@ -226,7 +226,7 @@ python3 scripts/gui_qa_measure.py strokes target/gui-qa-offscreen/running.png --
 ```
 
 The design has no outlines, so use this on single-colour bars: the playhead
-LED above reads as one 6 px horizontal segment (`LED_H` 3 pt), and a
+LED above reads as one 8 px horizontal segment (`LED_H` 4 pt), and a
 separator is one 2 px `WELL_BG` line. Several thicknesses in one indicator
 mean separate marks are touching. A segment of the same colour in the same
 box on a step that is not playing means the indicator leaks.

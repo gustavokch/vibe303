@@ -24,7 +24,7 @@ Depth comes from five neutral planes and nothing else, darkest to lightest:
 | `CHASSIS_BG` | the window, the 6 px gutters between devices |
 | `WELL_BG` | inset values: DragValue and ComboBox wells, fader tracks, knob value pills, pitch cells, REST gates, the step LED at rest, separators |
 | `PANEL_BG` | the device body |
-| `PANEL_HEADER_BG` | the device header strip, the app bar, the current-step plate |
+| `PANEL_HEADER_BG` | the device header strip, the app bar, the current-step plate while the sequencer runs |
 | `SURFACE_ELEVATED` | a raised control at rest: buttons, tiles, unselected segments, the knob body |
 
 Hover lifts a raised control to `SURFACE_HOVER`; press drops it to
@@ -136,8 +136,8 @@ a banner that says why, with an ENABLE FUN MODE action.
 | Fader | `widgets/fader.rs` `MiniFader` | 12 pt `WELL_BG` track filled from the bottom in the accent; no thumb; label 8.5 pt above, value 7.5 pt monospace below |
 | Value field | `theme::field_style` | DragValue: 9 pt monospace in a well. ComboBox: a well with a ▼; the TRANSPORT combos keep ▼ even when the popup opens upward. A value that cannot be edited is a `Readout`. The ANALOG TWEAKS fields share one width, `FIELD_W` = 80 pt |
 | Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt label. A lit action is an orange fill with `TEXT_ON_ACCENT`. An action at rest is never lit; GENERATE is raised |
-| Step column | `widgets/step_button.rs` | top down: 3 pt LED bar, 12 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted |
-| Playhead | `step_button.rs` | the current step's column gets a `PANEL_HEADER_BG` plate; while the sequencer runs, its LED turns orange and its number `TEXT_PRIMARY`. No frame, no outline |
+| Step column | `widgets/step_button.rs` | top down: 4 pt LED bar, 11 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted |
+| Playhead | `step_button.rs` | while the sequencer runs, the playing step's column gets a `PANEL_HEADER_BG` plate, its 4 pt LED turns orange and its number `TEXT_PRIMARY`. Stopped: no step is marked. No frame, no outline |
 
 ## Type
 
