@@ -6,6 +6,7 @@ pub mod dsp;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod params;
+pub mod value_text;
 use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::{Voice, VoiceClipperParams};
 use params::{Plugin303Params, QaState};

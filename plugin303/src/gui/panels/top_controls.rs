@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use nih_plug::prelude::{FloatParam, ParamSetter};
+use nih_plug::prelude::{FloatParam, Param, ParamSetter};
 use nih_plug_egui::egui::{vec2, Align, FontFamily, FontId, Layout, Sense, Ui};
 
 use crate::gui::theme;
@@ -111,12 +111,14 @@ pub fn render_voice_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamS
                     "TUNING",
                     theme::KNOB_RADIUS_LARGE,
                 ));
-                render_knob(Knob303::new(
-                    &params.cutoff,
-                    setter,
-                    "CUTOFF",
-                    theme::KNOB_RADIUS_LARGE,
-                ));
+                render_knob(
+                    Knob303::new(&params.cutoff, setter, "CUTOFF", theme::KNOB_RADIUS_LARGE)
+                        .value_text(crate::value_text::cutoff(
+                            params.cutoff.unmodulated_plain_value(),
+                            params.topology.value(),
+                            params.advanced_env.value(),
+                        )),
+                );
                 render_knob(Knob303::new(
                     &params.resonance,
                     setter,

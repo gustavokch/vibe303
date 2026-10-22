@@ -1,4 +1,4 @@
-use nih_plug::prelude::ParamSetter;
+use nih_plug::prelude::{Param, ParamSetter};
 use nih_plug_egui::egui::{vec2, Align, Button, FontId, Layout, RichText, Ui};
 
 use crate::gui::theme;
@@ -132,12 +132,14 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             "SUB",
                             theme::KNOB_RADIUS_MEDIUM,
                         ));
-                        render_knob(Knob303::new(
-                            &params.glide,
-                            setter,
-                            "GLIDE",
-                            theme::KNOB_RADIUS_MEDIUM,
-                        ));
+                        render_knob(
+                            Knob303::new(&params.glide, setter, "GLIDE", theme::KNOB_RADIUS_MEDIUM)
+                                .value_text(crate::value_text::glide(
+                                    params.glide.unmodulated_plain_value(),
+                                    params.topology.value(),
+                                    params.advanced_env.value(),
+                                )),
+                        );
                         render_knob(Knob303::new(
                             &params.osc1_pitch,
                             setter,

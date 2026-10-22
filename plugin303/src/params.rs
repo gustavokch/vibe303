@@ -1,6 +1,7 @@
 use crate::dsp::filter::Tier;
 use nih_plug::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
 pub enum CompTolerance {
@@ -462,6 +463,14 @@ impl QaState {
     }
 }
 
+/// Text of a 0..=1 amount: "50%". Typed host input "50" or "50%" parses back.
+fn percent(param: FloatParam) -> FloatParam {
+    param
+        .with_unit("%")
+        .with_value_to_string(formatters::v2s_f32_percentage(0))
+        .with_string_to_value(formatters::s2v_f32_percentage())
+}
+
 impl Default for Plugin303Params {
     fn default() -> Self {
         // `QaState::from_env` is the one read of VIBE303_QA_STATE for the
@@ -507,21 +516,37 @@ impl Default for Plugin303Params {
                     max: 100.0,
                 },
             )
-            .with_unit(" cents"),
+            .with_unit(" ct")
+            .with_value_to_string(Arc::new(crate::value_text::signed)),
 
-            cutoff: FloatParam::new(
+            cutoff: percent(FloatParam::new(
                 "Cutoff",
                 default_cutoff,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
+            )),
 
-            resonance: FloatParam::new("Resonance", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            resonance: percent(FloatParam::new(
+                "Resonance",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )),
 
-            env_mod: FloatParam::new("Env Mod", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            env_mod: percent(FloatParam::new(
+                "Env Mod",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )),
 
-            decay: FloatParam::new("Decay", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            decay: FloatParam::new("Decay", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_value_to_string(Arc::new(|v| {
+                    crate::value_text::ms_or_s(crate::dsp::voice::decay_ms(v))
+                })),
 
-            accent: FloatParam::new("Accent", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            accent: percent(FloatParam::new(
+                "Accent",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )),
 
             waveform: EnumParam::new("Waveform", OscWave::Saw),
 
@@ -535,7 +560,8 @@ impl Default for Plugin303Params {
                     center: 0.0,
                 },
             )
-            .with_unit(" dB"),
+            .with_unit(" dB")
+            .with_value_to_string(Arc::new(crate::value_text::signed)),
 
             seq_run: BoolParam::new("Seq Run", default_seq_run),
             seq_sync: BoolParam::new("Seq Sync", true),
@@ -567,7 +593,8 @@ impl Default for Plugin303Params {
                     max: 24.0,
                 },
             )
-            .with_unit(" st"),
+            .with_unit(" st")
+            .with_value_to_string(Arc::new(crate::value_text::signed)),
 
             osc2_pitch: FloatParam::new(
                 "Osc 2 Pitch",
@@ -577,23 +604,32 @@ impl Default for Plugin303Params {
                     max: 24.0,
                 },
             )
-            .with_unit(" st"),
+            .with_unit(" st")
+            .with_value_to_string(Arc::new(crate::value_text::signed)),
 
-            osc2_vol: FloatParam::new(
+            osc2_vol: percent(FloatParam::new(
                 "Osc 2 Volume",
                 0.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
+            )),
 
-            osc1_pw: FloatParam::new("Osc 1 PW", 0.5, FloatRange::Linear { min: 0.1, max: 0.9 }),
+            osc1_pw: percent(FloatParam::new(
+                "Osc 1 PW",
+                0.5,
+                FloatRange::Linear { min: 0.1, max: 0.9 },
+            )),
 
-            sub_vol: FloatParam::new("Sub Vol", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            sub_vol: percent(FloatParam::new(
+                "Sub Vol",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )),
 
-            sweep_pos: FloatParam::new(
+            sweep_pos: percent(FloatParam::new(
                 "Sweep Morph",
                 0.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
+            )),
 
             vcf_taps: EnumParam::new("VCF Taps", VcfTaps::FourPole),
 
@@ -605,15 +641,20 @@ impl Default for Plugin303Params {
                     max: 24.0,
                 },
             )
-            .with_unit(" dB"),
+            .with_unit(" dB")
+            .with_value_to_string(Arc::new(|v| format!("{v:.1}"))),
 
-            reso_comp: FloatParam::new(
+            reso_comp: percent(FloatParam::new(
                 "Reso Gain Comp",
                 0.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
+            )),
 
-            glide: FloatParam::new("Glide", 0.4, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            glide: percent(FloatParam::new(
+                "Glide",
+                0.4,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )),
 
             advanced_env: BoolParam::new("Advanced Env", default_advanced_env),
 
@@ -709,19 +750,17 @@ impl Default for Plugin303Params {
                 format!("{:.1} yrs", v as f32 * 0.45)
             })),
 
-            comp_drift: FloatParam::new(
+            comp_drift: percent(FloatParam::new(
                 "Comp Drift",
                 0.1,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            )
-            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            )),
 
-            recalibration_scale: FloatParam::new(
+            recalibration_scale: percent(FloatParam::new(
                 "Recalibration Scale",
                 1.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            )
-            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            )),
             calibrate_sync: BoolParam::new("Calibrate Sync", false),
 
             tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),
@@ -746,37 +785,32 @@ impl Default for Plugin303Params {
 
             clipper_bypass: BoolParam::new("Clipper Bypass", false),
             clipper_os: EnumParam::new("Clipper OS", ClipperOversampling::X2),
-            clipper_drive: FloatParam::new(
+            clipper_drive: percent(FloatParam::new(
                 "Clipper Drive",
                 0.5,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            )
-            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
-            clipper_threshold: FloatParam::new(
+            )),
+            clipper_threshold: percent(FloatParam::new(
                 "Clipper Threshold",
                 0.5,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            )
-            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
-            clipper_bass: FloatParam::new(
+            )),
+            clipper_bass: percent(FloatParam::new(
                 "Clipper Bass",
                 0.5,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            )
-            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
-            clipper_tone: FloatParam::new(
+            )),
+            clipper_tone: percent(FloatParam::new(
                 "Clipper Tone",
                 0.5,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            )
-            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            )),
             clipper_asym: BoolParam::new("Clipper Asym", false),
-            clipper_mix: FloatParam::new(
+            clipper_mix: percent(FloatParam::new(
                 "Clipper Mix",
                 0.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            )
-            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            )),
             clipper_in_gain: FloatParam::new(
                 "Clipper In",
                 0.0,
@@ -785,7 +819,8 @@ impl Default for Plugin303Params {
                     max: 18.0,
                 },
             )
-            .with_unit(" dB"),
+            .with_unit(" dB")
+            .with_value_to_string(Arc::new(crate::value_text::signed)),
             clipper_out_gain: FloatParam::new(
                 "Clipper Out",
                 0.0,
@@ -794,7 +829,8 @@ impl Default for Plugin303Params {
                     max: 18.0,
                 },
             )
-            .with_unit(" dB"),
+            .with_unit(" dB")
+            .with_value_to_string(Arc::new(crate::value_text::signed)),
             clipper_gain_link: BoolParam::new("Clipper Gain Link", true),
             clipper_tilt: FloatParam::new(
                 "Clipper Tilt",
@@ -804,13 +840,13 @@ impl Default for Plugin303Params {
                     max: 6.0,
                 },
             )
-            .with_unit(" dB"),
-            clipper_dynamics: FloatParam::new(
+            .with_unit(" dB")
+            .with_value_to_string(Arc::new(crate::value_text::signed)),
+            clipper_dynamics: percent(FloatParam::new(
                 "Clipper Dynamics",
                 0.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            )
-            .with_value_to_string(std::sync::Arc::new(|v| format!("{:.0} %", v * 100.0))),
+            )),
 
             pattern: std::sync::RwLock::new({
                 let mut p = SequencerPattern::default();
