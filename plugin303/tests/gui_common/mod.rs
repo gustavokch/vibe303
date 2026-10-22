@@ -8,6 +8,7 @@ use nih_plug_egui::egui::{
     Vec2,
 };
 use plugin303::gui::theme;
+use std::ffi::OsString;
 use std::sync::Mutex;
 
 /// Text colours the contract allows (Colour roles). Anything else is a faded
@@ -21,22 +22,32 @@ pub const TEXT_TOKENS: [Color32; 5] = [
 ];
 
 /// Serialises `VIBE303_QA_STATE` edits: the tests of one binary share a process.
+/// A failed test poisons it; callers take the guard with
+/// `ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())` so one failure does not
+/// cascade into the rest.
 pub static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+/// Sets an environment variable for its lifetime and restores the previous
+/// value on drop (removes it if it was unset).
 pub struct EnvGuard<'a> {
     key: &'a str,
+    prev: Option<OsString>,
 }
 
 impl<'a> EnvGuard<'a> {
     pub fn set(key: &'a str, val: &str) -> Self {
+        let prev = std::env::var_os(key);
         unsafe { std::env::set_var(key, val) };
-        Self { key }
+        Self { key, prev }
     }
 }
 
 impl Drop for EnvGuard<'_> {
     fn drop(&mut self) {
-        unsafe { std::env::remove_var(self.key) };
+        match &self.prev {
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
     }
 }
 

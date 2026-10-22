@@ -15,7 +15,7 @@ use std::sync::atomic::AtomicU8;
 /// outside the token set is that fade or a hard-coded colour.
 #[test]
 fn every_text_uses_a_token_in_every_mode() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for state in ["default", "accurate", "advanced", "running"] {
         let _env = EnvGuard::set("VIBE303_QA_STATE", state);
         let params = Plugin303Params::default();
