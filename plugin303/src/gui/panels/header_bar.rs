@@ -11,6 +11,10 @@ use crate::params::{CircuitTopology, Plugin303Params};
 /// Horizontal inset of the bar's contents from its edge.
 const PAD_X: f32 = 8.0;
 
+/// Hover text of the QUALITY switch in ACCURATE.
+pub const QUALITY_ACCURATE_HINT: &str =
+    "Quality tier applies to FUN mode (ACCURATE uses fixed physical modeling)";
+
 /// The app bar: instrument identity on the left, engine-wide modes on the
 /// right. One flat strip, one row, every control on the same 18 px height
 /// (`SEG_H`, `TOGGLE_H`).
@@ -52,7 +56,7 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
 
     // Quality tier (inert in ACCURATE: that mode uses fixed physical modelling).
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
-    let quality_resp = ui.add_enabled_ui(!is_accurate, |ui| {
+    ui.add_enabled_ui(!is_accurate, |ui| {
         ui.add(
             SlideSwitch::new(
                 &params.tier,
@@ -62,12 +66,8 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
             )
             .caption_left(),
         )
+        .on_disabled_hover_text(QUALITY_ACCURATE_HINT);
     });
-    if is_accurate {
-        quality_resp.response.on_hover_text(
-            "Quality tier applies to FUN mode (ACCURATE uses fixed physical modeling)",
-        );
-    }
 
     // Circuit topology.
     let prev_topology = params.topology.value();

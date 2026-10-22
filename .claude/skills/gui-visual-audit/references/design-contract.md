@@ -106,13 +106,18 @@ ComboBox, Button) is drift: egui fades it. Values become `Readout`s;
 labels are painted with the fade cleared; an action the mode cannot use is
 hidden.
 
-Disabled groups (`add_enabled_ui(false, …)`): QUALITY in ACCURATE, the MEG
-ADSR bank without ADV ENV, the OUTPUT CLIPPER body and header switches when
-it is off, and the ANALOG TWEAKS body in ACCURATE: its fields become
-Readouts, its status reads FUN MODE ONLY, and its header hides CALIBRATE.
-GENERATION SEED is a Readout in every mode. In ACCURATE the SOUPED-UP
-ENGINE body is replaced by a banner that says why, with an ENABLE FUN MODE
-action.
+A disabled control says why on hover with `on_disabled_hover_text`;
+`on_hover_text` never shows on a disabled widget.
+`plugin303/tests/gui_tooltips.rs` checks QUALITY and ANALOG TWEAKS in
+ACCURATE and both ADSR banks.
+
+Disabled groups (`add_enabled_ui(false, …)`): QUALITY in ACCURATE, both ADSR
+banks (MEG and VEG) unless ADV ENV is on in FUN, the ADV ENV tile in
+ACCURATE, the OUTPUT CLIPPER body and header switches when it is off, and
+the ANALOG TWEAKS body in ACCURATE: its fields become Readouts, its status
+reads FUN MODE ONLY, and its header hides CALIBRATE. GENERATION SEED is a
+Readout in every mode. In ACCURATE the SOUPED-UP ENGINE body is replaced by
+a banner that says why, with an ENABLE FUN MODE action.
 
 - Orange on a disabled control is a defect: orange claims "live".
 - A disabled selection must still show which option is selected.

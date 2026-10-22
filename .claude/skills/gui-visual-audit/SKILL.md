@@ -80,7 +80,7 @@ dimensions as given.
 |---|---|
 | `latest.png` | defaults: FUN, QUALITY DRAFT, stopped |
 | `accurate.png` | ACCURATE: SOUPED-UP banner, ANALOG TWEAKS and QUALITY disabled |
-| `advanced.png` | ADV ENV on: the MEG bank enabled |
+| `advanced.png` | ADV ENV on: both ADSR banks enabled |
 | `running.png` | running, playhead pinned on step 04, a REST step |
 | `running_note.png` | running, every step NOTE: the playhead over a lit gate |
 | `knobs.png` | TUNING +25 ct (bipolar, off its detent), CUTOFF 0.75 |

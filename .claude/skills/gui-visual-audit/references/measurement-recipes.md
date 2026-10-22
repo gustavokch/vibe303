@@ -48,7 +48,7 @@ Prints changed-region clusters as `y … x … n=…`. Expected scopes against
 | State | Changes only in |
 |---|---|
 | `accurate` | app bar (TOPOLOGY, QUALITY), SOUPED-UP ENGINE body (banner), ANALOG TWEAKS |
-| `advanced` | ENVELOPES (MEG bank, ADV ENV tile) |
+| `advanced` | ENVELOPES (both ADSR banks, ADV ENV tile) |
 | `knobs` | TUNING and CUTOFF |
 | `quality_low` | the QUALITY bar |
 | `generator` | ACID EUCLIDEAN GENERATOR body, the GENERATION SEED value |
@@ -122,7 +122,7 @@ Triage every flag before it becomes a finding:
   surfaces exactly does not help: glyph antialiasing then floods every card
   with sub-3:1 greys. Probe every label in a disabled group with `text --box`.
 
-Run it on **every** state. The disabled palettes (`accurate`, and the MEG bank
+Run it on **every** state. The disabled palettes (`accurate`, and the ADSR banks
 in every state without ADV ENV) are where the 3:1 floor gets breached.
 Surfaces, fills and gate colours are hidden unless you pass `--show-surfaces`.
 

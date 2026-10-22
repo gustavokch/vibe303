@@ -13,6 +13,10 @@ use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
 /// four fields share one right edge (round-20 #7).
 pub const FIELD_W: f32 = 80.0;
 
+/// Hover text of every ANALOG TWEAKS control in ACCURATE (round-20 #3).
+pub const ACCURATE_HINT: &str =
+    "Analog tweaks apply to FUN mode only. Set TOPOLOGY to FUN to edit them.";
+
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
     let calibrating = params.calibrate_sync.value();
@@ -140,7 +144,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                             CompTolerance::Ten => "10%",
                                         };
                                         if is_accurate {
-                                            ui.add(Readout::new(tol_text, FIELD_W, row_h));
+                                            ui.add(Readout::new(tol_text, FIELD_W, row_h))
+                                                .on_disabled_hover_text(ACCURATE_HINT);
                                             return;
                                         }
                                         ComboBox::from_id_salt("tweaks_tolerance_combo")
@@ -187,7 +192,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 &format!("{age} yrs"),
                                                 FIELD_W,
                                                 row_h,
-                                            ));
+                                            ))
+                                            .on_disabled_hover_text(ACCURATE_HINT);
                                             return;
                                         }
                                         let mut age_val = age;
@@ -220,7 +226,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 &format!("{noise}%"),
                                                 FIELD_W,
                                                 row_h,
-                                            ));
+                                            ))
+                                            .on_disabled_hover_text(ACCURATE_HINT);
                                             return;
                                         }
                                         let mut noise_val = noise;
@@ -251,7 +258,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 &format!("{seed:04}"),
                                                 FIELD_W,
                                                 row_h,
-                                            ));
+                                            ))
+                                            .on_disabled_hover_text(ACCURATE_HINT);
                                             return;
                                         }
                                         let mut seed_val = seed;
@@ -322,7 +330,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 setter,
                                 "DRIFT",
                                 theme::KNOB_RADIUS_LARGE,
-                            ));
+                            ))
+                            .on_disabled_hover_text(ACCURATE_HINT);
                         });
                         knob_column(ui, &mut |ui| {
                             ui.add(Knob303::new(
@@ -330,7 +339,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 setter,
                                 "RECAL",
                                 theme::KNOB_RADIUS_LARGE,
-                            ));
+                            ))
+                            .on_disabled_hover_text(ACCURATE_HINT);
                         });
                     });
                 });
