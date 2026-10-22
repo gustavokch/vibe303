@@ -138,6 +138,7 @@ a banner that says why, with an ENABLE FUN MODE action.
 | Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt label. A lit action is an orange fill with `TEXT_ON_ACCENT`. An action at rest is never lit; GENERATE is raised. A destructive action takes two clicks: CLEAR relabels to CONFIRM CLEAR on `SURFACE_HOVER` for 3 s; a second click within that window acts |
 | Step column | `widgets/step_button.rs` | top down: 4 pt LED bar, 11 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted |
 | Playhead | `step_button.rs` | while the sequencer runs, the playing step's column gets a `PANEL_HEADER_BG` plate, its 4 pt LED turns orange and its number `TEXT_PRIMARY`. Stopped: no step is marked. No frame, no outline |
+| Tooltip | every control | Every control in SOUPED-UP ENGINE, OUTPUT CLIPPER and ANALOG TWEAKS, and every abbreviated generator field, has a hover tooltip (`plugin303/tests/gui_tooltips.rs`). A disabled control uses on_disabled_hover_text to say why |
 
 ## Type
 

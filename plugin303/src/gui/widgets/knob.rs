@@ -13,6 +13,7 @@ pub struct Knob303<'a, P: Param> {
     radius: f32,
     accent_color: Option<nih_plug_egui::egui::Color32>,
     value_text: Option<String>,
+    tooltip: Option<&'a str>,
 }
 
 impl<'a, P: Param> Knob303<'a, P> {
@@ -24,6 +25,7 @@ impl<'a, P: Param> Knob303<'a, P> {
             radius,
             accent_color: None,
             value_text: None,
+            tooltip: None,
         }
     }
 
@@ -42,6 +44,13 @@ impl<'a, P: Param> Knob303<'a, P> {
     /// meaning depends on another parameter (CUTOFF and GLIDE follow ADV ENV).
     pub fn value_text(mut self, text: String) -> Self {
         self.value_text = Some(text);
+        self
+    }
+
+    /// Hover text: what the knob does. Device banks use short labels (MIX2,
+    /// R-COMP, DYN), so their knobs carry one (round-20 #11).
+    pub fn tooltip(mut self, text: &'a str) -> Self {
+        self.tooltip = Some(text);
         self
     }
 }
@@ -221,7 +230,10 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             );
         }
 
-        response
+        match self.tooltip {
+            Some(text) => response.on_hover_text(text),
+            None => response,
+        }
     }
 }
 

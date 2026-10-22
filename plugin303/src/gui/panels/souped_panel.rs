@@ -19,16 +19,22 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                     header_ui.add(
                         SlideSwitch::new(&params.vca_env_mode, setter, "VCA ENV", &["GATE", "ENV"])
                             .caption_left(),
+                    )
+                    .on_hover_text(
+                        "GATE: the VCA is open while the gate is held. ENV: the VCA follows the \
+                         amplitude envelope.",
                     );
-                    header_ui.add(
-                        SlideSwitch::new(
-                            &params.vcf_taps,
-                            setter,
-                            "VCF TAPS",
-                            &["2-POLE", "3-POLE", "4-POLE"],
+                    header_ui
+                        .add(
+                            SlideSwitch::new(
+                                &params.vcf_taps,
+                                setter,
+                                "VCF TAPS",
+                                &["2-POLE", "3-POLE", "4-POLE"],
+                            )
+                            .caption_left(),
                         )
-                        .caption_left(),
-                    );
+                        .on_hover_text("Filter slope: 2, 3 or 4 poles");
                 }
             },
             |body_ui| {
@@ -120,62 +126,80 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             );
                         };
 
-                        render_knob(Knob303::new(
-                            &params.vcf_drive,
-                            setter,
-                            "DRIVE",
-                            theme::KNOB_RADIUS_MEDIUM,
-                        ));
-                        render_knob(Knob303::new(
-                            &params.sub_vol,
-                            setter,
-                            "SUB",
-                            theme::KNOB_RADIUS_MEDIUM,
-                        ));
+                        render_knob(
+                            Knob303::new(
+                                &params.vcf_drive,
+                                setter,
+                                "DRIVE",
+                                theme::KNOB_RADIUS_MEDIUM,
+                            )
+                            .tooltip("VCF input drive (dB)"),
+                        );
+                        render_knob(
+                            Knob303::new(&params.sub_vol, setter, "SUB", theme::KNOB_RADIUS_MEDIUM)
+                                .tooltip("Sub-oscillator level"),
+                        );
                         render_knob(
                             Knob303::new(&params.glide, setter, "GLIDE", theme::KNOB_RADIUS_MEDIUM)
                                 .value_text(crate::value_text::glide(
                                     params.glide.unmodulated_plain_value(),
                                     params.topology.value(),
                                     params.advanced_env.value(),
-                                )),
+                                ))
+                                .tooltip("Pitch glide time on slid notes"),
                         );
-                        render_knob(Knob303::new(
-                            &params.osc1_pitch,
-                            setter,
-                            "PITCH1",
-                            theme::KNOB_RADIUS_MEDIUM,
-                        ));
-                        render_knob(Knob303::new(
-                            &params.osc2_pitch,
-                            setter,
-                            "PITCH2",
-                            theme::KNOB_RADIUS_MEDIUM,
-                        ));
-                        render_knob(Knob303::new(
-                            &params.osc2_vol,
-                            setter,
-                            "MIX2",
-                            theme::KNOB_RADIUS_MEDIUM,
-                        ));
-                        render_knob(Knob303::new(
-                            &params.osc1_pw,
-                            setter,
-                            "PW",
-                            theme::KNOB_RADIUS_MEDIUM,
-                        ));
-                        render_knob(Knob303::new(
-                            &params.sweep_pos,
-                            setter,
-                            "SWEEP",
-                            theme::KNOB_RADIUS_MEDIUM,
-                        ));
-                        render_knob(Knob303::new(
-                            &params.reso_comp,
-                            setter,
-                            "R-COMP",
-                            theme::KNOB_RADIUS_MEDIUM,
-                        ));
+                        render_knob(
+                            Knob303::new(
+                                &params.osc1_pitch,
+                                setter,
+                                "PITCH1",
+                                theme::KNOB_RADIUS_MEDIUM,
+                            )
+                            .tooltip("Oscillator 1 pitch offset (semitones)"),
+                        );
+                        render_knob(
+                            Knob303::new(
+                                &params.osc2_pitch,
+                                setter,
+                                "PITCH2",
+                                theme::KNOB_RADIUS_MEDIUM,
+                            )
+                            .tooltip("Oscillator 2 pitch offset (semitones)"),
+                        );
+                        render_knob(
+                            Knob303::new(
+                                &params.osc2_vol,
+                                setter,
+                                "MIX2",
+                                theme::KNOB_RADIUS_MEDIUM,
+                            )
+                            .tooltip("Oscillator 2 level"),
+                        );
+                        render_knob(
+                            Knob303::new(&params.osc1_pw, setter, "PW", theme::KNOB_RADIUS_MEDIUM)
+                                .tooltip("Oscillator 1 pulse width"),
+                        );
+                        render_knob(
+                            Knob303::new(
+                                &params.sweep_pos,
+                                setter,
+                                "SWEEP",
+                                theme::KNOB_RADIUS_MEDIUM,
+                            )
+                            .tooltip("Oscillator 1 waveform morph, saw to square"),
+                        );
+                        render_knob(
+                            Knob303::new(
+                                &params.reso_comp,
+                                setter,
+                                "R-COMP",
+                                theme::KNOB_RADIUS_MEDIUM,
+                            )
+                            .tooltip(
+                                "Resonance gain compensation: makes up the level lost at high \
+                                 resonance",
+                            ),
+                        );
                     });
                 }
             },

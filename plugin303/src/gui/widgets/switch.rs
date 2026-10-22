@@ -85,13 +85,11 @@ fn segment_colors(selected: bool, hovered: bool, enabled: bool) -> (Color32, Col
 }
 
 /// Shared renderer for horizontal segmented parameter switches.
-#[allow(clippy::too_many_arguments)]
 fn render_hsegment_row(
     ui: &mut Ui,
     label: &str,
     caption: Caption,
     options: &[&str],
-    option_tooltips: Option<&[Option<&str>]>,
     current_idx: usize,
     fixed_width: Option<f32>,
     on_select: &mut dyn FnMut(&mut Response, usize),
@@ -137,15 +135,6 @@ fn render_hsegment_row(
         let rel_x = (pos.x - track_rect.left()).clamp(0.0, track_rect.width());
         ((rel_x / (slot_width + SEG_GAP)).floor() as usize).min(num_opts - 1)
     };
-
-    if let Some(tooltips) = option_tooltips {
-        for (i, tip_opt) in tooltips.iter().enumerate().take(num_opts) {
-            if let Some(tip) = tip_opt {
-                let slot_resp = ui.interact(slot_rect(i), response.id.with(i), Sense::hover());
-                let _ = slot_resp.on_hover_text(*tip);
-            }
-        }
-    }
 
     if response.clicked() || response.dragged() {
         if let Some(mouse_pos) = response.interact_pointer_pos() {
@@ -389,7 +378,6 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
             self.label,
             self.caption,
             self.options,
-            None,
             current_idx,
             self.fixed_width,
             &mut |response, target_idx| {
@@ -405,7 +393,6 @@ pub struct BoolSwitch<'a> {
     setter: &'a ParamSetter<'a>,
     label: &'a str,
     options: [&'a str; 2],
-    option_tooltips: Option<[Option<&'a str>; 2]>,
     fixed_width: Option<f32>,
     caption: Caption,
 }
@@ -422,7 +409,6 @@ impl<'a> BoolSwitch<'a> {
             setter,
             label,
             options,
-            option_tooltips: None,
             fixed_width: None,
             caption: Caption::Above,
         }
@@ -438,23 +424,16 @@ impl<'a> BoolSwitch<'a> {
         self.caption = Caption::Left;
         self
     }
-
-    pub fn with_option_tooltips(mut self, tooltips: [Option<&'a str>; 2]) -> Self {
-        self.option_tooltips = Some(tooltips);
-        self
-    }
 }
 
 impl<'a> Widget for BoolSwitch<'a> {
     fn ui(self, ui: &mut Ui) -> Response {
         let current_idx = usize::from(self.param.value());
-        let tooltips_slice = self.option_tooltips.as_ref().map(|t| t.as_slice());
         render_hsegment_row(
             ui,
             self.label,
             self.caption,
             &self.options,
-            tooltips_slice,
             current_idx,
             self.fixed_width,
             &mut |response, target_idx| {

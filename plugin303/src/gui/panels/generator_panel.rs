@@ -1,6 +1,6 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Align2, Button, ComboBox, DragValue, FontId, Sense, Separator, Ui,
+    pos2, vec2, Align2, Button, ComboBox, DragValue, FontId, Response, Sense, Separator, Ui,
 };
 
 use crate::dsp::generator::{AcidGenerator, GeneratorParams, MusicalScale};
@@ -28,8 +28,8 @@ fn field_label(ui: &mut Ui, text: &str, w: f32) {
 }
 
 /// Numeric field cell with configurable width.
-fn field_drag<'a>(ui: &mut Ui, drag: DragValue<'a>, w: f32) {
-    ui.add_sized(vec2(w, G_ROW_H), drag);
+fn field_drag<'a>(ui: &mut Ui, drag: DragValue<'a>, w: f32) -> Response {
+    ui.add_sized(vec2(w, G_ROW_H), drag)
 }
 
 /// Group sub-heading: 8.5 pt TEXT_SECONDARY caps without numeral prefixes.
@@ -154,7 +154,8 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(1..=16)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
                                 G_FIELD_W,
-                            );
+                            )
+                            .on_hover_text("Euclidean pulses: notes spread evenly over STEPS");
 
                             field_label(ui, "STEPS (n):", G1_LBL_W);
                             field_drag(
@@ -163,7 +164,8 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(1..=16)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
                                 G_FIELD_W,
-                            );
+                            )
+                            .on_hover_text("Euclidean pattern length in steps");
                         });
 
                         ui.horizontal(|ui| {
@@ -310,13 +312,19 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(0.0..=1.0)
                                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                                 G_FIELD_W,
+                            )
+                            .on_hover_text(
+                                "Chance that an accented note moves to the upper half of the scale",
                             );
                         });
 
                         ui.add(ToggleButton::new(
                             &mut gen_params.slide_chaining,
                             "SLD CHAIN",
-                        ));
+                        ))
+                        .on_hover_text(
+                            "Lit: slides may follow slides. Unlit: never two slides in a row.",
+                        );
                     });
                 });
             });

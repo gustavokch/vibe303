@@ -179,7 +179,12 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                         setter.end_set_parameter(&params.tolerance);
                                                     }
                                                 }
-                                            });
+                                            })
+                                            .response
+                                            .on_hover_text(
+                                                "Component tolerance: how far part values stray \
+                                                 from nominal",
+                                            );
                                     });
 
                                     ui.add_space(v_gap);
@@ -325,21 +330,33 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             );
                         };
                         knob_column(ui, &mut |ui| {
-                            ui.add(Knob303::new(
-                                &params.comp_drift,
-                                setter,
-                                "DRIFT",
-                                theme::KNOB_RADIUS_LARGE,
-                            ))
+                            ui.add(
+                                Knob303::new(
+                                    &params.comp_drift,
+                                    setter,
+                                    "DRIFT",
+                                    theme::KNOB_RADIUS_LARGE,
+                                )
+                                .tooltip(
+                                    "Component drift: slow random wander of pitch, cutoff and \
+                                     resonance",
+                                ),
+                            )
                             .on_disabled_hover_text(ACCURATE_HINT);
                         });
                         knob_column(ui, &mut |ui| {
-                            ui.add(Knob303::new(
-                                &params.recalibration_scale,
-                                setter,
-                                "RECAL",
-                                theme::KNOB_RADIUS_LARGE,
-                            ))
+                            ui.add(
+                                Knob303::new(
+                                    &params.recalibration_scale,
+                                    setter,
+                                    "RECAL",
+                                    theme::KNOB_RADIUS_LARGE,
+                                )
+                                .tooltip(
+                                    "Recalibration: share of the component pitch error the VCO \
+                                     calibration removes",
+                                ),
+                            )
                             .on_disabled_hover_text(ACCURATE_HINT);
                         });
                     });
