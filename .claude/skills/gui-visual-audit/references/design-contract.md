@@ -48,8 +48,8 @@ Hover lifts a raised control to `SURFACE_HOVER`; press drops it to
 
 | Colour | Role, and only this role |
 |---|---|
-| `ACCENT_ORANGE` | live state: value arcs, fader fills, a lit toggle, the selected segment, lit actions (GENERATE, ENABLE FUN MODE, CALIBRATE when a rebuild is due), a lit ACC step, the playhead LED. As text only in the CALIBRATE status line when a rebuild is due (`tweaks_panel.rs`) |
-| `ACCENT_ORANGE_HOVER` | a hovered lit tile |
+| `ACCENT_ORANGE` | live state: value arcs, fader fills, a toggle's LED when on, the selected segment, lit actions (ENABLE FUN MODE, CALIBRATE when a rebuild is due), a lit ACC step, the playhead LED. As text only in the CALIBRATE status line when a rebuild is due (`tweaks_panel.rs`) |
+| `ACCENT_ORANGE_HOVER` | a hovered lit tile or toggle LED |
 | `ACCENT_BLUE` | a lit SLD step. Nothing else |
 | `GATE_NOTE_FILL` > `GATE_TIE_FILL` > `WELL_BG` | NOTE > TIE > REST gate brightness, neutral on purpose so orange and blue stay free |
 | `TEXT_ON_ACCENT` | text on every light fill: orange, blue, NOTE |
@@ -94,8 +94,10 @@ The custom widgets clear the fade (`set_fade_to_color(None)`) and paint:
 
 | Widget | Disabled paint |
 |---|---|
-| Segment, toggle: selected / on | `SURFACE_HOVER` fill, `TEXT_SECONDARY` text. Keeps its position, never orange |
-| Segment, toggle: unselected / off | `SURFACE_PRESSED` fill, `TEXT_MUTED` text |
+| Segment: selected / on | `SURFACE_HOVER` fill, `TEXT_SECONDARY` text. Keeps its position, never orange |
+| Segment: unselected / off | `SURFACE_PRESSED` fill, `TEXT_MUTED` text |
+| Toggle: on | `SURFACE_PRESSED` tile, `TEXT_MUTED` LED and text |
+| Toggle: off | `SURFACE_PRESSED` tile, `WELL_BG` LED, `TEXT_MUTED` text |
 | Knob | arc, pointer and label `TEXT_MUTED`; the value stays `TEXT_PRIMARY` |
 | Fader | fill `TEXT_MUTED`, value `TEXT_SECONDARY` |
 | DevicePanel `.dimmed(true)` | title `TEXT_SECONDARY` |
@@ -129,11 +131,11 @@ a banner that says why, with an ENABLE FUN MODE action.
 |---|---|---|
 | Device card | `widgets/panel.rs` `DevicePanel` | `PANEL_BG` body under a 22 pt `PANEL_HEADER_BG` strip. Title 9 pt proportional on the left; that device's own mode switches sit right-aligned in the strip (the first one added sits flush right). Body inset 8 pt x, 4 pt y |
 | Segmented control | `widgets/switch.rs` `SlideSwitch`, `BoolSwitch` | one flat bar of 18 pt segments split by 1 pt panel-colour hairlines; only the outer ends are rounded. Selected = orange fill + `TEXT_ON_ACCENT`. Caption 8.5 pt, left of the bar in header strips, above it in knob columns. WAVE is the vertical variant |
-| Boolean | `widgets/toggle.rs` `ToggleButton` | every on/off (ADV ENV, LINK, ON, SLD CHAIN, JITTER) is a tile: orange when on, `SURFACE_ELEVATED` when off; 18 pt tall (28 pt in TRANSPORT). An egui checkbox is drift |
+| Boolean | `widgets/toggle.rs` `ToggleButton` | every on/off (RUN, SYNC, MIDI, SYNTH, JITTER, ADV ENV, LINK, ON, SLD CHAIN) is a raised tile with a 3 × 10 pt LED left of a state-free label: `WELL_BG` slot off, orange on (`ACCENT_ORANGE_HOVER` on hover). The tile never fills orange. 18 pt tall (28 pt in TRANSPORT). An egui checkbox is drift; a label that spells its state (`MIDI: OFF`) is drift |
 | Knob | `widgets/knob.rs` `Knob303` | two tiers only: LARGE r 21 pt (VOICE, DRIFT, RECAL), MEDIUM r 12 pt (SOUPED-UP ENGINE, OUTPUT CLIPPER). `KNOB_TRACK` ring over the whole -135°..+135° sweep; orange arc from the minimum, or from 0 when the range's plain minimum is below 0 (TUNING, VOLUME, PITCH1/2, IN, OUT, TILT); `KNOB_BODY` disc at 0.68 r; `TEXT_PRIMARY` pointer; label 8.5 pt caps; value 8 pt monospace in an 11 pt `WELL_BG` pill, 52 / 38 pt wide by tier |
 | Fader | `widgets/fader.rs` `MiniFader` | 12 pt `WELL_BG` track filled from the bottom in the accent; no thumb; label 8.5 pt above, value 7.5 pt monospace below |
 | Value field | `theme::field_style` | DragValue: 9 pt monospace in a well. ComboBox: a well with a ▼; the TRANSPORT combos keep ▼ even when the popup opens upward. A value that cannot be edited is a `Readout`. The ANALOG TWEAKS fields share one width, `FIELD_W` = 80 pt |
-| Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt label. A lit action is an orange fill with `TEXT_ON_ACCENT` |
+| Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt label. A lit action is an orange fill with `TEXT_ON_ACCENT`. An action at rest is never lit; GENERATE is raised |
 | Step column | `widgets/step_button.rs` | top down: 3 pt LED bar, 12 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted |
 | Playhead | `step_button.rs` | the current step's column gets a `PANEL_HEADER_BG` plate; while the sequencer runs, its LED turns orange and its number `TEXT_PRIMARY`. No frame, no outline |
 

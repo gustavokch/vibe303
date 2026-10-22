@@ -104,54 +104,46 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
             let slot_w = ((body_w - SLOT_GAP) * 0.5).floor();
             let row_gap = ((ui.available_height() - 6.0 * ROW_H) / 5.0).max(2.0);
 
-            // Row 1: RUN / STOP and SYNC HOST / INT
+            // Row 1: RUN and SYNC
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
 
-                let run_val = params.seq_run.value();
-                let (fill, text_color) = if run_val {
-                    (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
-                } else {
-                    (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
-                };
-                let run_btn = Button::new(
-                    RichText::new(if run_val { "STOP" } else { "RUN" })
-                        .font(FontId::proportional(8.5))
-                        .color(text_color),
-                )
-                .fill(fill)
-                .min_size(vec2(slot_w, ROW_H));
-
-                if ui.add(run_btn).clicked() {
+                let mut run = params.seq_run.value();
+                if ui
+                    .add(
+                        ToggleButton::new(&mut run, "RUN")
+                            .min_width(slot_w)
+                            .height(ROW_H),
+                    )
+                    .on_hover_text("Lit: the internal sequencer runs.")
+                    .changed()
+                {
                     setter.begin_set_parameter(&params.seq_run);
-                    setter.set_parameter(&params.seq_run, !run_val);
+                    setter.set_parameter(&params.seq_run, run);
                     setter.end_set_parameter(&params.seq_run);
                 }
 
-                let sync_val = params.seq_sync.value();
-                let (fill, text_color) = if sync_val {
-                    (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
-                } else {
-                    (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
-                };
-                let sync_btn = Button::new(
-                    RichText::new(if sync_val { "SYNC: HOST" } else { "SYNC: INT" })
-                        .font(FontId::proportional(8.5))
-                        .color(text_color),
-                )
-                .fill(fill)
-                .min_size(vec2(slot_w, ROW_H));
-
-                if ui.add(sync_btn).clicked() {
+                let mut sync = params.seq_sync.value();
+                if ui
+                    .add(
+                        ToggleButton::new(&mut sync, "SYNC")
+                            .min_width(slot_w)
+                            .height(ROW_H),
+                    )
+                    .on_hover_text(
+                        "Lit: follow the host transport and tempo. Unlit: internal clock at BPM.",
+                    )
+                    .changed()
+                {
                     setter.begin_set_parameter(&params.seq_sync);
-                    setter.set_parameter(&params.seq_sync, !sync_val);
+                    setter.set_parameter(&params.seq_sync, sync);
                     setter.end_set_parameter(&params.seq_sync);
                 }
             });
 
             ui.add_space(row_gap);
 
-            // Row 2: MIDI OUT + Channel and SYNTH ON / MUTE
+            // Row 2: MIDI + Channel and SYNTH
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
 
@@ -162,28 +154,19 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     |ui| {
                         ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
 
-                        let midi_val = params.midi_out.value();
-                        let (fill, text_color) = if midi_val {
-                            (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
-                        } else {
-                            (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
-                        };
+                        let mut midi = params.midi_out.value();
                         let midi_btn_w = (slot_w * 0.55).floor();
-                        let midi_btn = Button::new(
-                            RichText::new(if midi_val { "MIDI: ON" } else { "MIDI: OFF" })
-                                .font(FontId::proportional(8.5))
-                                .color(text_color),
-                        )
-                        .fill(fill)
-                        .min_size(vec2(midi_btn_w, ROW_H));
-
                         if ui
-                            .add(midi_btn)
-                            .on_hover_text("Toggle MIDI Output from 16-step sequencer")
-                            .clicked()
+                            .add(
+                                ToggleButton::new(&mut midi, "MIDI")
+                                    .min_width(midi_btn_w)
+                                    .height(ROW_H),
+                            )
+                            .on_hover_text("Lit: send the sequence as MIDI notes on CH.")
+                            .changed()
                         {
                             setter.begin_set_parameter(&params.midi_out);
-                            setter.set_parameter(&params.midi_out, !midi_val);
+                            setter.set_parameter(&params.midi_out, midi);
                             setter.end_set_parameter(&params.midi_out);
                         }
 
@@ -216,28 +199,18 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                 );
 
                 // Right slot: SYNTH voice on/off
-                let bypass_val = params.synth_bypass.value();
-                let synth_on = !bypass_val;
-                let (fill, text_color) = if synth_on {
-                    (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
-                } else {
-                    (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
-                };
-                let bypass_btn = Button::new(
-                    RichText::new(if synth_on { "SYNTH: ON" } else { "SYNTH: MUTE" })
-                        .font(FontId::proportional(8.5))
-                        .color(text_color),
-                )
-                .fill(fill)
-                .min_size(vec2(slot_w, ROW_H));
-
+                let mut synth_on = !params.synth_bypass.value();
                 if ui
-                    .add(bypass_btn)
-                    .on_hover_text("Bypass internal synth voice (outputs silence, 0% CPU)")
-                    .clicked()
+                    .add(
+                        ToggleButton::new(&mut synth_on, "SYNTH")
+                            .min_width(slot_w)
+                            .height(ROW_H),
+                    )
+                    .on_hover_text("Lit: the internal voice plays. Unlit: muted (silence, 0% CPU).")
+                    .changed()
                 {
                     setter.begin_set_parameter(&params.synth_bypass);
-                    setter.set_parameter(&params.synth_bypass, !bypass_val);
+                    setter.set_parameter(&params.synth_bypass, !synth_on);
                     setter.end_set_parameter(&params.synth_bypass);
                 }
             });

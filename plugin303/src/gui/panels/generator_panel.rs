@@ -360,13 +360,13 @@ pub fn render_generation_panel(
 
             ui.add_space(5.0);
 
-            // Row 2: GENERATE Button (primary action: Bitwig orange fill, TEXT_ON_ACCENT, 22 px)
+            // Row 2: GENERATE, a raised action like MUTATE. Orange is for live
+            // state, and nothing is live about an action at rest (round-20 #4).
             let gen_btn = Button::new(
                 nih_plug_egui::egui::RichText::new("GENERATE")
                     .font(FontId::proportional(8.5))
-                    .color(theme::TEXT_ON_ACCENT),
+                    .color(theme::TEXT_PRIMARY),
             )
-            .fill(theme::ACCENT_ORANGE)
             .min_size(vec2(ui.available_width(), 22.0));
 
             if ui.add(gen_btn).clicked() {
