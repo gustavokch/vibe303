@@ -578,11 +578,7 @@ impl Plugin for Plugin303 {
                         }
                     }
 
-                    self.voice.on_seq_event(
-                        ev,
-                        self.params.accent.value(),
-                        self.params.decay.value() * 3000.0,
-                    );
+                    self.voice.on_seq_event(ev, self.params.accent.value());
                     seq_event_idx += 1;
                 }
             }

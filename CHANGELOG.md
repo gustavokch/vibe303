@@ -81,6 +81,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before (in the plugin, Low's VCF brightness goes from 1.0 to 0.50 and
   High/Best from 1.0 to 0.70); sessions keep their settings. Draft-to-Best
   parity moves apart (20.41 to 24.81 dB LSD), because Best is darker.
+- Sequencer notes ignored the DECAY curve that MIDI notes use. The sequencer
+  mapped the knob linearly to 0-3000 ms for the classic filter envelope, so
+  DECAY at 0.5 gave 1500 ms while the knob read 400 ms. Unaccented sequencer
+  notes now use the MIDI curve (100 ms to 2.1 s, the value the DECAY readout
+  shows). Above DECAY 0.04 the classic filter envelope of sequencer patterns
+  is shorter than before (0.2: 200 ms, was 600 ms; 0.5: 400 ms, was 1500 ms;
+  1.0: 2.1 s, was 3 s); below it, it is longer (0.01: 105 ms, was 30 ms).
+  Accented notes keep their fixed 200 ms.
 
 ### Removed
 - The BA283 Neve-preamp product (plugin crate, WaveNet/LSTM model, WDF engine, training

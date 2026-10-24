@@ -100,7 +100,6 @@ fn run_tier(name: &str, tier: Tier, secs: f32, sr: f32, seed: u64) -> (f64, f64,
                         accent: acc,
                     },
                     0.8,
-                    300.0,
                 );
             } else {
                 voice.on_seq_event(
@@ -110,11 +109,10 @@ fn run_tier(name: &str, tier: Tier, secs: f32, sr: f32, seed: u64) -> (f64, f64,
                         accent: acc,
                     },
                     0.8,
-                    300.0,
                 );
             }
         } else if step_offset == samples_per_step * 3 / 4 && !slides[step] {
-            voice.on_seq_event(SeqEvent::GateOff, 0.0, 0.0);
+            voice.on_seq_event(SeqEvent::GateOff, 0.0);
         }
 
         // Cutoff modulation and jitter
@@ -197,7 +195,6 @@ fn run_sweep(secs: f32, sr: f32, _seed: u64) -> (f64, f64, f64, bool) {
                         accent: acc,
                     },
                     0.8,
-                    300.0,
                 );
             } else {
                 voice.on_seq_event(
@@ -207,11 +204,10 @@ fn run_sweep(secs: f32, sr: f32, _seed: u64) -> (f64, f64, f64, bool) {
                         accent: acc,
                     },
                     0.8,
-                    300.0,
                 );
             }
         } else if step_offset == samples_per_step * 3 / 4 {
-            voice.on_seq_event(SeqEvent::GateOff, 0.0, 0.0);
+            voice.on_seq_event(SeqEvent::GateOff, 0.0);
         }
 
         if i % 64 == 0 {

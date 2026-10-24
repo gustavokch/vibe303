@@ -280,8 +280,8 @@ pub struct Voice {
 
     // Accent state
     accent_gain: f32,     // 0.0 or accent_knob value (set per-note)
-    normal_decay_ms: f64, // decay knob → 30..3000 ms
-    accent_decay_ms: f64, // accent decay knob -> 30..3000 ms
+    normal_decay_ms: f64, // decay_ms(decay knob), unaccented MIDI and sequencer notes
+    accent_decay_ms: f64, // fixed 200 ms on accented notes
 
     // EnvMod scaling (measured curve from hardware)
     env_scaler: f64,
@@ -398,7 +398,10 @@ pub struct Voice {
 }
 
 /// Decay time in ms for DECAY knob position `k` (0..=1): 100 ms .. 2.1 s, finer
-/// between 200 and 700 ms. Classic and ADV ENV share it; so does the DECAY text.
+/// between 200 and 700 ms. Every envelope that follows the DECAY knob uses it:
+/// the classic envelopes (MIDI and sequencer notes alike), the ADV ENV path and
+/// the DECAY text.
+#[inline]
 pub fn decay_ms(k: f32) -> f32 {
     const P: [(f32, f32); 13] = [
         (0.0, 100.0),
@@ -943,7 +946,7 @@ impl Voice {
             self.veg.set_release(200.0);
 
             // --- Classic RC-based settings (both topologies) ---
-            // MEG decay from knob: same scaled mapping (replaces 30..3000 linear)
+            // Filter-envelope decay of unaccented notes, MIDI and sequencer alike
             self.normal_decay_ms = decay_ms(decay_knob) as f64;
             // On hardware TB-303, the 4066 switch shorts the DECAY pot on accented notes,
             // locking MEG decay to a fixed ~200 ms regardless of the panel Decay or Accent knob settings.
@@ -1253,7 +1256,7 @@ impl Voice {
         }
     }
 
-    pub fn on_seq_event(&mut self, ev: SeqEvent, accent_amount: f32, decay_knob_ms: f32) {
+    pub fn on_seq_event(&mut self, ev: SeqEvent, accent_amount: f32) {
         match ev {
             SeqEvent::Trigger {
                 key,
@@ -1284,11 +1287,7 @@ impl Voice {
                     self.accent_acc += (1.0 - self.accent_acc) * 0.8;
                 } else {
                     self.accent_gain = 0.0;
-                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 {
-                        decay_knob_ms as f64
-                    } else {
-                        self.normal_decay_ms
-                    });
+                    self.meg_decay.set_decay(self.normal_decay_ms);
                     self.vca_env.set_release(0.5);
                 }
 
@@ -1323,11 +1322,7 @@ impl Voice {
                     self.accent_acc += (1.0 - self.accent_acc) * 0.8;
                 } else {
                     self.accent_gain = 0.0;
-                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 {
-                        decay_knob_ms as f64
-                    } else {
-                        self.normal_decay_ms
-                    });
+                    self.meg_decay.set_decay(self.normal_decay_ms);
                     self.vca_env.set_release(0.5);
                 }
             }
