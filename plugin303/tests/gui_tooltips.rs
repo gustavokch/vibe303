@@ -7,8 +7,9 @@ use nih_plug::prelude::{BoolParam, ParamSetter};
 use nih_plug_egui::egui::{self, vec2, Rect, Ui};
 use plugin303::dsp::generator::GeneratorParams;
 use plugin303::gui::panels::generator_panel::{self, GENERATOR_H};
+use plugin303::gui::panels::sequencer_panel::SEQUENCER_H;
 use plugin303::gui::panels::{
-    header_bar, output_clipper, souped_panel, top_controls, tweaks_panel,
+    header_bar, output_clipper, sequencer_panel, souped_panel, top_controls, tweaks_panel,
 };
 use plugin303::gui::widgets::toggle::TOGGLE_H;
 use plugin303::gui::{
@@ -336,5 +337,40 @@ fn bypassed_clipper_explains_why_it_is_inert() {
         &mut |ui| output_clipper::render_output_clipper(ui, &params, &setter),
         output_clipper::CLIPPER_OFF_HINT,
         12,
+    );
+}
+
+/// The two TRANSPORT combos (RATE/timebase and MODE/sequencer mode) explain
+/// what both options do on hover (round-21 #1).
+#[test]
+fn transport_combos_explain_themselves() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
+    let params = Plugin303Params::default();
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    let mut rig = Rig::new(vec2(right_column_width(), SEQUENCER_H + TOOLTIP_ROOM));
+
+    let controls = tooltips_by_control(&mut rig, &mut |ui| {
+        sequencer_panel::render_transport_panel(ui, &params, &setter)
+    });
+
+    let tb_tooltip = "Timebase: 16th is straight 16th steps. 12th is triplet 12th steps.";
+    let mode_tooltip = "Mode: Direct plays the pitch stored on that step. Decoupled is the TB-303 pitch/time split: NOTE steps take stored pitches in order, so a TIE or REST does not use a pitch.";
+
+    let has_tb = controls
+        .iter()
+        .any(|(_, texts)| texts.iter().any(|t| t == tb_tooltip));
+    assert!(
+        has_tb,
+        "RATE combo does not show tooltip {tb_tooltip:?}; controls: {controls:?}"
+    );
+
+    let has_mode = controls
+        .iter()
+        .any(|(_, texts)| texts.iter().any(|t| t == mode_tooltip));
+    assert!(
+        has_mode,
+        "MODE combo does not show tooltip {mode_tooltip:?}; controls: {controls:?}"
     );
 }

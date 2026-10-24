@@ -138,7 +138,7 @@ a banner that says why, with an ENABLE FUN MODE action.
 | Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt label. A lit action is an orange fill with `TEXT_ON_ACCENT`, and only as the call to action of a state: ENABLE FUN MODE while ACCURATE bypasses the engine, CALIBRATE when a rebuild is due. Any other action is never lit; GENERATE is raised. A destructive action takes two clicks: CLEAR relabels to CONFIRM CLEAR on `SURFACE_HOVER` for 3 s; a second click within that window acts |
 | Step column | `widgets/step_button.rs` | top down: 4 pt LED bar, 11 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted |
 | Playhead | `step_button.rs` | while the sequencer runs, the playing step's column gets a `PANEL_HEADER_BG` plate, its 4 pt LED turns orange and its number `TEXT_PRIMARY`. Stopped: no step is marked. No frame, no outline |
-| Tooltip | every control | Every control in SOUPED-UP ENGINE (in ACCURATE, the ENABLE FUN MODE action), OUTPUT CLIPPER and ANALOG TWEAKS, and every abbreviated generator field, has a hover tooltip (`plugin303/tests/gui_tooltips.rs`). A disabled control uses on_disabled_hover_text to say why |
+| Tooltip | every control | Every control in SOUPED-UP ENGINE (in ACCURATE, the ENABLE FUN MODE action), OUTPUT CLIPPER and ANALOG TWEAKS, every abbreviated generator field, and the two TRANSPORT combos (RATE, MODE), has a hover tooltip (`plugin303/tests/gui_tooltips.rs`). A disabled control uses on_disabled_hover_text to say why |
 
 ## Type
 
@@ -149,7 +149,7 @@ Words are proportional; every numeric readout is monospace.
 | App bar identity (BASS SYNTH, MONO), ACCURATE banner title | 9.5 pt | proportional |
 | Device title | 9 pt | proportional |
 | Captions, labels, tile and button text | 8.5 pt | proportional |
-| TRANSPORT field labels (CH:, BPM:, LEN:) | 8 pt | proportional |
+| TRANSPORT field labels (CH:, BPM:, LEN:, RATE:, MODE:) | 8 pt | proportional |
 | Default Body and Button text (combo values, plain labels) | 9.5 pt | proportional |
 | DragValue readouts | 9 pt | monospace |
 | Knob value | 8 pt | monospace |
