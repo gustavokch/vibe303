@@ -27,14 +27,6 @@ const SLOT_GAP: f32 = 3.0;
 /// How long a first CLEAR click stays armed, in seconds.
 const CLEAR_CONFIRM_S: f64 = 3.0;
 
-/// Hover text of the RATE (timebase) combo (round-21 #1).
-pub const TIMEBASE_HINT: &str =
-    "Timebase: 16th is straight 16th steps. 12th is triplet 12th steps.";
-/// Hover text of the MODE combo (round-21 #1).
-pub const MODE_HINT: &str = "Mode: Direct plays the pitch stored on that step. Decoupled is the \
-                             TB-303 pitch/time split: NOTE steps take stored pitches in order, so \
-                             a TIE or REST does not use a pitch.";
-
 /// Whether CLEAR, armed at `armed_at`, is still armed at `now`.
 fn clear_armed(armed_at: Option<f64>, now: f64) -> bool {
     armed_at.is_some_and(|t| now - t <= CLEAR_CONFIRM_S)
@@ -419,15 +411,6 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     vec2(slot_w, ROW_H),
                     Layout::left_to_right(Align::Center),
                     |ui| {
-                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-
-                        ui.label(
-                            RichText::new("RATE:")
-                                .font(FontId::proportional(8.0))
-                                .color(theme::TEXT_SECONDARY),
-                        );
-
-                        let combo_w = ui.available_width();
                         ui.scope(|ui| {
                             theme::field_style(ui);
                             ui.spacing_mut().interact_size.y = ROW_H;
@@ -439,9 +422,9 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                                         crate::params::Timebase::Straight => "16th",
                                         crate::params::Timebase::Triplet => "12th",
                                     })
-                                    .font(FontId::proportional(9.5)),
+                                    .font(FontId::proportional(8.5)),
                                 )
-                                .width(combo_w)
+                                .width(slot_w)
                                 .show_ui(ui, |ui| {
                                     if ui
                                         .selectable_label(
@@ -471,9 +454,7 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                                         );
                                         setter.end_set_parameter(&params.seq_timebase);
                                     }
-                                })
-                                .response
-                                .on_hover_text(TIMEBASE_HINT);
+                                });
                         });
                     },
                 );
@@ -483,15 +464,6 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     vec2(slot_w, ROW_H),
                     Layout::left_to_right(Align::Center),
                     |ui| {
-                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-
-                        ui.label(
-                            RichText::new("MODE:")
-                                .font(FontId::proportional(8.0))
-                                .color(theme::TEXT_SECONDARY),
-                        );
-
-                        let combo_w = ui.available_width();
                         ui.scope(|ui| {
                             theme::field_style(ui);
                             ui.spacing_mut().interact_size.y = ROW_H;
@@ -505,9 +477,9 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                                             "Decoupled"
                                         }
                                     })
-                                    .font(FontId::proportional(9.5)),
+                                    .font(FontId::proportional(8.5)),
                                 )
-                                .width(combo_w)
+                                .width(slot_w)
                                 .show_ui(ui, |ui| {
                                     if ui
                                         .selectable_label(
@@ -539,9 +511,7 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                                         );
                                         setter.end_set_parameter(&params.seq_mode);
                                     }
-                                })
-                                .response
-                                .on_hover_text(MODE_HINT);
+                                });
                         });
                     },
                 );

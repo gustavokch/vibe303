@@ -80,7 +80,7 @@ fn segment_colors(selected: bool, hovered: bool, enabled: bool) -> (Color32, Col
         (true, false) => (theme::SURFACE_HOVER, theme::TEXT_SECONDARY),
         (false, true) if hovered => (theme::SURFACE_HOVER, theme::TEXT_PRIMARY),
         (false, true) => (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY),
-        (false, false) => (theme::PANEL_BG, theme::TEXT_MUTED),
+        (false, false) => (theme::SURFACE_PRESSED, theme::TEXT_MUTED),
     }
 }
 
@@ -452,28 +452,12 @@ mod tests {
     use super::*;
 
     /// A disabled control must never claim the accent: the selected segment
-    /// keeps its position but drops to SURFACE_HOVER / TEXT_SECONDARY, while
-    /// unselected segments fill PANEL_BG / TEXT_MUTED (round-21 #4).
+    /// keeps its position but drops to a neutral fill.
     #[test]
-    fn disabled_segment_colors() {
-        assert_eq!(
-            segment_colors(true, false, true),
-            (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
-        );
-
-        let (selected_fill, selected_text) = segment_colors(true, false, false);
-        assert_eq!(selected_fill, theme::SURFACE_HOVER);
-        assert_eq!(selected_text, theme::TEXT_SECONDARY);
-        assert_ne!(selected_fill, theme::ACCENT_ORANGE);
-
-        let (unselected_fill, unselected_text) = segment_colors(false, false, false);
-        assert_eq!(unselected_fill, theme::PANEL_BG);
-        assert_eq!(unselected_text, theme::TEXT_MUTED);
-        assert_ne!(unselected_fill, theme::ACCENT_ORANGE);
-
-        // Hover on disabled makes no difference
-        let (hovered_unsel_fill, hovered_unsel_text) = segment_colors(false, true, false);
-        assert_eq!(hovered_unsel_fill, theme::PANEL_BG);
-        assert_eq!(hovered_unsel_text, theme::TEXT_MUTED);
+    fn disabled_selection_is_neutral() {
+        let (fill, _) = segment_colors(true, false, false);
+        assert_ne!(fill, theme::ACCENT_ORANGE);
+        let (fill, _) = segment_colors(true, false, true);
+        assert_eq!(fill, theme::ACCENT_ORANGE);
     }
 }

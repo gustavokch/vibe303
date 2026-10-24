@@ -51,8 +51,6 @@ Prints changed-region clusters as `y … x … n=…`. Expected scopes against
 | `advanced` | ENVELOPES (both ADSR banks, ADV ENV tile), and the GLIDE value pill: its readout follows the voice's glide map, which ADV ENV switches (`value_text::glide`) |
 | `knobs` | TUNING and CUTOFF |
 | `quality_low` | the QUALITY bar |
-| `knob_extremes` | TUNING, PITCH1, PITCH2, IN, OUT, and TILT knobs only: TUNING (`x 241-328, y 118-244`), PITCH1 and PITCH2 (`x 597-849, y 323-414`), IN, OUT and TILT (`x 772-1161, y 489-580`) |
-| `clipper_off` | OUTPUT CLIPPER card only (`x 8-1614, y 434-594`; diff clusters in `x 25-1580, y 438-558` covering dimmed header switches, unlit ON tile, dimmed knobs) |
 | `generator` | ACID EUCLIDEAN GENERATOR body, the GENERATION SEED value |
 | `running` | SEQUENCER step 04 (plate, LED, number), the RUN tile |
 | `running_note` | as `running`, plus every gate and pitch cell |
@@ -149,7 +147,7 @@ the generator card in `generator` is correct. The findings are:
 
 Narrow a card to one control group with `--box x0,y0,x1,y1`. Then confirm that
 the disabled selection still reads: crop it and look for the `SURFACE_HOVER`
-segment among `PANEL_BG` neighbours.
+segment among `SURFACE_PRESSED` neighbours.
 
 ## `knobs`: arc versus pointer
 

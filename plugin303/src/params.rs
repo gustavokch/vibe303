@@ -414,17 +414,16 @@ impl Plugin303Params {
 
 /// QA capture states that drive parameter defaults. The string contract is
 /// shared with `scripts/capture_standalone_gui.sh`, which sets
-/// `VIBE303_QA_STATE`. The state names are also hand-listed in `tools/gui_render`
-/// (`STATES`), `scripts/crop_gui_sections.py`, and `tests/test_crop_gui_sections.py`.
-/// All five places (including `QaState::parse`) must stay in sync.
+/// `VIBE303_QA_STATE`. The state names are also hand-listed in
+/// `scripts/crop_gui_sections.py` and the `STATES` table in `tools/gui_render`.
+/// All three must stay in sync with each other and with `QaState::parse`, the
+/// only place in the crate that knows the state names.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum QaState {
     Accurate,
     Advanced,
-    ClipperOff,
     Generator,
     Knobs,
-    KnobExtremes,
     QualityBest,
     QualityHigh,
     QualityLow,
@@ -438,10 +437,8 @@ impl QaState {
         Some(match var {
             "accurate" => Self::Accurate,
             "advanced" => Self::Advanced,
-            "clipper_off" => Self::ClipperOff,
             "generator" => Self::Generator,
             "knobs" => Self::Knobs,
-            "knob_extremes" => Self::KnobExtremes,
             "quality_best" => Self::QualityBest,
             "quality_high" => Self::QualityHigh,
             "quality_low" => Self::QualityLow,
@@ -498,30 +495,8 @@ impl Default for Plugin303Params {
         // range-derived arc polarity (round-13 issue 1) is verifiable in a
         // screenshot. Shipped defaults stay 0.0 ct / 0.5.
         let qa_knobs = qa_state == Some(QaState::Knobs);
-        let qa_knob_extremes = qa_state == Some(QaState::KnobExtremes);
-        let default_tuning = if qa_knob_extremes {
-            -100.0
-        } else if qa_knobs {
-            25.0
-        } else {
-            0.0
-        };
-        let default_cutoff = if qa_knobs { 0.75 } else { 0.5 };
+        let (default_tuning, default_cutoff) = if qa_knobs { (25.0, 0.75) } else { (0.0, 0.5) };
 
-        let (default_osc1_pitch, default_osc2_pitch) = if qa_knob_extremes {
-            (-24.0, 24.0)
-        } else {
-            (0.0, 0.0)
-        };
-
-        let (default_clipper_in_gain, default_clipper_out_gain, default_clipper_tilt) =
-            if qa_knob_extremes {
-                (-18.0, 18.0, -6.0)
-            } else {
-                (0.0, 0.0, 0.0)
-            };
-
-        let default_clipper_bypass = qa_state == Some(QaState::ClipperOff);
         let default_tier = match qa_state {
             Some(QaState::QualityLow) => Tier::Low,
             Some(QaState::QualityHigh) => Tier::High,
@@ -612,7 +587,7 @@ impl Default for Plugin303Params {
 
             osc1_pitch: FloatParam::new(
                 "Osc 1 Pitch",
-                default_osc1_pitch,
+                0.0,
                 FloatRange::Linear {
                     min: -24.0,
                     max: 24.0,
@@ -623,7 +598,7 @@ impl Default for Plugin303Params {
 
             osc2_pitch: FloatParam::new(
                 "Osc 2 Pitch",
-                default_osc2_pitch,
+                0.0,
                 FloatRange::Linear {
                     min: -24.0,
                     max: 24.0,
@@ -808,7 +783,7 @@ impl Default for Plugin303Params {
                 },
             ),
 
-            clipper_bypass: BoolParam::new("Clipper Bypass", default_clipper_bypass),
+            clipper_bypass: BoolParam::new("Clipper Bypass", false),
             clipper_os: EnumParam::new("Clipper OS", ClipperOversampling::X2),
             clipper_drive: percent(FloatParam::new(
                 "Clipper Drive",
@@ -838,7 +813,7 @@ impl Default for Plugin303Params {
             )),
             clipper_in_gain: FloatParam::new(
                 "Clipper In",
-                default_clipper_in_gain,
+                0.0,
                 FloatRange::Linear {
                     min: -18.0,
                     max: 18.0,
@@ -848,7 +823,7 @@ impl Default for Plugin303Params {
             .with_value_to_string(Arc::new(crate::value_text::signed)),
             clipper_out_gain: FloatParam::new(
                 "Clipper Out",
-                default_clipper_out_gain,
+                0.0,
                 FloatRange::Linear {
                     min: -18.0,
                     max: 18.0,
@@ -859,7 +834,7 @@ impl Default for Plugin303Params {
             clipper_gain_link: BoolParam::new("Clipper Gain Link", true),
             clipper_tilt: FloatParam::new(
                 "Clipper Tilt",
-                default_clipper_tilt,
+                0.0,
                 FloatRange::Linear {
                     min: -6.0,
                     max: 6.0,

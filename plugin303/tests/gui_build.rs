@@ -183,60 +183,6 @@ fn test_qa_knobs_state() {
     );
 }
 
-#[test]
-fn test_qa_knob_extremes_state() {
-    use plugin303::params::Plugin303Params;
-
-    let _lock = ENV_LOCK.lock().unwrap();
-    let _guard = EnvGuard::set("VIBE303_QA_STATE", "knob_extremes");
-
-    let params = Plugin303Params::default();
-    assert_eq!(
-        params.osc1_pitch.value(),
-        -24.0,
-        "knob_extremes QA state must initialize PITCH1 to -24.0 st"
-    );
-    assert_eq!(
-        params.osc2_pitch.value(),
-        24.0,
-        "knob_extremes QA state must initialize PITCH2 to +24.0 st"
-    );
-    assert_eq!(
-        params.clipper_in_gain.value(),
-        -18.0,
-        "knob_extremes QA state must initialize IN to -18.0 dB"
-    );
-    assert_eq!(
-        params.clipper_out_gain.value(),
-        18.0,
-        "knob_extremes QA state must initialize OUT to +18.0 dB"
-    );
-    assert_eq!(
-        params.clipper_tilt.value(),
-        -6.0,
-        "knob_extremes QA state must initialize TILT to -6.0 dB"
-    );
-    assert_eq!(
-        params.tuning.value(),
-        -100.0,
-        "knob_extremes QA state must initialize TUNING to -100.0 ct"
-    );
-}
-
-#[test]
-fn test_qa_clipper_off_state() {
-    use plugin303::params::Plugin303Params;
-
-    let _lock = ENV_LOCK.lock().unwrap();
-    let _guard = EnvGuard::set("VIBE303_QA_STATE", "clipper_off");
-
-    let params = Plugin303Params::default();
-    assert!(
-        params.clipper_bypass.value(),
-        "clipper_off QA state must initialize clipper_bypass to true"
-    );
-}
-
 #[cfg(feature = "gui")]
 #[test]
 fn test_qa_generator_state_editor_build() {

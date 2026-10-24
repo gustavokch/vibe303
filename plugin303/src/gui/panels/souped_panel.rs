@@ -133,7 +133,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             Knob303::new(
                                 &params.vcf_drive,
                                 setter,
-                                "VCF DRIVE",
+                                "DRIVE",
                                 theme::KNOB_RADIUS_MEDIUM,
                             )
                             .tooltip("VCF input drive (dB)"),
