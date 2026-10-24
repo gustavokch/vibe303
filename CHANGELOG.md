@@ -64,6 +64,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   controls in SOUPED-UP ENGINE, OUTPUT CLIPPER, ANALOG TWEAKS and the
   generator have tooltips. In ACCURATE, ADV ENV and both envelope banks are
   disabled, ANALOG TWEAKS shows `FUN MODE ONLY` and hides CALIBRATE.
+- Editor (round-21 GUI audit): RATE: and MODE: captions (8 pt) and hover
+  tooltips explain the TRANSPORT combos; combo values are 9.5 pt; TOL
+  displays in 9 pt monospace centered within its well. MEDIUM knob pills are
+  widened to 44 pt so extremum readouts (-24.0 st, +24.0 st, -18.0 dB,
+  +18.0 dB) stay >= 2 px inside each pill edge, and SOUPED-UP DRIVE is
+  labeled VCF DRIVE. Disabled unselected segments and disabled toggle tiles
+  fill PANEL_BG instead of blending into the header strip. Generator ROOT well
+  is fixed at G_FIELD_W and SCALE at 84 pt, aligned with PULSES and STEPS;
+  GENERATE and MUTATE action labels are centered; NEW SEED is a raised action
+  in GENERATION row 1 right of SEED, clearing the generator header strip;
+  OCT RANGE wells format zero as +0. Capture harness adds knob_extremes and
+  clipper_off QA states.
 
 ### Fixed
 - The High tier was padded for Best's 4x oversampling latency instead of its
