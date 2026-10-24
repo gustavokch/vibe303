@@ -257,8 +257,8 @@ const GENERATOR_CONTROLS: [(&str, Option<&str>); 19] = [
 ];
 
 /// The generator abbreviates its fields (PULSES (k), STEPS (n), PITCH LEN,
-/// OCT UP, OCT DN, ACC BIAS, SLD CHAIN); each control, and no other, shows its
-/// own text on hover (round-20 #11).
+/// OCT RANGE MIN/MAX, OCT UP, OCT DN, ACC BIAS, SLD CHAIN); each control, and
+/// no other, shows its own text on hover (round-20 #11).
 #[test]
 fn generator_abbreviated_fields_explain_themselves() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
