@@ -6,6 +6,9 @@ use crate::gui::widgets::panel::DevicePanel;
 use crate::gui::widgets::{Knob303, SlideSwitch};
 use crate::params::{CircuitTopology, Plugin303Params};
 
+/// Hover text of the ACCURATE banner's action (round-20 #11).
+pub const ENABLE_FUN_HINT: &str = "Switch TOPOLOGY to FUN and turn the souped-up engine back on.";
+
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
 
@@ -98,7 +101,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         .fill(theme::ACCENT_ORANGE)
                         .min_size(vec2(btn_w, crate::gui::widgets::toggle::TOGGLE_H));
 
-                        if ui.add(btn).clicked() {
+                        if ui.add(btn).on_hover_text(ENABLE_FUN_HINT).clicked() {
                             setter.begin_set_parameter(&params.topology);
                             setter.set_parameter(&params.topology, CircuitTopology::Fun);
                             setter.end_set_parameter(&params.topology);

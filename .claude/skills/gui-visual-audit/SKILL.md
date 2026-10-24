@@ -114,7 +114,7 @@ to read:
 
 - **`panels`**: 10 cards, every gutter 6 px, the seam at x 1614 | 1620.
   Anything else is layout drift.
-- **`knobs`**: 27 knobs at 100%. A mismatch, or a fill origin that
+- **`knobs`**: 27 knobs. A mismatch, or a fill origin that
   contradicts the parameter's range, is a value/position defect.
 - **`accent`**: a disabled control loses the accent by design. The finding
   is orange on a disabled control, or no orange where an enabled selection

@@ -155,7 +155,7 @@ segment among `SURFACE_PRESSED` neighbours.
 python3 scripts/gui_qa_measure.py knobs target/gui-qa-offscreen/knobs.png
 ```
 
-Expect 27 knobs at 100%: 9 LARGE (seven in VOICE, DRIFT and RECAL) and 18
+Expect 27 knobs: 9 LARGE (seven in VOICE, DRIFT and RECAL) and 18
 MEDIUM (nine in SOUPED-UP ENGINE, nine in OUTPUT CLIPPER). Expect 18 in
 `accurate`, where the SOUPED-UP body is a banner. Any other count is a layout
 change or a detector failure; look at the image before you read further.

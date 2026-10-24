@@ -202,6 +202,39 @@ fn engine_device_controls_explain_themselves() {
     );
 }
 
+/// In ACCURATE the SOUPED-UP ENGINE body is a banner with one action; it says
+/// what it does on hover like every other engine control (round-20 #11).
+#[test]
+fn accurate_banner_action_explains_itself() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("VIBE303_QA_STATE", "accurate");
+    let params = Plugin303Params::default();
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+
+    let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
+    let controls = tooltips_by_control(&mut rig, &mut |ui| {
+        souped_panel::render_souped_panel(ui, &params, &setter)
+    });
+    // The header switches are hidden. The banner's two text labels sense clicks
+    // (text selection); the action is the one tile of toggle height.
+    let actions: Vec<_> = controls
+        .iter()
+        .filter(|(rect, _)| (rect.height() - TOGGLE_H).abs() < 0.5)
+        .collect();
+    assert_eq!(
+        actions.len(),
+        1,
+        "expected one action tile, found {controls:?}"
+    );
+    let (rect, texts) = actions[0];
+    assert!(
+        texts.iter().any(|t| t == souped_panel::ENABLE_FUN_HINT),
+        "ENABLE FUN MODE at {rect:?} does not show {:?}; on screen: {texts:?}",
+        souped_panel::ENABLE_FUN_HINT
+    );
+}
+
 /// The generator's widgets that sense a click or drag, in layout order (the
 /// header action, then each column top to bottom), and the tooltip the
 /// contract demands of each. The group headings are here because egui's
