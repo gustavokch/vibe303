@@ -213,8 +213,10 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             };
 
             let pill_width = pill_width(self.radius);
-            let pill_rect =
-                Rect::from_center_size(pos2(rect.center().x, value_y), vec2(pill_width, 11.0));
+            let pill_rect = Rect::from_center_size(
+                pos2(rect.center().x, value_y),
+                vec2(pill_width, theme::KNOB_PILL_HEIGHT),
+            );
             painter.rect_filled(pill_rect, theme::radius(), theme::WELL_BG);
             painter.text(
                 pos2(rect.center().x, value_y),

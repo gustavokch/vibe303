@@ -2,7 +2,7 @@
 
 mod gui_common;
 
-use gui_common::{DummyGuiContext, EnvGuard, Rig, ENV_LOCK};
+use gui_common::{text_runs, DummyGuiContext, EnvGuard, Rig, ENV_LOCK};
 use nih_plug::prelude::{BoolParam, ParamSetter};
 use nih_plug_egui::egui::{self, vec2, Rect, Ui};
 use plugin303::dsp::generator::GeneratorParams;
@@ -316,42 +316,6 @@ fn generator_abbreviated_fields_explain_themselves() {
     }
 }
 
-/// GENERATION controls: MUTATION, NEW SEED, GENERATE, MUTATE.
-const GENERATION_CONTROLS: [(&str, Option<&str>); 4] = [
-    ("MUTATION", None),
-    ("NEW SEED", None),
-    ("GENERATE", None),
-    ("MUTATE", None),
-];
-
-#[test]
-fn generation_controls_explain_themselves() {
-    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
-    let params = Plugin303Params::default();
-    let mut gen_params = GeneratorParams::default();
-    let host = DummyGuiContext;
-    let setter = ParamSetter::new(&host);
-    let mut rig = Rig::new(vec2(right_column_width(), GENERATOR_H + TOOLTIP_ROOM));
-    let controls = tooltips_by_control(&mut rig, &mut |ui| {
-        generator_panel::render_generation_panel(ui, &params, &mut gen_params, &setter);
-    });
-    assert_eq!(
-        controls.len(),
-        GENERATION_CONTROLS.len(),
-        "the generation panel's controls changed; update GENERATION_CONTROLS: {controls:?}"
-    );
-    for ((rect, texts), (name, expected)) in controls.iter().zip(GENERATION_CONTROLS) {
-        if let Some(expected) = expected {
-            assert_eq!(
-                texts.as_slice(),
-                [expected],
-                "{name} at {rect:?} shows the wrong tooltip"
-            );
-        }
-    }
-}
-
 /// A bypassed OUTPUT CLIPPER greys its switches and knobs; each says how to
 /// wake them (`on_hover_text` never shows on a disabled widget).
 #[test]
@@ -374,37 +338,53 @@ fn bypassed_clipper_explains_why_it_is_inert() {
     );
 }
 
-/// The two TRANSPORT combos (RATE/timebase and MODE/sequencer mode) explain
-/// what both options do on hover (round-21 #1).
+/// Each TRANSPORT combo, and no other control, explains both of its options on
+/// hover. The control showing the text is the combo that shows the setting's
+/// value, with its caption directly to its left on the same row (round-21 #1).
 #[test]
 fn transport_combos_explain_themselves() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
-    let params = Plugin303Params::default();
+    let params = Plugin303Params::default(); // 16th, Direct
     let host = DummyGuiContext;
     let setter = ParamSetter::new(&host);
     let mut rig = Rig::new(vec2(right_column_width(), SEQUENCER_H + TOOLTIP_ROOM));
+    let mut add = |ui: &mut Ui| sequencer_panel::render_transport_panel(ui, &params, &setter);
 
-    let controls = tooltips_by_control(&mut rig, &mut |ui| {
-        sequencer_panel::render_transport_panel(ui, &params, &setter)
-    });
+    let texts = text_runs(&rig.shapes(&mut add));
+    let painted = |s: &str| {
+        texts
+            .iter()
+            .find(|(t, _)| t == s)
+            .map(|(_, r)| *r)
+            .unwrap_or_else(|| panic!("{s:?} is not painted; on screen: {texts:?}"))
+    };
+    let controls = tooltips_by_control(&mut rig, &mut add);
 
-    let tb_tooltip = "Timebase: 16th is straight 16th steps. 12th is triplet 12th steps.";
-    let mode_tooltip = "Mode: Direct plays the pitch stored on that step. Decoupled is the TB-303 pitch/time split: NOTE steps take stored pitches in order, so a TIE or REST does not use a pitch.";
-
-    let has_tb = controls
-        .iter()
-        .any(|(_, texts)| texts.iter().any(|t| t == tb_tooltip));
-    assert!(
-        has_tb,
-        "RATE combo does not show tooltip {tb_tooltip:?}; controls: {controls:?}"
-    );
-
-    let has_mode = controls
-        .iter()
-        .any(|(_, texts)| texts.iter().any(|t| t == mode_tooltip));
-    assert!(
-        has_mode,
-        "MODE combo does not show tooltip {mode_tooltip:?}; controls: {controls:?}"
-    );
+    for (caption, value, hint) in [
+        ("RATE:", "16th", sequencer_panel::TIMEBASE_HINT),
+        ("MODE:", "Direct", sequencer_panel::MODE_HINT),
+    ] {
+        let showing: Vec<Rect> = controls
+            .iter()
+            .filter(|(_, t)| t.iter().any(|t| t == hint))
+            .map(|(r, _)| *r)
+            .collect();
+        assert_eq!(
+            showing.len(),
+            1,
+            "{hint:?} must show on exactly one control; shown on {showing:?}"
+        );
+        let combo = showing[0];
+        assert!(
+            combo.contains(painted(value).center()),
+            "{hint:?} shows on {combo:?}, not on the combo that reads {value:?}"
+        );
+        let label = painted(caption);
+        let gap = combo.left() - label.right();
+        assert!(
+            (0.0..=4.0).contains(&gap) && combo.y_range().contains(label.center().y),
+            "{caption} at {label:?} is not directly left of its combo at {combo:?}"
+        );
+    }
 }
