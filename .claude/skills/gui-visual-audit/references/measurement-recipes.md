@@ -47,8 +47,8 @@ Prints changed-region clusters as `y … x … n=…`. Expected scopes against
 
 | State | Changes only in |
 |---|---|
-| `accurate` | app bar (TOPOLOGY, QUALITY), SOUPED-UP ENGINE body (banner), ANALOG TWEAKS, the ADV ENV tile |
-| `advanced` | ENVELOPES (both ADSR banks, ADV ENV tile) |
+| `accurate` | app bar (TOPOLOGY, QUALITY), SOUPED-UP ENGINE header switches and body (banner), ANALOG TWEAKS (CALIBRATE hidden, readouts, status), the ADV ENV tile |
+| `advanced` | ENVELOPES (both ADSR banks, ADV ENV tile), and the GLIDE value pill: its readout follows the voice's glide map, which ADV ENV switches (`value_text::glide`) |
 | `knobs` | TUNING and CUTOFF |
 | `quality_low` | the QUALITY bar |
 | `generator` | ACID EUCLIDEAN GENERATOR body, the GENERATION SEED value |
