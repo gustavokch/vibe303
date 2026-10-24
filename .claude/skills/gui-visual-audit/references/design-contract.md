@@ -77,7 +77,7 @@ Light fills: `TEXT_ON_ACCENT` on orange 6.00, on blue 7.27, on NOTE 7.75;
 - Enabled text ≥ 4.5:1. Non-text marks (arcs, fills, pointers, arrows)
   ≥ 3:1.
 - Disabled text ≥ 3:1. The widgets themselves pair `TEXT_MUTED` with
-  `SURFACE_PRESSED` (4.08:1) for a disabled, unselected segment.
+  `PANEL_BG` (4.68:1) for a disabled, unselected segment or toggle.
 - Below 3:1 is a hard defect in every state. The usual cause is a plain
   egui widget (Label, DragValue, ComboBox) inside `add_enabled_ui(false)`:
   egui's fade dims it on top of its token.
@@ -95,9 +95,9 @@ The custom widgets clear the fade (`set_fade_to_color(None)`) and paint:
 | Widget | Disabled paint |
 |---|---|
 | Segment: selected / on | `SURFACE_HOVER` fill, `TEXT_SECONDARY` text. Keeps its position, never orange |
-| Segment: unselected / off | `SURFACE_PRESSED` fill, `TEXT_MUTED` text |
-| Toggle: on | `SURFACE_PRESSED` tile, `TEXT_MUTED` LED and text |
-| Toggle: off | `SURFACE_PRESSED` tile, `WELL_BG` LED, `TEXT_MUTED` text |
+| Segment: unselected / off | `PANEL_BG` fill, `TEXT_MUTED` text |
+| Toggle: on | `PANEL_BG` tile, `TEXT_MUTED` LED and text |
+| Toggle: off | `PANEL_BG` tile, `WELL_BG` LED, `TEXT_MUTED` text |
 | Knob | arc, pointer and label `TEXT_MUTED`; the value stays `TEXT_PRIMARY` |
 | Fader | fill `TEXT_MUTED`, value `TEXT_SECONDARY` |
 | DevicePanel `.dimmed(true)` | title `TEXT_SECONDARY` |
