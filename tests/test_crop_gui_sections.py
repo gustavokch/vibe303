@@ -37,7 +37,6 @@ class TestCropGuiSections(unittest.TestCase):
             "knobs",
             "quality_low",
             "generator",
-            "zoom75",
         ]:
             img = Image.new("RGBA", (2432, 1280), color=(30, 30, 30, 255))
             img.save(self.test_dir / f"{stem}.png")
@@ -61,14 +60,6 @@ class TestCropGuiSections(unittest.TestCase):
         for f in expected_files:
             p = self.test_dir / f
             self.assertTrue(p.exists(), f"Expected crop file {f} was not generated")
-
-        # Verify zoom-scaled states do not produce per-section crops
-        for section in ["crop_header", "crop_voice", "crop_engine", "crop_sequencer"]:
-            zoom_crop = self.test_dir / f"zoom75_{section}.png"
-            self.assertFalse(
-                zoom_crop.exists(),
-                f"Zoom-scaled state crop {zoom_crop.name} should not be generated",
-            )
 
 
 if __name__ == "__main__":

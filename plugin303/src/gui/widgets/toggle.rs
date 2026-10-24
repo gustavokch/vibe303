@@ -1,12 +1,23 @@
-use nih_plug_egui::egui::{vec2, Align2, Color32, FontFamily, FontId, Response, Sense, Ui, Widget};
+use nih_plug_egui::egui::{
+    pos2, vec2, Align2, Color32, CornerRadius, FontFamily, FontId, Rect, Response, Sense, Ui,
+    Widget,
+};
 
 use crate::gui::theme;
 
 /// Default height of a toggle and flat button: one height, one row rhythm.
 pub const TOGGLE_H: f32 = 18.0;
 
-/// A flat on/off tile. Lit orange when on, a quiet grey tile when off. Replaces
-/// egui's checkbox so every boolean in the UI looks and reads the same.
+/// The state LED, a slot left of the label.
+const LED_W: f32 = 3.0;
+const LED_H: f32 = 10.0;
+const LED_GAP: f32 = 5.0;
+const PAD_X: f32 = 8.0;
+
+/// A raised on/off tile with an LED: orange LED when on, an empty `WELL_BG`
+/// slot when off. The tile itself never fills orange, so an off toggle still
+/// reads as a toggle (its slot) and not as an action, and the lit area on
+/// screen stays small (round-20 #4, #5). Replaces egui's checkbox.
 pub struct ToggleButton<'a> {
     on: &'a mut bool,
     label: &'a str,
@@ -37,15 +48,43 @@ impl<'a> ToggleButton<'a> {
     }
 }
 
-/// Fill and text for a toggle in each state.
-fn toggle_colors(on: bool, hovered: bool, enabled: bool) -> (Color32, Color32) {
-    match (on, enabled) {
-        (true, true) if hovered => (theme::ACCENT_ORANGE_HOVER, theme::TEXT_ON_ACCENT),
-        (true, true) => (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT),
-        (true, false) => (theme::SURFACE_HOVER, theme::TEXT_SECONDARY),
-        (false, true) if hovered => (theme::SURFACE_HOVER, theme::TEXT_PRIMARY),
-        (false, true) => (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY),
-        (false, false) => (theme::SURFACE_PRESSED, theme::TEXT_MUTED),
+/// Paint of one toggle state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ToggleColors {
+    fill: Color32,
+    led: Color32,
+    text: Color32,
+}
+
+fn toggle_colors(on: bool, hovered: bool, enabled: bool) -> ToggleColors {
+    if !enabled {
+        return ToggleColors {
+            fill: theme::SURFACE_PRESSED,
+            led: if on {
+                theme::TEXT_MUTED
+            } else {
+                theme::WELL_BG
+            },
+            text: theme::TEXT_MUTED,
+        };
+    }
+    let led = match (on, hovered) {
+        (true, true) => theme::ACCENT_ORANGE_HOVER,
+        (true, false) => theme::ACCENT_ORANGE,
+        (false, _) => theme::WELL_BG,
+    };
+    ToggleColors {
+        fill: if hovered {
+            theme::SURFACE_HOVER
+        } else {
+            theme::SURFACE_ELEVATED
+        },
+        led,
+        text: if on || hovered {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        },
     }
 }
 
@@ -57,19 +96,30 @@ impl Widget for ToggleButton<'_> {
                 .size()
                 .x
         });
-        let width = (text_w + 16.0).max(self.min_width);
+        let group_w = LED_W + LED_GAP + text_w;
+        let width = (group_w + 2.0 * PAD_X).max(self.min_width);
         let (rect, mut response) = ui.allocate_exact_size(vec2(width, self.height), Sense::click());
         if response.clicked() {
             *self.on = !*self.on;
             response.mark_changed();
         }
         if ui.is_rect_visible(rect) {
-            let enabled = ui.is_enabled();
             let mut painter = ui.painter().clone();
             painter.set_fade_to_color(None);
-            let (fill, text) = toggle_colors(*self.on, response.hovered(), enabled);
-            painter.rect_filled(rect, theme::radius(), fill);
-            painter.text(rect.center(), Align2::CENTER_CENTER, self.label, font, text);
+            let c = toggle_colors(*self.on, response.hovered(), ui.is_enabled());
+            painter.rect_filled(rect, theme::radius(), c.fill);
+            // LED and label are centred as one group.
+            let x0 = rect.center().x - group_w * 0.5;
+            let led =
+                Rect::from_center_size(pos2(x0 + LED_W * 0.5, rect.center().y), vec2(LED_W, LED_H));
+            painter.rect_filled(led, CornerRadius::same(1), c.led);
+            painter.text(
+                pos2(x0 + LED_W + LED_GAP, rect.center().y),
+                Align2::LEFT_CENTER,
+                self.label,
+                font,
+                c.text,
+            );
         }
         response
     }
@@ -79,16 +129,45 @@ impl Widget for ToggleButton<'_> {
 mod tests {
     use super::*;
 
-    /// A disabled toggle must never light up in the accent colour, even when
-    /// it is on: lit orange means "live", and a disabled control is not.
+    const MODES: [(bool, bool); 3] = [(false, true), (true, true), (false, false)]; // (hovered, enabled)
+
+    /// A disabled toggle never shows the accent: lit orange means "live".
     #[test]
     fn disabled_toggle_never_claims_accent() {
         for on in [true, false] {
             for hovered in [true, false] {
-                let (fill, _) = toggle_colors(on, hovered, false);
-                assert_ne!(fill, theme::ACCENT_ORANGE);
-                assert_ne!(fill, theme::ACCENT_ORANGE_HOVER);
+                let c = toggle_colors(on, hovered, false);
+                for accent in [theme::ACCENT_ORANGE, theme::ACCENT_ORANGE_HOVER] {
+                    assert_ne!(c.fill, accent);
+                    assert_ne!(c.led, accent);
+                }
             }
+        }
+    }
+
+    /// Only the LED carries the state: the tile is the same plane on and off,
+    /// so a boolean never paints a block of orange (round-20 #4).
+    #[test]
+    fn only_the_led_shows_state() {
+        for (hovered, enabled) in MODES {
+            let on = toggle_colors(true, hovered, enabled);
+            let off = toggle_colors(false, hovered, enabled);
+            assert_eq!(on.fill, off.fill, "hovered={hovered} enabled={enabled}");
+            assert_ne!(on.led, off.led, "hovered={hovered} enabled={enabled}");
+        }
+    }
+
+    /// A lit LED is a non-text mark: ≥ 3:1 on its tile, disabled included, so a
+    /// disabled selection still shows.
+    #[test]
+    fn lit_led_clears_the_mark_floor_on_its_tile() {
+        for (hovered, enabled) in MODES {
+            let c = toggle_colors(true, hovered, enabled);
+            let ratio = theme::contrast_ratio(c.led, c.fill);
+            assert!(
+                ratio >= 3.0,
+                "hovered={hovered} enabled={enabled}: {ratio:.2}"
+            );
         }
     }
 }

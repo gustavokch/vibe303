@@ -90,7 +90,7 @@ stated so it can be measured in a re-render.
 
 Re-render the full set with `scripts/render_gui_offscreen.sh` and confirm
 every capture is 2432 px wide. Use `scripts/capture_standalone_gui.sh` as well
-when an issue concerns the window itself (title bar, zoom, GL text).
+when an issue concerns the window itself (title bar, GL text).
 
 **States to capture:**
 

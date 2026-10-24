@@ -1,13 +1,19 @@
 use std::cell::Cell;
 
-use nih_plug::prelude::{FloatParam, ParamSetter};
+use nih_plug::prelude::{FloatParam, Param, ParamSetter};
 use nih_plug_egui::egui::{vec2, Align, FontFamily, FontId, Layout, Sense, Ui};
 
 use crate::gui::theme;
 use crate::gui::widgets::panel::DevicePanel;
 use crate::gui::widgets::toggle::ToggleButton;
 use crate::gui::widgets::{fader, Knob303, MiniFader, SlideSwitch};
-use crate::params::Plugin303Params;
+use crate::params::{CircuitTopology, Plugin303Params};
+
+/// Hover text of an ADSR fader while ADV ENV is off (round-20 #10).
+pub const ADV_ENV_OFF_HINT: &str = "Turn on ADV ENV to edit the MEG and VEG envelopes.";
+/// Hover text of the ADV ENV tile and the ADSR faders in ACCURATE.
+pub const ADV_ENV_ACCURATE_HINT: &str =
+    "ADV ENV applies to FUN mode only. Set TOPOLOGY to FUN to use it.";
 
 const CAPTION_H: f32 = 11.0;
 
@@ -20,6 +26,7 @@ fn render_adsr_bank(
     faders: [(&FloatParam, &'static str); 4],
     track_h: f32,
     setter: &ParamSetter,
+    disabled_hint: &str,
 ) {
     ui.vertical(|ui| {
         let is_enabled = ui.is_enabled();
@@ -63,7 +70,8 @@ fn render_adsr_bank(
                             label,
                             track_h,
                             theme::ACCENT_ORANGE,
-                        ));
+                        ))
+                        .on_disabled_hover_text(disabled_hint);
                     },
                 );
             }
@@ -103,12 +111,14 @@ pub fn render_voice_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamS
                     "TUNING",
                     theme::KNOB_RADIUS_LARGE,
                 ));
-                render_knob(Knob303::new(
-                    &params.cutoff,
-                    setter,
-                    "CUTOFF",
-                    theme::KNOB_RADIUS_LARGE,
-                ));
+                render_knob(
+                    Knob303::new(&params.cutoff, setter, "CUTOFF", theme::KNOB_RADIUS_LARGE)
+                        .value_text(crate::value_text::cutoff(
+                            params.cutoff.unmodulated_plain_value(),
+                            params.topology.value(),
+                            params.advanced_env.value(),
+                        )),
+                );
                 render_knob(Knob303::new(
                     &params.resonance,
                     setter,
@@ -145,24 +155,35 @@ pub fn render_voice_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamS
 }
 
 pub fn render_envelope_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
+    let is_accurate = params.topology.value() == CircuitTopology::Accurate;
     // Header and body closures both live while the card is built, so the ADV ENV
     // state is shared through a Cell instead of a `&mut` the header would hold.
     let adv = Cell::new(params.advanced_env.value());
     DevicePanel::new("ENVELOPES", crate::gui::VOICE_ROW_H).show(
         ui,
         |header_ui| {
-            let mut on = adv.get();
-            if header_ui
-                .add(ToggleButton::new(&mut on, "ADV ENV"))
-                .changed()
-            {
-                adv.set(on);
-                setter.begin_set_parameter(&params.advanced_env);
-                setter.set_parameter(&params.advanced_env, on);
-                setter.end_set_parameter(&params.advanced_env);
-            }
+            header_ui.add_enabled_ui(!is_accurate, |ui| {
+                let mut on = adv.get();
+                if ui
+                    .add(ToggleButton::new(&mut on, "ADV ENV"))
+                    .on_hover_text("Lit: the MEG and VEG ADSR banks replace the classic 303 decay.")
+                    .on_disabled_hover_text(ADV_ENV_ACCURATE_HINT)
+                    .changed()
+                {
+                    adv.set(on);
+                    setter.begin_set_parameter(&params.advanced_env);
+                    setter.set_parameter(&params.advanced_env, on);
+                    setter.end_set_parameter(&params.advanced_env);
+                }
+            });
         },
         |body_ui| {
+            let banks_live = adv.get() && !is_accurate;
+            let hint = if is_accurate {
+                ADV_ENV_ACCURATE_HINT
+            } else {
+                ADV_ENV_OFF_HINT
+            };
             let body_h = body_ui.available_height();
             body_ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
@@ -178,7 +199,7 @@ pub fn render_envelope_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                     vec2(bank_w, bank_h),
                     Layout::top_down(Align::Min),
                     |ui| {
-                        ui.add_enabled_ui(adv.get(), |ui| {
+                        ui.add_enabled_ui(banks_live, |ui| {
                             render_adsr_bank(
                                 ui,
                                 "MEG ADSR (Mod Envelope)",
@@ -190,6 +211,7 @@ pub fn render_envelope_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                                 ],
                                 track_h,
                                 setter,
+                                hint,
                             );
                         });
                     },
@@ -203,18 +225,21 @@ pub fn render_envelope_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                     vec2(bank_w, bank_h),
                     Layout::top_down(Align::Min),
                     |ui| {
-                        render_adsr_bank(
-                            ui,
-                            "VEG ADSR (Voice Envelope)",
-                            [
-                                (&params.veg_attack, "A"),
-                                (&params.veg_decay_adj, "D"),
-                                (&params.veg_sustain, "S"),
-                                (&params.veg_release, "R"),
-                            ],
-                            track_h,
-                            setter,
-                        );
+                        ui.add_enabled_ui(banks_live, |ui| {
+                            render_adsr_bank(
+                                ui,
+                                "VEG ADSR (Voice Envelope)",
+                                [
+                                    (&params.veg_attack, "A"),
+                                    (&params.veg_decay_adj, "D"),
+                                    (&params.veg_sustain, "S"),
+                                    (&params.veg_release, "R"),
+                                ],
+                                track_h,
+                                setter,
+                                hint,
+                            );
+                        });
                     },
                 );
             });

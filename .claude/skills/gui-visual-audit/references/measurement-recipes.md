@@ -6,7 +6,7 @@ which readings lie on this GUI. Read before Phase 2.
 All coordinates are **physical** pixels. The offscreen render is 2432 × 1280,
 the 1216 × 640 pt window at 2x. A window capture adds the macOS title bar on
 top (`crop_gui_sections.py` assumes 32 pt); subtract it before you compare a
-y with the contract's landmarks. `zoom75` draws at 1.5 px/pt.
+y with the contract's landmarks.
 
 At startup the tool parses `plugin303/src/gui/theme.rs` (colour tokens and the
 `KNOB_RADIUS_*` tiers) and `GUI_WIDTH` from `gui/mod.rs`, so token names, knob
@@ -22,12 +22,10 @@ run it as `uv run --no-project --with numpy --with pillow python scripts/gui_qa_
 python3 scripts/gui_qa_measure.py report target/gui-qa-offscreen
 ```
 
-About 15 s for the nine states on an idle machine; `colors` takes most of
+About 15 s for the eight states on an idle machine; `colors` takes most of
 it. It prints, in audit order: the capture set, diffs against `latest`, per
 capture the geometry, dead space and colours, knobs in `latest` and `knobs`,
-then the accent table. `zoom75` gets geometry and colours only: its layout
-differs from every other state, so a diff or an accent row against it means
-nothing.
+then the accent table.
 
 Each section below is the focused version of one part of the report.
 
@@ -49,12 +47,12 @@ Prints changed-region clusters as `y … x … n=…`. Expected scopes against
 
 | State | Changes only in |
 |---|---|
-| `accurate` | app bar (TOPOLOGY, QUALITY), SOUPED-UP ENGINE body (banner), ANALOG TWEAKS |
-| `advanced` | ENVELOPES (MEG bank, ADV ENV tile) |
+| `accurate` | app bar (TOPOLOGY, QUALITY), SOUPED-UP ENGINE header switches and body (banner), ANALOG TWEAKS (CALIBRATE hidden, readouts, status), the ADV ENV tile |
+| `advanced` | ENVELOPES (both ADSR banks, ADV ENV tile), and the GLIDE value pill: its readout follows the voice's glide map, which ADV ENV switches (`value_text::glide`) |
 | `knobs` | TUNING and CUTOFF |
 | `quality_low` | the QUALITY bar |
 | `generator` | ACID EUCLIDEAN GENERATOR body, the GENERATION SEED value |
-| `running` | SEQUENCER steps 01-04 (plate, LED, number), the RUN tile |
+| `running` | SEQUENCER step 04 (plate, LED, number), the RUN tile |
 | `running_note` | as `running`, plus every gate and pitch cell |
 
 - **IDENTICAL** means the harness produced two captures of one state. That
@@ -75,9 +73,6 @@ exactly 10 (the app bar and nine devices), every `gap_above=6`, and the
 column seam at x 1614 | 1620; the contract's landmark table names each box.
 Any other count or gap is a layout change. `header_bottom` marks the end of
 the 44 px header strip; `interior` starts 8 px below it.
-
-In `zoom75` the gutter is 3 pt × 1.5 = 4.5 px, so `INCONSISTENT inter-panel
-gaps: [4, 4, 5, …]` there is rounding, not a defect.
 
 ## `deadspace`: where the layout gave up
 
@@ -110,7 +105,7 @@ against the tile fill, not the body.
 Triage every flag before it becomes a finding:
 
 - **`ACCENT_ORANGE <-- below 4.5:1`** with thousands of pixels is a lit fill
-  (segment, tile, GENERATE): a non-text mark with a 3:1 floor. Orange text
+  (selected segment, lit action): a non-text mark with a 3:1 floor. Orange text
   exists only in the CALIBRATE status line. Check text on an orange fill with
   `text --box`.
 - **An antialiasing grey snapped to the wrong token.** At 8.5 pt, the edge
@@ -121,8 +116,13 @@ Triage every flag before it becomes a finding:
   an egui default leaking through. A handful of antialiasing neighbours is
   normal.
 - **`<-- BELOW 3:1`** on real text is a hard defect in any state.
+- **Faded text hidden as a surface.** egui's disabled fade turns a
+  `TEXT_SECONDARY` label on `PANEL_BG` into #6C6C6C (2.9:1). That grey snaps
+  to `GATE_TIE_FILL`, a surface token, so `colors` never lists it. Matching
+  surfaces exactly does not help: glyph antialiasing then floods every card
+  with sub-3:1 greys. Probe every label in a disabled group with `text --box`.
 
-Run it on **every** state. The disabled palettes (`accurate`, and the MEG bank
+Run it on **every** state. The disabled palettes (`accurate`, and the ADSR banks
 in every state without ADV ENV) are where the 3:1 floor gets breached.
 Surfaces, fills and gate colours are hidden unless you pass `--show-surfaces`.
 
@@ -155,7 +155,7 @@ segment among `SURFACE_PRESSED` neighbours.
 python3 scripts/gui_qa_measure.py knobs target/gui-qa-offscreen/knobs.png
 ```
 
-Expect 27 knobs at 100%: 9 LARGE (seven in VOICE, DRIFT and RECAL) and 18
+Expect 27 knobs: 9 LARGE (seven in VOICE, DRIFT and RECAL) and 18
 MEDIUM (nine in SOUPED-UP ENGINE, nine in OUTPUT CLIPPER). Expect 18 in
 `accurate`, where the SOUPED-UP body is a banner. Any other count is a layout
 change or a detector failure; look at the image before you read further.
@@ -190,8 +190,6 @@ Detection notes:
   angle of its pixels seen from the centre. egui snaps lines to the pixel
   grid, and a 1 px sideways shift tilts the from-centre angle by up to 6° on
   a MEDIUM knob.
-- `zoom75`: pass `--scale 1.5`. `--radii` takes outer radii in points and
-  defaults to the theme's tiers.
 
 ## `text --box`: glyph sizes and real text colour
 
@@ -228,7 +226,7 @@ python3 scripts/gui_qa_measure.py strokes target/gui-qa-offscreen/running.png --
 ```
 
 The design has no outlines, so use this on single-colour bars: the playhead
-LED above reads as one 6 px horizontal segment (`LED_H` 3 pt), and a
+LED above reads as one 8 px horizontal segment (`LED_H` 4 pt), and a
 separator is one 2 px `WELL_BG` line. Several thicknesses in one indicator
 mean separate marks are touching. A segment of the same colour in the same
 box on a step that is not playing means the indicator leaks.
@@ -251,7 +249,7 @@ Both capture scripts already run `scripts/crop_gui_sections.py`, which writes
 `<state>_crop_{header,voice,engine,generator,sequencer}.png` per state (the
 `latest` set also without the prefix), `crop_right_margin.png`,
 `crop_bottom_margin.png`, and `crop_state_diff.png` (the engine rows of
-`latest`, `accurate` and `running` stacked). It skips `zoom75`.
+`latest`, `accurate` and `running` stacked).
 
 ---
 

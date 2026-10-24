@@ -6,6 +6,7 @@ pub mod dsp;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod params;
+pub mod value_text;
 use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::{Voice, VoiceClipperParams};
 use params::{Plugin303Params, QaState};
@@ -577,11 +578,7 @@ impl Plugin for Plugin303 {
                         }
                     }
 
-                    self.voice.on_seq_event(
-                        ev,
-                        self.params.accent.value(),
-                        self.params.decay.value() * 3000.0,
-                    );
+                    self.voice.on_seq_event(ev, self.params.accent.value());
                     seq_event_idx += 1;
                 }
             }

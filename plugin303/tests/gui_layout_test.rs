@@ -1,6 +1,8 @@
 #![cfg(feature = "gui")]
 
-use nih_plug::prelude::{GuiContext, PluginApi};
+mod gui_common;
+use gui_common::DummyGuiContext;
+
 use nih_plug_egui::egui::{self, Frame, Margin};
 use plugin303::gui::panels::sequencer_panel::{render_transport_panel, SEQUENCER_H};
 use plugin303::gui::widgets::DevicePanel;
@@ -8,28 +10,6 @@ use plugin303::gui::{render_editor, split_columns, theme, GUI_HEIGHT, GUI_WIDTH,
 use plugin303::params::Plugin303Params;
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
-
-struct DummyGuiContext;
-impl GuiContext for DummyGuiContext {
-    fn plugin_api(&self) -> PluginApi {
-        PluginApi::Standalone
-    }
-    fn request_resize(&self) -> bool {
-        false
-    }
-    unsafe fn raw_begin_set_parameter(&self, _param: nih_plug::prelude::ParamPtr) {}
-    unsafe fn raw_set_parameter_normalized(
-        &self,
-        _param: nih_plug::prelude::ParamPtr,
-        _normalized: f32,
-    ) {
-    }
-    unsafe fn raw_end_set_parameter(&self, _param: nih_plug::prelude::ParamPtr) {}
-    fn get_state(&self) -> nih_plug::prelude::PluginState {
-        unimplemented!("state query not exercised by layout tests")
-    }
-    fn set_state(&self, _state: nih_plug::prelude::PluginState) {}
-}
 
 /// The full editor, rendered through the same `render_editor` the plugin uses,
 /// must fill the window: no horizontal or vertical overflow, and no dead band

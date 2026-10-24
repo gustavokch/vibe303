@@ -280,8 +280,8 @@ pub struct Voice {
 
     // Accent state
     accent_gain: f32,     // 0.0 or accent_knob value (set per-note)
-    normal_decay_ms: f64, // decay knob → 30..3000 ms
-    accent_decay_ms: f64, // accent decay knob -> 30..3000 ms
+    normal_decay_ms: f64, // decay_ms(decay knob), unaccented MIDI and sequencer notes
+    accent_decay_ms: f64, // fixed 200 ms on accented notes
 
     // EnvMod scaling (measured curve from hardware)
     env_scaler: f64,
@@ -397,42 +397,47 @@ pub struct Voice {
     vco_dirty: bool,
 }
 
-impl Voice {
-    fn decay_map(k: f32) -> f32 {
-        const P: [(f32, f32); 13] = [
-            (0.0, 100.0),
-            (0.1, 150.0),
-            (0.2, 200.0),
-            (0.3, 250.0),
-            (0.4, 300.0),
-            (0.5, 400.0),
-            (0.6, 500.0),
-            (0.7, 600.0),
-            (0.8, 700.0),
-            (0.85, 1000.0),
-            (0.9, 1400.0),
-            (0.95, 1750.0),
-            (1.0, 2100.0),
-        ];
-        let mut lo = 0usize;
-        let mut hi = P.len() - 1;
-        while lo + 1 < hi {
-            let mid = (lo + hi) / 2;
-            if P[mid].0 < k {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        let (x0, y0) = P[lo];
-        let (x1, y1) = P[hi];
-        if x1 - x0 < 1e-6 {
-            y0
+/// Decay time in ms for DECAY knob position `k` (0..=1): 100 ms .. 2.1 s, finer
+/// between 200 and 700 ms. Every envelope that follows the DECAY knob uses it:
+/// the classic envelopes (MIDI and sequencer notes alike), the ADV ENV path and
+/// the DECAY text.
+#[inline]
+pub fn decay_ms(k: f32) -> f32 {
+    const P: [(f32, f32); 13] = [
+        (0.0, 100.0),
+        (0.1, 150.0),
+        (0.2, 200.0),
+        (0.3, 250.0),
+        (0.4, 300.0),
+        (0.5, 400.0),
+        (0.6, 500.0),
+        (0.7, 600.0),
+        (0.8, 700.0),
+        (0.85, 1000.0),
+        (0.9, 1400.0),
+        (0.95, 1750.0),
+        (1.0, 2100.0),
+    ];
+    let mut lo = 0usize;
+    let mut hi = P.len() - 1;
+    while lo + 1 < hi {
+        let mid = (lo + hi) / 2;
+        if P[mid].0 < k {
+            lo = mid;
         } else {
-            y0 + (y1 - y0) * (k - x0) / (x1 - x0)
+            hi = mid;
         }
     }
+    let (x0, y0) = P[lo];
+    let (x1, y1) = P[hi];
+    if x1 - x0 < 1e-6 {
+        y0
+    } else {
+        y0 + (y1 - y0) * (k - x0) / (x1 - x0)
+    }
+}
 
+impl Voice {
     pub fn new(sr: f32) -> Self {
         let lat_draft = Os4x::new().latency_samples();
         let lat_low = Os4x::new().latency_samples();
@@ -929,20 +934,20 @@ impl Voice {
             self.veg.set_attack(3.0);
 
             // Decay knob: 100 ms (min) to 2100 ms (max) with finer granularity 200-700 ms
-            let decay_ms = Self::decay_map(decay_knob);
-            self.meg.set_decay(decay_ms);
+            let meg_decay_ms = decay_ms(decay_knob);
+            self.meg.set_decay(meg_decay_ms);
             self.meg.set_sustain(0.0);
             self.meg.set_release(200.0);
 
             // VCA Decay uses same scaled knob mapping
-            let vca_decay_ms = Self::decay_map(decay_knob);
+            let vca_decay_ms = decay_ms(decay_knob);
             self.veg.set_decay(vca_decay_ms);
             self.veg.set_sustain(0.0);
             self.veg.set_release(200.0);
 
             // --- Classic RC-based settings (both topologies) ---
-            // MEG decay from knob: same scaled mapping (replaces 30..3000 linear)
-            self.normal_decay_ms = Self::decay_map(decay_knob) as f64;
+            // Filter-envelope decay of unaccented notes, MIDI and sequencer alike
+            self.normal_decay_ms = decay_ms(decay_knob) as f64;
             // On hardware TB-303, the 4066 switch shorts the DECAY pot on accented notes,
             // locking MEG decay to a fixed ~200 ms regardless of the panel Decay or Accent knob settings.
             self.accent_decay_ms = 200.0;
@@ -956,7 +961,7 @@ impl Voice {
             self.rc1.set_time_constant(3.0); // normal attack
 
             // envMod scaling using measured hardware curve
-            let cutoff_hz = lin_to_exp(cutoff as f64, 314.0, 2394.0);
+            let cutoff_hz = classic_base_cutoff_hz(cutoff as f64);
             self.calculate_env_mod_scaler(cutoff_hz, env_mod as f64);
         }
 
@@ -1251,7 +1256,7 @@ impl Voice {
         }
     }
 
-    pub fn on_seq_event(&mut self, ev: SeqEvent, accent_amount: f32, decay_knob_ms: f32) {
+    pub fn on_seq_event(&mut self, ev: SeqEvent, accent_amount: f32) {
         match ev {
             SeqEvent::Trigger {
                 key,
@@ -1282,11 +1287,7 @@ impl Voice {
                     self.accent_acc += (1.0 - self.accent_acc) * 0.8;
                 } else {
                     self.accent_gain = 0.0;
-                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 {
-                        decay_knob_ms as f64
-                    } else {
-                        self.normal_decay_ms
-                    });
+                    self.meg_decay.set_decay(self.normal_decay_ms);
                     self.vca_env.set_release(0.5);
                 }
 
@@ -1321,11 +1322,7 @@ impl Voice {
                     self.accent_acc += (1.0 - self.accent_acc) * 0.8;
                 } else {
                     self.accent_gain = 0.0;
-                    self.meg_decay.set_decay(if decay_knob_ms > 0.0 {
-                        decay_knob_ms as f64
-                    } else {
-                        self.normal_decay_ms
-                    });
+                    self.meg_decay.set_decay(self.normal_decay_ms);
                     self.vca_env.set_release(0.5);
                 }
             }
@@ -1490,7 +1487,7 @@ impl Voice {
 
         // Pitch glide slew
         if self.advanced_env {
-            let glide_time_ms = 10.0 + self.glide_knob * 400.0;
+            let glide_time_ms = adv_glide_ms(self.glide_knob);
             self.pitch_slew.set_time_constant(glide_time_ms as f64);
             self.current_pitch_st = self.pitch_slew.tick(self.target_pitch_st as f64) as f32;
         } else {
@@ -1572,7 +1569,7 @@ impl Voice {
 
         let final_cutoff_hz = if self.advanced_env {
             // Modulate filter decay using same scaled knob mapping
-            let decay_normal_ms = Self::decay_map(self.decay_knob);
+            let decay_normal_ms = decay_ms(self.decay_knob);
             let effective_decay_ms = decay_normal_ms
                 + (self.accent_knob_val * self.accent_acc).min(1.0) * (200.0 - decay_normal_ms);
             self.meg.set_decay(effective_decay_ms);
@@ -1580,9 +1577,9 @@ impl Voice {
             // MEG envelope
             let meg_val = self.meg.tick(self.gate);
 
-            // VCF Cutoff Base in Hz
-            let base_cutoff_hz = 200.0 * 20.0f32.powf(self.cutoff_knob); // 200 Hz to 4000 Hz
-                                                                         // Modulated Cutoff
+            // VCF Cutoff Base in Hz, 200 Hz to 4000 Hz
+            let base_cutoff_hz = adv_base_cutoff_hz(self.cutoff_knob);
+            // Modulated Cutoff
             let mod_cutoff_hz = base_cutoff_hz
                 + meg_val * self.env_mod * 4000.0
                 + self.accent_knob_val * self.accent_acc * 3000.0;
@@ -1602,7 +1599,7 @@ impl Voice {
             let sweep_out = self.sweep_c13.tick(sweep_drive, self.reso_knob as f64);
 
             // Base cutoff in Hz (314..2394 range)
-            let base_cutoff_hz = lin_to_exp(self.cutoff_knob as f64, 314.0, 2394.0);
+            let base_cutoff_hz = classic_base_cutoff_hz(self.cutoff_knob as f64);
 
             // Modulated Cutoff in Hz (exponential/octave domain)
             let env_mod_term = self.env_scaler * (rc1_out - self.env_offset);
@@ -1815,8 +1812,9 @@ impl Voice {
     }
 }
 
+/// Classic slide time constant in ms: 2·55^(k^1.5) in FUN, the hardware 22 ms in ACCURATE.
 #[inline]
-fn calculate_classic_slide_tau_ms(topology: CircuitTopology, glide_knob: f32) -> f64 {
+pub fn calculate_classic_slide_tau_ms(topology: CircuitTopology, glide_knob: f32) -> f64 {
     if topology == CircuitTopology::Fun {
         let k = (glide_knob as f64).clamp(0.0, 1.0);
         2.0 * 55.0f64.powf(k.powf(1.5))
@@ -1828,6 +1826,24 @@ fn calculate_classic_slide_tau_ms(topology: CircuitTopology, glide_knob: f32) ->
 #[inline]
 fn lin_to_exp(x: f64, min: f64, max: f64) -> f64 {
     min * (max / min).powf(x)
+}
+
+/// Base VCF cutoff of CUTOFF position `k` with ADV ENV: 200 Hz .. 4 kHz.
+#[inline]
+pub fn adv_base_cutoff_hz(k: f32) -> f32 {
+    200.0 * 20.0f32.powf(k)
+}
+
+/// Base VCF cutoff of CUTOFF position `k` in classic mode: 314 Hz .. 2394 Hz.
+#[inline]
+pub fn classic_base_cutoff_hz(k: f64) -> f64 {
+    lin_to_exp(k, 314.0, 2394.0)
+}
+
+/// Pitch-glide time constant in ms of GLIDE position `k` with ADV ENV.
+#[inline]
+pub fn adv_glide_ms(k: f32) -> f32 {
+    10.0 + k * 400.0
 }
 
 #[inline]

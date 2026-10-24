@@ -147,28 +147,30 @@ pub fn apply(ctx: &egui::Context) {
     });
 }
 
+/// WCAG relative luminance of an sRGB colour.
+pub fn rel_luminance(c: Color32) -> f64 {
+    let to_linear = |v: u8| {
+        let s = v as f64 / 255.0;
+        if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * to_linear(c.r()) + 0.7152 * to_linear(c.g()) + 0.0722 * to_linear(c.b())
+}
+
+/// WCAG contrast ratio of two colours, in either order.
+pub fn contrast_ratio(c1: Color32, c2: Color32) -> f64 {
+    let l1 = rel_luminance(c1);
+    let l2 = rel_luminance(c2);
+    let (hi, lo) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn rel_luminance(c: Color32) -> f64 {
-        let to_linear = |v: u8| {
-            let s = v as f64 / 255.0;
-            if s <= 0.04045 {
-                s / 12.92
-            } else {
-                ((s + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * to_linear(c.r()) + 0.7152 * to_linear(c.g()) + 0.0722 * to_linear(c.b())
-    }
-
-    fn contrast_ratio(c1: Color32, c2: Color32) -> f64 {
-        let l1 = rel_luminance(c1);
-        let l2 = rel_luminance(c2);
-        let (hi, lo) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
-        (hi + 0.05) / (lo + 0.05)
-    }
 
     /// Every text token must clear WCAG AA (4.5:1) on every plane it is
     /// documented as safe for. Small caps labels at 8.5 pt need the full ratio.

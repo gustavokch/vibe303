@@ -24,7 +24,7 @@ Depth comes from five neutral planes and nothing else, darkest to lightest:
 | `CHASSIS_BG` | the window, the 6 px gutters between devices |
 | `WELL_BG` | inset values: DragValue and ComboBox wells, fader tracks, knob value pills, pitch cells, REST gates, the step LED at rest, separators |
 | `PANEL_BG` | the device body |
-| `PANEL_HEADER_BG` | the device header strip, the app bar, the current-step plate |
+| `PANEL_HEADER_BG` | the device header strip, the app bar, the current-step plate while the sequencer runs |
 | `SURFACE_ELEVATED` | a raised control at rest: buttons, tiles, unselected segments, the knob body |
 
 Hover lifts a raised control to `SURFACE_HOVER`; press drops it to
@@ -48,13 +48,13 @@ Hover lifts a raised control to `SURFACE_HOVER`; press drops it to
 
 | Colour | Role, and only this role |
 |---|---|
-| `ACCENT_ORANGE` | live state: value arcs, fader fills, a lit toggle, the selected segment, lit actions (GENERATE, ENABLE FUN MODE, CALIBRATE when a rebuild is due), a lit ACC step, the playhead LED. As text only in the CALIBRATE status line when a rebuild is due (`tweaks_panel.rs`) |
-| `ACCENT_ORANGE_HOVER` | a hovered lit tile |
+| `ACCENT_ORANGE` | live state: value arcs, fader fills, a toggle's LED when on, the selected segment, lit actions (ENABLE FUN MODE, CALIBRATE when a rebuild is due), a lit ACC step, the playhead LED. As text only in the CALIBRATE status line when a rebuild is due (`tweaks_panel.rs`) |
+| `ACCENT_ORANGE_HOVER` | a hovered lit tile or toggle LED |
 | `ACCENT_BLUE` | a lit SLD step. Nothing else |
 | `GATE_NOTE_FILL` > `GATE_TIE_FILL` > `WELL_BG` | NOTE > TIE > REST gate brightness, neutral on purpose so orange and blue stay free |
 | `TEXT_ON_ACCENT` | text on every light fill: orange, blue, NOTE |
-| `TEXT_PRIMARY` | values, readouts, the knob pointer, the playing step number |
-| `TEXT_SECONDARY` | captions, labels, the text on an unlit tile |
+| `TEXT_PRIMARY` | values, readouts, the knob pointer, the playing step number, the label of an on or hovered toggle |
+| `TEXT_SECONDARY` | captions, labels, the text on an unlit tile, an off toggle's label at rest |
 | `TEXT_MUTED` | disabled text and marks, REST text |
 
 A third hue, orange that means something other than "live", or blue anywhere
@@ -81,6 +81,8 @@ Light fills: `TEXT_ON_ACCENT` on orange 6.00, on blue 7.27, on NOTE 7.75;
 - Below 3:1 is a hard defect in every state. The usual cause is a plain
   egui widget (Label, DragValue, ComboBox) inside `add_enabled_ui(false)`:
   egui's fade dims it on top of its token.
+  `plugin303/tests/gui_text_contrast.rs` fails on any text outside the text
+  tokens.
 - `TEXT_MUTED` on `SURFACE_ELEVATED` or `SURFACE_HOVER` as enabled text is
   drift. `theme.rs` names `CHASSIS_BG`, `WELL_BG` and `PANEL_BG` as its safe
   planes.
@@ -92,17 +94,32 @@ The custom widgets clear the fade (`set_fade_to_color(None)`) and paint:
 
 | Widget | Disabled paint |
 |---|---|
-| Segment, toggle: selected / on | `SURFACE_HOVER` fill, `TEXT_SECONDARY` text. Keeps its position, never orange |
-| Segment, toggle: unselected / off | `SURFACE_PRESSED` fill, `TEXT_MUTED` text |
+| Segment: selected / on | `SURFACE_HOVER` fill, `TEXT_SECONDARY` text. Keeps its position, never orange |
+| Segment: unselected / off | `SURFACE_PRESSED` fill, `TEXT_MUTED` text |
+| Toggle: on | `SURFACE_PRESSED` tile, `TEXT_MUTED` LED and text |
+| Toggle: off | `SURFACE_PRESSED` tile, `WELL_BG` LED, `TEXT_MUTED` text |
 | Knob | arc, pointer and label `TEXT_MUTED`; the value stays `TEXT_PRIMARY` |
 | Fader | fill `TEXT_MUTED`, value `TEXT_SECONDARY` |
 | DevicePanel `.dimmed(true)` | title `TEXT_SECONDARY` |
+| Readout (`widgets/readout.rs`) | always `WELL_BG` well, `TEXT_SECONDARY` 9 pt monospace; a disabled group's labels turn `TEXT_MUTED` |
 
-Disabled groups (`add_enabled_ui(false, …)`): QUALITY in ACCURATE, the MEG
-ADSR bank without ADV ENV, the OUTPUT CLIPPER body and header switches when
-it is off, the ANALOG TWEAKS header and body in ACCURATE, and the read-only
-SEED field in GENERATION. In ACCURATE the SOUPED-UP ENGINE body is replaced
-by a banner that says why, with an ENABLE FUN MODE action.
+Inside a disabled group, a built-in egui widget (Label, DragValue,
+ComboBox, Button) is drift: egui fades it. Values become `Readout`s;
+labels are painted with the fade cleared; an action the mode cannot use is
+hidden.
+
+A disabled control says why on hover with `on_disabled_hover_text`;
+`on_hover_text` never shows on a disabled widget.
+`plugin303/tests/gui_tooltips.rs` checks QUALITY and ANALOG TWEAKS in
+ACCURATE, both ADSR banks, and the OUTPUT CLIPPER while it is off.
+
+Disabled groups (`add_enabled_ui(false, …)`): QUALITY in ACCURATE, both ADSR
+banks (MEG and VEG) unless ADV ENV is on in FUN, the ADV ENV tile in
+ACCURATE, the OUTPUT CLIPPER body and header switches when it is off, and
+the ANALOG TWEAKS body in ACCURATE: its fields become Readouts, its status
+reads FUN MODE ONLY, and its header hides CALIBRATE. GENERATION SEED is a
+Readout in every mode. In ACCURATE the SOUPED-UP ENGINE body is replaced by
+a banner that says why, with an ENABLE FUN MODE action.
 
 - Orange on a disabled control is a defect: orange claims "live".
 - A disabled selection must still show which option is selected.
@@ -114,13 +131,14 @@ by a banner that says why, with an ENABLE FUN MODE action.
 |---|---|---|
 | Device card | `widgets/panel.rs` `DevicePanel` | `PANEL_BG` body under a 22 pt `PANEL_HEADER_BG` strip. Title 9 pt proportional on the left; that device's own mode switches sit right-aligned in the strip (the first one added sits flush right). Body inset 8 pt x, 4 pt y |
 | Segmented control | `widgets/switch.rs` `SlideSwitch`, `BoolSwitch` | one flat bar of 18 pt segments split by 1 pt panel-colour hairlines; only the outer ends are rounded. Selected = orange fill + `TEXT_ON_ACCENT`. Caption 8.5 pt, left of the bar in header strips, above it in knob columns. WAVE is the vertical variant |
-| Boolean | `widgets/toggle.rs` `ToggleButton` | every on/off (ADV ENV, LINK, ON, SLD CHAIN, JITTER) is a tile: orange when on, `SURFACE_ELEVATED` when off; 18 pt tall (28 pt in TRANSPORT). An egui checkbox is drift |
-| Knob | `widgets/knob.rs` `Knob303` | two tiers only: LARGE r 21 pt (VOICE, DRIFT, RECAL), MEDIUM r 12 pt (SOUPED-UP ENGINE, OUTPUT CLIPPER). `KNOB_TRACK` ring over the whole -135°..+135° sweep; orange arc from the minimum, or from 0 when the range's plain minimum is below 0 (TUNING, VOLUME, PITCH1/2, IN, OUT, TILT); `KNOB_BODY` disc at 0.68 r; `TEXT_PRIMARY` pointer; label 8.5 pt caps; value 8 pt monospace in an 11 pt `WELL_BG` pill, 52 / 38 pt wide by tier |
+| Boolean | `widgets/toggle.rs` `ToggleButton` | every on/off (RUN, SYNC, MIDI, SYNTH, JITTER, ADV ENV, LINK, ON, SLD CHAIN) is a raised tile with a 3 × 10 pt LED left of a state-free label: `WELL_BG` slot off, orange on (`ACCENT_ORANGE_HOVER` on hover). The tile never fills orange. 18 pt tall (28 pt in TRANSPORT). An egui checkbox is drift; a label that spells its state (`MIDI: OFF`) is drift |
+| Knob | `widgets/knob.rs` `Knob303` | two tiers only: LARGE r 21 pt (VOICE, DRIFT, RECAL), MEDIUM r 12 pt (SOUPED-UP ENGINE, OUTPUT CLIPPER). `KNOB_TRACK` ring over the whole -135°..+135° sweep; orange arc from the minimum, or from 0 when the range's plain minimum is below 0 (TUNING, VOLUME, PITCH1/2, IN, OUT, TILT); `KNOB_BODY` disc at 0.68 r; `TEXT_PRIMARY` pointer; label 8.5 pt caps; value 8 pt monospace in an 11 pt `WELL_BG` pill, 52 / 38 pt wide by tier. The value text is the parameter's own text (`value_to_string`, the string the host shows). A knob whose meaning depends on another parameter passes `value_text()` computed from the voice's mapping (`value_text::cutoff`, `value_text::glide`) |
 | Fader | `widgets/fader.rs` `MiniFader` | 12 pt `WELL_BG` track filled from the bottom in the accent; no thumb; label 8.5 pt above, value 7.5 pt monospace below |
-| Value field | `theme::field_style` | DragValue: 9 pt monospace in a well. ComboBox: a well with a ▼; the TRANSPORT combos keep ▼ even when the popup opens upward |
-| Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt label. A lit action is an orange fill with `TEXT_ON_ACCENT` |
-| Step column | `widgets/step_button.rs` | top down: 3 pt LED bar, 12 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted |
-| Playhead | `step_button.rs` | the current step's column gets a `PANEL_HEADER_BG` plate; while the sequencer runs, its LED turns orange and its number `TEXT_PRIMARY`. No frame, no outline |
+| Value field | `theme::field_style` | DragValue: 9 pt monospace in a well. ComboBox: a well with a ▼; the TRANSPORT combos keep ▼ even when the popup opens upward. A value that cannot be edited is a `Readout`. The ANALOG TWEAKS fields share one width, `FIELD_W` = 80 pt |
+| Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt label. A lit action is an orange fill with `TEXT_ON_ACCENT`, and only as the call to action of a state: ENABLE FUN MODE while ACCURATE bypasses the engine, CALIBRATE when a rebuild is due. Any other action is never lit; GENERATE is raised. A destructive action takes two clicks: CLEAR relabels to CONFIRM CLEAR on `SURFACE_HOVER` for 3 s; a second click within that window acts |
+| Step column | `widgets/step_button.rs` | top down: 4 pt LED bar, 11 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted |
+| Playhead | `step_button.rs` | while the sequencer runs, the playing step's column gets a `PANEL_HEADER_BG` plate, its 4 pt LED turns orange and its number `TEXT_PRIMARY`. Stopped: no step is marked. No frame, no outline |
+| Tooltip | every control | Every control in SOUPED-UP ENGINE (in ACCURATE, the ENABLE FUN MODE action), OUTPUT CLIPPER and ANALOG TWEAKS, and every abbreviated generator field, has a hover tooltip (`plugin303/tests/gui_tooltips.rs`). A disabled control uses on_disabled_hover_text to say why |
 
 ## Type
 
@@ -128,7 +146,7 @@ Words are proportional; every numeric readout is monospace.
 
 | Use | Size | Face |
 |---|---|---|
-| App bar identity (BASS SYNTH, MONO) | 9.5 pt | proportional |
+| App bar identity (BASS SYNTH, MONO), ACCURATE banner title | 9.5 pt | proportional |
 | Device title | 9 pt | proportional |
 | Captions, labels, tile and button text | 8.5 pt | proportional |
 | TRANSPORT field labels (CH:, BPM:, LEN:) | 8 pt | proportional |
@@ -148,7 +166,7 @@ egui's 14 pt default (about 20 px) never got the theme font.
 - Window margin 4 pt. One gutter, 3 pt, horizontal and vertical. Every gap
   is an explicit `PANEL_GAP`; `item_spacing.y` is zeroed.
 - App bar 24 pt: identity on the left, engine-wide modes on the right
-  (TOPOLOGY, QUALITY, ZOOM); the empty middle is by design.
+  (TOPOLOGY, QUALITY); the empty middle is by design.
 - Below the app bar, four rows split at one seam: left
   `round((1208 - 3) × 2/3)` = 803 pt, right 402 pt. Device edges line up down
   the whole window.

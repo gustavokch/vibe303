@@ -1,18 +1,17 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Align2, Button, ComboBox, DragValue, FontId, Sense, Separator, Ui,
+    pos2, vec2, Align2, Button, ComboBox, DragValue, FontId, Response, Sense, Separator, Ui,
 };
 
 use crate::dsp::generator::{AcidGenerator, GeneratorParams, MusicalScale};
 use crate::gui::theme;
-use crate::gui::widgets::{DevicePanel, ToggleButton};
+use crate::gui::widgets::{DevicePanel, Readout, ToggleButton};
 use crate::params::{Plugin303Params, SequencerStep, StepGate};
 
 /// Device height for both generator cards in the generator row.
 pub const GENERATOR_H: f32 = 102.0;
 
 const G_FIELD_W: f32 = 34.0;
-const G_OCT_FIELD_W: f32 = 44.0;
 const G_ROW_H: f32 = 18.0;
 
 /// Fixed-width label cell, vertically centered with the field row.
@@ -28,8 +27,8 @@ fn field_label(ui: &mut Ui, text: &str, w: f32) {
 }
 
 /// Numeric field cell with configurable width.
-fn field_drag<'a>(ui: &mut Ui, drag: DragValue<'a>, w: f32) {
-    ui.add_sized(vec2(w, G_ROW_H), drag);
+fn field_drag<'a>(ui: &mut Ui, drag: DragValue<'a>, w: f32) -> Response {
+    ui.add_sized(vec2(w, G_ROW_H), drag)
 }
 
 /// Group sub-heading: 8.5 pt TEXT_SECONDARY caps without numeral prefixes.
@@ -154,7 +153,8 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(1..=16)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
                                 G_FIELD_W,
-                            );
+                            )
+                            .on_hover_text("Euclidean pulses: notes spread evenly over STEPS");
 
                             field_label(ui, "STEPS (n):", G1_LBL_W);
                             field_drag(
@@ -163,7 +163,8 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(1..=16)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
                                 G_FIELD_W,
-                            );
+                            )
+                            .on_hover_text("Euclidean pattern length in steps");
                         });
 
                         ui.horizontal(|ui| {
@@ -183,6 +184,10 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(1..=16)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
                                 G_FIELD_W,
+                            )
+                            .on_hover_text(
+                                "Pitch sequence length. When it differs from STEPS, pitches and \
+                                 rhythm repeat at different lengths.",
                             );
                         });
                     });
@@ -210,24 +215,28 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
 
                         ui.horizontal(|ui| {
                             field_label(ui, "OCT RANGE:", G2_LBL_W);
+                            // Words are proportional captions; the wells hold
+                            // numbers only (contract, Type; round-20 #12).
+                            field_label(ui, "MIN", 20.0);
                             let oct_max = gen_params.octave_max;
                             field_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_min)
                                     .range(-2..=oct_max)
-                                    .prefix("MIN ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
-                                G_OCT_FIELD_W,
-                            );
+                                G_FIELD_W,
+                            )
+                            .on_hover_text("Lowest octave a generated note may use.");
+                            field_label(ui, "MAX", 22.0);
                             let oct_min = gen_params.octave_min;
                             field_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_max)
                                     .range(oct_min..=2)
-                                    .prefix("MAX ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
-                                G_OCT_FIELD_W,
-                            );
+                                G_FIELD_W,
+                            )
+                            .on_hover_text("Highest octave a generated note may use.");
                         });
 
                         ui.horizontal(|ui| {
@@ -239,6 +248,9 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(0.0..=1.0)
                                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                                 G_FIELD_W,
+                            )
+                            .on_hover_text(
+                                "Chance that a note steps one octave up from the previous note.",
                             );
                         });
 
@@ -251,6 +263,9 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(0.0..=1.0)
                                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                                 G_FIELD_W,
+                            )
+                            .on_hover_text(
+                                "Chance that a note steps one octave down from the previous note.",
                             );
                         });
                     });
@@ -310,13 +325,19 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(0.0..=1.0)
                                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                                 G_FIELD_W,
+                            )
+                            .on_hover_text(
+                                "Chance that an accented note moves to the upper half of the scale",
                             );
                         });
 
                         ui.add(ToggleButton::new(
                             &mut gen_params.slide_chaining,
                             "SLD CHAIN",
-                        ));
+                        ))
+                        .on_hover_text(
+                            "Lit: slides may follow slides. Unlit: never two slides in a row.",
+                        );
                     });
                 });
             });
@@ -353,27 +374,20 @@ pub fn render_generation_panel(
                     ui.add_space(16.0);
 
                     field_label(ui, "SEED:", 36.0);
-                    let mut seed_val = (gen_params.seed % 10000) as i32;
-                    ui.add_enabled_ui(false, |ui| {
-                        field_drag(
-                            ui,
-                            DragValue::new(&mut seed_val)
-                                .custom_formatter(|v, _| format!("{:04}", v as i32)),
-                            G_FIELD_W,
-                        );
-                    });
+                    let seed_text = format!("{:04}", gen_params.seed % 10000);
+                    ui.add(Readout::new(&seed_text, G_FIELD_W, G_ROW_H));
                 });
             });
 
             ui.add_space(5.0);
 
-            // Row 2: GENERATE Button (primary action: Bitwig orange fill, TEXT_ON_ACCENT, 22 px)
+            // Row 2: GENERATE, a raised action like MUTATE. Orange is for live
+            // state, and nothing is live about an action at rest (round-20 #4).
             let gen_btn = Button::new(
                 nih_plug_egui::egui::RichText::new("GENERATE")
                     .font(FontId::proportional(8.5))
-                    .color(theme::TEXT_ON_ACCENT),
+                    .color(theme::TEXT_PRIMARY),
             )
-            .fill(theme::ACCENT_ORANGE)
             .min_size(vec2(ui.available_width(), 22.0));
 
             if ui.add(gen_btn).clicked() {

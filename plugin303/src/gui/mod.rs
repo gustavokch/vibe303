@@ -118,11 +118,6 @@ pub fn render_editor(
     });
 }
 
-/// Zoom factor of the `VIBE303_QA_STATE=zoom75` capture.
-pub fn qa_zoom_factor(state: Option<&str>) -> Option<f32> {
-    (state.and_then(QaState::parse) == Some(QaState::Zoom75)).then_some(0.75)
-}
-
 /// Generator preset of a `VIBE303_QA_STATE` capture: every `generator` field
 /// moved off its default. Any other state gets `GeneratorParams::default()`.
 /// `create_editor` and the offscreen renderer (`tools/gui_render`) both read
@@ -164,21 +159,17 @@ pub fn create_editor(
     let gen_params_state = Arc::new(std::sync::Mutex::new(qa_generator_params(
         qa_state.as_deref(),
     )));
-    // Read once at editor creation: the closure below runs every frame, and a
-    // per-frame `env::var` is a syscall + alloc at repaint rate.
-    let qa_zoom = qa_zoom_factor(qa_state.as_deref());
 
     create_egui_editor(
         editor_state,
         (),
         move |egui_ctx, _| {
-            if let Some(zoom) = qa_zoom {
-                egui_ctx.set_zoom_factor(zoom);
-            }
             egui_ctx.send_viewport_cmd(nih_plug_egui::egui::ViewportCommand::Title(
                 "TECHNEO 303".into(),
             ));
             theme::apply(egui_ctx);
+            // The window cannot follow egui's zoom, so Cmd/Ctrl +/- would leave a dead band.
+            egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         },
         move |egui_ctx, setter, _state| {
             CentralPanel::default()

@@ -12,6 +12,8 @@ pub struct Knob303<'a, P: Param> {
     label: &'a str,
     radius: f32,
     accent_color: Option<nih_plug_egui::egui::Color32>,
+    value_text: Option<String>,
+    tooltip: Option<&'a str>,
 }
 
 impl<'a, P: Param> Knob303<'a, P> {
@@ -22,6 +24,8 @@ impl<'a, P: Param> Knob303<'a, P> {
             label,
             radius,
             accent_color: None,
+            value_text: None,
+            tooltip: None,
         }
     }
 
@@ -33,6 +37,20 @@ impl<'a, P: Param> Knob303<'a, P> {
 
     pub fn with_accent(mut self, color: nih_plug_egui::egui::Color32) -> Self {
         self.accent_color = Some(color);
+        self
+    }
+
+    /// Readout text when the parameter's own text cannot know it: a value whose
+    /// meaning depends on another parameter (CUTOFF and GLIDE follow ADV ENV).
+    pub fn value_text(mut self, text: String) -> Self {
+        self.value_text = Some(text);
+        self
+    }
+
+    /// Hover text: what the knob does. Device banks use short labels (MIX2,
+    /// R-COMP, DYN), so their knobs carry one (round-20 #11).
+    pub fn tooltip(mut self, text: &'a str) -> Self {
+        self.tooltip = Some(text);
         self
     }
 }
@@ -143,10 +161,6 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             };
             painter.circle_filled(center, body_r, body_fill);
 
-            // Display string parsed once here and reused by the value badge
-            // below.
-            let raw_str = self.param.to_string();
-            let plain_value = parse_plain_value(&raw_str);
             let current_angle = compute_needle_angle(normalized, start_angle, end_angle);
             let pointer_color = if is_enabled {
                 theme::TEXT_PRIMARY
@@ -189,67 +203,12 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
                 label_color,
             );
 
-            // 5. Monospace Value Badge
+            // 5. Monospace value badge: the parameter's own text, the same
+            // string the host shows.
             let value_y = label_y + 11.0;
-            let value_str = if let Some(f) = plain_value {
-                if self.label.contains("CUTOFF") {
-                    let hz = 300.0 * (15000.0 / 300.0_f32).powf(f.clamp(0.0, 1.0));
-                    if hz >= 1000.0 {
-                        format!("{:.1} kHz", hz / 1000.0)
-                    } else {
-                        format!("{:.0} Hz", hz)
-                    }
-                } else if self.label.contains("VOLUME") {
-                    format_zero_centered(f, |v| format!("{:+.1}", v), "dB")
-                } else if self.label.contains("DRIFT") || self.label.contains("RECAL") {
-                    let pct = if f <= 1.0 { f * 100.0 } else { f };
-                    format!("{:.0}%", pct)
-                } else if self.label.contains("TONE")
-                    || self.label.contains("THRESH")
-                    || self.label.contains("BASS")
-                    || self.label.contains("RESONANCE")
-                    || self.label.contains("ENV MOD")
-                    || self.label.contains("ACCENT")
-                    || self.label.contains("MIX")
-                    || self.label.contains("DRIVE")
-                    || self.label.contains("RESO")
-                    || self.label.contains("PW")
-                    || self.label.contains("SUB")
-                    || self.label.contains("SWEEP")
-                    || self.label.contains("VOL")
-                    || self.label.contains("AGE")
-                    || self.label.contains("DYN")
-                    || self.label.contains("R-COMP")
-                {
-                    // Parameters with .with_value_to_string using "%" format (e.g. Clipper Drive) pass f as raw percentage value (e.g. 50.0), so avoid double multiply.
-                    if f > 2.0 {
-                        format!("{:.0}%", f)
-                    } else {
-                        format!("{:.0}%", f * 100.0)
-                    }
-                } else if self.label.contains("DECAY") {
-                    format_decay_label(f)
-                } else if self.label.contains("GLIDE") {
-                    let ms = f.clamp(0.0, 1.0) * 500.0;
-                    format!("{:.0} ms", ms)
-                } else if self.label.contains("TUNING") {
-                    format_zero_centered(f, |v| format!("{:+.1}", v), "ct")
-                } else if self.label.contains("PITCH") || self.label.contains("DET") {
-                    format_zero_centered(f, |v| format!("{:+.1}", v), "st")
-                } else if self.label.contains("IN")
-                    || self.label.contains("OUT")
-                    || self.label.contains("TILT")
-                {
-                    format_zero_centered(f, |v| format!("{:+.1}", v), "dB")
-                } else if self.label.contains("TEMPO") {
-                    format!("{:.0} BPM", f)
-                } else if f.abs() >= 1.0 {
-                    format!("{:.0}", f)
-                } else {
-                    format!("{:.2}", f)
-                }
-            } else {
-                raw_str
+            let value_str = match &self.value_text {
+                Some(text) => text.clone(),
+                None => self.param.to_string(),
             };
 
             let pill_width = if self.radius >= theme::KNOB_RADIUS_LARGE - 0.5 {
@@ -271,7 +230,10 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             );
         }
 
-        response
+        match self.tooltip {
+            Some(text) => response.on_hover_text(text),
+            None => response,
+        }
     }
 }
 
@@ -279,88 +241,6 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
 /// by linearly interpolating between `start_angle` and `end_angle`.
 pub fn compute_needle_angle(normalized: f32, start_angle: f32, end_angle: f32) -> f32 {
     start_angle + normalized * (end_angle - start_angle)
-}
-
-/// Extract the plain numeric value from a param display string by parsing
-/// its first whitespace-separated token. Returns `None` when the token is
-/// not numeric (e.g. `"OFF"`, or a unit fused to the number like `"50%"`).
-pub fn parse_plain_value(display: &str) -> Option<f32> {
-    display.split_whitespace().next()?.parse::<f32>().ok()
-}
-
-/// Format a bipolar-center value: at |f| < 0.05 print `+0.0 {unit}`;
-/// otherwise apply `non_zero(f)` and append `unit`. Single source of truth
-/// for the three zero-center branches (TUNING / PITCH / dB), so the next
-/// audit only has to change one place.
-pub fn format_zero_centered<F: FnOnce(f32) -> String>(f: f32, non_zero: F, unit: &str) -> String {
-    if f.abs() < 0.05 {
-        format!("+0.0 {}", unit)
-    } else {
-        format!("{} {}", non_zero(f), unit)
-    }
-}
-
-/// DECAY badge label from normalized parameter value (0.0 = 200 ms, 1.0 = 2 s).
-///
-/// Threshold sits at 999.5 ms, not 1000.0: `{:.0}` rounds 999.6 up to "1000 ms",
-/// so a value below one second must switch to seconds at the rounding boundary.
-pub fn format_decay_label(normalized: f32) -> String {
-    let ms = 200.0 + normalized.clamp(0.0, 1.0) * 1800.0;
-    if ms >= 999.5 {
-        format!("{:.1} s", ms / 1000.0)
-    } else {
-        format!("{:.0} ms", ms)
-    }
-}
-
-#[cfg(test)]
-mod parse_tests {
-    use super::parse_plain_value;
-
-    #[test]
-    fn parses_leading_numeric_token() {
-        assert_eq!(parse_plain_value("+0.0 dB"), Some(0.0));
-        assert_eq!(parse_plain_value("-3.5 dB"), Some(-3.5));
-        assert_eq!(parse_plain_value("50 %"), Some(50.0));
-        assert_eq!(parse_plain_value("0.75"), Some(0.75));
-    }
-
-    #[test]
-    fn rejects_non_numeric() {
-        assert_eq!(parse_plain_value("OFF"), None);
-        assert_eq!(parse_plain_value(""), None);
-        // No whitespace separator — trailing unit stays attached, parse fails.
-        assert_eq!(parse_plain_value("50%"), None);
-    }
-}
-
-#[cfg(test)]
-mod decay_tests {
-    use super::format_decay_label;
-
-    #[test]
-    fn decay_boundary_no_false_1000ms() {
-        // 999.6 ms is below 1 s but would round to "1000 ms" under a 1000.0 threshold
-        assert_eq!(format_decay_label((999.6 - 200.0) / 1800.0), "1.0 s");
-        assert_eq!(format_decay_label((999.4 - 200.0) / 1800.0), "999 ms");
-    }
-
-    #[test]
-    fn decay_range_endpoints() {
-        assert_eq!(format_decay_label(0.0), "200 ms");
-        assert_eq!(format_decay_label(1.0), "2.0 s");
-    }
-
-    #[test]
-    fn decay_mid_range_ms() {
-        assert_eq!(format_decay_label((800.0 - 200.0) / 1800.0), "800 ms");
-    }
-
-    #[test]
-    fn decay_clamps_out_of_range_input() {
-        assert_eq!(format_decay_label(-0.5), "200 ms");
-        assert_eq!(format_decay_label(1.5), "2.0 s");
-    }
 }
 
 #[cfg(test)]

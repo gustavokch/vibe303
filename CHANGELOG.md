@@ -50,6 +50,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   57). The maps are evaluated inside the fitted cutoff range (200–4000 Hz) and
   extended by octaves above and below it, so high cutoffs do not drive Draft into
   self-oscillation. `eval/303/calibrate_vcf.py` takes `--tiers` to fit one tier.
+- Editor (round-20 GUI audit): on/off controls (RUN, SYNC, MIDI, SYNTH,
+  JITTER, ADV ENV, LINK, ON, SLD CHAIN) are raised tiles with a small LED that
+  lights orange; the tile no longer fills orange, and RUN, SYNC, MIDI and SYNTH
+  keep one label in both states. GENERATE is a raised action, not a lit one.
+  The playhead plate shows only while the sequencer runs, and the step LED is
+  4 pt tall. CLEAR asks for a second click within 3 s before it wipes the
+  pattern. Knobs show their parameter's own value text, the same string the
+  host shows; CUTOFF reads the base cutoff and GLIDE the glide time the voice
+  uses. The host shows DECAY in ms/s, the voice levels in dB and the 0-1
+  amounts in percent. Disabled controls keep readable text and say on hover
+  why they are disabled (ACCURATE, ADV ENV off, clipper off); abbreviated
+  controls in SOUPED-UP ENGINE, OUTPUT CLIPPER, ANALOG TWEAKS and the
+  generator have tooltips. In ACCURATE, ADV ENV and both envelope banks are
+  disabled, ANALOG TWEAKS shows `FUN MODE ONLY` and hides CALIBRATE.
 
 ### Fixed
 - The High tier was padded for Best's 4x oversampling latency instead of its
@@ -81,8 +95,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before (in the plugin, Low's VCF brightness goes from 1.0 to 0.50 and
   High/Best from 1.0 to 0.70); sessions keep their settings. Draft-to-Best
   parity moves apart (20.41 to 24.81 dB LSD), because Best is darker.
+- Sequencer notes ignored the DECAY curve that MIDI notes use. The sequencer
+  mapped the knob linearly to 0-3000 ms for the classic filter envelope, so
+  DECAY at 0.5 gave 1500 ms while the knob read 400 ms. Unaccented sequencer
+  notes now use the MIDI curve (100 ms to 2.1 s, the value the DECAY readout
+  shows). Above DECAY 0.04 the classic filter envelope of sequencer patterns
+  is shorter than before (0.2: 200 ms, was 600 ms; 0.5: 400 ms, was 1500 ms;
+  1.0: 2.1 s, was 3 s); below it, it is longer (0.01: 105 ms, was 30 ms).
+  Accented notes keep their fixed 200 ms.
 
 ### Removed
+- The editor's ZOOM control and the `zoom75` QA capture state. nih-plug cannot
+  resize the plugin window from the editor, so a smaller zoom left an empty
+  band; keyboard zoom is disabled for the same reason.
 - The BA283 Neve-preamp product (plugin crate, WaveNet/LSTM model, WDF engine, training
   and data-generation pipelines, colab notebooks, datasets, ba283 eval suites and docs).
   The repo is now the standalone 303 project; the shared `circuitgen` circuit-IR pipeline

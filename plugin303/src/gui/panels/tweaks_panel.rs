@@ -1,12 +1,21 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Align, Align2, Button, ComboBox, DragValue, FontId, Layout, RichText, Sense, Ui,
+    pos2, vec2, Align, Align2, Button, Color32, ComboBox, DragValue, FontId, Layout, Rect,
+    RichText, Sense, Ui,
 };
 
 use crate::gui::theme;
 use crate::gui::widgets::panel::DevicePanel;
-use crate::gui::widgets::Knob303;
+use crate::gui::widgets::{Knob303, Readout};
 use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
+
+/// Width of every value in the field column: the TOL combo's width, so the
+/// four fields share one right edge (round-20 #7).
+pub const FIELD_W: f32 = 80.0;
+
+/// Hover text of every ANALOG TWEAKS control in ACCURATE (round-20 #3).
+pub const ACCURATE_HINT: &str =
+    "Analog tweaks apply to FUN mode only. Set TOPOLOGY to FUN to edit them.";
 
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
@@ -22,38 +31,39 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
         .show(
             ui,
             |header_ui| {
-                header_ui.add_enabled_ui(!is_accurate, |ui| {
-                    let btn_text = if calibrating {
-                        "CALIBRATING..."
-                    } else {
-                        "CALIBRATE"
-                    };
+                if is_accurate {
+                    return;
+                }
+                let btn_text = if calibrating {
+                    "CALIBRATING..."
+                } else {
+                    "CALIBRATE"
+                };
 
-                    let mut cal_btn = Button::new(
-                        RichText::new(btn_text)
-                            .font(FontId::proportional(8.5))
-                            .color(if needs_rebuild || calibrating {
-                                theme::TEXT_ON_ACCENT
-                            } else {
-                                theme::TEXT_PRIMARY
-                            }),
-                    )
-                    .min_size(vec2(80.0, crate::gui::widgets::toggle::TOGGLE_H));
+                let mut cal_btn = Button::new(
+                    RichText::new(btn_text)
+                        .font(FontId::proportional(8.5))
+                        .color(if needs_rebuild || calibrating {
+                            theme::TEXT_ON_ACCENT
+                        } else {
+                            theme::TEXT_PRIMARY
+                        }),
+                )
+                .min_size(vec2(80.0, crate::gui::widgets::toggle::TOGGLE_H));
 
-                    if needs_rebuild || calibrating {
-                        cal_btn = cal_btn.fill(theme::ACCENT_ORANGE);
-                    }
+                if needs_rebuild || calibrating {
+                    cal_btn = cal_btn.fill(theme::ACCENT_ORANGE);
+                }
 
-                    if ui
-                        .add(cal_btn)
-                        .on_hover_text("Rebuild analog model with current component tolerances")
-                        .clicked()
-                    {
-                        setter.begin_set_parameter(&params.calibrate_sync);
-                        setter.set_parameter(&params.calibrate_sync, true);
-                        setter.end_set_parameter(&params.calibrate_sync);
-                    }
-                });
+                if header_ui
+                    .add(cal_btn)
+                    .on_hover_text("Rebuild analog model with current component tolerances")
+                    .clicked()
+                {
+                    setter.begin_set_parameter(&params.calibrate_sync);
+                    setter.set_parameter(&params.calibrate_sync, true);
+                    setter.end_set_parameter(&params.calibrate_sync);
+                }
             },
             |body_ui| {
                 body_ui.add_enabled_ui(!is_accurate, |ui| {
@@ -87,8 +97,26 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     // Even gaps: above the first row, between rows, below the status.
                                     let v_gap = ((total_h - content_h) / 6.0).max(3.0);
 
-                                    let label_color = theme::TEXT_SECONDARY;
+                                    // Labels are painted, not egui Labels, so the
+                                    // disabled group cannot fade them (round-20 #1).
+                                    let label_color = if is_accurate {
+                                        theme::TEXT_MUTED
+                                    } else {
+                                        theme::TEXT_SECONDARY
+                                    };
                                     let label_font = FontId::proportional(8.5);
+                                    let paint_left =
+                                        |ui: &Ui, rect: Rect, text: &str, color: Color32| {
+                                            let mut painter = ui.painter().clone();
+                                            painter.set_fade_to_color(None);
+                                            painter.text(
+                                                pos2(rect.left(), rect.center().y),
+                                                Align2::LEFT_CENTER,
+                                                text,
+                                                label_font.clone(),
+                                                color,
+                                            );
+                                        };
 
                                     let field_row = |ui: &mut Ui,
                                                      label: &str,
@@ -98,13 +126,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 vec2(LABEL_W, row_h),
                                                 Sense::hover(),
                                             );
-                                            ui.painter().text(
-                                                pos2(rect.left(), rect.center().y),
-                                                Align2::LEFT_CENTER,
-                                                label,
-                                                label_font.clone(),
-                                                label_color,
-                                            );
+                                            paint_left(ui, rect, label, label_color);
                                             add_content(ui);
                                         });
                                     };
@@ -114,18 +136,24 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     // TOL
                                     field_row(ui, "TOL", &mut |ui| {
                                         let tol = params.tolerance.value();
+                                        let tol_text = match tol {
+                                            CompTolerance::Zero => "0%",
+                                            CompTolerance::PointFive => "0.5%",
+                                            CompTolerance::Two => "2%",
+                                            CompTolerance::Five => "5%",
+                                            CompTolerance::Ten => "10%",
+                                        };
+                                        if is_accurate {
+                                            ui.add(Readout::new(tol_text, FIELD_W, row_h))
+                                                .on_disabled_hover_text(ACCURATE_HINT);
+                                            return;
+                                        }
                                         ComboBox::from_id_salt("tweaks_tolerance_combo")
                                             .selected_text(
-                                                RichText::new(match tol {
-                                                    CompTolerance::Zero => "0%",
-                                                    CompTolerance::PointFive => "0.5%",
-                                                    CompTolerance::Two => "2%",
-                                                    CompTolerance::Five => "5%",
-                                                    CompTolerance::Ten => "10%",
-                                                })
-                                                .font(FontId::proportional(8.5)),
+                                                RichText::new(tol_text)
+                                                    .font(FontId::proportional(8.5)),
                                             )
-                                            .width(80.0)
+                                            .width(FIELD_W)
                                             .show_ui(ui, |ui| {
                                                 for (variant, opt_label) in [
                                                     (CompTolerance::Zero, "0% (Ideal)"),
@@ -151,16 +179,32 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                         setter.end_set_parameter(&params.tolerance);
                                                     }
                                                 }
-                                            });
+                                            })
+                                            .response
+                                            .on_hover_text(
+                                                "Component tolerance: how far part values stray \
+                                                 from nominal",
+                                            );
                                     });
 
                                     ui.add_space(v_gap);
 
                                     // AGE
                                     field_row(ui, "AGE", &mut |ui| {
-                                        let mut age_val = params.comp_age.value();
+                                        let age = params.comp_age.value();
+                                        if is_accurate {
+                                            ui.add(Readout::new(
+                                                &format!("{age} yrs"),
+                                                FIELD_W,
+                                                row_h,
+                                            ))
+                                            .on_disabled_hover_text(ACCURATE_HINT);
+                                            return;
+                                        }
+                                        let mut age_val = age;
                                         if ui
-                                            .add(
+                                            .add_sized(
+                                                vec2(FIELD_W, row_h),
                                                 DragValue::new(&mut age_val)
                                                     .range(0..=100)
                                                     .speed(0.2)
@@ -181,9 +225,20 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                     // NOISE
                                     field_row(ui, "NOISE", &mut |ui| {
-                                        let mut noise_val = params.thermal_noise.value();
+                                        let noise = params.thermal_noise.value();
+                                        if is_accurate {
+                                            ui.add(Readout::new(
+                                                &format!("{noise}%"),
+                                                FIELD_W,
+                                                row_h,
+                                            ))
+                                            .on_disabled_hover_text(ACCURATE_HINT);
+                                            return;
+                                        }
+                                        let mut noise_val = noise;
                                         if ui
-                                            .add(
+                                            .add_sized(
+                                                vec2(FIELD_W, row_h),
                                                 DragValue::new(&mut noise_val)
                                                     .range(0..=100)
                                                     .speed(0.2)
@@ -202,9 +257,20 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                     // CMP SEED
                                     field_row(ui, "CMP SEED", &mut |ui| {
-                                        let mut seed_val = params.comp_seed.value();
+                                        let seed = params.comp_seed.value();
+                                        if is_accurate {
+                                            ui.add(Readout::new(
+                                                &format!("{seed:04}"),
+                                                FIELD_W,
+                                                row_h,
+                                            ))
+                                            .on_disabled_hover_text(ACCURATE_HINT);
+                                            return;
+                                        }
+                                        let mut seed_val = seed;
                                         if ui
-                                            .add(
+                                            .add_sized(
+                                                vec2(FIELD_W, row_h),
                                                 DragValue::new(&mut seed_val)
                                                     .range(0..=9999)
                                                     .speed(1.0)
@@ -225,23 +291,22 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                     ui.add_space(v_gap);
 
-                                    // Fifth line: Calibration status under fields
-                                    let status_text = if needs_rebuild {
-                                        "SYNC PENDING"
+                                    // Status under the fields. In ACCURATE it says the
+                                    // card is FUN-only (round-20 #3).
+                                    let (status_text, status_color) = if is_accurate {
+                                        ("FUN MODE ONLY", theme::TEXT_MUTED)
+                                    } else if needs_rebuild {
+                                        ("SYNC PENDING", theme::ACCENT_ORANGE)
                                     } else {
-                                        "CALIBRATED"
+                                        ("CALIBRATED", theme::TEXT_SECONDARY)
                                     };
                                     ui.horizontal(|ui| {
                                         ui.add_space(LABEL_W);
-                                        ui.label(
-                                            RichText::new(status_text)
-                                                .font(label_font.clone())
-                                                .color(if needs_rebuild {
-                                                    theme::ACCENT_ORANGE
-                                                } else {
-                                                    theme::TEXT_SECONDARY
-                                                }),
+                                        let (rect, _) = ui.allocate_exact_size(
+                                            vec2(ui.available_width(), status_h),
+                                            Sense::hover(),
                                         );
+                                        paint_left(ui, rect, status_text, status_color);
                                     });
                                 });
                             },
@@ -265,20 +330,34 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             );
                         };
                         knob_column(ui, &mut |ui| {
-                            ui.add(Knob303::new(
-                                &params.comp_drift,
-                                setter,
-                                "DRIFT",
-                                theme::KNOB_RADIUS_LARGE,
-                            ));
+                            ui.add(
+                                Knob303::new(
+                                    &params.comp_drift,
+                                    setter,
+                                    "DRIFT",
+                                    theme::KNOB_RADIUS_LARGE,
+                                )
+                                .tooltip(
+                                    "Component drift: slow random wander of pitch, cutoff and \
+                                     resonance",
+                                ),
+                            )
+                            .on_disabled_hover_text(ACCURATE_HINT);
                         });
                         knob_column(ui, &mut |ui| {
-                            ui.add(Knob303::new(
-                                &params.recalibration_scale,
-                                setter,
-                                "RECAL",
-                                theme::KNOB_RADIUS_LARGE,
-                            ));
+                            ui.add(
+                                Knob303::new(
+                                    &params.recalibration_scale,
+                                    setter,
+                                    "RECAL",
+                                    theme::KNOB_RADIUS_LARGE,
+                                )
+                                .tooltip(
+                                    "Recalibration: share of the component pitch error the VCO \
+                                     calibration removes",
+                                ),
+                            )
+                            .on_disabled_hover_text(ACCURATE_HINT);
                         });
                     });
                 });
