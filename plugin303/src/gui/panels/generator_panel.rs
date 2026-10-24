@@ -345,51 +345,45 @@ pub fn render_generation_panel(
         ui,
         |_| {},
         |ui| {
+            // Row 1: MUTATION and SEED side by side, plus NEW SEED raised action (18 px)
             ui.scope(|ui| {
-                theme::field_style(ui);
                 ui.spacing_mut().item_spacing = vec2(4.0, 3.0);
-
-                // Row 1: MUTATION and SEED side by side, plus NEW SEED action (18 px)
                 ui.horizontal(|ui| {
-                    field_label(ui, "MUTATION:", 58.0);
-                    field_drag(
-                        ui,
-                        DragValue::new(&mut gen_params.mutation_rate)
-                            .speed(0.01)
-                            .range(0.0..=1.0)
-                            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-                        G_FIELD_W,
-                    );
-
-                    ui.add_space(16.0);
-
-                    field_label(ui, "SEED:", 36.0);
-                    let seed_text = format!("{:04}", gen_params.seed % 10000);
-                    ui.add(Readout::new(&seed_text, G_FIELD_W, G_ROW_H));
-
-                    // NEW SEED is a raised action directly right of SEED Readout
                     ui.scope(|ui| {
-                        // Restore button visuals to raised action instead of well style
-                        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =
-                            theme::SURFACE_ELEVATED;
-                        ui.style_mut().visuals.widgets.inactive.bg_fill = theme::SURFACE_ELEVATED;
-                        let new_seed_btn = Button::new(
-                            nih_plug_egui::egui::RichText::new("NEW SEED")
-                                .font(FontId::proportional(8.5))
-                                .color(theme::TEXT_PRIMARY),
-                        )
-                        .min_size(vec2(0.0, G_ROW_H));
-                        if ui.add(new_seed_btn).clicked() {
-                            gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-                        }
+                        theme::field_style(ui);
+                        field_label(ui, "MUTATION:", 58.0);
+                        field_drag(
+                            ui,
+                            DragValue::new(&mut gen_params.mutation_rate)
+                                .speed(0.01)
+                                .range(0.0..=1.0)
+                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                            G_FIELD_W,
+                        );
+
+                        ui.add_space(16.0);
+
+                        field_label(ui, "SEED:", 36.0);
+                        let seed_text = format!("{:04}", gen_params.seed % 10000);
+                        ui.add(Readout::new(&seed_text, G_FIELD_W, G_ROW_H));
                     });
+
+                    // NEW SEED is a raised action directly right of SEED Readout (outside field_style)
+                    let new_seed_btn = Button::new(
+                        nih_plug_egui::egui::RichText::new("NEW SEED")
+                            .font(FontId::proportional(8.5))
+                            .color(theme::TEXT_PRIMARY),
+                    )
+                    .min_size(vec2(0.0, G_ROW_H));
+                    if ui.add(new_seed_btn).clicked() {
+                        gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                    }
                 });
             });
 
             ui.add_space(5.0);
 
-            // Row 2: GENERATE, a raised action like MUTATE. Orange is for live
-            // state, and nothing is live about an action at rest (round-20 #4).
+            // Row 2: GENERATE, a raised action like MUTATE.
             let gen_btn = Button::new(
                 nih_plug_egui::egui::RichText::new("GENERATE")
                     .font(FontId::proportional(8.5))
@@ -546,6 +540,42 @@ mod tests {
                     }
                 }
                 assert_eq!(scale_w, 84.0);
+            });
+        });
+    }
+    #[test]
+    fn new_seed_visuals_match_raised_action() {
+        use nih_plug::prelude::{GuiContext, ParamPtr, PluginApi, PluginState};
+        let ctx = nih_plug_egui::egui::Context::default();
+        theme::apply(&ctx);
+        let params = Plugin303Params::default();
+        let mut gen_params = GeneratorParams::default();
+        struct DummyGui;
+        impl GuiContext for DummyGui {
+            fn plugin_api(&self) -> PluginApi {
+                PluginApi::Standalone
+            }
+            fn request_resize(&self) -> bool {
+                false
+            }
+            unsafe fn raw_begin_set_parameter(&self, _param: ParamPtr) {}
+            unsafe fn raw_set_parameter_normalized(&self, _param: ParamPtr, _normalized: f32) {}
+            unsafe fn raw_end_set_parameter(&self, _param: ParamPtr) {}
+            fn get_state(&self) -> PluginState {
+                unimplemented!()
+            }
+            fn set_state(&self, _state: PluginState) {}
+        }
+        let host = DummyGui;
+        let setter = ParamSetter::new(&host);
+
+        let _ = ctx.run(Default::default(), |ctx| {
+            nih_plug_egui::egui::CentralPanel::default().show(ctx, |ui| {
+                render_generation_panel(ui, &params, &mut gen_params, &setter);
+                let w = &ui.visuals().widgets;
+                assert_eq!(w.inactive.weak_bg_fill, theme::SURFACE_ELEVATED);
+                assert_eq!(w.hovered.weak_bg_fill, theme::SURFACE_HOVER);
+                assert_eq!(w.active.weak_bg_fill, theme::SURFACE_PRESSED);
             });
         });
     }
