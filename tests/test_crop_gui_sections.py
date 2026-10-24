@@ -35,6 +35,8 @@ class TestCropGuiSections(unittest.TestCase):
             "advanced",
             "running_note",
             "knobs",
+            "knob_extremes",
+            "clipper_off",
             "quality_low",
             "generator",
         ]:
@@ -56,6 +58,8 @@ class TestCropGuiSections(unittest.TestCase):
             "knobs_crop_voice.png",
             "advanced_crop_engine.png",
             "running_note_crop_header.png",
+            "knob_extremes_crop_voice.png",
+            "clipper_off_crop_engine.png",
         ]
         for f in expected_files:
             p = self.test_dir / f

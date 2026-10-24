@@ -86,6 +86,8 @@ dimensions as given.
 | `knobs.png` | TUNING +25 ct (bipolar, off its detent), CUTOFF 0.75 |
 | `quality_low.png` | QUALITY LOW |
 | `generator.png` | every generator field off its default, SLD CHAIN on |
+| `knob_extremes.png` | knob extremes: PITCH1 -24 st, PITCH2 +24 st, IN -18 dB, OUT +18 dB, TILT -6 dB, TUNING -100 ct |
+| `clipper_off.png` | OUTPUT CLIPPER disabled (`clipper_bypass` true) |
 
 `quality_high` and `quality_best` exist in `QaState`, but neither script
 renders them; capture them by hand when a round needs them.
