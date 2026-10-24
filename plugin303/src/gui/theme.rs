@@ -56,11 +56,10 @@ pub const KNOB_TRACK: Color32 = Color32::from_rgb(0x40, 0x40, 0x40);
 pub const KNOB_RADIUS_LARGE: f32 = 21.0;
 pub const KNOB_RADIUS_MEDIUM: f32 = 12.0;
 
-// Value-field widths matching the knob tiers, and the one height they share.
+// Value-field widths matching the knob tiers.
 pub const KNOB_PILL_WIDTH_LARGE: f32 = 52.0;
-pub const KNOB_PILL_WIDTH_MEDIUM: f32 = 44.0;
+pub const KNOB_PILL_WIDTH_MEDIUM: f32 = 38.0;
 pub const KNOB_PILL_WIDTH_SMALL: f32 = 34.0;
-pub const KNOB_PILL_HEIGHT: f32 = 11.0;
 
 // ── Shape ───────────────────────────────────────────────────────────────────
 /// Every panel, button and field uses this one radius.

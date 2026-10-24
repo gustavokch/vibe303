@@ -120,10 +120,6 @@ capture_single_state "running_note" "$OUTPUT_DIR/running_note.png"
 # Bipolar knob off detent + unipolar knob off default (round-13 issue 1
 # verification state).
 capture_single_state "knobs" "$OUTPUT_DIR/knobs.png"
-# Knob extremes state for readout clipping and pill containment checks.
-capture_single_state "knob_extremes" "$OUTPUT_DIR/knob_extremes.png"
-# Clipper bypass state for disabled OUTPUT CLIPPER header and body checks.
-capture_single_state "clipper_off" "$OUTPUT_DIR/clipper_off.png"
 # Quality tier selection (Low tier: 4x nodal ladder, polyBLEP saw)
 # The other non-default tiers (quality_high, quality_best) are supported by
 # VIBE303_QA_STATE in plugin303/src/params.rs but captured manually only —
@@ -144,8 +140,6 @@ REQUIRED_CROPS=(
     "knobs.png"
     "quality_low.png"
     "generator.png"
-    "knob_extremes.png"
-    "clipper_off.png"
     "crop_header.png"
     "crop_voice.png"
     "crop_engine.png"

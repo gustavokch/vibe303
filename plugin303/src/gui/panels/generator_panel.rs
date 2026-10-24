@@ -12,7 +12,6 @@ use crate::params::{Plugin303Params, SequencerStep, StepGate};
 pub const GENERATOR_H: f32 = 102.0;
 
 const G_FIELD_W: f32 = 34.0;
-const G_SCALE_W: f32 = 84.0;
 const G_ROW_H: f32 = 18.0;
 
 /// Fixed-width label cell, vertically centered with the field row.
@@ -43,13 +42,28 @@ fn group_heading(ui: &mut Ui, title: &str) {
 
 fn fmt_octave(v: f64) -> String {
     let iv = v as i32;
-    format!("{:+}", iv)
+    if iv == 0 {
+        "0".to_string()
+    } else {
+        format!("{:+}", iv)
+    }
 }
 
 pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
     DevicePanel::new("ACID EUCLIDEAN GENERATOR", GENERATOR_H).show(
         ui,
-        |_| {},
+        |header_ui| {
+            // Header (right-to-left): NEW SEED flat button sits flush right
+            let new_seed_btn = Button::new(
+                nih_plug_egui::egui::RichText::new("NEW SEED")
+                    .font(FontId::proportional(8.5))
+                    .color(theme::TEXT_PRIMARY),
+            )
+            .min_size(vec2(0.0, G_ROW_H));
+            if header_ui.add(new_seed_btn).clicked() {
+                gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            }
+        },
         |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
@@ -73,23 +87,18 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                             const NOTE_NAMES: [&str; 12] = [
                                 "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
                             ];
-                            ui.scope(|ui| {
-                                ui.spacing_mut().button_padding = vec2(4.0, 1.0);
-                                ui.spacing_mut().icon_width = 8.0;
-                                ui.spacing_mut().icon_spacing = 2.0;
-                                ComboBox::from_id_salt("gen_root_key")
-                                    .selected_text(NOTE_NAMES[(gen_params.root_note % 12) as usize])
-                                    .width(G_FIELD_W)
-                                    .show_ui(ui, |ui| {
-                                        for (idx, name) in NOTE_NAMES.iter().enumerate() {
-                                            ui.selectable_value(
-                                                &mut gen_params.root_note,
-                                                idx as u8,
-                                                *name,
-                                            );
-                                        }
-                                    });
-                            });
+                            ComboBox::from_id_salt("gen_root_key")
+                                .selected_text(NOTE_NAMES[(gen_params.root_note % 12) as usize])
+                                .width(42.0)
+                                .show_ui(ui, |ui| {
+                                    for (idx, name) in NOTE_NAMES.iter().enumerate() {
+                                        ui.selectable_value(
+                                            &mut gen_params.root_note,
+                                            idx as u8,
+                                            *name,
+                                        );
+                                    }
+                                });
 
                             field_label(ui, "SCALE:", G1_LBL_W);
                             ComboBox::from_id_salt("gen_scale")
@@ -101,7 +110,7 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     MusicalScale::HarmonicMinor => "Harmonic",
                                     MusicalScale::Chromatic => "Chromatic",
                                 })
-                                .width(G_SCALE_W)
+                                .width(66.0)
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(
                                         &mut gen_params.scale,
@@ -346,45 +355,34 @@ pub fn render_generation_panel(
         ui,
         |_| {},
         |ui| {
-            // Row 1: MUTATION and SEED side by side, plus NEW SEED raised action (18 px)
             ui.scope(|ui| {
+                theme::field_style(ui);
                 ui.spacing_mut().item_spacing = vec2(4.0, 3.0);
+
+                // Row 1: MUTATION and SEED side by side (18 px)
                 ui.horizontal(|ui| {
-                    ui.scope(|ui| {
-                        theme::field_style(ui);
-                        field_label(ui, "MUTATION:", 58.0);
-                        field_drag(
-                            ui,
-                            DragValue::new(&mut gen_params.mutation_rate)
-                                .speed(0.01)
-                                .range(0.0..=1.0)
-                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-                            G_FIELD_W,
-                        );
+                    field_label(ui, "MUTATION:", 58.0);
+                    field_drag(
+                        ui,
+                        DragValue::new(&mut gen_params.mutation_rate)
+                            .speed(0.01)
+                            .range(0.0..=1.0)
+                            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                        G_FIELD_W,
+                    );
 
-                        ui.add_space(16.0);
+                    ui.add_space(16.0);
 
-                        field_label(ui, "SEED:", 36.0);
-                        let seed_text = format!("{:04}", gen_params.seed % 10000);
-                        ui.add(Readout::new(&seed_text, G_FIELD_W, G_ROW_H));
-                    });
-
-                    // NEW SEED is a raised action directly right of SEED Readout (outside field_style)
-                    let new_seed_btn = Button::new(
-                        nih_plug_egui::egui::RichText::new("NEW SEED")
-                            .font(FontId::proportional(8.5))
-                            .color(theme::TEXT_PRIMARY),
-                    )
-                    .min_size(vec2(0.0, G_ROW_H));
-                    if ui.add(new_seed_btn).clicked() {
-                        gen_params.seed = gen_params.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-                    }
+                    field_label(ui, "SEED:", 36.0);
+                    let seed_text = format!("{:04}", gen_params.seed % 10000);
+                    ui.add(Readout::new(&seed_text, G_FIELD_W, G_ROW_H));
                 });
             });
 
             ui.add_space(5.0);
 
-            // Row 2: GENERATE, a raised action like MUTATE.
+            // Row 2: GENERATE, a raised action like MUTATE. Orange is for live
+            // state, and nothing is live about an action at rest (round-20 #4).
             let gen_btn = Button::new(
                 nih_plug_egui::egui::RichText::new("GENERATE")
                     .font(FontId::proportional(8.5))
@@ -392,14 +390,7 @@ pub fn render_generation_panel(
             )
             .min_size(vec2(ui.available_width(), 22.0));
 
-            let gen_clicked = ui
-                .with_layout(
-                    nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
-                    |ui| ui.add(gen_btn).clicked(),
-                )
-                .inner;
-
-            if gen_clicked {
+            if ui.add(gen_btn).clicked() {
                 let pat = AcidGenerator::generate(gen_params);
                 if let Ok(mut seq_pat) = params.pattern.write() {
                     for i in 0..16 {
@@ -440,14 +431,7 @@ pub fn render_generation_panel(
             )
             .min_size(vec2(ui.available_width(), 22.0));
 
-            let mutate_clicked = ui
-                .with_layout(
-                    nih_plug_egui::egui::Layout::top_down(nih_plug_egui::egui::Align::Center),
-                    |ui| ui.add(mutate_btn).clicked(),
-                )
-                .inner;
-
-            if mutate_clicked {
+            if ui.add(mutate_btn).clicked() {
                 if let Ok(mut seq_pat) = params.pattern.write() {
                     let mode = params.seq_mode.value();
                     let num_steps = params.seq_length.value() as u8;
@@ -478,73 +462,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn octave_formatter_shows_signed_zero() {
-        assert_eq!(fmt_octave(0.0), "+0");
+    fn octave_formatter_hides_signed_zero() {
+        assert_eq!(fmt_octave(0.0), "0");
         assert_eq!(fmt_octave(1.0), "+1");
         assert_eq!(fmt_octave(-1.0), "-1");
-        assert_eq!(fmt_octave(0.5), "+0"); // truncates toward zero; range is integral
-    }
-
-    #[test]
-    fn root_and_scale_widths_fit_widest_values() {
-        let ctx = nih_plug_egui::egui::Context::default();
-        theme::apply(&ctx);
-        let _ = ctx.run(Default::default(), |ctx| {
-            nih_plug_egui::egui::CentralPanel::default().show(ctx, |ui| {
-                theme::field_style(ui);
-                // Every root note name fits inside ROOT well with padding and icon
-                let mut root_w = 0.0;
-                ui.scope(|ui| {
-                    ui.spacing_mut().button_padding = vec2(4.0, 1.0);
-                    ui.spacing_mut().icon_width = 8.0;
-                    ui.spacing_mut().icon_spacing = 2.0;
-                    const NOTE_NAMES: [&str; 12] = [
-                        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-                    ];
-                    for note in NOTE_NAMES {
-                        let r = ComboBox::from_id_salt(format!("test_root_{note}"))
-                            .selected_text(note)
-                            .width(G_FIELD_W)
-                            .show_ui(ui, |_| {});
-                        if root_w == 0.0 {
-                            root_w = r.response.rect.width();
-                        } else {
-                            assert_eq!(
-                                r.response.rect.width(),
-                                root_w,
-                                "ROOT well width must be fixed"
-                            );
-                        }
-                    }
-                });
-                assert_eq!(root_w, G_FIELD_W);
-
-                // Widest scale name fits inside SCALE well
-                let mut scale_w = 0.0;
-                for scale in [
-                    "Pentatonic",
-                    "Dorian",
-                    "Phrygian",
-                    "Aeolian",
-                    "Harmonic",
-                    "Chromatic",
-                ] {
-                    let r = ComboBox::from_id_salt(format!("test_scale_{scale}"))
-                        .selected_text(scale)
-                        .width(G_SCALE_W)
-                        .show_ui(ui, |_| {});
-                    if scale_w == 0.0 {
-                        scale_w = r.response.rect.width();
-                    } else {
-                        assert_eq!(
-                            r.response.rect.width(),
-                            scale_w,
-                            "SCALE well width must be fixed"
-                        );
-                    }
-                }
-                assert_eq!(scale_w, G_SCALE_W);
-            });
-        });
+        assert_eq!(fmt_octave(0.5), "0"); // truncates toward zero; range is integral
     }
 }

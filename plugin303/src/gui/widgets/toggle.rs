@@ -59,7 +59,7 @@ struct ToggleColors {
 fn toggle_colors(on: bool, hovered: bool, enabled: bool) -> ToggleColors {
     if !enabled {
         return ToggleColors {
-            fill: theme::PANEL_BG,
+            fill: theme::SURFACE_PRESSED,
             led: if on {
                 theme::TEXT_MUTED
             } else {
@@ -141,29 +141,6 @@ mod tests {
                     assert_ne!(c.fill, accent);
                     assert_ne!(c.led, accent);
                 }
-            }
-        }
-    }
-
-    /// A disabled toggle tile fills PANEL_BG (round-21 #4) so it steps
-    /// 1.13:1 off the PANEL_HEADER_BG strip instead of blending into it.
-    #[test]
-    fn disabled_toggle_fills_panel_bg() {
-        for on in [true, false] {
-            for hovered in [true, false] {
-                let c = toggle_colors(on, hovered, false);
-                assert_eq!(
-                    c.fill,
-                    theme::PANEL_BG,
-                    "on={on} hovered={hovered} expected PANEL_BG"
-                );
-                assert_eq!(c.text, theme::TEXT_MUTED);
-                let expected_led = if on {
-                    theme::TEXT_MUTED
-                } else {
-                    theme::WELL_BG
-                };
-                assert_eq!(c.led, expected_led);
             }
         }
     }

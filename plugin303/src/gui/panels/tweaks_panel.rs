@@ -148,54 +148,43 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 .on_disabled_hover_text(ACCURATE_HINT);
                                             return;
                                         }
-                                        // Hand-paint selected_text: egui's combo paints selected text left-aligned in the proportional face; the value must be 9 pt monospace centred like the ACCURATE Readout.
-                                        let combo =
-                                            ComboBox::from_id_salt("tweaks_tolerance_combo")
-                                                .selected_text("")
-                                                .width(FIELD_W)
-                                                .show_ui(ui, |ui| {
-                                                    for (variant, opt_label) in [
-                                                        (CompTolerance::Zero, "0% (Ideal)"),
-                                                        (CompTolerance::PointFive, "0.5% (Tight)"),
-                                                        (CompTolerance::Two, "2% (Stock)"),
-                                                        (CompTolerance::Five, "5% (Loose)"),
-                                                        (CompTolerance::Ten, "10% (Wild)"),
-                                                    ] {
-                                                        if ui
-                                                            .selectable_label(
-                                                                tol == variant,
-                                                                RichText::new(opt_label).font(
-                                                                    FontId::proportional(8.5),
-                                                                ),
-                                                            )
-                                                            .clicked()
-                                                        {
-                                                            setter.begin_set_parameter(
-                                                                &params.tolerance,
-                                                            );
-                                                            setter.set_parameter(
-                                                                &params.tolerance,
-                                                                variant,
-                                                            );
-                                                            setter.end_set_parameter(
-                                                                &params.tolerance,
-                                                            );
-                                                        }
+                                        ComboBox::from_id_salt("tweaks_tolerance_combo")
+                                            .selected_text(
+                                                RichText::new(tol_text)
+                                                    .font(FontId::proportional(8.5)),
+                                            )
+                                            .width(FIELD_W)
+                                            .show_ui(ui, |ui| {
+                                                for (variant, opt_label) in [
+                                                    (CompTolerance::Zero, "0% (Ideal)"),
+                                                    (CompTolerance::PointFive, "0.5% (Tight)"),
+                                                    (CompTolerance::Two, "2% (Stock)"),
+                                                    (CompTolerance::Five, "5% (Loose)"),
+                                                    (CompTolerance::Ten, "10% (Wild)"),
+                                                ] {
+                                                    if ui
+                                                        .selectable_label(
+                                                            tol == variant,
+                                                            RichText::new(opt_label)
+                                                                .font(FontId::proportional(8.5)),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        setter
+                                                            .begin_set_parameter(&params.tolerance);
+                                                        setter.set_parameter(
+                                                            &params.tolerance,
+                                                            variant,
+                                                        );
+                                                        setter.end_set_parameter(&params.tolerance);
                                                     }
-                                                });
-                                        let mut painter = ui.painter().clone();
-                                        painter.set_fade_to_color(None);
-                                        painter.text(
-                                            combo.response.rect.center(),
-                                            Align2::CENTER_CENTER,
-                                            tol_text,
-                                            FontId::monospace(9.0),
-                                            theme::TEXT_PRIMARY,
-                                        );
-                                        combo.response.on_hover_text(
-                                            "Component tolerance: how far part values stray \
-                                             from nominal",
-                                        );
+                                                }
+                                            })
+                                            .response
+                                            .on_hover_text(
+                                                "Component tolerance: how far part values stray \
+                                                 from nominal",
+                                            );
                                     });
 
                                     ui.add_space(v_gap);

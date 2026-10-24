@@ -86,8 +86,6 @@ dimensions as given.
 | `knobs.png` | TUNING +25 ct (bipolar, off its detent), CUTOFF 0.75 |
 | `quality_low.png` | QUALITY LOW |
 | `generator.png` | every generator field off its default, SLD CHAIN on |
-| `knob_extremes.png` | knob extremes: PITCH1 -24 st, PITCH2 +24 st, IN -18 dB, OUT +18 dB, TILT -6 dB, TUNING -100 ct |
-| `clipper_off.png` | OUTPUT CLIPPER disabled (`clipper_bypass` true) |
 
 `quality_high` and `quality_best` exist in `QaState`, but neither script
 renders them; capture them by hand when a round needs them.
@@ -96,7 +94,7 @@ renders them; capture them by hand when a round needs them.
 list what the set does not cover and put it in the report. Standing gaps:
 hover, press and keyboard focus; open ComboBox and piano-roll popups; the SQR
 and SWP waves; TIE under the playhead; CALIBRATE when a rebuild is due; SYNTH
-MUTE, MIDI ON, LINK off; QUALITY HIGH and BEST; ADV ENV in
+MUTE, MIDI ON, LINK off, OUTPUT CLIPPER off; QUALITY HIGH and BEST; ADV ENV in
 ACCURATE.
 
 ## Phase 2 — Measure
