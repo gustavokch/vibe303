@@ -146,7 +146,7 @@ Words are proportional; every numeric readout is monospace.
 
 | Use | Size | Face |
 |---|---|---|
-| App bar identity (BASS SYNTH, MONO) | 9.5 pt | proportional |
+| App bar identity (BASS SYNTH, MONO), ACCURATE banner title | 9.5 pt | proportional |
 | Device title | 9 pt | proportional |
 | Captions, labels, tile and button text | 8.5 pt | proportional |
 | TRANSPORT field labels (CH:, BPM:, LEN:) | 8 pt | proportional |

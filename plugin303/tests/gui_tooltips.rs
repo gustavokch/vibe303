@@ -226,8 +226,14 @@ const GENERATOR_CONTROLS: [(&str, Option<&str>); 19] = [
         ),
     ),
     ("OCTAVE BEHAVIOR heading", None),
-    ("OCT RANGE MIN", None),
-    ("OCT RANGE MAX", None),
+    (
+        "OCT RANGE MIN",
+        Some("Lowest octave a generated note may use."),
+    ),
+    (
+        "OCT RANGE MAX",
+        Some("Highest octave a generated note may use."),
+    ),
     (
         "OCT UP",
         Some("Chance that a note steps one octave up from the previous note."),

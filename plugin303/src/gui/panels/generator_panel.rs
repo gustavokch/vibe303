@@ -12,7 +12,6 @@ use crate::params::{Plugin303Params, SequencerStep, StepGate};
 pub const GENERATOR_H: f32 = 102.0;
 
 const G_FIELD_W: f32 = 34.0;
-const G_OCT_FIELD_W: f32 = 44.0;
 const G_ROW_H: f32 = 18.0;
 
 /// Fixed-width label cell, vertically centered with the field row.
@@ -216,24 +215,28 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
 
                         ui.horizontal(|ui| {
                             field_label(ui, "OCT RANGE:", G2_LBL_W);
+                            // Words are proportional captions; the wells hold
+                            // numbers only (contract, Type; round-20 #12).
+                            field_label(ui, "MIN", 20.0);
                             let oct_max = gen_params.octave_max;
                             field_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_min)
                                     .range(-2..=oct_max)
-                                    .prefix("MIN ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
-                                G_OCT_FIELD_W,
-                            );
+                                G_FIELD_W,
+                            )
+                            .on_hover_text("Lowest octave a generated note may use.");
+                            field_label(ui, "MAX", 22.0);
                             let oct_min = gen_params.octave_min;
                             field_drag(
                                 ui,
                                 DragValue::new(&mut gen_params.octave_max)
                                     .range(oct_min..=2)
-                                    .prefix("MAX ")
                                     .custom_formatter(|v, _| fmt_octave(v)),
-                                G_OCT_FIELD_W,
-                            );
+                                G_FIELD_W,
+                            )
+                            .on_hover_text("Highest octave a generated note may use.");
                         });
 
                         ui.horizontal(|ui| {

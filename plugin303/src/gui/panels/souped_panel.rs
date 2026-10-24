@@ -46,7 +46,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         .max(0.0);
                     body_ui.add_space(pad_y);
 
-                    let font_title = FontId::proportional(10.5);
+                    let font_title = FontId::proportional(9.5);
                     let font_sub = FontId::proportional(8.5);
                     let text_title = "ACCURATE MODE ACTIVE";
                     let text_sub = "Souped-up engine is bypassed";
