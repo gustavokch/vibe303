@@ -185,6 +185,10 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(1..=16)
                                     .custom_formatter(|v, _| format!("{:02}", v as u32)),
                                 G_FIELD_W,
+                            )
+                            .on_hover_text(
+                                "Pitch sequence length. When it differs from STEPS, pitches and \
+                                 rhythm repeat at different lengths.",
                             );
                         });
                     });
@@ -241,6 +245,9 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(0.0..=1.0)
                                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                                 G_FIELD_W,
+                            )
+                            .on_hover_text(
+                                "Chance that a note steps one octave up from the previous note.",
                             );
                         });
 
@@ -253,6 +260,9 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     .range(0.0..=1.0)
                                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                                 G_FIELD_W,
+                            )
+                            .on_hover_text(
+                                "Chance that a note steps one octave down from the previous note.",
                             );
                         });
                     });

@@ -7,6 +7,10 @@ use crate::gui::widgets::toggle::ToggleButton;
 use crate::gui::widgets::{BoolSwitch, Knob303, SlideSwitch};
 use crate::params::Plugin303Params;
 
+/// Hover text of the OS, DIODE and LINK switches and the nine knobs while the
+/// clipper is off (round-20 #11).
+pub const CLIPPER_OFF_HINT: &str = "Turn the OUTPUT CLIPPER on to edit it.";
+
 /// The clipper colours the final voice output for both Accurate and Fun engines.
 pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let bypassed = params.clipper_bypass.value();
@@ -33,7 +37,8 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                         SlideSwitch::new(&params.clipper_os, setter, "OS", &["2X", "4X"])
                             .caption_left(),
                     )
-                    .on_hover_text("Clipper oversampling: 4X aliases less and costs more CPU");
+                    .on_hover_text("Clipper oversampling: 4X aliases less and costs more CPU")
+                    .on_disabled_hover_text(CLIPPER_OFF_HINT);
 
                     ui.add(
                         BoolSwitch::new(&params.clipper_asym, setter, "DIODE", ["SI", "GE"])
@@ -41,12 +46,14 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                     )
                     .on_hover_text(
                         "SI: silicon, symmetric clipping. GE: germanium, asymmetric clipping.",
-                    );
+                    )
+                    .on_disabled_hover_text(CLIPPER_OFF_HINT);
 
                     let mut link = params.clipper_gain_link.value();
                     let link_resp = ui
                         .add(ToggleButton::new(&mut link, "LINK"))
-                        .on_hover_text("Link: OUT tracks −IN while dragging (edit-time only)");
+                        .on_hover_text("Link: OUT tracks −IN while dragging (edit-time only)")
+                        .on_disabled_hover_text(CLIPPER_OFF_HINT);
                     if link_resp.changed() {
                         setter.begin_set_parameter(&params.clipper_gain_link);
                         setter.set_parameter(&params.clipper_gain_link, link);
@@ -74,7 +81,7 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                             ui.allocate_ui_with_layout(
                                 vec2(col_w, col_h),
                                 Layout::top_down(Align::Center),
-                                |ui| ui.add(knob),
+                                |ui| ui.add(knob).on_disabled_hover_text(CLIPPER_OFF_HINT),
                             )
                             .inner
                         };

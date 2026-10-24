@@ -3,7 +3,7 @@
 mod gui_common;
 
 use gui_common::{DummyGuiContext, EnvGuard, Rig, ENV_LOCK};
-use nih_plug::prelude::ParamSetter;
+use nih_plug::prelude::{BoolParam, ParamSetter};
 use nih_plug_egui::egui::{self, vec2, Rect, Ui};
 use plugin303::dsp::generator::GeneratorParams;
 use plugin303::gui::panels::generator_panel::{self, GENERATOR_H};
@@ -202,26 +202,100 @@ fn engine_device_controls_explain_themselves() {
     );
 }
 
-/// The generator spells its fields out as abbreviations (PULSES (k), STEPS (n),
-/// ACC BIAS, SLD CHAIN); each says what it is on hover (round-20 #11).
+/// The generator's widgets that sense a click or drag, in layout order (the
+/// header action, then each column top to bottom), and the tooltip the
+/// contract demands of each. The group headings are here because egui's
+/// selectable labels sense clicks. `None`: a plain word, no abbreviation to
+/// explain.
+const GENERATOR_CONTROLS: [(&str, Option<&str>); 19] = [
+    ("NEW SEED", None),
+    ("PATTERN STRUCTURE heading", None),
+    ("ROOT", None),
+    ("SCALE", None),
+    (
+        "PULSES (k)",
+        Some("Euclidean pulses: notes spread evenly over STEPS"),
+    ),
+    ("STEPS (n)", Some("Euclidean pattern length in steps")),
+    ("SHIFT", None),
+    (
+        "PITCH LEN",
+        Some(
+            "Pitch sequence length. When it differs from STEPS, pitches and rhythm repeat at \
+             different lengths.",
+        ),
+    ),
+    ("OCTAVE BEHAVIOR heading", None),
+    ("OCT RANGE MIN", None),
+    ("OCT RANGE MAX", None),
+    (
+        "OCT UP",
+        Some("Chance that a note steps one octave up from the previous note."),
+    ),
+    (
+        "OCT DN",
+        Some("Chance that a note steps one octave down from the previous note."),
+    ),
+    ("PROBABILITIES heading", None),
+    ("REST", None),
+    ("ACCENT", None),
+    ("SLIDE", None),
+    (
+        "ACC BIAS",
+        Some("Chance that an accented note moves to the upper half of the scale"),
+    ),
+    (
+        "SLD CHAIN",
+        Some("Lit: slides may follow slides. Unlit: never two slides in a row."),
+    ),
+];
+
+/// The generator abbreviates its fields (PULSES (k), STEPS (n), PITCH LEN,
+/// OCT UP, OCT DN, ACC BIAS, SLD CHAIN); each control, and no other, shows its
+/// own text on hover (round-20 #11).
 #[test]
 fn generator_abbreviated_fields_explain_themselves() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
     let mut gen_params = GeneratorParams::default();
     let mut rig = Rig::new(vec2(left_column_width(), GENERATOR_H + TOOLTIP_ROOM));
-    let shown: HashSet<String> = tooltips_by_control(&mut rig, &mut |ui| {
+    let controls = tooltips_by_control(&mut rig, &mut |ui| {
         generator_panel::render_generator_panel(ui, &mut gen_params)
-    })
-    .into_iter()
-    .flat_map(|(_, texts)| texts)
-    .collect();
-    for expected in [
-        "Euclidean pulses: notes spread evenly over STEPS",
-        "Euclidean pattern length in steps",
-        "Chance that an accented note moves to the upper half of the scale",
-        "Lit: slides may follow slides. Unlit: never two slides in a row.",
-    ] {
-        assert!(shown.contains(expected), "no control shows {expected:?}");
+    });
+    assert_eq!(
+        controls.len(),
+        GENERATOR_CONTROLS.len(),
+        "the generator's controls changed; update GENERATOR_CONTROLS: {controls:?}"
+    );
+    for ((rect, texts), (name, expected)) in controls.iter().zip(GENERATOR_CONTROLS) {
+        if let Some(expected) = expected {
+            assert_eq!(
+                texts.as_slice(),
+                [expected],
+                "{name} at {rect:?} shows the wrong tooltip"
+            );
+        }
     }
+}
+
+/// A bypassed OUTPUT CLIPPER greys its switches and knobs; each says how to
+/// wake them (`on_hover_text` never shows on a disabled widget).
+#[test]
+fn bypassed_clipper_explains_why_it_is_inert() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
+    let params = Plugin303Params {
+        clipper_bypass: BoolParam::new("Clipper Bypass", true),
+        ..Default::default()
+    };
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
+    // OS + DIODE + LINK + 9 knobs; ON stays live.
+    assert_disabled_controls_explain(
+        &mut rig,
+        &mut |ui| output_clipper::render_output_clipper(ui, &params, &setter),
+        output_clipper::CLIPPER_OFF_HINT,
+        12,
+    );
 }

@@ -111,7 +111,7 @@ hidden.
 A disabled control says why on hover with `on_disabled_hover_text`;
 `on_hover_text` never shows on a disabled widget.
 `plugin303/tests/gui_tooltips.rs` checks QUALITY and ANALOG TWEAKS in
-ACCURATE and both ADSR banks.
+ACCURATE, both ADSR banks, and the OUTPUT CLIPPER while it is off.
 
 Disabled groups (`add_enabled_ui(false, …)`): QUALITY in ACCURATE, both ADSR
 banks (MEG and VEG) unless ADV ENV is on in FUN, the ADV ENV tile in
