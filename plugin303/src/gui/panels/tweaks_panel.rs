@@ -148,6 +148,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 .on_disabled_hover_text(ACCURATE_HINT);
                                             return;
                                         }
+                                        // Hand-paint selected_text: egui's combo paints selected text left-aligned in the proportional face; the value must be 9 pt monospace centred like the ACCURATE Readout.
                                         let combo =
                                             ComboBox::from_id_salt("tweaks_tolerance_combo")
                                                 .selected_text("")

@@ -456,6 +456,11 @@ mod tests {
     /// unselected segments fill PANEL_BG / TEXT_MUTED (round-21 #4).
     #[test]
     fn disabled_segment_colors() {
+        assert_eq!(
+            segment_colors(true, false, true),
+            (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
+        );
+
         let (selected_fill, selected_text) = segment_colors(true, false, false);
         assert_eq!(selected_fill, theme::SURFACE_HOVER);
         assert_eq!(selected_text, theme::TEXT_SECONDARY);

@@ -149,8 +149,7 @@ the generator card in `generator` is correct. The findings are:
 
 Narrow a card to one control group with `--box x0,y0,x1,y1`. Then confirm that
 the disabled selection still reads: crop it and look for the `SURFACE_HOVER`
-segment among `SURFACE_PRESSED` neighbours.
-
+segment among `PANEL_BG` neighbours.
 ## `knobs`: arc versus pointer
 
 ```bash

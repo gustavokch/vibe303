@@ -32,13 +32,7 @@ impl<'a, P: Param> Knob303<'a, P> {
     /// Footprint of a knob with outer radius `radius`: the dial, then the label
     /// row and the value well stacked tight beneath it.
     pub fn size(radius: f32) -> nih_plug_egui::egui::Vec2 {
-        let pill_width = if radius >= theme::KNOB_RADIUS_LARGE - 0.5 {
-            theme::KNOB_PILL_WIDTH_LARGE
-        } else if radius >= theme::KNOB_RADIUS_MEDIUM - 0.5 {
-            theme::KNOB_PILL_WIDTH_MEDIUM
-        } else {
-            theme::KNOB_PILL_WIDTH_SMALL
-        };
+        let pill_width = pill_width(radius);
         vec2((radius * 2.0 + 16.0).max(pill_width), radius * 2.0 + 26.0)
     }
 
@@ -218,13 +212,7 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
                 None => self.param.to_string(),
             };
 
-            let pill_width = if self.radius >= theme::KNOB_RADIUS_LARGE - 0.5 {
-                theme::KNOB_PILL_WIDTH_LARGE
-            } else if self.radius >= theme::KNOB_RADIUS_MEDIUM - 0.5 {
-                theme::KNOB_PILL_WIDTH_MEDIUM
-            } else {
-                theme::KNOB_PILL_WIDTH_SMALL
-            };
+            let pill_width = pill_width(self.radius);
             let pill_rect =
                 Rect::from_center_size(pos2(rect.center().x, value_y), vec2(pill_width, 11.0));
             painter.rect_filled(pill_rect, theme::radius(), theme::WELL_BG);
@@ -248,6 +236,16 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
 /// by linearly interpolating between `start_angle` and `end_angle`.
 pub fn compute_needle_angle(normalized: f32, start_angle: f32, end_angle: f32) -> f32 {
     start_angle + normalized * (end_angle - start_angle)
+}
+
+fn pill_width(radius: f32) -> f32 {
+    if radius >= theme::KNOB_RADIUS_LARGE - 0.5 {
+        theme::KNOB_PILL_WIDTH_LARGE
+    } else if radius >= theme::KNOB_RADIUS_MEDIUM - 0.5 {
+        theme::KNOB_PILL_WIDTH_MEDIUM
+    } else {
+        theme::KNOB_PILL_WIDTH_SMALL
+    }
 }
 
 #[cfg(test)]

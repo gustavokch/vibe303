@@ -12,6 +12,7 @@ use crate::params::{Plugin303Params, SequencerStep, StepGate};
 pub const GENERATOR_H: f32 = 102.0;
 
 const G_FIELD_W: f32 = 34.0;
+const G_SCALE_W: f32 = 84.0;
 const G_ROW_H: f32 = 18.0;
 
 /// Fixed-width label cell, vertically centered with the field row.
@@ -100,7 +101,7 @@ pub fn render_generator_panel(ui: &mut Ui, gen_params: &mut GeneratorParams) {
                                     MusicalScale::HarmonicMinor => "Harmonic",
                                     MusicalScale::Chromatic => "Chromatic",
                                 })
-                                .width(84.0)
+                                .width(G_SCALE_W)
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(
                                         &mut gen_params.scale,
@@ -491,13 +492,16 @@ mod tests {
         let _ = ctx.run(Default::default(), |ctx| {
             nih_plug_egui::egui::CentralPanel::default().show(ctx, |ui| {
                 theme::field_style(ui);
-                // Widest note (C# or D#) fits inside ROOT well with padding and icon
+                // Every root note name fits inside ROOT well with padding and icon
                 let mut root_w = 0.0;
                 ui.scope(|ui| {
                     ui.spacing_mut().button_padding = vec2(4.0, 1.0);
                     ui.spacing_mut().icon_width = 8.0;
                     ui.spacing_mut().icon_spacing = 2.0;
-                    for note in ["C", "C#", "D#"] {
+                    const NOTE_NAMES: [&str; 12] = [
+                        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+                    ];
+                    for note in NOTE_NAMES {
                         let r = ComboBox::from_id_salt(format!("test_root_{note}"))
                             .selected_text(note)
                             .width(G_FIELD_W)
@@ -527,7 +531,7 @@ mod tests {
                 ] {
                     let r = ComboBox::from_id_salt(format!("test_scale_{scale}"))
                         .selected_text(scale)
-                        .width(84.0)
+                        .width(G_SCALE_W)
                         .show_ui(ui, |_| {});
                     if scale_w == 0.0 {
                         scale_w = r.response.rect.width();
@@ -539,43 +543,7 @@ mod tests {
                         );
                     }
                 }
-                assert_eq!(scale_w, 84.0);
-            });
-        });
-    }
-    #[test]
-    fn new_seed_visuals_match_raised_action() {
-        use nih_plug::prelude::{GuiContext, ParamPtr, PluginApi, PluginState};
-        let ctx = nih_plug_egui::egui::Context::default();
-        theme::apply(&ctx);
-        let params = Plugin303Params::default();
-        let mut gen_params = GeneratorParams::default();
-        struct DummyGui;
-        impl GuiContext for DummyGui {
-            fn plugin_api(&self) -> PluginApi {
-                PluginApi::Standalone
-            }
-            fn request_resize(&self) -> bool {
-                false
-            }
-            unsafe fn raw_begin_set_parameter(&self, _param: ParamPtr) {}
-            unsafe fn raw_set_parameter_normalized(&self, _param: ParamPtr, _normalized: f32) {}
-            unsafe fn raw_end_set_parameter(&self, _param: ParamPtr) {}
-            fn get_state(&self) -> PluginState {
-                unimplemented!()
-            }
-            fn set_state(&self, _state: PluginState) {}
-        }
-        let host = DummyGui;
-        let setter = ParamSetter::new(&host);
-
-        let _ = ctx.run(Default::default(), |ctx| {
-            nih_plug_egui::egui::CentralPanel::default().show(ctx, |ui| {
-                render_generation_panel(ui, &params, &mut gen_params, &setter);
-                let w = &ui.visuals().widgets;
-                assert_eq!(w.inactive.weak_bg_fill, theme::SURFACE_ELEVATED);
-                assert_eq!(w.hovered.weak_bg_fill, theme::SURFACE_HOVER);
-                assert_eq!(w.active.weak_bg_fill, theme::SURFACE_PRESSED);
+                assert_eq!(scale_w, G_SCALE_W);
             });
         });
     }

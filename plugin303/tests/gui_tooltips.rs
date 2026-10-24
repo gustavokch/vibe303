@@ -236,11 +236,10 @@ fn accurate_banner_action_explains_itself() {
     );
 }
 
-/// The generator's widgets that sense a click or drag, in layout order (the
-/// header action, then each column top to bottom), and the tooltip the
-/// contract demands of each. The group headings are here because egui's
-/// selectable labels sense clicks. `None`: a plain word, no abbreviation to
-/// explain.
+/// The generator's widgets that sense a click or drag, in layout order (each
+/// column top to bottom), and the tooltip the contract demands of each. The
+/// group headings are here because egui's selectable labels sense clicks.
+/// `None`: a plain word, no abbreviation to explain.
 const GENERATOR_CONTROLS: [(&str, Option<&str>); 18] = [
     ("PATTERN STRUCTURE heading", None),
     ("ROOT", None),
