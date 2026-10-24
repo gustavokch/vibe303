@@ -241,8 +241,7 @@ fn accurate_banner_action_explains_itself() {
 /// contract demands of each. The group headings are here because egui's
 /// selectable labels sense clicks. `None`: a plain word, no abbreviation to
 /// explain.
-const GENERATOR_CONTROLS: [(&str, Option<&str>); 19] = [
-    ("NEW SEED", None),
+const GENERATOR_CONTROLS: [(&str, Option<&str>); 18] = [
     ("PATTERN STRUCTURE heading", None),
     ("ROOT", None),
     ("SCALE", None),
@@ -308,6 +307,42 @@ fn generator_abbreviated_fields_explain_themselves() {
         "the generator's controls changed; update GENERATOR_CONTROLS: {controls:?}"
     );
     for ((rect, texts), (name, expected)) in controls.iter().zip(GENERATOR_CONTROLS) {
+        if let Some(expected) = expected {
+            assert_eq!(
+                texts.as_slice(),
+                [expected],
+                "{name} at {rect:?} shows the wrong tooltip"
+            );
+        }
+    }
+}
+
+/// GENERATION controls: MUTATION, NEW SEED, GENERATE, MUTATE.
+const GENERATION_CONTROLS: [(&str, Option<&str>); 4] = [
+    ("MUTATION", None),
+    ("NEW SEED", None),
+    ("GENERATE", None),
+    ("MUTATE", None),
+];
+
+#[test]
+fn generation_controls_explain_themselves() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
+    let params = Plugin303Params::default();
+    let mut gen_params = GeneratorParams::default();
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    let mut rig = Rig::new(vec2(right_column_width(), GENERATOR_H + TOOLTIP_ROOM));
+    let controls = tooltips_by_control(&mut rig, &mut |ui| {
+        generator_panel::render_generation_panel(ui, &params, &mut gen_params, &setter);
+    });
+    assert_eq!(
+        controls.len(),
+        GENERATION_CONTROLS.len(),
+        "the generation panel's controls changed; update GENERATION_CONTROLS: {controls:?}"
+    );
+    for ((rect, texts), (name, expected)) in controls.iter().zip(GENERATION_CONTROLS) {
         if let Some(expected) = expected {
             assert_eq!(
                 texts.as_slice(),
