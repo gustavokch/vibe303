@@ -96,7 +96,7 @@ renders them; capture them by hand when a round needs them.
 list what the set does not cover and put it in the report. Standing gaps:
 hover, press and keyboard focus; open ComboBox and piano-roll popups; the SQR
 and SWP waves; TIE under the playhead; CALIBRATE when a rebuild is due; SYNTH
-MUTE, MIDI ON, LINK off, OUTPUT CLIPPER off; QUALITY HIGH and BEST; ADV ENV in
+MUTE, MIDI ON, LINK off; QUALITY HIGH and BEST; ADV ENV in
 ACCURATE.
 
 ## Phase 2 — Measure

@@ -51,8 +51,8 @@ Prints changed-region clusters as `y … x … n=…`. Expected scopes against
 | `advanced` | ENVELOPES (both ADSR banks, ADV ENV tile), and the GLIDE value pill: its readout follows the voice's glide map, which ADV ENV switches (`value_text::glide`) |
 | `knobs` | TUNING and CUTOFF |
 | `quality_low` | the QUALITY bar |
-| `knob_extremes` | TUNING, PITCH1, PITCH2, IN, OUT, and TILT knobs |
-| `clipper_off` | OUTPUT CLIPPER card only (header switches dimmed, ON tile unlit, body dimmed) |
+| `knob_extremes` | TUNING, PITCH1, PITCH2, IN, OUT, and TILT knobs only: TUNING (`x 241-328, y 118-244`), PITCH1 and PITCH2 (`x 597-849, y 324-414`), IN, OUT and TILT (`x 772-1161, y 490-580`) |
+| `clipper_off` | OUTPUT CLIPPER card only (`x 8-1614, y 434-594`; diff clusters in `x 25-1580, y 438-580` covering dimmed header switches, unlit ON tile, dimmed knobs) |
 | `generator` | ACID EUCLIDEAN GENERATOR body, the GENERATION SEED value |
 | `running` | SEQUENCER step 04 (plate, LED, number), the RUN tile |
 | `running_note` | as `running`, plus every gate and pitch cell |
