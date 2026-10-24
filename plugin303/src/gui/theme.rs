@@ -58,7 +58,7 @@ pub const KNOB_RADIUS_MEDIUM: f32 = 12.0;
 
 // Value-field widths matching the knob tiers.
 pub const KNOB_PILL_WIDTH_LARGE: f32 = 52.0;
-pub const KNOB_PILL_WIDTH_MEDIUM: f32 = 38.0;
+pub const KNOB_PILL_WIDTH_MEDIUM: f32 = 44.0;
 pub const KNOB_PILL_WIDTH_SMALL: f32 = 34.0;
 
 // ── Shape ───────────────────────────────────────────────────────────────────
