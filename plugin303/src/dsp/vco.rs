@@ -563,7 +563,7 @@ impl Vco303 {
         let mut rng_state = seed ^ instance_xor;
         let mut next_f64 = || {
             rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
-            (rng_state as f64) / (std::u32::MAX as f64)
+            (rng_state as f64) / (u32::MAX as f64)
         };
         let mut next_gauss = || {
             let mut u1 = next_f64();
@@ -1164,7 +1164,7 @@ impl Vco303 {
         let mut i_noise = 0.0;
         if self.thermal_noise > 0 {
             self.noise_seed = self.noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
-            let white = ((self.noise_seed as f64) / (std::u32::MAX as f64)) * 2.0 - 1.0;
+            let white = ((self.noise_seed as f64) / (u32::MAX as f64)) * 2.0 - 1.0;
             i_noise = white * 5e-8 * (self.thermal_noise as f64 / 21.0);
         }
 

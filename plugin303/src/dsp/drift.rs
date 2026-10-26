@@ -40,7 +40,7 @@ impl DriftGenerator {
     pub fn tick(&mut self, cutoff_hz: f32, sr: f32) -> f32 {
         // Linear Congruential Generator step for white noise in [-1.0, 1.0]
         self.state = self.state.wrapping_mul(1103515245).wrapping_add(12345);
-        let white = ((self.state as f32) / (std::u32::MAX as f32)) * 2.0 - 1.0;
+        let white = ((self.state as f32) / (u32::MAX as f32)) * 2.0 - 1.0;
 
         // Paul Kellet's refined pinking filter
         self.b0 = 0.99886 * self.b0 + white * 0.0555179;

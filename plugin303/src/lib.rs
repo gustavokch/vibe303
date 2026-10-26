@@ -1,3 +1,4 @@
+#![allow(semicolon_in_expressions_from_non_local_macros)]
 use nih_plug::prelude::*;
 use std::num::NonZeroU32;
 use std::sync::Arc;
