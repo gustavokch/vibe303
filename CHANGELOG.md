@@ -110,8 +110,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   switch the hardware sample rate, so CoreAudio resampled 512 device frames at
   44.1 kHz into ceil(512 * 48000 / 44100) = 558 callback frames,
   exceeding nih-plug's preallocated `period_size` buffer. `standalone` now
-  queries the CoreAudio output device's nominal sample rate when `--sample-rate`
-  is not passed on the command line.
+  passes the output device's current sample rate (the `--output-device`
+  device, or the system default) when the command line does not set
+  `-r`/`--sample-rate`.
 
 ### Removed
 - The editor's ZOOM control and the `zoom75` QA capture state. nih-plug cannot
