@@ -103,6 +103,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is shorter than before (0.2: 200 ms, was 600 ms; 0.5: 400 ms, was 1500 ms;
   1.0: 2.1 s, was 3 s); below it, it is longer (0.01: 105 ms, was 30 ms).
   Accented notes keep their fixed 200 ms.
+- The macOS standalone binary (`cargo run --release --bin standalone`) panicked
+  on startup when the output device's nominal sample rate was below 48 kHz
+  (e.g. 44.1 kHz on built-in MacBook speakers: `Received 558 samples, while the
+  configured buffer size is 512`). `cpal`'s CoreAudio output backend does not
+  switch the hardware sample rate, so CoreAudio resampled 512 device frames at
+  44.1 kHz into ceil(512 * 48000 / 44100) = 558 callback frames,
+  exceeding nih-plug's preallocated `period_size` buffer. `standalone` now
+  queries the CoreAudio output device's nominal sample rate when `--sample-rate`
+  is not passed on the command line.
 
 ### Removed
 - The editor's ZOOM control and the `zoom75` QA capture state. nih-plug cannot
