@@ -7,6 +7,8 @@ pub mod dsp;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod params;
+#[cfg(feature = "standalone")]
+pub mod standalone_args;
 pub mod value_text;
 use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::{Voice, VoiceClipperParams};
