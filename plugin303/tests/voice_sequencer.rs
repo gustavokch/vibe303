@@ -120,7 +120,6 @@ fn classic_voice(decay: f32) -> Voice {
         0,
         0.5,
         0.0,
-        1.0,
     );
     v
 }

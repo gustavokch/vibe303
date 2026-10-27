@@ -16,9 +16,9 @@ use plugin303::Plugin303;
 
 #[global_allocator]
 static ALLOC: AllocDisabler = AllocDisabler;
-/// Pre-warm the VCO LUT cache exactly once across all parallel test threads.
-/// Without this, `recalculate_luts_async` spawns background threads that
-/// compete for CPU with the test's tight VCO tick loops.
+/// Pre-warm the nominal VCO LUT cache exactly once across all parallel test
+/// threads, as `initialize` does, so a FUN switch finds its LUT cached
+/// (`Vco303::use_cached_nominal`) and no test builds one in a guarded region.
 fn ensure_lut_cache_warm() {
     use std::sync::Once;
     static INIT: Once = Once::new();
@@ -252,12 +252,67 @@ fn oversampler_hot_path_is_alloc_free() {
     );
 }
 
+/// Minimal host for driving `Plugin303::process` in a test.
+struct DummyContext {
+    transport: nih_plug::prelude::Transport,
+}
+
+impl nih_plug::prelude::ProcessContext<Plugin303> for DummyContext {
+    fn plugin_api(&self) -> nih_plug::prelude::PluginApi {
+        nih_plug::prelude::PluginApi::Clap
+    }
+    fn execute_background(&self, _: ()) {}
+    fn execute_gui(&self, _: ()) {}
+    fn send_event(&mut self, _: nih_plug::prelude::NoteEvent<()>) {}
+    fn transport(&self) -> &nih_plug::prelude::Transport {
+        &self.transport
+    }
+    fn next_event(&mut self) -> Option<nih_plug::prelude::PluginNoteEvent<Plugin303>> {
+        None
+    }
+    fn set_latency_samples(&self, _samples: u32) {}
+    fn set_current_voice_capacity(&self, _capacity: u32) {}
+}
+
+/// Runs `blocks` 512-sample stereo `process` calls; `guard` wraps them in
+/// `assert_no_alloc`. Returns the allocation count seen inside the guard.
+fn run_blocks(plugin: &mut Plugin303, blocks: usize, guard: bool) -> usize {
+    use nih_plug::prelude::*;
+    let mut aux = AuxiliaryBuffers {
+        inputs: &mut [],
+        outputs: &mut [],
+    };
+    let mut buffer = Buffer::default();
+    let mut scratch_l = [0.0f32; 512];
+    let mut scratch_r = [0.0f32; 512];
+    unsafe {
+        buffer.set_slices(512, |slices| {
+            slices.push(&mut scratch_l);
+            slices.push(&mut scratch_r);
+        });
+    }
+    let transport: Transport = unsafe { std::mem::zeroed() };
+    let mut ctx = DummyContext { transport };
+
+    reset_violation_count();
+    let mut run = || {
+        for _ in 0..blocks {
+            plugin.process(&mut buffer, &mut aux, &mut ctx);
+        }
+    };
+    if guard {
+        assert_no_alloc(run);
+    } else {
+        run();
+    }
+    violation_count() as usize
+}
+
 #[test]
 fn sequencer_audio_path_is_alloc_free() {
     ensure_lut_cache_warm();
     use nih_plug::prelude::*;
     use plugin303::params::{Plugin303Params, SequencerPattern, StepGate};
-    use plugin303::Plugin303;
     use std::sync::Arc;
 
     let mut pattern = SequencerPattern::default();
@@ -273,58 +328,51 @@ fn sequencer_audio_path_is_alloc_free() {
 
     let mut plugin = Plugin303::new_with_params(Arc::new(params));
 
-    let mut aux = AuxiliaryBuffers {
-        inputs: &mut [],
-        outputs: &mut [],
-    };
-    let mut buffer = Buffer::default();
-    let mut scratch_l = [0.0f32; 512];
-    let mut scratch_r = [0.0f32; 512];
-    unsafe {
-        buffer.set_slices(512, |slices| {
-            slices.push(&mut scratch_l);
-            slices.push(&mut scratch_r);
-        });
-    }
-
-    struct DummyContext {
-        transport: Transport,
-    }
-    impl ProcessContext<Plugin303> for DummyContext {
-        fn plugin_api(&self) -> PluginApi {
-            PluginApi::Clap
-        }
-        fn execute_background(&self, _: ()) {}
-        fn execute_gui(&self, _: ()) {}
-        fn send_event(&mut self, _: NoteEvent<()>) {}
-        fn transport(&self) -> &Transport {
-            &self.transport
-        }
-        fn next_event(&mut self) -> Option<PluginNoteEvent<Plugin303>> {
-            None
-        }
-        fn set_latency_samples(&self, _samples: u32) {}
-        fn set_current_voice_capacity(&self, _capacity: u32) {}
-    }
-
-    let transport: Transport = unsafe { std::mem::zeroed() };
-    let mut ctx = DummyContext { transport };
-
     // Warm-up outside guard
-    for _ in 0..4 {
-        plugin.process(&mut buffer, &mut aux, &mut ctx);
-    }
-
-    reset_violation_count();
-    assert_no_alloc(|| {
-        for _ in 0..16 {
-            plugin.process(&mut buffer, &mut aux, &mut ctx);
-        }
-    });
+    run_blocks(&mut plugin, 4, false);
     assert_eq!(
-        violation_count(),
+        run_blocks(&mut plugin, 16, true),
         0,
         "Plugin303::process with sequencer allocated on audio path"
+    );
+}
+
+/// CALIBRATE used to run the whole VCO LUT solve (about 30 s) inside
+/// `process()` on every block, because nothing reset its trigger. A trim must
+/// only queue background work: blocks stay fast and allocation-free while the
+/// LUT worker computes it.
+#[test]
+fn calibrate_never_blocks_the_audio_thread() {
+    ensure_lut_cache_warm();
+    use plugin303::params::{CompTolerance, Plugin303Params, VcoTrim};
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let params = Arc::new(Plugin303Params::default());
+    let mut plugin = Plugin303::new_with_params(params.clone());
+    plugin303::dsp::worker::start(); // as `initialize` does
+    run_blocks(&mut plugin, 4, false);
+
+    // The editor's CALIBRATE click with worn components.
+    *params.vco_trim.write().unwrap() = VcoTrim {
+        age: 50,
+        tolerance: CompTolerance::Two,
+        seed: 1337,
+        recal: 1.0,
+    };
+    let t0 = Instant::now();
+    let allocs = run_blocks(&mut plugin, 64, true);
+    let elapsed = t0.elapsed();
+
+    assert_eq!(allocs, 0, "a CALIBRATE trim allocated on the audio thread");
+    assert!(
+        params.vco_trim_busy.load(Ordering::Relaxed),
+        "the trim must still be computing in the background"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "64 blocks took {elapsed:?}: the trim ran on the audio thread"
     );
 }
 
@@ -365,12 +413,11 @@ fn analog_character_param_sweep_is_alloc_free() {
         0.0,                                    // comp_drift
         plugin303::params::CompTolerance::Five, // tolerance
         0,                                      // thermal_noise
-        plugin303::params::CircuitTopology::Accurate,
+        plugin303::params::CircuitTopology::Fun,
         0.0,
         1337, // comp_seed
         0.5,
         0.0,
-        1.0, // recalibration_scale
     );
     for _ in 0..128 {
         voice.tick();
@@ -405,16 +452,18 @@ fn analog_character_param_sweep_is_alloc_free() {
                 0.0,
                 200.0,
                 plugin303::params::VcaEnvMode::Envelope,
-                0,                                      // comp_age (fixed during RT sweep)
-                (i as f32 * 0.001) % 1.0,               // comp_drift (real-time sweep)
-                plugin303::params::CompTolerance::Five, // tolerance (fixed during RT sweep)
-                (i % 50) as i32,                        // thermal_noise (real-time sweep)
-                plugin303::params::CircuitTopology::Accurate,
+                (i % 101) as i32,         // comp_age (real-time sweep)
+                (i as f32 * 0.001) % 1.0, // comp_drift (real-time sweep)
+                [
+                    plugin303::params::CompTolerance::Zero,
+                    plugin303::params::CompTolerance::Five,
+                ][(i / 7) % 2], // tolerance (real-time sweep)
+                (i % 50) as i32,          // thermal_noise (real-time sweep)
+                plugin303::params::CircuitTopology::Fun,
                 0.0,
-                1337, // comp_seed (fixed during RT sweep)
+                1337 + (i / 13) as i32, // comp_seed (real-time sweep)
                 0.5,
                 0.0,
-                1.0, // recalibration_scale (fixed during RT sweep)
             );
             acc += voice.tick();
         }

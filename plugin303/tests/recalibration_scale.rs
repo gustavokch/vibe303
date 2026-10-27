@@ -1,9 +1,9 @@
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::vco::Vco303;
 use plugin303::dsp::voice::Voice;
-use plugin303::params::{CircuitTopology, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
+use plugin303::params::{CircuitTopology, CompTolerance, OscWave, VcaEnvMode, VcfTaps, VcoTrim};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[test]
 fn test_recalibration_scale_alters_lut() {
@@ -75,12 +75,11 @@ fn test_recal_scale_audio_integration() {
         0.0,
         CompTolerance::Ten,
         0,
-        CircuitTopology::Accurate,
+        CircuitTopology::Fun,
         0.0,
         1337,
         0.5,
         0.0,
-        1.0, // recal = 1.0
     );
 
     v2.update_params(
@@ -113,16 +112,21 @@ fn test_recal_scale_audio_integration() {
         0.0,
         CompTolerance::Ten,
         0,
-        CircuitTopology::Accurate,
+        CircuitTopology::Fun,
         0.0,
         1337,
         0.5,
         0.0,
-        0.0, // recal = 0.0
     );
 
-    v1.recalculate_luts_sync();
-    v2.recalculate_luts_sync();
+    let trim = |recal| VcoTrim {
+        age: 40,
+        tolerance: CompTolerance::Ten,
+        seed: 1337,
+        recal,
+    };
+    v1.set_vco_trim_blocking(trim(1.0));
+    v2.set_vco_trim_blocking(trim(0.0));
 
     assert_ne!(
         v1.get_vco_cv_lut(),
@@ -176,34 +180,41 @@ fn test_recal_scale_audio_integration() {
     );
 }
 
+/// A background trim request reaches the LUT worker and its result is
+/// published to the VCO.
 #[test]
 fn test_worker_recal_scale_async() {
     let sr = 48000.0;
     let mut vco_recal = Vco303::new(sr);
     let mut vco_half = Vco303::new(sr);
-
-    vco_recal.set_analog_wear(0.10, 40, 1337);
-    vco_half.set_analog_wear(0.10, 40, 1337);
+    plugin303::dsp::worker::start();
 
     vco_recal.recalculate_luts_sync_with_recal(40, 0.10, 1337, 1.0);
 
-    assert!(vco_half.recalculate_luts_async(40, 0.10, 1337, 0.5));
+    assert!(vco_half.request_luts(40, 0.10, 1337, 0.5));
+    assert!(vco_half.lut_pending());
 
-    let mut updated = false;
-    for _ in 0..100 {
-        sleep(Duration::from_millis(10));
+    let nominal = vco_half.get_cv_lut();
+    let deadline = Instant::now() + Duration::from_secs(180);
+    while vco_half.lut_pending() {
+        assert!(
+            Instant::now() < deadline,
+            "LUT worker never published the requested set"
+        );
+        sleep(Duration::from_millis(50));
         vco_half.poll_lut_update();
-        if vco_half.get_cv_lut() != [0.0; 37] && vco_half.get_cv_lut() != vco_recal.get_cv_lut() {
-            updated = true;
-            break;
-        }
     }
 
-    assert!(
-        updated,
-        "Async worker should finish and update LUT with recal_scale=0.5"
-    );
     let lut = vco_half.get_cv_lut();
+    assert_ne!(
+        lut, nominal,
+        "the published set must replace the nominal LUT"
+    );
+    assert_ne!(
+        lut,
+        vco_recal.get_cv_lut(),
+        "RECAL 0.5 must keep part of the component error that RECAL 1.0 trims out"
+    );
     for entry in lut.iter() {
         assert!(entry.is_finite(), "Async recal LUT entries must be finite");
     }

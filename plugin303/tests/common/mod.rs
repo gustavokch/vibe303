@@ -220,7 +220,6 @@ fn apply_plugin_patch(v: &mut plugin303::dsp::voice::Voice, comp_age: i32, env_m
         p.comp_seed.value(),
         p.glide.value(),
         p.reso_comp.value(),
-        p.recalibration_scale.value() as f64,
     );
 }
 
@@ -233,6 +232,9 @@ fn apply_plugin_patch(v: &mut plugin303::dsp::voice::Voice, comp_age: i32, env_m
 /// render never runs `update_params`, so only this render sees an update that
 /// overrides a tier's calibrated voicing.
 pub fn render_plugin_path(tier: plugin303::dsp::filter::Tier, op: &GoldOp, n: usize) -> Vec<f32> {
+    // As `Plugin303::initialize` does: build the FUN nominal LUT before the
+    // first block switches the voice to FUN.
+    plugin303::dsp::vco::Vco303::warm_cache_nominal(op.sr, true);
     let mut v = plugin303::dsp::voice::Voice::new(op.sr);
     v.update_clipper_params_immediate(bypassed_clipper());
     v.set_tier_immediate(tier);

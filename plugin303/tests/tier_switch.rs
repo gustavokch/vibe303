@@ -149,7 +149,6 @@ fn fun_mode_with_sub(v: &mut Voice) {
         0,
         0.5,
         0.0,
-        1.0,
     );
 }
 

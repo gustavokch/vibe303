@@ -166,6 +166,24 @@ pub struct LadderVcf {
     pub dbg_iters: u32,
 }
 
+/// BJT bias factor after `age` (0..=100 years): the bias current, and with it
+/// the ladder corner, falls 15 % at 100.
+fn age_bias_factor(age: i32) -> f64 {
+    1.0 - 0.15 * (age as f64 / 100.0)
+}
+
+/// Systematic capacitor shift after `age`: -5 % at 100 (less C, higher corner).
+fn age_cap_shift(age: i32) -> f64 {
+    -0.05 * (age as f64 / 100.0)
+}
+
+/// Corner-frequency factor that `age` gives the nodal ladder: the bias factor
+/// over the capacitor factor (corner ∝ bias / C). The Draft tier scales its
+/// cutoff by the same factor, so AGE moves every tier the same way.
+pub fn age_corner_factor(age: i32) -> f64 {
+    age_bias_factor(age) / (1.0 + age_cap_shift(age))
+}
+
 impl LadderVcf {
     pub fn new(sr: f32) -> Self {
         let mut f = Self {
@@ -235,13 +253,7 @@ impl LadderVcf {
         self.cal
     }
 
-    pub fn set_analog_wear(
-        &mut self,
-        tolerance: f64,
-        age: i32,
-        seed: u32,
-        recalibration_scale: f64,
-    ) {
+    pub fn set_analog_wear(&mut self, tolerance: f64, age: i32, seed: u32) {
         let mut rng_state = seed ^ (self.instance_id.wrapping_mul(0x9E3779B9) ^ 0x55AA55AA);
         let mut next_f64 = || {
             rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
@@ -256,12 +268,10 @@ impl LadderVcf {
             (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
         };
 
-        let systematic_c = -0.05 * (age as f64 / 100.0) * recalibration_scale;
-        let bjt_age_factor = 1.0 - 0.15 * (age as f64 / 100.0) * recalibration_scale;
-
-        self.age_factor = bjt_age_factor;
+        self.age_factor = age_bias_factor(age);
         self.update_bias();
 
+        let systematic_c = age_cap_shift(age);
         let sigma = tolerance / 3.0;
         for m in self.c_mults.iter_mut() {
             let c_dev = next_gauss() * sigma;
@@ -431,7 +441,7 @@ impl LadderVcf {
             if (self.thermal_noise as f64) > 0.1 {
                 self.noise_seed = self.noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
                 let white = ((self.noise_seed as f64) / (u32::MAX as f64)) * 2.0 - 1.0;
-                // Scale companion current noise: max 1.0e-7 A at thermal_noise = 21
+                // Companion current noise: 1e-7 A per 21 NOISE steps (4.8e-7 A at 100).
                 i_noise = white * 1e-7 * (self.thermal_noise as f64 / 21.0);
             }
 
@@ -959,10 +969,10 @@ mod tests {
     /// update must not change the brightness.
     #[test]
     fn analog_wear_scales_brightness_instead_of_replacing_it() {
-        let age_50 = 1.0 - 0.15 * 0.5; // bjt_age_factor at age 50, full recalibration
+        let age_50 = 1.0 - 0.15 * 0.5; // bjt_age_factor at age 50
         let mut f = LadderVcf::new(192_000.0);
         f.set_cal(0.70);
-        f.set_analog_wear(0.0, 50, 1, 1.0);
+        f.set_analog_wear(0.0, 50, 1);
         assert!((f.cal() - 0.70 * age_50).abs() < 1e-12, "wear after brightness: {}", f.cal());
 
         f.set_thermal(20);
@@ -971,7 +981,7 @@ mod tests {
         f.set_cal(0.50);
         assert!((f.cal() - 0.50 * age_50).abs() < 1e-12, "brightness after wear: {}", f.cal());
 
-        f.set_analog_wear(0.0, 0, 1, 1.0);
+        f.set_analog_wear(0.0, 0, 1);
         assert!((f.cal() - 0.50).abs() < 1e-12, "age 0 must give back the brightness: {}", f.cal());
     }
 }

@@ -3,7 +3,7 @@ use nih_plug::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum, Serialize, Deserialize)]
 pub enum CompTolerance {
     #[default]
     #[name = "0%"]
@@ -27,6 +27,63 @@ impl CompTolerance {
             CompTolerance::Five => 0.05,
             CompTolerance::Ten => 0.10,
         }
+    }
+}
+
+/// The analog settings the last CALIBRATE trimmed the circuit VCOs for. The
+/// live components follow AGE / TOL / SEED at once; the VCO pitch LUTs follow
+/// this snapshot. The gap between the two is the audible component pitch
+/// error, until the next CALIBRATE. Saved with the project, so a reload plays
+/// the same trim.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct VcoTrim {
+    pub age: i32,
+    pub tolerance: CompTolerance,
+    pub seed: i32,
+    /// RECAL: the share of the component pitch error the trim removes.
+    pub recal: f32,
+}
+
+impl VcoTrim {
+    /// Factory trim: nominal components, fully trimmed.
+    pub const NEUTRAL: Self = Self {
+        age: 0,
+        tolerance: CompTolerance::Zero,
+        seed: 0,
+        recal: 1.0,
+    };
+
+    /// The trim the current parameters ask for.
+    pub fn from_params(p: &Plugin303Params) -> Self {
+        Self {
+            age: p.comp_age.value(),
+            tolerance: p.tolerance.value(),
+            seed: p.comp_seed.value(),
+            recal: p.recalibration_scale.value(),
+        }
+        .normalized()
+    }
+
+    /// Clears the fields that cannot change the LUTs, so trims with equal LUTs
+    /// compare equal: the seed only draws tolerance deviations, and RECAL only
+    /// scales a component error.
+    pub fn normalized(self) -> Self {
+        let nominal = self.age == 0 && self.tolerance == CompTolerance::Zero;
+        Self {
+            seed: if self.tolerance == CompTolerance::Zero {
+                0
+            } else {
+                self.seed
+            },
+            recal: if nominal { 1.0 } else { self.recal },
+            ..self
+        }
+    }
+}
+
+impl Default for VcoTrim {
+    fn default() -> Self {
+        Self::NEUTRAL
     }
 }
 
@@ -352,8 +409,6 @@ pub struct Plugin303Params {
     #[id = "recalibration_scale"]
     pub recalibration_scale: FloatParam,
 
-    #[id = "calibrate_sync"]
-    pub calibrate_sync: BoolParam,
     #[id = "tolerance"]
     pub tolerance: EnumParam<CompTolerance>,
     #[id = "thermal_noise"]
@@ -392,16 +447,42 @@ pub struct Plugin303Params {
     // Sequencer pattern persistence
     #[persist = "pattern"]
     pub pattern: std::sync::RwLock<SequencerPattern>,
+    /// Settings of the last CALIBRATE; written by the editor, read by the
+    /// audio thread with `try_read`.
+    #[persist = "vco_trim"]
+    pub vco_trim: std::sync::RwLock<VcoTrim>,
+    /// Audio thread to editor: a VCO trim is still being computed.
+    pub vco_trim_busy: std::sync::atomic::AtomicBool,
 }
 
 impl Plugin303Params {
     pub fn is_param_active(&self, param_id: &str) -> bool {
         match self.topology.value() {
             CircuitTopology::Accurate => match param_id {
-                "osc1_pitch" | "osc2_pitch" | "osc2_vol" | "osc1_pw" | "sub_vol" | "sweep_pos"
-                | "vcf_taps" | "vcf_drive" | "advanced_env" | "meg_attack" | "meg_decay_adj"
-                | "meg_sustain" | "meg_release" | "veg_attack" | "veg_decay_adj"
-                | "veg_sustain" | "veg_release" | "vca_env_mode" => false,
+                "osc1_pitch"
+                | "osc2_pitch"
+                | "osc2_vol"
+                | "osc1_pw"
+                | "sub_vol"
+                | "sweep_pos"
+                | "vcf_taps"
+                | "vcf_drive"
+                | "advanced_env"
+                | "meg_attack"
+                | "meg_decay_adj"
+                | "meg_sustain"
+                | "meg_release"
+                | "veg_attack"
+                | "veg_decay_adj"
+                | "veg_sustain"
+                | "veg_release"
+                | "vca_env_mode"
+                | "comp_age"
+                | "comp_drift"
+                | "recalibration_scale"
+                | "tolerance"
+                | "thermal_noise"
+                | "comp_seed" => false,
                 _ => true,
             },
             CircuitTopology::Fun => match param_id {
@@ -746,9 +827,7 @@ impl Default for Plugin303Params {
                     max: (100),
                 },
             )
-            .with_value_to_string(std::sync::Arc::new(|v| {
-                format!("{:.1} yrs", v as f32 * 0.45)
-            })),
+            .with_value_to_string(std::sync::Arc::new(|v| format!("{v} yrs"))),
 
             comp_drift: percent(FloatParam::new(
                 "Comp Drift",
@@ -761,7 +840,6 @@ impl Default for Plugin303Params {
                 1.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )),
-            calibrate_sync: BoolParam::new("Calibrate Sync", false),
 
             tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),
 
@@ -770,7 +848,7 @@ impl Default for Plugin303Params {
                     if v == 0 {
                         "Off".to_string()
                     } else {
-                        format!("{:.1}°C", 20.0 + v as f32 * 0.25)
+                        format!("{:.1}°C", crate::dsp::voice::ambient_temp_c(v))
                     }
                 })),
 
@@ -864,6 +942,8 @@ impl Default for Plugin303Params {
                 }
                 p
             }),
+            vco_trim: std::sync::RwLock::new(VcoTrim::NEUTRAL),
+            vco_trim_busy: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }

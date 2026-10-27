@@ -4,7 +4,7 @@ use super::drift::DriftGenerator;
 use super::env::AdsrEnv;
 use super::filter::{Filter303, Tier};
 use super::ladder::TptLadder;
-use super::ladder_wdf::LadderVcf;
+use super::ladder_wdf::{age_corner_factor, LadderVcf};
 use super::osc::BlepOsc;
 use super::oversample::{Os2x, Os4x};
 use super::rc_env::{AccentSweep, DecayEnv, LeakyIntegrator, RcEnv};
@@ -12,13 +12,22 @@ use super::sequencer::SeqEvent;
 use super::vco::Vco303;
 use super::warm_clipper::{ClipperOs, ClipperParams, WarmClipper};
 use crate::params::{
-    CircuitTopology, ClipperOversampling, CompTolerance, OscWave, VcaEnvMode, VcfTaps,
+    CircuitTopology, ClipperOversampling, CompTolerance, OscWave, VcaEnvMode, VcfTaps, VcoTrim,
 };
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
 pub fn midi_to_freq(note: u8) -> f32 {
     440.0 * 2.0f32.powf((note as f32 - 69.0) / 12.0)
 }
+
+/// Ambient temperature (°C) the NOISE control sets: 20 °C at 0, 40 °C at 100.
+/// Gate self-heating adds up to `SELF_HEAT_C` on top, slowly.
+pub fn ambient_temp_c(thermal_noise: i32) -> f32 {
+    20.0 + 0.2 * thermal_noise as f32
+}
+
+/// Self-heating (°C) a held gate settles at, above ambient.
+const SELF_HEAT_C: f32 = 3.0;
 
 pub const BEST_OS_FACTOR: f32 = 4.0;
 pub const HIGH_OS_FACTOR: f32 = 2.0;
@@ -344,22 +353,25 @@ pub struct Voice {
     master_volume: f32,
     /// Main VCF drive factor.
     drive: f32,
-    /// Component age wear level in [0, 10].
+    /// Effective component age in [0, 100] (0 in ACCURATE).
     age: i32,
-    /// Component tolerance.
+    /// Effective component tolerance (0 % in ACCURATE).
     tolerance: CompTolerance,
     /// Seed for component variation.
     comp_seed: i32,
-    /// Voice drift amount in [0.0, 1.0].
+    /// Effective drift amount in [0.0, 1.0] (0 in ACCURATE).
     drift: f32,
-    /// Trimmer recalibration scale in [0.0, 1.0].
-    recalibration_scale: f64,
     draft_cutoff_mult: f64,
     draft_reso_mult: f64,
-    /// Thermal noise level in [0, 50].
+    /// Effective NOISE level in [0, 100] (0 in ACCURATE); sets the ambient
+    /// temperature and the ladders' noise current.
     thermal_noise: i32,
-    /// Dynamic operating temperature in degrees Celsius (20.0 to 45.0)
+    /// Operating temperature in °C: ambient (from NOISE, applied at once) plus
+    /// `self_heat`. 20 to 43.
     temperature: f32,
+    /// Gate self-heating above ambient (°C), relaxing toward `SELF_HEAT_C`
+    /// while gated and 0 otherwise (15 s / 30 s time constants).
+    self_heat: f32,
     /// Last VCO thermal step applied by `tick` (0..=21 step scale; -1 = unset).
     thermal_noise_state: i32,
     /// Last raw `thermal_noise` parameter applied to the ladder filters
@@ -393,8 +405,10 @@ pub struct Voice {
     reso_comp: f32,
     /// Cached classic slide tau in ms.
     classic_slide_tau_ms: f64,
-    /// Whether the VCO LUTs need recalculation before running Tier::High or Tier::Best.
-    vco_dirty: bool,
+    /// VCO trim (and topology) last requested from the LUT worker.
+    trim_requested: Option<(VcoTrim, CircuitTopology)>,
+    /// The last trim request did not reach the worker queue; resend it.
+    trim_retry: bool,
 }
 
 /// Decay time in ms for DECAY knob position `k` (0..=1): 100 ms .. 2.1 s, finer
@@ -561,11 +575,11 @@ impl Voice {
             tolerance: CompTolerance::Zero,
             comp_seed: 0,
             drift: 0.0,
-            recalibration_scale: 1.0,
             draft_cutoff_mult: 1.0,
             draft_reso_mult: 1.0,
             thermal_noise: 0,
             temperature: 20.0,
+            self_heat: 0.0,
             thermal_noise_state: -1,
             ladder_thermal_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
@@ -579,19 +593,15 @@ impl Voice {
             glide_knob: 0.5,
             reso_comp: 0.0,
             classic_slide_tau_ms: 22.0,
-            vco_dirty: true,
+            trim_requested: None,
+            trim_retry: false,
         };
         // Bring the circuit ladders to the current thermal and wear state, as
         // `update_params` does on every later change.
         let tol = voice.tolerance_f64();
         for ladder in [&mut voice.ladder_high, &mut voice.ladder_best] {
             ladder.set_thermal(voice.thermal_noise);
-            ladder.set_analog_wear(
-                tol,
-                voice.age,
-                voice.comp_seed as u32,
-                voice.recalibration_scale,
-            );
+            ladder.set_analog_wear(tol, voice.age, voice.comp_seed as u32);
         }
         voice
     }
@@ -616,21 +626,49 @@ impl Voice {
         self.vco.get_cv_lut()
     }
 
-    pub fn recalculate_luts_sync(&mut self) {
-        let tol_f64 = self.tolerance_f64();
-        self.vco.recalculate_luts_sync_with_recal(
-            self.age,
-            tol_f64,
-            self.comp_seed as u32,
-            self.recalibration_scale,
-        );
-        self.vco2.recalculate_luts_sync_with_recal(
-            self.age,
-            tol_f64,
-            self.comp_seed as u32,
-            self.recalibration_scale,
-        );
-        self.vco_dirty = false;
+    /// The trim the VCOs play under the current topology: the CALIBRATE
+    /// snapshot in FUN, the factory trim in ACCURATE (analog tweaks are
+    /// FUN-only).
+    fn effective_trim(&self, trim: VcoTrim) -> (VcoTrim, CircuitTopology) {
+        match self.topology {
+            CircuitTopology::Fun => (trim.normalized(), self.topology),
+            CircuitTopology::Accurate => (VcoTrim::NEUTRAL, self.topology),
+        }
+    }
+
+    /// Block-rate: keep the VCO pitch LUTs on `trim` (the last CALIBRATE).
+    /// A new trim or topology sends one background LUT job per VCO; the LUTs
+    /// swap in when the worker publishes them. A job that does not fit the
+    /// queue is resent on the next call. RT-safe: no allocation, no wait.
+    pub fn set_vco_trim(&mut self, trim: VcoTrim) {
+        let key = self.effective_trim(trim);
+        if self.trim_requested == Some(key) && !self.trim_retry {
+            return;
+        }
+        let (t, _) = key;
+        let (age, tol, seed, recal) = (t.age, t.tolerance.as_f64(), t.seed as u32, t.recal as f64);
+        let ok1 = self.vco.request_luts(age, tol, seed, recal);
+        let ok2 = self.vco2.request_luts(age, tol, seed, recal);
+        self.trim_requested = Some(key);
+        self.trim_retry = !(ok1 && ok2);
+    }
+
+    /// Whether the LUTs of the last [`Self::set_vco_trim`] are still on their way.
+    pub fn vco_trim_pending(&self) -> bool {
+        self.trim_retry || self.vco.lut_pending() || self.vco2.lut_pending()
+    }
+
+    /// Blocking [`Self::set_vco_trim`]: solves both VCOs' LUTs on the calling
+    /// thread. Seconds of work: tests and offline rendering only.
+    pub fn set_vco_trim_blocking(&mut self, trim: VcoTrim) {
+        let key = self.effective_trim(trim);
+        let (t, _) = key;
+        let tol = t.tolerance.as_f64();
+        for vco in [&mut self.vco, &mut self.vco2] {
+            vco.recalculate_luts_sync_with_recal(t.age, tol, t.seed as u32, t.recal as f64);
+        }
+        self.trim_requested = Some(key);
+        self.trim_retry = false;
     }
 
     pub fn get_current_pitch(&self) -> f32 {
@@ -704,11 +742,15 @@ impl Voice {
         comp_seed: i32,
         glide_knob: f32,
         reso_comp: f32,
-        recalibration_scale: f64,
     ) {
+        // Analog tweaks are FUN-only (the editor shows them read-only in
+        // ACCURATE): ACCURATE plays nominal components, no drift, no added heat.
+        let (comp_age, comp_drift, tolerance, thermal_noise) = match topology {
+            CircuitTopology::Fun => (comp_age, comp_drift, tolerance, thermal_noise),
+            CircuitTopology::Accurate => (0, 0.0, CompTolerance::Zero, 0),
+        };
         let age_changed = self.age != comp_age;
         let tolerance_changed = self.tolerance != tolerance || self.comp_seed != comp_seed;
-        let recal_changed = self.recalibration_scale != recalibration_scale;
         let topology_changed = self.topology != topology;
 
         if self.comp_seed != comp_seed {
@@ -725,61 +767,28 @@ impl Voice {
         self.tolerance = tolerance;
         self.comp_seed = comp_seed;
         self.thermal_noise = thermal_noise;
-        self.recalibration_scale = recalibration_scale;
 
-        let mean_c_mult = 1.0 - 0.05 * (comp_age as f64 / 100.0);
-        self.draft_cutoff_mult = 1.0 / mean_c_mult;
+        // Draft follows the nodal ladder's age corner shift, so AGE darkens
+        // every tier.
+        self.draft_cutoff_mult = age_corner_factor(comp_age);
         self.draft_reso_mult = 1.0 - 0.10 * (comp_age as f64 / 100.0);
-
-        let tol_f64 = self.tolerance_f64();
 
         self.set_topology(topology);
 
-        // Topology-change recalcs are owned by `set_topology` (called above,
-        // after `self.age`/`self.tolerance` are updated, so it sees fresh
-        // values). This branch owns age/tolerance/recal changes only —
-        // including `topology_changed` here would fire a second recalc that
-        // always supersedes the one `set_topology` just started.
-        if age_changed || tolerance_changed || recal_changed {
-            let is_fun_mode = topology == CircuitTopology::Fun;
-            self.vco.set_fun(is_fun_mode);
-            self.vco2.set_fun(is_fun_mode);
-            for ladder in [&mut self.ladder_high, &mut self.ladder_best, &mut self.ladder_low] {
-                ladder.set_analog_wear(
-                    tol_f64,
-                    comp_age,
-                    comp_seed as u32,
-                    self.recalibration_scale,
-                );
-            }
-
-            if self.tier == Tier::Best
-                || self.tier == Tier::High
-                || self.pending_tier == Some(Tier::Best)
-                || self.pending_tier == Some(Tier::High)
-                || self.xfade_from.is_some()
-            {
-                let ok1 = self.vco.recalculate_luts_async(
-                    comp_age,
-                    tol_f64,
-                    comp_seed as u32,
-                    recalibration_scale,
-                );
-                let ok2 = self.vco2.recalculate_luts_async(
-                    comp_age,
-                    tol_f64,
-                    comp_seed as u32,
-                    recalibration_scale,
-                );
-                if ok1 && ok2 {
-                    self.vco_dirty = false;
-                }
-            } else {
-                self.vco
-                    .set_analog_wear(tol_f64, comp_age, comp_seed as u32);
-                self.vco2
-                    .set_analog_wear(tol_f64, comp_age, comp_seed as u32);
-                self.vco_dirty = true;
+        // Component wear reaches every circuit at once. The VCO pitch trim
+        // follows only on CALIBRATE (`set_vco_trim`): until then the worn VCO
+        // plays the old trim, which is the audible component pitch error.
+        if age_changed || tolerance_changed {
+            let tol = tolerance.as_f64();
+            let seed = comp_seed as u32;
+            self.vco.set_analog_wear(tol, comp_age, seed);
+            self.vco2.set_analog_wear(tol, comp_age, seed);
+            for ladder in [
+                &mut self.ladder_high,
+                &mut self.ladder_best,
+                &mut self.ladder_low,
+            ] {
+                ladder.set_analog_wear(tol, comp_age, seed);
             }
         }
 
@@ -995,25 +1004,6 @@ impl Voice {
         self.xfade_from = None;
         self.xfade_pos = 1.0;
         self.pending_tier = None;
-
-        if (tier == Tier::Best || tier == Tier::High) && self.vco_dirty {
-            let tol_f64 = self.tolerance_f64();
-            let ok1 = self.vco.recalculate_luts_async(
-                self.age,
-                tol_f64,
-                self.comp_seed as u32,
-                self.recalibration_scale,
-            );
-            let ok2 = self.vco2.recalculate_luts_async(
-                self.age,
-                tol_f64,
-                self.comp_seed as u32,
-                self.recalibration_scale,
-            );
-            if ok1 && ok2 {
-                self.vco_dirty = false;
-            }
-        }
     }
 
     /// Clear all runtime state to silence, **in place** — the host reset path.
@@ -1075,7 +1065,6 @@ impl Voice {
         self.drift_pitch_osc2 = DriftGenerator::new(3579);
         self.accent_acc = 0.0;
         self.tier = Tier::Draft;
-        self.topology = CircuitTopology::Accurate;
         self.advanced_env = false;
         self.slide_active = false;
         self.current_pitch_st = 60.0;
@@ -1103,25 +1092,6 @@ impl Voice {
     /// and the incoming path starts cold, so a hard switch would pop. No
     /// allocation, RT-safe (field writes and fixed-size in-place state clears).
     pub fn set_tier(&mut self, tier: Tier) {
-        if (tier == Tier::Best || tier == Tier::High) && self.vco_dirty {
-            let tol_f64 = self.tolerance_f64();
-            let ok1 = self.vco.recalculate_luts_async(
-                self.age,
-                tol_f64,
-                self.comp_seed as u32,
-                self.recalibration_scale,
-            );
-            let ok2 = self.vco2.recalculate_luts_async(
-                self.age,
-                tol_f64,
-                self.comp_seed as u32,
-                self.recalibration_scale,
-            );
-            if ok1 && ok2 {
-                self.vco_dirty = false;
-            }
-        }
-
         if self.xfade_from.is_some() {
             // If a fade is already in flight, queue the new target instead of
             // clobbering the outgoing path (which would hard-cut a still-weighted
@@ -1460,16 +1430,13 @@ impl Voice {
         self.vco.poll_lut_update();
         self.vco2.poll_lut_update();
 
-        // Update operating temperature
-        let ambient_temp = 20.0 + 20.0 * (self.thermal_noise as f32 / 100.0);
-        let target_temp = if self.gate {
-            ambient_temp + 3.0
-        } else {
-            ambient_temp
-        };
+        // Operating temperature: the NOISE ambient applies at once; the gate
+        // self-heating follows slowly (15 s up, 30 s down).
+        let heat_target = if self.gate { SELF_HEAT_C } else { 0.0 };
         let tau = if self.gate { 15.0 } else { 30.0 };
         let alpha = 1.0 - (-1.0 / (tau * self.sr)).exp();
-        self.temperature += alpha * (target_temp - self.temperature);
+        self.self_heat += alpha * (heat_target - self.self_heat);
+        self.temperature = ambient_temp_c(self.thermal_noise) + self.self_heat;
 
         let noise_step = (((self.temperature - 20.0) / 25.0 * 21.0).round() as i32).clamp(0, 21);
         if noise_step != self.thermal_noise_state {
@@ -1501,7 +1468,9 @@ impl Voice {
             }
         }
 
-        // Pitch drift (LFO pink noise walk + systematic temperature drift)
+        // Pitch drift (slow random walk) + systematic temperature detune. The
+        // circuit VCOs' LUTs trim out their device tempco, so every tier gets
+        // the same modelled detune.
         let drift_pitch_val = self.drift_pitch.tick(0.15, self.sr);
         let pitch_drift_st = drift_pitch_val * 0.12 * self.drift;
         let pitch_thermal_st = -0.10 * (self.temperature - 20.0) / 25.0;
@@ -1511,16 +1480,10 @@ impl Voice {
 
         // Tuning offset
         let tuning_st = self.tuning_offset / 100.0; // cents to semitones
-        let dp = 0.0f32;
 
-        let vco1_f = 440.0
-            * 2.0f32.powf(
-                (self.current_pitch_st - 69.0 + self.osc1_pitch_st + tuning_st + pitch_drift_st)
-                    / 12.0,
-            );
         let osc1_f = 440.0
             * 2.0f32.powf(
-                (self.current_pitch_st + dp - 69.0
+                (self.current_pitch_st - 69.0
                     + self.osc1_pitch_st
                     + tuning_st
                     + pitch_drift_st
@@ -1529,7 +1492,7 @@ impl Voice {
             );
         self.osc.set_freq(osc1_f, self.sr);
         self.osc_low.set_freq(osc1_f, self.sr);
-        self.vco.set_freq(vco1_f);
+        self.vco.set_freq(osc1_f);
 
         let sub_f = osc1_f * 0.5;
         self.sub_osc.set_freq(sub_f, self.sr);
@@ -1537,14 +1500,9 @@ impl Voice {
         self.sub_osc_circuit.set_freq(sub_f, self.sr);
 
         if self.osc2_vol > 0.0 {
-            let vco2_f = 440.0
-                * 2.0f32.powf(
-                    (self.current_pitch_st - 69.0 + self.osc2_pitch_st + tuning_st + osc2_drift_st)
-                        / 12.0,
-                );
             let osc2_f = 440.0
                 * 2.0f32.powf(
-                    (self.current_pitch_st + dp - 69.0
+                    (self.current_pitch_st - 69.0
                         + self.osc2_pitch_st
                         + tuning_st
                         + osc2_drift_st
@@ -1553,7 +1511,7 @@ impl Voice {
                 );
             self.osc2.set_freq(osc2_f, self.sr);
             self.osc2_low.set_freq(osc2_f, self.sr);
-            self.vco2.set_freq(vco2_f);
+            self.vco2.set_freq(osc2_f);
         }
 
         // --- 2. Filter Cutoff Modulation ---
@@ -1786,28 +1744,19 @@ impl Voice {
         (low_fc as f32, low_reso as f32)
     }
 
+    /// Switches the circuit topology. The VCOs take the new JFET at once and
+    /// play the new topology's cached nominal LUT until `set_vco_trim`'s
+    /// background LUTs for it arrive. RT-safe: no build, no blocking lock.
     pub fn set_topology(&mut self, topology: CircuitTopology) {
         if self.topology != topology {
             self.topology = topology;
             self.classic_slide_tau_ms = calculate_classic_slide_tau_ms(topology, self.glide_knob);
             let is_fun = topology == CircuitTopology::Fun;
-            self.vco.set_fun(is_fun);
-            self.vco2.set_fun(is_fun);
-            let tol_f64 = self.tolerance_f64();
-            self.vco.recalculate_luts_async(
-                self.age,
-                tol_f64,
-                self.comp_seed as u32,
-                self.recalibration_scale,
-            );
-            self.vco2.recalculate_luts_async(
-                self.age,
-                tol_f64,
-                self.comp_seed as u32,
-                self.recalibration_scale,
-            );
-            self.vco.set_thermal(self.thermal_noise_state);
-            self.vco2.set_thermal(self.thermal_noise_state);
+            for vco in [&mut self.vco, &mut self.vco2] {
+                vco.set_fun(is_fun);
+                vco.use_cached_nominal();
+                vco.set_thermal(self.thermal_noise_state);
+            }
         }
     }
 }
