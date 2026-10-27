@@ -245,7 +245,7 @@ impl LadderVcf {
         let mut rng_state = seed ^ (self.instance_id.wrapping_mul(0x9E3779B9) ^ 0x55AA55AA);
         let mut next_f64 = || {
             rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
-            (rng_state as f64) / (std::u32::MAX as f64)
+            (rng_state as f64) / (u32::MAX as f64)
         };
         let mut next_gauss = || {
             let mut u1 = next_f64();
@@ -430,7 +430,7 @@ impl LadderVcf {
             let mut i_noise = 0.0;
             if (self.thermal_noise as f64) > 0.1 {
                 self.noise_seed = self.noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
-                let white = ((self.noise_seed as f64) / (std::u32::MAX as f64)) * 2.0 - 1.0;
+                let white = ((self.noise_seed as f64) / (u32::MAX as f64)) * 2.0 - 1.0;
                 // Scale companion current noise: max 1.0e-7 A at thermal_noise = 21
                 i_noise = white * 1e-7 * (self.thermal_noise as f64 / 21.0);
             }

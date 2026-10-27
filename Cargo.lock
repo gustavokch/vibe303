@@ -2700,6 +2700,7 @@ name = "plugin303"
 version = "0.1.0"
 dependencies = [
  "assert_no_alloc",
+ "cpal",
  "nih_plug",
  "nih_plug_egui",
  "serde",
