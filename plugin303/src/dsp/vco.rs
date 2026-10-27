@@ -842,7 +842,7 @@ impl Vco303 {
             seed,
             recal_scale,
             sequence,
-            buffer: Arc::clone(&self.lut_buffer),
+            buffer: Arc::downgrade(&self.lut_buffer),
         })
     }
 
