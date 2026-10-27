@@ -147,9 +147,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   self-heating moved the pitch about 17 cents, and NOISE 100 about 100 cents)
   because the nominal pitch LUT ignored the device temperature. Their LUTs now
   trim the device temperature out, and every tier gets the same small modelled
-  thermal detune (-8 cents at NOISE 100).
+  thermal detune (-8 cents at NOISE 100). Until a VCO's per-temperature LUTs
+  arrive (the first seconds after load or a topology switch), its devices stay
+  at 20 °C, where the nominal LUT is exact, so the pitch is in tune from the
+  first note.
 - The LUT worker allocated on the audio thread (a boxed callback per request).
-  Requests are now plain data and allocation-free.
+  Requests are now plain data and allocation-free. A request no longer outlives
+  its voice: after a project or preset load or a sample-rate change, the
+  replaced voice's queued LUT jobs are dropped instead of delaying the new trim.
 
 ### Removed
 - The editor's ZOOM control and the `zoom75` QA capture state. nih-plug cannot
