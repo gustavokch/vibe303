@@ -44,7 +44,7 @@ static WORKER_CHANNEL: LazyLock<SyncSender<LutJob>> = LazyLock::new(|| {
                     continue;
                 };
                 if current() {
-                    job.buffer.store(luts, job.sequence);
+                    job.buffer.store(luts, job.sequence, true);
                 }
             }
         })

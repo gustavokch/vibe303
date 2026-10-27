@@ -171,6 +171,10 @@ pub struct LutPayload {
     pub luts: [[f64; LUT_K]; 22],
     /// The request this set answers (see [`VcoLutBuffer::next_request`]).
     pub sequence: u64,
+    /// Each step's LUT was solved at that step's device temperature. `false`
+    /// for one step-0 LUT copied to every step, which is exact only at step 0:
+    /// the VCO then keeps its devices at step 0.
+    pub per_step: bool,
 }
 
 /// Triple-buffered background LUT store using lock-free, zero-allocation primitive.
@@ -186,6 +190,7 @@ impl VcoLutBuffer {
             buffer: TripleBuffer::new(LutPayload {
                 luts: [nominal_lut; 22],
                 sequence: 0,
+                per_step: false,
             }),
             requested: AtomicU64::new(0),
         }
@@ -213,10 +218,15 @@ impl VcoLutBuffer {
         self.latest_request() == sequence
     }
 
-    /// Publish the LUT set computed for request `sequence`. Single producer:
-    /// the LUT worker, or the owning VCO in its blocking path.
-    pub fn store(&self, luts: [[f64; LUT_K]; 22], sequence: u64) {
-        self.buffer.write(LutPayload { luts, sequence });
+    /// Publish the LUT set computed for request `sequence` (`per_step`: see
+    /// [`LutPayload::per_step`]). Single producer: the LUT worker, or the
+    /// owning VCO in its blocking path.
+    pub fn store(&self, luts: [[f64; LUT_K]; 22], sequence: u64, per_step: bool) {
+        self.buffer.write(LutPayload {
+            luts,
+            sequence,
+            per_step,
+        });
     }
 }
 
@@ -245,7 +255,8 @@ pub struct Vco303 {
     dc_r: f32,
     /// Background LUT store: the LUT worker publishes, `poll_lut_update` adopts.
     pub lut_buffer: Arc<VcoLutBuffer>,
-    /// Pitch LUT of the active thermal step (from `lut_buffer` or `fallback`).
+    /// Pitch LUT of the active thermal step (from `lut_buffer` or `fallback`);
+    /// set with the device temperature by [`Self::apply_active_lut`].
     pub cv_lut: [f64; LUT_K],
     pub wave: OscWave,
     pub sweep_pos: f64,
@@ -292,9 +303,9 @@ pub struct Vco303 {
     pub(crate) dense_solver: bool,
     /// Request number of the last LUT set seen in `lut_buffer`.
     loaded_sequence: u64,
-    /// Cached nominal LUT played at every thermal step after a topology
-    /// change, until the worker publishes a set requested at or after
-    /// `fallback_from` (see [`Self::use_cached_nominal`]).
+    /// Cached nominal step-0 LUT played at every thermal step (devices at
+    /// step 0) after a topology change, until the worker publishes a set
+    /// requested at or after `fallback_from` (see [`Self::use_cached_nominal`]).
     fallback: Option<[f64; LUT_K]>,
     fallback_from: u64,
 }
@@ -624,18 +635,23 @@ impl Vco303 {
 
     pub fn set_thermal(&mut self, thermal_noise: i32) {
         self.thermal_noise = thermal_noise;
-        self.set_thermal_internal(thermal_noise);
-        self.cv_lut = self.active_lut();
+        self.apply_active_lut();
     }
 
-    /// LUT of the active thermal step: the fallback while one is set, else the
-    /// published set.
-    #[inline]
-    fn active_lut(&self) -> [f64; LUT_K] {
-        match self.fallback {
-            Some(lut) => lut,
-            None => self.lut_buffer.load().luts[self.thermal_noise.clamp(0, 21) as usize],
-        }
+    /// Set `cv_lut` to the active thermal step's LUT (the fallback while one
+    /// is set, else the published set) and the devices to the temperature that
+    /// LUT was solved at: the active step for a per-step set, else step 0.
+    fn apply_active_lut(&mut self) {
+        let step = self.thermal_noise.clamp(0, 21);
+        let (lut, device_step) = match self.fallback {
+            Some(lut) => (lut, 0),
+            None => {
+                let payload = self.lut_buffer.load();
+                (payload.luts[step as usize], if payload.per_step { step } else { 0 })
+            }
+        };
+        self.cv_lut = lut;
+        self.set_thermal_internal(device_step);
     }
 
     /// Adopt the LUT set the worker published last. RT-safe: one wait-free read.
@@ -649,7 +665,7 @@ impl Vco303 {
             return; // requested before the topology change: wrong JFET
         }
         self.fallback = None;
-        self.cv_lut = self.active_lut();
+        self.apply_active_lut();
     }
 
     /// Whether the latest LUT request has not been published yet.
@@ -664,23 +680,23 @@ impl Vco303 {
         if let Some(lut) = Self::cached_lut(self.sr as f32, 0, self.is_fun) {
             self.fallback = Some(lut);
             self.fallback_from = self.lut_buffer.latest_request() + 1;
-            self.cv_lut = lut;
+            self.apply_active_lut();
         }
     }
 
     /// Adopt a LUT set computed on this thread (blocking paths only).
-    fn adopt_luts(&mut self, luts: [[f64; LUT_K]; 22]) {
+    fn adopt_luts(&mut self, luts: [[f64; LUT_K]; 22], per_step: bool) {
         let sequence = self.lut_buffer.next_request();
-        self.lut_buffer.store(luts, sequence);
+        self.lut_buffer.store(luts, sequence, per_step);
         self.loaded_sequence = sequence;
         self.fallback = None;
-        self.cv_lut = self.active_lut();
+        self.apply_active_lut();
     }
 
     // Public for integration tests only
     pub fn build_step0_sync(&mut self) {
         let lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
-        self.adopt_luts([lut; 22]);
+        self.adopt_luts([lut; 22], false);
     }
 
     pub fn get_cv_lut(&self) -> [f64; LUT_K] {
@@ -851,7 +867,7 @@ impl Vco303 {
             || true,
         )
         .expect("solve_luts only gives up when still_wanted() is false");
-        self.adopt_luts(luts);
+        self.adopt_luts(luts, true);
     }
 
     pub fn recalculate_luts_sync(&mut self, age: i32, tolerance: f64) {
