@@ -64,6 +64,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   controls in SOUPED-UP ENGINE, OUTPUT CLIPPER, ANALOG TWEAKS and the
   generator have tooltips. In ACCURATE, ADV ENV and both envelope banks are
   disabled, ANALOG TWEAKS shows `FUN MODE ONLY` and hides CALIBRATE.
+- ANALOG TWEAKS CALIBRATE is a manual trim. AGE, TOL and CMP SEED now change
+  the components at once in every tier, and the circuit VCOs keep the pitch
+  trim of the last CALIBRATE, so the component pitch error is audible (and the
+  status line reads `SYNC PENDING`) until you press CALIBRATE. CALIBRATE
+  computes the new trim in the background (`CALIBRATING`, about 20-40 s at
+  48 kHz) and RECAL sets the share of the error it removes. The trim is saved
+  with the project. Before, every tweak started the trim on its own and the
+  change was silent in High and Best until it finished. Sessions saved before
+  this change load with the factory trim: press CALIBRATE once to trim worn
+  components again.
+- The analog tweaks act in FUN only, as the editor says: ACCURATE plays
+  nominal components with no drift and no added heat.
+- AGE darkens the Draft tier like the ladder tiers (Draft scaled its cutoff up
+  with age). RECAL no longer changes the filter: it only scales the VCO pitch
+  trim.
+- NOISE sets the ambient temperature at once (20 °C at 0 to 40 °C at 100);
+  only gate self-heating is slow. The host shows that temperature (was 20 to
+  45 °C) and shows AGE in the years the editor shows (was 0.45 x the value).
 
 ### Fixed
 - The High tier was padded for Best's 4x oversampling latency instead of its
@@ -113,6 +131,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   passes the output device's current sample rate (the `--output-device`
   device, or the system default) when the command line does not set
   `-r`/`--sample-rate`.
+- CALIBRATE locked up the plugin. It set a host parameter that nothing reset,
+  and `process()` ran the full VCO pitch-LUT solve (about 30 s) on the audio
+  thread on every block while it stayed set. The `calibrate_sync` parameter is
+  removed: CALIBRATE only stores the trim settings, and the LUT worker computes
+  the trim off the audio thread. The first block in FUN also ran a 20 s LUT
+  build on the audio thread when the FUN pitch LUT was not cached yet;
+  `initialize` now builds it.
+- DRIFT was nearly inaudible: its random walk had an RMS of 0.02 at 48 kHz
+  (0.013 at 96 kHz) instead of about 0.33, so DRIFT at 100 % moved the pitch by
+  less than 0.4 cent. The walk is now normalized at every sample rate: at
+  100 % the pitch wanders about 4 cents RMS (peaks near 12 cents, 8 cents
+  peak-to-peak in 3 s), the cutoff about 3 % RMS and the resonance 1 % RMS.
+- High and Best detuned with temperature (about 5 cents per 1.2 °C: full gate
+  self-heating moved the pitch about 17 cents, and NOISE 100 about 100 cents)
+  because the nominal pitch LUT ignored the device temperature. Their LUTs now
+  trim the device temperature out, and every tier gets the same small modelled
+  thermal detune (-8 cents at NOISE 100).
+- The LUT worker allocated on the audio thread (a boxed callback per request).
+  Requests are now plain data and allocation-free.
 
 ### Removed
 - The editor's ZOOM control and the `zoom75` QA capture state. nih-plug cannot

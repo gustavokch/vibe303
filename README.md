@@ -44,7 +44,7 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
   - Accent with capacitor sweep memory and decay ducking.
   - Slide with an adjustable glide time.
   - **ADV ENV** mode exposes MEG (modulation) and VEG (voice) ADSR faders, and a VCA Gate/Envelope selector.
-- **Analog tweaks:** component tolerance (0%, 0.5%, 2%, 5%, 10%), age in years, thermal noise, drift, a repeatable component seed, and a CALIBRATE / RECAL control.
+- **Analog tweaks (FUN mode):** component tolerance (0%, 0.5%, 2%, 5%, 10%), age in years, thermal noise (ambient temperature), drift, a repeatable component seed, and CALIBRATE: it trims the VCO pitch for the current components in the background, and RECAL sets how much of the component pitch error the trim removes.
 
 ### 4. Output clipper
 
