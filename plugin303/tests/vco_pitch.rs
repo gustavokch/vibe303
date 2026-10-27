@@ -77,7 +77,10 @@ fn step0_lut_set_stays_in_tune_when_hot() {
     fallback.set_fun(true);
     fallback.use_cached_nominal();
 
-    for (name, v) in [("initial set", &mut initial), ("topology fallback", &mut fallback)] {
+    for (name, v) in [
+        ("initial set", &mut initial),
+        ("topology fallback", &mut fallback),
+    ] {
         v.set_thermal(17);
         v.set_freq(110.0);
         for _ in 0..(sr as usize / 4) {

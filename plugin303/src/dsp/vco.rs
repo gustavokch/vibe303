@@ -647,7 +647,10 @@ impl Vco303 {
             Some(lut) => (lut, 0),
             None => {
                 let payload = self.lut_buffer.load();
-                (payload.luts[step as usize], if payload.per_step { step } else { 0 })
+                (
+                    payload.luts[step as usize],
+                    if payload.per_step { step } else { 0 },
+                )
             }
         };
         self.cv_lut = lut;

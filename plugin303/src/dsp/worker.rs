@@ -108,8 +108,14 @@ mod tests {
         let superseded = job_for(&vco);
         let latest = job_for(&vco);
         assert!(superseded.target().is_none(), "superseded job still wanted");
-        assert!(latest.target().is_some(), "latest job of a live VCO not wanted");
+        assert!(
+            latest.target().is_some(),
+            "latest job of a live VCO not wanted"
+        );
         drop(vco);
-        assert!(latest.target().is_none(), "job of a dropped VCO still wanted");
+        assert!(
+            latest.target().is_none(),
+            "job of a dropped VCO still wanted"
+        );
     }
 }
