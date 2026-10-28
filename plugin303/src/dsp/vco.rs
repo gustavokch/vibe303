@@ -26,6 +26,7 @@ use super::linalg_static::vco_lu_solve;
 use super::triple_buffer::TripleBuffer;
 use super::worker::{submit_lut_job, LutJob};
 use crate::params::OscWave;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 // --- unknown node indices ---------------------------------------------------
@@ -96,14 +97,14 @@ pub(crate) fn midi_hz(m: f64) -> f64 {
     440.0 * 2.0f64.powf((m - 69.0) / 12.0)
 }
 
-/// Process-global LUT cache keyed by sample rate (`f32` bits). The secant build
-/// renders the VCO many times, so it must NOT run per-`Vco303`. Built once per
-/// sr and reused thereafter; touched only from `Vco303::new` (reached via the
-/// plugin's non-RT `initialize`, never from the audio-thread `reset`, which
-/// clears the VCO in place — see `Voice::reset`). Grows by one `[f64; LUT_K]`
-/// entry per *distinct* sample rate and is never freed: bounded by the handful
-/// of rates a host runs in a process lifetime, so the unbounded `Vec` is a
-/// non-issue (a few hundred bytes), not a leak worth a cap.
+/// Process-global nominal-LUT cache keyed by sample rate (`f32` bits), thermal
+/// step and topology. The secant build renders the VCO many times, so it must
+/// NOT run per-`Vco303` and never on the audio thread: entries are built by
+/// `Vco303::new` (reached via the plugin's non-RT `initialize`) and by the LUT
+/// worker. The audio thread only peeks with a non-blocking `try_read`
+/// ([`Vco303::use_cached_nominal`]). Grows by one `[f64; LUT_K]` entry per
+/// distinct key and is never freed: bounded by the handful of rates a host runs
+/// in a process lifetime (a few KB), not a leak worth a cap.
 static LUT_CACHE: RwLock<Vec<(u64, [f64; LUT_K])>> = RwLock::new(Vec::new());
 static DISABLE_WARM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -168,16 +169,19 @@ struct CapDef {
 #[derive(Clone, Copy)]
 pub struct LutPayload {
     pub luts: [[f64; LUT_K]; 22],
-    pub age: i32,
-    pub tolerance: f64,
-    pub seed: u32,
+    /// The request this set answers (see [`VcoLutBuffer::next_request`]).
+    pub sequence: u64,
+    /// Each step's LUT was solved at that step's device temperature. `false`
+    /// for one step-0 LUT copied to every step, which is exact only at step 0:
+    /// the VCO then keeps its devices at step 0.
+    pub per_step: bool,
 }
 
 /// Triple-buffered background LUT store using lock-free, zero-allocation primitive.
 pub struct VcoLutBuffer {
     buffer: TripleBuffer<LutPayload>,
-    pub sequence: Arc<std::sync::atomic::AtomicU64>,
-    pub completed_sequence: std::sync::atomic::AtomicU64,
+    /// Number of the latest LUT request. A job behind it is superseded.
+    requested: AtomicU64,
 }
 
 impl VcoLutBuffer {
@@ -185,12 +189,10 @@ impl VcoLutBuffer {
         Self {
             buffer: TripleBuffer::new(LutPayload {
                 luts: [nominal_lut; 22],
-                age: 0,
-                tolerance: 0.0,
-                seed: 1337,
+                sequence: 0,
+                per_step: false,
             }),
-            sequence: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            completed_sequence: std::sync::atomic::AtomicU64::new(0),
+            requested: AtomicU64::new(0),
         }
     }
 
@@ -201,16 +203,30 @@ impl VcoLutBuffer {
         self.buffer.read()
     }
 
-    /// Publish a freshly computed LUT set as the new active set.
-    pub fn store(&self, luts: [[f64; LUT_K]; 22], age: i32, tolerance: f64, seed: u32) {
+    /// Start a request that supersedes every earlier one; returns its number.
+    pub fn next_request(&self) -> u64 {
+        self.requested.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    /// Number of the latest request.
+    pub fn latest_request(&self) -> u64 {
+        self.requested.load(Ordering::Acquire)
+    }
+
+    /// Whether request `sequence` is still the latest one.
+    pub fn is_current(&self, sequence: u64) -> bool {
+        self.latest_request() == sequence
+    }
+
+    /// Publish the LUT set computed for request `sequence` (`per_step`: see
+    /// [`LutPayload::per_step`]). Single producer: the LUT worker, or the
+    /// owning VCO in its blocking path.
+    pub fn store(&self, luts: [[f64; LUT_K]; 22], sequence: u64, per_step: bool) {
         self.buffer.write(LutPayload {
             luts,
-            age,
-            tolerance,
-            seed,
+            sequence,
+            per_step,
         });
-        self.completed_sequence
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -237,9 +253,10 @@ pub struct Vco303 {
     dc_y1: f32,
     /// DC-blocker pole, derived from `sr` so the HP corner is rate-invariant.
     dc_r: f32,
-    /// Double-buffered background LUTs
+    /// Background LUT store: the LUT worker publishes, `poll_lut_update` adopts.
     pub lut_buffer: Arc<VcoLutBuffer>,
-    /// Per-note refined-CV pitch LUT (F6.6), filled from the active double-buffer
+    /// Pitch LUT of the active thermal step (from `lut_buffer` or `fallback`);
+    /// set with the device temperature by [`Self::apply_active_lut`].
     pub cv_lut: [f64; LUT_K],
     pub wave: OscWave,
     pub sweep_pos: f64,
@@ -284,7 +301,13 @@ pub struct Vco303 {
     /// thread, correctness matters more than speed); left `false` on
     /// real-time instances, which use the validated fast static solve.
     pub(crate) dense_solver: bool,
+    /// Request number of the last LUT set seen in `lut_buffer`.
     loaded_sequence: u64,
+    /// Cached nominal step-0 LUT played at every thermal step (devices at
+    /// step 0) after a topology change, until the worker publishes a set
+    /// requested at or after `fallback_from` (see [`Self::use_cached_nominal`]).
+    fallback: Option<[f64; LUT_K]>,
+    fallback_from: u64,
 }
 
 impl Vco303 {
@@ -304,10 +327,6 @@ impl Vco303 {
         let mut o = Self::raw(sr);
         o.cv_lut = Self::cv_lut_for(sr, 0, false); // Default to thermal_noise=0
         o.lut_buffer = Arc::new(VcoLutBuffer::new(o.cv_lut));
-        o.loaded_sequence = o
-            .lut_buffer
-            .completed_sequence
-            .load(std::sync::atomic::Ordering::Acquire);
         o
     }
 
@@ -357,19 +376,33 @@ impl Vco303 {
             last_cp: 0.0,
             dense_solver: false,
             loaded_sequence: 0,
+            fallback: None,
+            fallback_from: 0,
         };
         o.update_g_mults();
         o.set_thermal_internal(0);
         o
     }
 
+    fn lut_cache_key(sr: f32, thermal_step: i32, is_fun: bool) -> u64 {
+        ((sr.to_bits() as u64) << 32)
+            | ((thermal_step as u64) & 0xff)
+            | (if is_fun { 0x100 } else { 0x0 })
+    }
+
+    /// Cached nominal LUT, without building it and without blocking on the
+    /// cache lock (`try_read`). `None` on a miss or a busy lock. RT-safe.
+    fn cached_lut(sr: f32, thermal_step: i32, is_fun: bool) -> Option<[f64; LUT_K]> {
+        let key = Self::lut_cache_key(sr, thermal_step, is_fun);
+        let cache = LUT_CACHE.try_read().ok()?;
+        cache.iter().find(|(k, _)| *k == key).map(|&(_, lut)| lut)
+    }
+
     /// Return the refined-CV LUT for `sr`, building (and caching) it once. The
     /// build renders a throwaway VCO per anchor (secant), so it is gated behind
     /// the process-global cache — never repeated per voice / per `reset()`.
     pub(crate) fn cv_lut_for(sr: f32, thermal_noise: i32, is_fun: bool) -> [f64; LUT_K] {
-        let key = ((sr.to_bits() as u64) << 32)
-            | ((thermal_noise as u64) & 0xff)
-            | (if is_fun { 0x100 } else { 0x0 });
+        let key = Self::lut_cache_key(sr, thermal_noise, is_fun);
         // Fast path: check the cache under the read lock, but release it before any
         // expensive computation so other threads are not blocked during LUT build.
         {
@@ -414,11 +447,9 @@ impl Vco303 {
     }
 
     /// Pre-warm the process-global LUT cache for all 22 thermal-noise steps at
-    /// the given `sr` and `is_fun` combination. After this returns, every
-    /// `recalculate_luts_async` call with `age=0, tolerance=0.0` will hit the
-    /// fast-path (pure cache lookups, ~2 µs, no background thread). Expensive
-    /// on first call for a given `sr`, but idempotent — subsequent calls
-    /// are instant because `cv_lut_for` checks the cache first.
+    /// the given `sr` and `is_fun` combination. Expensive on first call for a
+    /// given `sr`, but idempotent — subsequent calls are instant because
+    /// `cv_lut_for` checks the cache first.
     pub fn warm_cache(sr: f32, is_fun: bool) {
         for step in 0..22i32 {
             Self::cv_lut_for(sr, step, is_fun);
@@ -604,44 +635,86 @@ impl Vco303 {
 
     pub fn set_thermal(&mut self, thermal_noise: i32) {
         self.thermal_noise = thermal_noise;
-        self.set_thermal_internal(thermal_noise);
-        let noise_idx = thermal_noise.clamp(0, 21) as usize;
-        self.cv_lut = self.lut_buffer.load().luts[noise_idx];
+        self.apply_active_lut();
     }
 
-    pub fn poll_lut_update(&mut self) {
-        let comp_seq = self
-            .lut_buffer
-            .completed_sequence
-            .load(std::sync::atomic::Ordering::Acquire);
-        if comp_seq != self.loaded_sequence {
-            self.loaded_sequence = comp_seq;
-            let (tol, age, seed, luts) = {
+    /// Set `cv_lut` to the active thermal step's LUT (the fallback while one
+    /// is set, else the published set) and the devices to the temperature that
+    /// LUT was solved at: the active step for a per-step set, else step 0.
+    fn apply_active_lut(&mut self) {
+        let step = self.thermal_noise.clamp(0, 21);
+        let (lut, device_step) = match self.fallback {
+            Some(lut) => (lut, 0),
+            None => {
                 let payload = self.lut_buffer.load();
-                (payload.tolerance, payload.age, payload.seed, payload.luts)
-            };
-            self.set_analog_wear(tol, age, seed);
-            let noise_idx = self.thermal_noise.clamp(0, 21) as usize;
-            self.cv_lut = luts[noise_idx];
+                (
+                    payload.luts[step as usize],
+                    if payload.per_step { step } else { 0 },
+                )
+            }
+        };
+        self.cv_lut = lut;
+        self.set_thermal_internal(device_step);
+    }
+
+    /// Adopt the LUT set the worker published last. RT-safe: one wait-free read.
+    pub fn poll_lut_update(&mut self) {
+        let sequence = self.lut_buffer.load().sequence;
+        if sequence == self.loaded_sequence {
+            return;
         }
+        self.loaded_sequence = sequence;
+        if self.fallback.is_some() && sequence < self.fallback_from {
+            return; // requested before the topology change: wrong JFET
+        }
+        self.fallback = None;
+        self.apply_active_lut();
+    }
+
+    /// Whether the latest LUT request has not been published yet.
+    pub fn lut_pending(&self) -> bool {
+        self.lut_buffer.latest_request() != self.loaded_sequence
+    }
+
+    /// After a topology change, play the new topology's cached nominal LUT
+    /// until the worker publishes the set requested next. On a cache miss the
+    /// current LUT stays. RT-safe: a non-blocking cache peek, no build.
+    pub fn use_cached_nominal(&mut self) {
+        if let Some(lut) = Self::cached_lut(self.sr as f32, 0, self.is_fun) {
+            self.fallback = Some(lut);
+            self.fallback_from = self.lut_buffer.latest_request() + 1;
+            self.apply_active_lut();
+        }
+    }
+
+    /// Adopt a LUT set computed on this thread (blocking paths only).
+    fn adopt_luts(&mut self, luts: [[f64; LUT_K]; 22], per_step: bool) {
+        let sequence = self.lut_buffer.next_request();
+        self.lut_buffer.store(luts, sequence, per_step);
+        self.loaded_sequence = sequence;
+        self.fallback = None;
+        self.apply_active_lut();
     }
 
     // Public for integration tests only
     pub fn build_step0_sync(&mut self) {
         let lut = Self::cv_lut_for(self.sr as f32, 0, self.is_fun);
-        self.lut_buffer.store([lut; 22], 0, 0.0, 1337);
-        self.cv_lut = lut;
+        self.adopt_luts([lut; 22], false);
     }
 
     pub fn get_cv_lut(&self) -> [f64; LUT_K] {
         self.cv_lut
     }
 
-    pub fn solve_cv_lut_with_recal(&mut self, recal_scale: f64) -> [f64; LUT_K] {
+    /// One thermal step's LUT for this VCO's components. With `recal_scale`
+    /// below 1 the trim keeps that share of the component pitch error,
+    /// measured against the nominal LUT of the same `thermal_step`, so the
+    /// device tempco is always trimmed out and only the component error stays.
+    fn solve_cv_lut_with_recal(&mut self, recal_scale: f64, thermal_step: i32) -> [f64; LUT_K] {
         let prev_dense = self.dense_solver;
         self.dense_solver = true;
         let nominal_lut = if recal_scale < 1.0 {
-            Some(Self::cv_lut_for(self.sr as f32, 0, self.is_fun))
+            Some(Self::cv_lut_for(self.sr as f32, thermal_step, self.is_fun))
         } else {
             None
         };
@@ -709,64 +782,76 @@ impl Vco303 {
         lut
     }
 
-    pub fn recalculate_luts_async(
-        &self,
+    /// Pitch LUTs for all 22 thermal steps of a VCO built from these
+    /// components, trimmed by `recal_scale`. Steps 0 and 21 are solved and the
+    /// steps between interpolated; each step's LUT trims out that step's device
+    /// temperature. Nominal components reuse the process cache. Seconds of
+    /// work per solve: LUT worker or offline only. `still_wanted` is polled
+    /// between the two solves; `None` means it returned `false`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn solve_luts(
+        sr: f32,
+        instance_id: u32,
+        is_fun: bool,
         age: i32,
         tolerance: f64,
         seed: u32,
         recal_scale: f64,
-    ) -> bool {
-        let is_fun = self.is_fun;
-        if age == 0 && tolerance == 0.0 && recal_scale == 1.0 {
-            let sr = self.sr as f32;
-            let step0 = Self::cv_lut_for(sr, 0, is_fun);
-            let mut local_luts = [step0; 22];
-            let cache = match LUT_CACHE.read() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            for noise_step in 1..22i32 {
-                let key = ((sr.to_bits() as u64) << 32)
-                    | ((noise_step as u64) & 0xff)
-                    | (if is_fun { 0x100 } else { 0x0 });
-                if let Some(&(_, lut)) = cache.iter().find(|(k, _)| *k == key) {
-                    local_luts[noise_step as usize] = lut;
-                }
+        still_wanted: impl Fn() -> bool,
+    ) -> Option<[[f64; LUT_K]; 22]> {
+        let (lo, hi) = if age == 0 && tolerance == 0.0 {
+            let lo = Self::cv_lut_for(sr, 0, is_fun);
+            if !still_wanted() {
+                return None;
             }
-            self.lut_buffer
-                .sequence
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.lut_buffer.store(local_luts, 0, 0.0, seed);
-            return true;
-        }
-
-        let lut_buffer = Arc::clone(&self.lut_buffer);
-        let seq = lut_buffer
-            .sequence
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-
-        let seq_checker = Arc::clone(&lut_buffer.sequence);
-        let buffer_for_complete = Arc::clone(&lut_buffer);
-
-        let job = LutJob {
-            sr: self.sr as f32,
-            instance_id: self.instance_id,
-            is_fun,
-            age,
-            tolerance,
-            recal_scale,
-            seed,
-            sequence: seq,
-            sequence_checker: seq_checker,
-            on_complete: Arc::new(move |luts, age, tol, seed| {
-                buffer_for_complete.store(luts, age, tol, seed);
-            }),
+            (lo, Self::cv_lut_for(sr, 21, is_fun))
+        } else {
+            let mut vco = Self::raw(sr);
+            vco.set_instance_id(instance_id);
+            vco.set_fun(is_fun);
+            vco.set_analog_wear(tolerance, age, seed);
+            vco.set_thermal_internal(0);
+            let lo = vco.solve_cv_lut_with_recal(recal_scale, 0);
+            if !still_wanted() {
+                return None;
+            }
+            vco.set_thermal_internal(21);
+            (lo, vco.solve_cv_lut_with_recal(recal_scale, 21))
         };
-
-        submit_lut_job(job)
+        let mut luts = [lo; 22];
+        luts[21] = hi;
+        for (step, lut) in luts.iter_mut().enumerate().take(21).skip(1) {
+            let t = step as f64 / 21.0;
+            for i in 0..LUT_K {
+                lut[i] = lo[i] + t * (hi[i] - lo[i]);
+            }
+        }
+        Some(luts)
     }
 
+    /// Ask the LUT worker for the LUT set of a VCO with these components,
+    /// trimmed by `recal_scale` ([`Self::solve_luts`]); supersedes every
+    /// earlier request. The live components are not touched. RT-safe once
+    /// `worker::start` has run: no allocation, no lock, no wait. `false` if
+    /// the job queue is full; the request is then lost and must be retried.
+    pub fn request_luts(&self, age: i32, tolerance: f64, seed: u32, recal_scale: f64) -> bool {
+        let sequence = self.lut_buffer.next_request();
+        submit_lut_job(LutJob {
+            sr: self.sr as f32,
+            instance_id: self.instance_id,
+            is_fun: self.is_fun,
+            age,
+            tolerance,
+            seed,
+            recal_scale,
+            sequence,
+            buffer: Arc::downgrade(&self.lut_buffer),
+        })
+    }
+
+    /// Blocking [`Self::request_luts`]: solves on the calling thread and adopts
+    /// the result. Seconds of work: tests and offline rendering only, never the
+    /// audio thread, and not while a background request is in flight.
     pub fn recalculate_luts_sync_with_recal(
         &mut self,
         age: i32,
@@ -774,52 +859,18 @@ impl Vco303 {
         seed: u32,
         recal_scale: f64,
     ) {
-        self.lut_buffer
-            .sequence
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let is_fun = self.is_fun;
-        if age == 0 && tolerance == 0.0 && recal_scale == 1.0 {
-            let lut = Self::cv_lut_for(self.sr as f32, 0, is_fun);
-            self.set_analog_wear(0.0, 0, seed);
-            self.lut_buffer.store([lut; 22], 0, 0.0, seed);
-            self.loaded_sequence = self
-                .lut_buffer
-                .completed_sequence
-                .load(std::sync::atomic::Ordering::Acquire);
-            self.cv_lut = lut;
-            return;
-        }
-
-        self.set_analog_wear(tolerance, age, seed);
-
-        let mut local_luts = [[0.0f64; LUT_K]; 22];
-        self.set_thermal_internal(0);
-        let lut_lo = self.solve_cv_lut_with_recal(recal_scale);
-        local_luts[0] = lut_lo;
-
-        self.set_thermal_internal(21);
-        let lut_hi = self.solve_cv_lut_with_recal(recal_scale);
-        local_luts[21] = lut_hi;
-
-        for step in 1..21 {
-            let t = step as f64 / 21.0;
-            for i in 0..LUT_K {
-                local_luts[step][i] = lut_lo[i] + t * (lut_hi[i] - lut_lo[i]);
-            }
-        }
-
-        self.lut_buffer.store(local_luts, age, tolerance, seed);
-        self.loaded_sequence = self
-            .lut_buffer
-            .completed_sequence
-            .load(std::sync::atomic::Ordering::Acquire);
-        // The endpoint solves left the device models at the step-21 temperature;
-        // restore them to the VCO's active thermal step so the live solver matches
-        // the selected cv_lut.
-        self.set_thermal_internal(self.thermal_noise);
-        let noise_idx = self.thermal_noise.clamp(0, 21) as usize;
-        self.cv_lut = local_luts[noise_idx];
-        self.reset();
+        let luts = Self::solve_luts(
+            self.sr as f32,
+            self.instance_id,
+            self.is_fun,
+            age,
+            tolerance,
+            seed,
+            recal_scale,
+            || true,
+        )
+        .expect("solve_luts only gives up when still_wanted() is false");
+        self.adopt_luts(luts, true);
     }
 
     pub fn recalculate_luts_sync(&mut self, age: i32, tolerance: f64) {

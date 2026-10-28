@@ -31,41 +31,40 @@ fn voice_on(start: Tier, sub_vol: f32, resonance: f32, topology: CircuitTopology
     let mut v = Voice::new(SR);
     v.update_clipper_params_immediate(common::bypassed_clipper());
     v.update_params(
-        0.0,                       // tuning_cents
-        0.0,                       // osc1_pitch_st
-        0.0,                       // osc2_pitch_st
-        0.0,                       // osc2_vol
-        OscWave::Saw,              // osc1_wave
-        0.5,                       // osc1_pw
-        sub_vol,                   // sub_vol
-        0.5,                       // cutoff (normalised)
-        resonance,                 // resonance
-        0.5,                       // env_mod
-        0.5,                       // decay_knob
-        0.0,                       // accent_knob
-        0.0,                       // volume_db
-        VcfTaps::FourPole,         // vcf_taps
-        0.0,                       // vcf_drive_db
-        false,                     // advanced_env
-        3.0,                       // meg_attack
-        200.0,                     // meg_decay_adj
-        0.0,                       // meg_sustain
-        200.0,                     // meg_release
-        3.0,                       // veg_attack
-        200.0,                     // veg_decay_adj
-        0.0,                       // veg_sustain
-        200.0,                     // veg_release
-        VcaEnvMode::Gate,          // vca_env_mode
-        0,                         // comp_age
-        0.0,                       // comp_drift
-        CompTolerance::Zero,       // tolerance
-        0,                         // thermal_noise
-        topology,                  // topology
-        0.0,                       // sweep_pos
-        0,                         // comp_seed
-        0.5,                       // glide_knob
-        0.0,                       // reso_comp
-        1.0,                       // recalibration_scale
+        0.0,                 // tuning_cents
+        0.0,                 // osc1_pitch_st
+        0.0,                 // osc2_pitch_st
+        0.0,                 // osc2_vol
+        OscWave::Saw,        // osc1_wave
+        0.5,                 // osc1_pw
+        sub_vol,             // sub_vol
+        0.5,                 // cutoff (normalised)
+        resonance,           // resonance
+        0.5,                 // env_mod
+        0.5,                 // decay_knob
+        0.0,                 // accent_knob
+        0.0,                 // volume_db
+        VcfTaps::FourPole,   // vcf_taps
+        0.0,                 // vcf_drive_db
+        false,               // advanced_env
+        3.0,                 // meg_attack
+        200.0,               // meg_decay_adj
+        0.0,                 // meg_sustain
+        200.0,               // meg_release
+        3.0,                 // veg_attack
+        200.0,               // veg_decay_adj
+        0.0,                 // veg_sustain
+        200.0,               // veg_release
+        VcaEnvMode::Gate,    // vca_env_mode
+        0,                   // comp_age
+        0.0,                 // comp_drift
+        CompTolerance::Zero, // tolerance
+        0,                   // thermal_noise
+        topology,            // topology
+        0.0,                 // sweep_pos
+        0,                   // comp_seed
+        0.5,                 // glide_knob
+        0.0,                 // reso_comp
     );
     v.set_tier_immediate(start);
     v.note_on(45);

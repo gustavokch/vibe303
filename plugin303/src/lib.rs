@@ -12,7 +12,7 @@ pub mod standalone_args;
 pub mod value_text;
 use dsp::sequencer::{SeqEvent, Sequencer};
 use dsp::voice::{Voice, VoiceClipperParams};
-use params::{Plugin303Params, QaState};
+use params::{CircuitTopology, Plugin303Params, QaState};
 
 /// Step the playhead is pinned to in the `running` and `running_note` QA states.
 const QA_PLAYHEAD_STEP: u8 = 3;
@@ -232,6 +232,14 @@ impl Plugin for Plugin303 {
     ) -> bool {
         self.sample_rate = cfg.sample_rate;
         self.voice = Voice::new(self.sample_rate);
+        // LUT work never runs on the audio thread: spawn the background worker
+        // here (spawning allocates), and build the persisted topology's nominal
+        // LUT now, so the first block's topology switch finds it cached
+        // (`Voice::new` builds ACCURATE's).
+        crate::dsp::worker::start();
+        if self.params.topology.value() == CircuitTopology::Fun {
+            crate::dsp::vco::Vco303::warm_cache_nominal(self.sample_rate, true);
+        }
         // Reuse the existing sequencer: `current_playing_step` shares its
         // `current_step` atomic with the GUI. Replacing the sequencer here
         // would swap in a new atomic and disconnect the playhead LED.
@@ -323,7 +331,6 @@ impl Plugin for Plugin303 {
             self.params.comp_seed.value(),
             self.params.glide.value(),
             self.params.reso_comp.value(),
-            self.params.recalibration_scale.value() as f64,
         );
         self.voice.update_clipper_params(VoiceClipperParams {
             bypass: self.params.clipper_bypass.value(),
@@ -340,12 +347,15 @@ impl Plugin for Plugin303 {
             dynamics: self.params.clipper_dynamics.value(),
         });
 
-        // Synchronous LUT recalibration trigger (Calibrate button)
-        if self.params.calibrate_sync.value() {
-            self.voice.recalculate_luts_sync();
-            // Reset trigger: ParamMut is internal (pub(crate)), not public; skip audio-thread reset
-            // and rely on GUI toggle off / single-shot behavior.
+        // VCO pitch trim follows the last CALIBRATE (persisted snapshot). The
+        // editor holds the write lock only to store a click; skip on contention.
+        if let Ok(trim) = self.params.vco_trim.try_read().map(|t| *t) {
+            self.voice.set_vco_trim(trim);
         }
+        self.params.vco_trim_busy.store(
+            self.voice.vco_trim_pending(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         // Block-rate read of the fidelity tier (starts a crossfade on change).
         self.voice.set_tier(self.params.tier.value());

@@ -7,7 +7,7 @@ use nih_plug_egui::egui::{
 use crate::gui::theme;
 use crate::gui::widgets::panel::DevicePanel;
 use crate::gui::widgets::{Knob303, Readout};
-use crate::params::{CircuitTopology, CompTolerance, Plugin303Params};
+use crate::params::{CircuitTopology, CompTolerance, Plugin303Params, VcoTrim};
 
 /// Width of every value in the field column: the TOL combo's width, so the
 /// four fields share one right edge (round-20 #7).
@@ -19,12 +19,18 @@ pub const ACCURATE_HINT: &str =
 
 pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
-    let calibrating = params.calibrate_sync.value();
-    let needs_rebuild = params.recalibration_scale.value() != 1.0
-        || params.comp_age.value() != 0
-        || params.tolerance.value() != crate::params::CompTolerance::Zero
-        || params.thermal_noise.value() != 0
-        || params.comp_drift.value() != 0.1;
+    // A VCO trim is being computed in the background (after CALIBRATE, a
+    // topology switch or a project load).
+    let calibrating = params
+        .vco_trim_busy
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let trimmed_for = match params.vco_trim.read() {
+        Ok(trim) => *trim,
+        Err(poisoned) => *poisoned.into_inner(),
+    };
+    // AGE / TOL / SEED / RECAL moved since the last CALIBRATE: the live
+    // components no longer match the trim, so the pitch is off until the next.
+    let needs_rebuild = VcoTrim::from_params(params) != trimmed_for.normalized();
 
     DevicePanel::new("ANALOG TWEAKS", crate::gui::TWEAKS_H)
         .dimmed(is_accurate)
@@ -57,12 +63,15 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                 if header_ui
                     .add(cal_btn)
-                    .on_hover_text("Rebuild analog model with current component tolerances")
+                    .on_hover_text(
+                        "Trim the VCO pitch for the current AGE, TOL, CMP SEED and RECAL. \
+                         Runs in the background",
+                    )
                     .clicked()
                 {
-                    setter.begin_set_parameter(&params.calibrate_sync);
-                    setter.set_parameter(&params.calibrate_sync, true);
-                    setter.end_set_parameter(&params.calibrate_sync);
+                    if let Ok(mut trim) = params.vco_trim.write() {
+                        *trim = VcoTrim::from_params(params);
+                    }
                 }
             },
             |body_ui| {
@@ -297,6 +306,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                         ("FUN MODE ONLY", theme::TEXT_MUTED)
                                     } else if needs_rebuild {
                                         ("SYNC PENDING", theme::ACCENT_ORANGE)
+                                    } else if calibrating {
+                                        ("CALIBRATING", theme::TEXT_SECONDARY)
                                     } else {
                                         ("CALIBRATED", theme::TEXT_SECONDARY)
                                     };
@@ -353,8 +364,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     theme::KNOB_RADIUS_LARGE,
                                 )
                                 .tooltip(
-                                    "Recalibration: share of the component pitch error the VCO \
-                                     calibration removes",
+                                    "Recalibration: share of the component pitch error the next \
+                                     CALIBRATE removes",
                                 ),
                             )
                             .on_disabled_hover_text(ACCURATE_HINT);

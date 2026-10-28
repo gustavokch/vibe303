@@ -62,3 +62,34 @@ fn pitch_accurate_across_range() {
         }
     }
 }
+
+/// A step-0 LUT copied to every thermal step is exact only at step 0. A VCO
+/// plays such a set from construction, and the cached fallback after a topology
+/// switch, until the LUT worker publishes per-step LUTs (seconds). It must stay
+/// in tune when hot: with its devices at the step-17 temperature (NOISE 100)
+/// it played about 90 cents sharp.
+#[test]
+fn step0_lut_set_stays_in_tune_when_hot() {
+    let sr = 48_000.0;
+    let mut initial = Vco303::new(sr);
+    Vco303::warm_cache_nominal(sr, true);
+    let mut fallback = Vco303::new(sr);
+    fallback.set_fun(true);
+    fallback.use_cached_nominal();
+
+    for (name, v) in [
+        ("initial set", &mut initial),
+        ("topology fallback", &mut fallback),
+    ] {
+        v.set_thermal(17);
+        v.set_freq(110.0);
+        for _ in 0..(sr as usize / 4) {
+            v.tick();
+        }
+        let cents = 1200.0 * (realized_hz(v, sr) / 110.0).log2();
+        assert!(
+            cents.abs() < 3.0,
+            "{name} at thermal step 17: {cents:+.1} cents off 110 Hz"
+        );
+    }
+}

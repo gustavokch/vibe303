@@ -1,27 +1,41 @@
+use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
-use plugin303::params::CircuitTopology;
+use plugin303::params::{CircuitTopology, CompTolerance, OscWave, VcaEnvMode, VcfTaps};
 
-#[test]
-fn component_drift_produces_fluctuations() {
-    let sr = 48_000.0;
-    let mut v = Voice::new(sr);
+/// Analog-tweak settings of one render.
+#[derive(Clone, Copy)]
+struct Analog {
+    age: i32,
+    drift: f32,
+    tolerance: CompTolerance,
+    noise: i32,
+    seed: i32,
+}
 
-    // Set parameters
+const NOMINAL: Analog = Analog {
+    age: 0,
+    drift: 0.0,
+    tolerance: CompTolerance::Zero,
+    noise: 0,
+    seed: 1337,
+};
+
+fn apply(v: &mut Voice, topology: CircuitTopology, a: Analog) {
     v.update_params(
         0.0,
         0.0,
         0.0,
         0.0,
-        plugin303::params::OscWave::Saw,
+        OscWave::Saw,
         0.5,
         0.0,
-        0.5,
-        0.5,
-        0.5,
-        0.5,
+        0.5, // cutoff
+        0.5, // resonance
+        0.0, // env_mod: hold the cutoff still
         0.5,
         0.0,
-        plugin303::params::VcfTaps::FourPole,
+        0.0,
+        VcfTaps::FourPole,
         0.0,
         false,
         3.0,
@@ -32,135 +46,98 @@ fn component_drift_produces_fluctuations() {
         200.0,
         0.0,
         200.0,
-        plugin303::params::VcaEnvMode::Envelope,
-        0,                                     // age
-        0.5,                                   // comp_drift
-        plugin303::params::CompTolerance::Ten, // tolerance (for drift)
-        5,                                     // thermal_noise (for drift)
-        CircuitTopology::Accurate,
-        0.0, // sweep_pos
-        0,   // comp_seed
-        0.5, // glide_knob
-        0.0, // reso_comp
-        1.0, // recalibration_scale
+        VcaEnvMode::Gate,
+        a.age,
+        a.drift,
+        a.tolerance,
+        a.noise,
+        topology,
+        0.0,
+        a.seed,
+        0.5,
+        0.0,
     );
-
-    v.note_on(60);
-    v.set_gate(true, true, false, false);
-
-    // Check that ticking multiple times shifts the internal drift state
-    let mut last_tick = v.tick();
-    let mut distinct_values = false;
-    for _ in 0..100 {
-        let val = v.tick();
-        if val != last_tick {
-            distinct_values = true;
-        }
-        last_tick = val;
-    }
-    assert!(distinct_values, "drift should create evolving waveforms");
 }
 
+/// Half a second of note 45 (110 Hz) on `tier`, after a 0.1 s settle.
+fn render(tier: Tier, topology: CircuitTopology, a: Analog) -> Vec<f32> {
+    let mut v = Voice::new(48_000.0);
+    v.set_tier_immediate(tier);
+    apply(&mut v, topology, a);
+    v.set_gate(true, true, false, false);
+    v.note_on(45);
+    (0..28_800).map(|_| v.tick()).skip(4_800).collect()
+}
+
+/// RMS of the first difference over the RMS: rises with high-frequency content.
+fn brightness(x: &[f32]) -> f64 {
+    let rms = |it: &mut dyn Iterator<Item = f64>| {
+        let (s, n) = it.fold((0.0, 0usize), |(s, n), v| (s + v * v, n + 1));
+        (s / n as f64).sqrt()
+    };
+    let d = rms(&mut x.windows(2).map(|w| (w[1] - w[0]) as f64));
+    d / rms(&mut x.iter().map(|&s| s as f64))
+}
+
+/// AGE lowers the bias current and so the filter corner. Draft follows the
+/// nodal ladder's corner shift, so every tier darkens with age; Draft used to
+/// brighten while the ladder tiers darkened.
 #[test]
-fn component_age_affects_tuning_and_cutoff() {
-    let sr = 48_000.0;
-    let mut v_new = Voice::new(sr);
-    let mut v_old = Voice::new(sr);
-
-    // Factory calibration (age = 0.0)
-    v_new.update_params(
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        plugin303::params::OscWave::Saw,
-        0.5,
-        0.0,
-        0.5,
-        0.5,
-        0.5,
-        0.5,
-        0.5,
-        0.0,
-        plugin303::params::VcfTaps::FourPole,
-        0.0,
-        false,
-        3.0,
-        200.0,
-        0.0,
-        200.0,
-        3.0,
-        200.0,
-        0.0,
-        200.0,
-        plugin303::params::VcaEnvMode::Envelope,
-        0,   // age = 0
-        0.0, // comp_drift = 0.0
-        plugin303::params::CompTolerance::Zero,
-        0, // thermal noise
-        CircuitTopology::Accurate,
-        0.0, // sweep_pos
-        0,   // comp_seed
-        0.5, // glide_knob
-        0.0, // reso_comp
-        1.0, // recalibration_scale
-    );
-
-    // Aged (age = 1.0)
-    v_old.update_params(
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        plugin303::params::OscWave::Saw,
-        0.5,
-        0.0,
-        0.5,
-        0.5,
-        0.5,
-        0.5,
-        0.5,
-        0.0,
-        plugin303::params::VcfTaps::FourPole,
-        0.0,
-        false,
-        3.0,
-        200.0,
-        0.0,
-        200.0,
-        3.0,
-        200.0,
-        0.0,
-        200.0,
-        plugin303::params::VcaEnvMode::Envelope,
-        10,  // age = 10
-        0.0, // comp_drift = 0.0
-        plugin303::params::CompTolerance::Zero,
-        0, // thermal noise
-        CircuitTopology::Accurate,
-        0.0, // sweep_pos
-        0,   // comp_seed
-        0.5, // glide_knob
-        0.0, // reso_comp
-        1.0, // recalibration_scale
-    );
-
-    v_new.note_on(60);
-    v_new.set_gate(true, true, false, false);
-    v_old.note_on(60);
-    v_old.set_gate(true, true, false, false);
-
-    // Verify they output different waveforms because age modifies cutoff and tuning.
-    // We tick past the latency compensation delay line.
-    for _ in 0..120 {
-        v_new.tick();
-        v_old.tick();
+fn age_darkens_every_tier() {
+    for tier in [Tier::Draft, Tier::Low] {
+        let new = brightness(&render(tier, CircuitTopology::Fun, NOMINAL));
+        let aged = brightness(&render(
+            tier,
+            CircuitTopology::Fun,
+            Analog {
+                age: 100,
+                ..NOMINAL
+            },
+        ));
+        assert!(
+            aged < new * 0.98,
+            "{tier:?}: AGE 100 must darken the voice (brightness {aged:.4} vs new {new:.4})"
+        );
     }
-    let sample_new = v_new.tick();
-    let sample_old = v_old.tick();
-    assert_ne!(
-        sample_new, sample_old,
-        "Aged voice should differ from new voice"
+}
+
+/// The editor shows the analog tweaks read-only in ACCURATE ("FUN mode
+/// only"), so ACCURATE must not play them.
+#[test]
+fn accurate_ignores_analog_tweaks() {
+    let worn = Analog {
+        age: 100,
+        drift: 1.0,
+        tolerance: CompTolerance::Ten,
+        noise: 100,
+        seed: 42,
+    };
+    for tier in [Tier::Draft, Tier::Low] {
+        assert_eq!(
+            render(tier, CircuitTopology::Accurate, NOMINAL),
+            render(tier, CircuitTopology::Accurate, worn),
+            "{tier:?}: ACCURATE played the analog tweaks"
+        );
+    }
+}
+
+/// NOISE sets the ambient temperature at once; only gate self-heating is slow.
+#[test]
+fn noise_sets_ambient_temperature_at_once() {
+    let mut v = Voice::new(48_000.0);
+    apply(
+        &mut v,
+        CircuitTopology::Fun,
+        Analog {
+            noise: 100,
+            ..NOMINAL
+        },
+    );
+    v.tick();
+    assert!(
+        (v.temperature() - 40.0).abs() < 0.1,
+        "NOISE 100 must put the voice at 40 °C on the next sample, got {}",
+        v.temperature()
     );
 }
 
@@ -224,12 +201,11 @@ fn test_age_100_maintains_positive_cutoff_and_resonance() {
         0.5, // comp_drift
         plugin303::params::CompTolerance::Ten,
         100, // max thermal noise
-        CircuitTopology::Accurate,
+        CircuitTopology::Fun,
         0.0,
         1337,
         0.5,
         0.0,
-        1.0, // recalibration_scale = 1.0
     );
     v.note_on(60);
     v.set_gate(true, true, false, false);
@@ -278,7 +254,6 @@ fn test_thermal_model_ramp_and_persistence() {
         1337,
         0.5,
         0.0,
-        1.0,
     );
 
     let initial_temp = v.temperature();
@@ -338,12 +313,11 @@ fn test_drift_reso_and_osc2_pitch() {
         0.8,
         plugin303::params::CompTolerance::Ten,
         20,
-        CircuitTopology::Accurate,
+        CircuitTopology::Fun,
         0.0,
         1337,
         0.5,
         0.0,
-        1.0,
     );
     v.note_on(60);
     v.set_gate(true, true, false, false);

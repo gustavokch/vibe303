@@ -84,7 +84,6 @@ fn test_live_tweaks_during_playback() {
         1337,
         0.5,
         0.0,
-        1.0,
     );
 
     // Sample immediately after update_params

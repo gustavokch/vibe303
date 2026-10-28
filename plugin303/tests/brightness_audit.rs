@@ -6,7 +6,7 @@
 //!
 //! Brightness is the `cal` factor on the ladder's cutoff→bias map. Intended
 //! values: Low `LOW_BRIGHT`, High/Best `CIRCUIT_BRIGHT`, each scaled by the
-//! analog-wear age factor `1 - 0.15 * age/100 * recalibration_scale`.
+//! analog-wear age factor `1 - 0.15 * age/100`.
 
 mod common;
 
