@@ -153,5 +153,24 @@ class TestKnobs(unittest.TestCase):
         self.assertAlmostEqual(k["needle_fraction"], 0.5, delta=0.01)
 
 
+class TestStaleCaptures(unittest.TestCase):
+    def test_capture_left_from_an_earlier_run_is_stale(self):
+        # One run writes its states seconds apart; a state the renderer no
+        # longer draws keeps the PNG of the run that last drew it.
+        run = 1_000_000.0
+        mtimes = {
+            "latest.png": run,
+            "accurate.png": run + 3.0,
+            "knob_extremes.png": run - 6.5 * 86400,
+        }
+        stale = qa.stale_captures(mtimes)
+        self.assertEqual(list(stale), ["knob_extremes.png"])
+        self.assertAlmostEqual(stale["knob_extremes.png"], 6.5 * 86400 + 3.0)
+
+    def test_slow_window_capture_run_is_not_stale(self):
+        mtimes = {"latest.png": 0.0, "generator.png": qa.STALE_AFTER_S - 1.0}
+        self.assertEqual(qa.stale_captures(mtimes), {})
+
+
 if __name__ == "__main__":
     unittest.main()
