@@ -22,6 +22,16 @@ pub const SURFACE_ELEVATED: Color32 = Color32::from_rgb(0x3a, 0x3a, 0x3a);
 pub const SURFACE_HOVER: Color32 = Color32::from_rgb(0x49, 0x49, 0x49);
 pub const SURFACE_PRESSED: Color32 = Color32::from_rgb(0x30, 0x30, 0x30);
 
+/// Edge of a floating layer (ComboBox popup, tooltip, piano roll): a band of
+/// `CHASSIS_BG` as wide as the device gutter. A layer sits over the devices
+/// the way a device sits on the chassis, so one edge of the band shows on
+/// every plane the layer covers (round-22 #8). egui paints it inside the
+/// frame, as the frame's stroke.
+pub const LAYER_EDGE: Stroke = Stroke {
+    width: crate::gui::PANEL_GAP,
+    color: CHASSIS_BG,
+};
+
 // ── Text ────────────────────────────────────────────────────────────────────
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xec, 0xec, 0xec);
 /// Safe on every plane including `SURFACE_ELEVATED` and `PANEL_HEADER_BG`.
@@ -38,6 +48,9 @@ pub const ACCENT_ORANGE: Color32 = Color32::from_rgb(0xf6, 0x66, 0x1e);
 pub const ACCENT_ORANGE_HOVER: Color32 = Color32::from_rgb(0xff, 0x7f, 0x3a);
 /// Bitwig blue. Fixed role: a lit SLIDE flag.
 pub const ACCENT_BLUE: Color32 = Color32::from_rgb(0x5c, 0xa8, 0xee);
+/// A hovered lit SLIDE flag: the blue lifted as `ACCENT_ORANGE_HOVER` lifts
+/// the orange.
+pub const ACCENT_BLUE_HOVER: Color32 = Color32::from_rgb(0x7a, 0xba, 0xf2);
 
 // ── Step gate fills ─────────────────────────────────────────────────────────
 // Neutral on purpose: orange is reserved for ACCENT, blue for SLIDE, so the
@@ -56,10 +69,12 @@ pub const KNOB_TRACK: Color32 = Color32::from_rgb(0x40, 0x40, 0x40);
 pub const KNOB_RADIUS_LARGE: f32 = 21.0;
 pub const KNOB_RADIUS_MEDIUM: f32 = 12.0;
 
-// Value-field widths matching the knob tiers.
+// Value-field widths matching the two knob tiers, and the one height they
+// share. MEDIUM fits the widest MEDIUM value (`-24.0 st`, 8 pt monospace,
+// 39.7 pt) with 2 pt each side (round-22 #2).
 pub const KNOB_PILL_WIDTH_LARGE: f32 = 52.0;
-pub const KNOB_PILL_WIDTH_MEDIUM: f32 = 38.0;
-pub const KNOB_PILL_WIDTH_SMALL: f32 = 34.0;
+pub const KNOB_PILL_WIDTH_MEDIUM: f32 = 44.0;
+pub const KNOB_PILL_HEIGHT: f32 = 11.0;
 
 // ── Shape ───────────────────────────────────────────────────────────────────
 /// Every panel, button and field uses this one radius.
@@ -112,7 +127,7 @@ pub fn apply(ctx: &egui::Context) {
         let v = &mut style.visuals;
         v.panel_fill = CHASSIS_BG;
         v.window_fill = SURFACE_ELEVATED;
-        v.window_stroke = Stroke::NONE;
+        v.window_stroke = LAYER_EDGE;
         v.window_corner_radius = radius();
         v.menu_corner_radius = radius();
         v.window_shadow = Shadow::NONE;
@@ -209,6 +224,7 @@ mod tests {
             ACCENT_ORANGE,
             ACCENT_ORANGE_HOVER,
             ACCENT_BLUE,
+            ACCENT_BLUE_HOVER,
             GATE_NOTE_FILL,
         ] {
             assert!(

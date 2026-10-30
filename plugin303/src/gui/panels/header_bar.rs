@@ -15,9 +15,13 @@ const PAD_X: f32 = 8.0;
 pub const QUALITY_ACCURATE_HINT: &str =
     "Quality tier applies to FUN mode (ACCURATE uses fixed physical modeling)";
 
+/// Hover text of the SYNTH OFF status.
+pub const SYNTH_OFF_HINT: &str =
+    "SYNTH is off in TRANSPORT & PATTERN: the internal voice is muted.";
+
 /// The app bar: instrument identity on the left, engine-wide modes on the
-/// right. One flat strip, one row, every control on the same 18 px height
-/// (`SEG_H`, `TOGGLE_H`).
+/// right, and in the middle a status while SYNTH is off. One flat strip, one
+/// row, every control on the same 18 px height (`SEG_H`, `TOGGLE_H`).
 pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, HEADER_BAR_H), Sense::hover());
@@ -40,6 +44,20 @@ pub fn render_header(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter
             FontId::new(9.5, FontFamily::Proportional),
             theme::TEXT_SECONDARY,
         );
+    }
+
+    // SYNTH off sends silence while every synth card still looks live, so the
+    // app bar says so where nothing else sits (round-22 #23).
+    if params.synth_bypass.value() {
+        let status = ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "SYNTH OFF",
+            FontId::new(8.5, FontFamily::Proportional),
+            theme::TEXT_PRIMARY,
+        );
+        ui.interact(status, ui.id().with("synth_off_status"), Sense::hover())
+            .on_hover_text(SYNTH_OFF_HINT);
     }
 
     let mut controls = ui.new_child(

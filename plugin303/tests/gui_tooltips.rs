@@ -2,13 +2,14 @@
 
 mod gui_common;
 
-use gui_common::{DummyGuiContext, EnvGuard, Rig, ENV_LOCK};
+use gui_common::{text_runs, DummyGuiContext, EnvGuard, Rig, ENV_LOCK};
 use nih_plug::prelude::{BoolParam, ParamSetter};
 use nih_plug_egui::egui::{self, vec2, Rect, Ui};
 use plugin303::dsp::generator::GeneratorParams;
 use plugin303::gui::panels::generator_panel::{self, GENERATOR_H};
+use plugin303::gui::panels::sequencer_panel::SEQUENCER_H;
 use plugin303::gui::panels::{
-    header_bar, output_clipper, souped_panel, top_controls, tweaks_panel,
+    header_bar, output_clipper, sequencer_panel, souped_panel, top_controls, tweaks_panel,
 };
 use plugin303::gui::widgets::toggle::TOGGLE_H;
 use plugin303::gui::{
@@ -235,14 +236,10 @@ fn accurate_banner_action_explains_itself() {
     );
 }
 
-/// The generator's widgets that sense a click or drag, in layout order (the
-/// header action, then each column top to bottom), and the tooltip the
-/// contract demands of each. The group headings are here because egui's
-/// selectable labels sense clicks. `None`: a plain word, no abbreviation to
-/// explain.
-const GENERATOR_CONTROLS: [(&str, Option<&str>); 19] = [
-    ("NEW SEED", None),
-    ("PATTERN STRUCTURE heading", None),
+/// The generator's widgets that sense a click or drag, in layout order (each
+/// column top to bottom), and the tooltip the contract demands of each.
+/// `None`: a plain word, no abbreviation to explain.
+const GENERATOR_CONTROLS: [(&str, Option<&str>); 15] = [
     ("ROOT", None),
     ("SCALE", None),
     (
@@ -258,7 +255,6 @@ const GENERATOR_CONTROLS: [(&str, Option<&str>); 19] = [
              different lengths.",
         ),
     ),
-    ("OCTAVE BEHAVIOR heading", None),
     (
         "OCT RANGE MIN",
         Some("Lowest octave a generated note may use."),
@@ -275,7 +271,6 @@ const GENERATOR_CONTROLS: [(&str, Option<&str>); 19] = [
         "OCT DN",
         Some("Chance that a note steps one octave down from the previous note."),
     ),
-    ("PROBABILITIES heading", None),
     ("REST", None),
     ("ACCENT", None),
     ("SLIDE", None),
@@ -337,4 +332,56 @@ fn bypassed_clipper_explains_why_it_is_inert() {
         output_clipper::CLIPPER_OFF_HINT,
         12,
     );
+}
+
+/// Each TRANSPORT combo says what it sets: a caption directly to its left on
+/// its row, and a hover text that explains both options, shown on that combo
+/// and no other control. Both read only `16th` or `Direct` before
+/// (round-22 #6).
+#[test]
+fn transport_combos_explain_themselves() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
+    let params = Plugin303Params::default(); // 16th, Direct
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    let mut rig = Rig::new(vec2(right_column_width(), SEQUENCER_H + TOOLTIP_ROOM));
+    let mut add = |ui: &mut Ui| sequencer_panel::render_transport_panel(ui, &params, &setter);
+
+    let texts = text_runs(&rig.shapes(&mut add));
+    let painted = |s: &str| {
+        texts
+            .iter()
+            .find(|(t, _)| t == s)
+            .map(|(_, r)| *r)
+            .unwrap_or_else(|| panic!("{s:?} is not painted; on screen: {texts:?}"))
+    };
+    let controls = tooltips_by_control(&mut rig, &mut add);
+
+    for (caption, value, hint) in [
+        ("RATE", "16th", sequencer_panel::TIMEBASE_HINT),
+        ("MODE", "Direct", sequencer_panel::MODE_HINT),
+    ] {
+        let showing: Vec<Rect> = controls
+            .iter()
+            .filter(|(_, t)| t.iter().any(|t| t == hint))
+            .map(|(r, _)| *r)
+            .collect();
+        assert_eq!(
+            showing.len(),
+            1,
+            "{hint:?} must show on exactly one control; shown on {showing:?}"
+        );
+        let combo = showing[0];
+        assert!(
+            combo.contains(painted(value).center()),
+            "{hint:?} shows on {combo:?}, not on the combo that reads {value:?}"
+        );
+        let label = painted(caption);
+        let gap = combo.left() - label.right();
+        assert!(
+            (0.0..=6.0).contains(&gap) && combo.y_range().contains(label.center().y),
+            "{caption} at {label:?} is not directly left of its combo at {combo:?}"
+        );
+    }
 }

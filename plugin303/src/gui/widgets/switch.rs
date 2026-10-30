@@ -80,7 +80,9 @@ fn segment_colors(selected: bool, hovered: bool, enabled: bool) -> (Color32, Col
         (true, false) => (theme::SURFACE_HOVER, theme::TEXT_SECONDARY),
         (false, true) if hovered => (theme::SURFACE_HOVER, theme::TEXT_PRIMARY),
         (false, true) => (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY),
-        (false, false) => (theme::SURFACE_PRESSED, theme::TEXT_MUTED),
+        // The well plane shows on the header strips where every disabled bar
+        // sits; SURFACE_PRESSED was the strip's own colour (round-22 #10).
+        (false, false) => (theme::WELL_BG, theme::TEXT_MUTED),
     }
 }
 
@@ -459,5 +461,24 @@ mod tests {
         assert_ne!(fill, theme::ACCENT_ORANGE);
         let (fill, _) = segment_colors(true, false, true);
         assert_eq!(fill, theme::ACCENT_ORANGE);
+    }
+
+    /// Every segment of a disabled bar stays a visible tile on both planes a
+    /// bar sits on: at least the quietest plane step the design uses (header
+    /// strip on body). SURFACE_PRESSED on the header strip was 1.01:1, and
+    /// the bar fell apart into loose words (round-22 #10).
+    #[test]
+    fn disabled_segments_show_on_their_planes() {
+        let floor = theme::contrast_ratio(theme::PANEL_HEADER_BG, theme::PANEL_BG);
+        for selected in [true, false] {
+            let (fill, _) = segment_colors(selected, false, false);
+            for plane in [theme::PANEL_HEADER_BG, theme::PANEL_BG] {
+                let ratio = theme::contrast_ratio(fill, plane);
+                assert!(
+                    ratio >= floor,
+                    "selected={selected} on {plane:?}: {ratio:.2} < {floor:.2}"
+                );
+            }
+        }
     }
 }
