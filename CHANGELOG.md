@@ -89,7 +89,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   under it, and every dropdown word uses one size. GENERATE and MUTATE centre
   their labels. OCT RANGE shows `+0` like the knobs show `+0.0`. A lit ACC or
   SLD flag lightens under the pointer, and their tooltips no longer name the
-  keys A and S, which do nothing. The piano roll title is in the word face.
+  keys A and S, which do nothing. The lit actions (ENABLE FUN MODE, CALIBRATE
+  when due, CONFIRM CLEAR) also lighten under the pointer, and CLEAR lifts on
+  hover like the other actions. The piano roll title is in the word face.
   New QA states `knob_extremes` and `clipper_off`.
 - ANALOG TWEAKS CALIBRATE is a manual trim. AGE, TOL and CMP SEED now change
   the components at once in every tier, and the circuit VCOs keep the pitch
