@@ -112,6 +112,29 @@ def expected_width() -> int:
     return GUI_WIDTH * CAPTURE_SCALE
 
 
+# One capture run writes every state within seconds (offscreen) or a few
+# minutes (window capture). A PNG much older than the newest one is left over
+# from an earlier run, often of a state the renderer no longer draws, and its
+# diffs, colours and accent counts describe old code.
+STALE_AFTER_S = 600.0
+
+
+def stale_captures(mtimes: dict, after_s: float = STALE_AFTER_S) -> dict:
+    """Captures written more than `after_s` before the newest one: name -> age in s."""
+    if not mtimes:
+        return {}
+    newest = max(mtimes.values())
+    return {name: newest - t for name, t in mtimes.items() if newest - t > after_s}
+
+
+def format_age(seconds: float) -> str:
+    if seconds >= 86400:
+        return f"{seconds / 86400:.1f} d"
+    if seconds >= 3600:
+        return f"{seconds / 3600:.1f} h"
+    return f"{seconds / 60:.0f} min"
+
+
 # The knob sweep runs from 135 deg to 405 deg in egui screen space, which is
 # -135 deg to +135 deg measured clockwise from 12 o'clock.
 SWEEP_MIN_DEG = -135.0
@@ -1106,10 +1129,16 @@ def cmd_report(args):
     print("CAPTURE SET")
     print("=" * 78)
     width = expected_width()
+    stale = stale_captures({path: os.path.getmtime(path) for path in images})
     for path in images:
         with Image.open(path) as im:
             w, h = im.size
         flag = "" if w == width else f"  <-- WIDTH {w}, EXPECTED {width}"
+        if path in stale:
+            flag += (
+                f"  <-- STALE: written {format_age(stale[path])} before the newest"
+                " capture; re-capture or remove it"
+            )
         print(f"  {os.path.basename(path):20s} {w}x{h}{flag}")
 
     comparable = images

@@ -14,7 +14,7 @@ device card so the report can be located in the source.
 
 - Content crossing a card edge onto the chassis, or a window edge.
 - Text truncated, ellipsised, or cut mid-glyph.
-- A value wider than its pill, well or tile (knob pills are 52 / 38 pt wide;
+- A value wider than its pill, well or tile (knob pills are 52 / 44 pt wide;
   a long readout such as `-100.0 ct` is the usual offender).
 - A child box wider or taller than its parent.
 - Content flush against a card edge that elsewhere has the 8 pt / 4 pt body
@@ -136,7 +136,7 @@ whether it stays in the current direction.
   surroundings at 1x.
 - **State legibility**: two states of one control that look alike: on and
   off, current and other step, a disabled selection and its disabled
-  neighbours (`SURFACE_HOVER` against `SURFACE_PRESSED` is 1.47:1; check that
+  neighbours (`SURFACE_HOVER` against `WELL_BG` is 1.93:1; check that
   it reads).
 - **Affordance**: a label that looks clickable, a tile that looks inert, a
   draggable value with no cue.

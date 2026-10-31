@@ -40,32 +40,33 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 if is_accurate {
                     return;
                 }
-                let btn_text = if calibrating {
-                    "CALIBRATING..."
-                } else {
-                    "CALIBRATE"
-                };
-
-                let mut cal_btn = Button::new(
-                    RichText::new(btn_text)
+                // Lit only as the call to action of a due rebuild. A trim that
+                // runs in the background is not a call to action: the tile
+                // stays raised and the status line alone says CALIBRATING
+                // (round-22 #4).
+                let cal_btn = Button::new(
+                    RichText::new("CALIBRATE")
                         .font(FontId::proportional(8.5))
-                        .color(if needs_rebuild || calibrating {
+                        .color(if needs_rebuild {
                             theme::TEXT_ON_ACCENT
                         } else {
                             theme::TEXT_PRIMARY
                         }),
                 )
                 .min_size(vec2(80.0, crate::gui::widgets::toggle::TOGGLE_H));
+                let cal_resp = header_ui
+                    .scope(|ui| {
+                        if needs_rebuild {
+                            theme::lit_action_style(ui);
+                        }
+                        ui.add(cal_btn)
+                    })
+                    .inner;
 
-                if needs_rebuild || calibrating {
-                    cal_btn = cal_btn.fill(theme::ACCENT_ORANGE);
-                }
-
-                if header_ui
-                    .add(cal_btn)
+                if cal_resp
                     .on_hover_text(
-                        "Trim the VCO pitch for the current AGE, TOL, CMP SEED and RECAL. \
-                         Runs in the background",
+                        "Calibrate the VCO pitch for the current AGE, TOL, CMP SEED and \
+                         RECAL. Runs in the background",
                     )
                     .clicked()
                 {
@@ -157,43 +158,54 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 .on_disabled_hover_text(ACCURATE_HINT);
                                             return;
                                         }
-                                        ComboBox::from_id_salt("tweaks_tolerance_combo")
-                                            .selected_text(
-                                                RichText::new(tol_text)
-                                                    .font(FontId::proportional(8.5)),
-                                            )
-                                            .width(FIELD_W)
-                                            .show_ui(ui, |ui| {
-                                                for (variant, opt_label) in [
-                                                    (CompTolerance::Zero, "0% (Ideal)"),
-                                                    (CompTolerance::PointFive, "0.5% (Tight)"),
-                                                    (CompTolerance::Two, "2% (Stock)"),
-                                                    (CompTolerance::Five, "5% (Loose)"),
-                                                    (CompTolerance::Ten, "10% (Wild)"),
-                                                ] {
-                                                    if ui
-                                                        .selectable_label(
-                                                            tol == variant,
-                                                            RichText::new(opt_label)
-                                                                .font(FontId::proportional(8.5)),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        setter
-                                                            .begin_set_parameter(&params.tolerance);
-                                                        setter.set_parameter(
-                                                            &params.tolerance,
-                                                            variant,
-                                                        );
-                                                        setter.end_set_parameter(&params.tolerance);
+                                        // The value is a number: 9 pt monospace, centred
+                                        // like the DragValues under it (round-22 #11).
+                                        // egui paints a combo's text left-aligned in the
+                                        // Button face, so the combo shows none and the
+                                        // value is painted over it.
+                                        let combo =
+                                            ComboBox::from_id_salt("tweaks_tolerance_combo")
+                                                .selected_text("")
+                                                .width(FIELD_W)
+                                                .show_ui(ui, |ui| {
+                                                    for (variant, opt_label) in [
+                                                        (CompTolerance::Zero, "0% (Ideal)"),
+                                                        (CompTolerance::PointFive, "0.5% (Tight)"),
+                                                        (CompTolerance::Two, "2% (Stock)"),
+                                                        (CompTolerance::Five, "5% (Loose)"),
+                                                        (CompTolerance::Ten, "10% (Wild)"),
+                                                    ] {
+                                                        if ui
+                                                            .selectable_label(
+                                                                tol == variant,
+                                                                opt_label,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            setter.begin_set_parameter(
+                                                                &params.tolerance,
+                                                            );
+                                                            setter.set_parameter(
+                                                                &params.tolerance,
+                                                                variant,
+                                                            );
+                                                            setter.end_set_parameter(
+                                                                &params.tolerance,
+                                                            );
+                                                        }
                                                     }
-                                                }
-                                            })
-                                            .response
-                                            .on_hover_text(
-                                                "Component tolerance: how far part values stray \
-                                                 from nominal",
-                                            );
+                                                });
+                                        ui.painter().text(
+                                            combo.response.rect.center(),
+                                            Align2::CENTER_CENTER,
+                                            tol_text,
+                                            FontId::monospace(9.0),
+                                            theme::TEXT_PRIMARY,
+                                        );
+                                        combo.response.on_hover_text(
+                                            "Component tolerance: how far part values stray \
+                                             from nominal",
+                                        );
                                     });
 
                                     ui.add_space(v_gap);
@@ -301,11 +313,12 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                     ui.add_space(v_gap);
 
                                     // Status under the fields. In ACCURATE it says the
-                                    // card is FUN-only (round-20 #3).
+                                    // card is FUN-only (round-20 #3). Every other state
+                                    // names the CALIBRATE action (round-22 #24).
                                     let (status_text, status_color) = if is_accurate {
                                         ("FUN MODE ONLY", theme::TEXT_MUTED)
                                     } else if needs_rebuild {
-                                        ("SYNC PENDING", theme::ACCENT_ORANGE)
+                                        ("CALIBRATION DUE", theme::ACCENT_ORANGE)
                                     } else if calibrating {
                                         ("CALIBRATING", theme::TEXT_SECONDARY)
                                     } else {

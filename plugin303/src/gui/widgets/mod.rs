@@ -1,3 +1,4 @@
+pub mod caption;
 pub mod fader;
 pub mod knob;
 pub mod panel;
@@ -7,6 +8,7 @@ pub mod step_button;
 pub mod switch;
 pub mod toggle;
 
+pub use caption::GroupCaption;
 pub use fader::MiniFader;
 pub use knob::Knob303;
 pub use panel::DevicePanel;

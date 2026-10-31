@@ -1,5 +1,5 @@
 //! Shared rig for editor tests: drive egui frames, read painted text and its
-//! colour, hover a widget. Each test binary uses a subset.
+//! colour or its rect, hover or click a widget. Each test binary uses a subset.
 #![allow(dead_code)]
 
 use nih_plug::prelude::{GuiContext, ParamPtr, PluginApi, PluginState};
@@ -70,27 +70,72 @@ impl GuiContext for DummyGuiContext {
     fn set_state(&self, _state: PluginState) {}
 }
 
-/// Every text run in `shape` with the colour it is painted in. egui's fade
-/// rewrites the glyph vertex colours, so this is the colour on screen.
+/// The text run of `shape`, if it is one, with the colour it is painted in.
+/// egui's fade rewrites the glyph vertex colours, so this is the colour on
+/// screen.
 fn collect_texts(shape: &Shape, out: &mut Vec<(String, Color32)>) {
-    match shape {
-        Shape::Text(t) => {
-            let color = t
-                .override_text_color
-                .or_else(|| {
-                    t.galley
-                        .rows
-                        .iter()
-                        .find_map(|r| r.visuals.mesh.vertices.first())
-                        .map(|v| v.color)
-                        .filter(|c| *c != Color32::PLACEHOLDER)
-                })
-                .unwrap_or(t.fallback_color);
-            out.push((t.galley.text().to_string(), color));
-        }
-        Shape::Vec(v) => v.iter().for_each(|s| collect_texts(s, out)),
-        _ => {}
+    if let Shape::Text(t) = shape {
+        let color = t
+            .override_text_color
+            .or_else(|| {
+                t.galley
+                    .rows
+                    .iter()
+                    .find_map(|r| r.visuals.mesh.vertices.first())
+                    .map(|v| v.color)
+                    .filter(|c| *c != Color32::PLACEHOLDER)
+            })
+            .unwrap_or(t.fallback_color);
+        out.push((t.galley.text().to_string(), color));
     }
+}
+
+/// `shape`, with nested `Shape::Vec`s spread into `out`.
+fn flatten(shape: Shape, out: &mut Vec<Shape>) {
+    match shape {
+        Shape::Vec(v) => v.into_iter().for_each(|s| flatten(s, out)),
+        s => out.push(s),
+    }
+}
+
+/// Every text run in `shapes` with its layout rect on screen.
+pub fn text_runs(shapes: &[Shape]) -> Vec<(String, Rect)> {
+    shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Text(t) => Some((
+                t.galley.text().to_string(),
+                t.galley.rect.translate(t.pos.to_vec2()),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The rects in `shapes` filled with `color`.
+pub fn filled_rects(shapes: &[Shape], color: Color32) -> Vec<Rect> {
+    shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Rect(r) if r.fill == color => Some(r.rect),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The fill of the smallest filled rect in `shapes` that holds `rect`: the
+/// tile a label sits on.
+pub fn fill_under(shapes: &[Shape], rect: Rect) -> Option<Color32> {
+    shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Rect(r) if r.fill != Color32::TRANSPARENT && r.rect.contains_rect(rect) => {
+                Some(r)
+            }
+            _ => None,
+        })
+        .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+        .map(|r| r.fill)
 }
 
 pub struct Rig {
@@ -111,13 +156,13 @@ impl Rig {
     }
 
     /// One frame `dt` seconds after the previous one, fed `events`. Returns the
-    /// text runs it painted.
-    fn frame(
+    /// shapes it painted, flattened.
+    fn pass(
         &mut self,
         dt: f64,
         events: Vec<egui::Event>,
         add: &mut dyn FnMut(&mut Ui),
-    ) -> Vec<(String, Color32)> {
+    ) -> Vec<Shape> {
         self.time += dt;
         let input = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
@@ -130,11 +175,47 @@ impl Rig {
                 .frame(Frame::new())
                 .show(ctx, |ui| add(ui));
         });
-        let mut found = Vec::new();
+        let mut shapes = Vec::new();
         out.shapes
+            .into_iter()
+            .for_each(|c| flatten(c.shape, &mut shapes));
+        shapes
+    }
+
+    /// One frame, as `pass`. Returns the text runs it painted.
+    fn frame(
+        &mut self,
+        dt: f64,
+        events: Vec<egui::Event>,
+        add: &mut dyn FnMut(&mut Ui),
+    ) -> Vec<(String, Color32)> {
+        let mut found = Vec::new();
+        self.pass(dt, events, add)
             .iter()
-            .for_each(|c| collect_texts(&c.shape, &mut found));
+            .for_each(|s| collect_texts(s, &mut found));
         found
+    }
+
+    /// Settle the layout with the pointer gone, then return the shapes of one
+    /// more frame.
+    pub fn shapes(&mut self, add: &mut dyn FnMut(&mut Ui)) -> Vec<Shape> {
+        self.run(2, None, add);
+        self.pass(0.5, vec![egui::Event::PointerGone], add)
+    }
+
+    /// Three frames 10 ms apart with the pointer at `pointer` (or gone): enough
+    /// for the hover to settle (the ANALOG TWEAKS header drops it on the second
+    /// frame after the pointer arrives), short enough that an armed CLEAR stays
+    /// armed. Returns the shapes of the last frame.
+    pub fn shapes_at(&mut self, pointer: Option<Pos2>, add: &mut dyn FnMut(&mut Ui)) -> Vec<Shape> {
+        let event = || match pointer {
+            Some(p) => egui::Event::PointerMoved(p),
+            None => egui::Event::PointerGone,
+        };
+        for _ in 0..2 {
+            self.frame(0.01, vec![event()], add);
+        }
+        self.pass(0.01, vec![event()], add)
     }
 
     /// Run `frames` frames, 0.5 s apart, with the pointer at `pointer` (or gone).

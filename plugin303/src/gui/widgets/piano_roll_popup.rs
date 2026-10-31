@@ -9,6 +9,10 @@ pub const TOTAL_PIANO_ROLL_ROWS: usize = 61; // C1 (row 60) through C6 (row 0)
 pub const POPUP_WIDTH: f32 = 145.0;
 pub const POPUP_HEIGHT: f32 = 255.0;
 pub const ROW_HEIGHT: f32 = 19.0;
+/// Frame margin inside the layer edge.
+const INNER_MARGIN: i8 = 4;
+/// Space between the popup's outer edge and its contents, on each side.
+const INSET: f32 = INNER_MARGIN as f32 + theme::LAYER_EDGE.width;
 pub const PIANO_ROLL_LABELS: [&str; TOTAL_PIANO_ROLL_ROWS] = [
     "C6", "B5", "A#5", "A5", "G#5", "G5", "F#5", "F5", "E5", "D#5", "D5",
     "C#5", // Rows 0..=11
@@ -113,6 +117,30 @@ pub fn toggle_open_state(ctx: &nih_plug_egui::egui::Context, step_idx: usize, an
     );
 }
 
+/// Side of the close action, and of the cross painted in it.
+const CLOSE_SIZE: f32 = 16.0;
+const CROSS_SIZE: f32 = 6.0;
+
+/// The close action: a raised tile with a painted cross. The font has no "✕"
+/// glyph, so a text label painted an empty box (round-22 #1).
+fn close_button(ui: &mut nih_plug_egui::egui::Ui) -> nih_plug_egui::egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(CLOSE_SIZE, CLOSE_SIZE), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        let fill = if response.hovered() {
+            theme::SURFACE_HOVER
+        } else {
+            theme::SURFACE_ELEVATED
+        };
+        p.rect_filled(rect, theme::radius(), fill);
+        let cross = Rect::from_center_size(rect.center(), vec2(CROSS_SIZE, CROSS_SIZE));
+        let stroke = Stroke::new(1.5_f32, theme::TEXT_PRIMARY);
+        p.line_segment([cross.left_top(), cross.right_bottom()], stroke);
+        p.line_segment([cross.right_top(), cross.left_bottom()], stroke);
+    }
+    response.on_hover_text("Close (Esc)")
+}
+
 pub fn render_piano_roll_popup(
     ctx: &nih_plug_egui::egui::Context,
     pattern: &mut SequencerPattern,
@@ -166,33 +194,26 @@ pub fn render_piano_roll_popup(
         .show(ctx, |ui| {
             Frame::new()
                 .fill(theme::PANEL_BG)
-                .stroke(Stroke::NONE)
+                .stroke(theme::LAYER_EDGE)
                 .corner_radius(theme::radius())
-                .inner_margin(Margin::same(4))
+                .inner_margin(Margin::same(INNER_MARGIN))
                 .show(ui, |ui| {
-                    ui.set_width(POPUP_WIDTH - 8.0);
-                    ui.set_height(POPUP_HEIGHT - 8.0);
+                    ui.set_width(POPUP_WIDTH - 2.0 * INSET);
+                    ui.set_height(POPUP_HEIGHT - 2.0 * INSET);
 
-                    // Header bar
+                    // Header bar: the title in words (proportional), the close
+                    // action flush right.
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(format!("STEP {:02} NOTE", open_state.step_idx + 1))
-                                .font(FontId::monospace(8.5))
+                                .font(FontId::proportional(9.0))
                                 .color(theme::TEXT_PRIMARY),
                         );
 
                         ui.with_layout(
                             nih_plug_egui::egui::Layout::right_to_left(Align::Center),
                             |ui| {
-                                let close_btn = nih_plug_egui::egui::Button::new(
-                                    RichText::new("✕")
-                                        .font(FontId::proportional(9.0))
-                                        .color(theme::TEXT_SECONDARY),
-                                )
-                                .fill(theme::SURFACE_ELEVATED)
-                                .min_size(vec2(16.0, 16.0));
-
-                                if ui.add(close_btn).clicked() {
+                                if close_button(ui).clicked() {
                                     should_close = true;
                                 }
                             },
@@ -203,9 +224,9 @@ pub fn render_piano_roll_popup(
                     ui.separator();
                     ui.add_space(2.0);
 
-                    // Scrollable piano roll
+                    // Scrollable piano roll, below the 24 pt title row and separator.
                     ScrollArea::vertical()
-                        .max_height(POPUP_HEIGHT - 32.0)
+                        .max_height(POPUP_HEIGHT - 2.0 * INSET - 24.0)
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
@@ -283,11 +304,11 @@ pub fn render_piano_roll_popup(
                                         key_text_color,
                                     );
 
-                                    // Full pitch descriptor + octave indicator on right
+                                    // Full pitch descriptor + octave indicator on right.
+                                    // The orange key alone marks the active row; orange
+                                    // text on the row highlight was 3.53:1 (round-22 #5).
                                     let label_pos = pos2(row_rect.max.x - 6.0, row_rect.center().y);
-                                    let full_label_color = if is_active {
-                                        theme::ACCENT_ORANGE
-                                    } else if is_hovered {
+                                    let full_label_color = if is_active || is_hovered {
                                         theme::TEXT_PRIMARY
                                     } else {
                                         theme::TEXT_SECONDARY

@@ -36,6 +36,11 @@ Each section below is the focused version of one part of the report.
 **A width other than 2432 invalidates every later number**: the capture
 script attached to the wrong window. Re-capture first.
 
+**`STALE`** marks a capture written more than 10 minutes before the newest
+one. Neither capture script deletes old PNGs, so a state the renderer no
+longer draws keeps the file of the run that last drew it, and `report` diffs
+and counts it like a current one. Re-capture it or move it out first.
+
 ## `diff`: do these captures show different states?
 
 ```bash
@@ -48,9 +53,11 @@ Prints changed-region clusters as `y … x … n=…`. Expected scopes against
 | State | Changes only in |
 |---|---|
 | `accurate` | app bar (TOPOLOGY, QUALITY), SOUPED-UP ENGINE header switches and body (banner), ANALOG TWEAKS (CALIBRATE hidden, readouts, status), the ADV ENV tile |
-| `advanced` | ENVELOPES (both ADSR banks, ADV ENV tile), and the GLIDE value pill: its readout follows the voice's glide map, which ADV ENV switches (`value_text::glide`) |
+| `advanced` | ENVELOPES (both ADSR banks, ADV ENV tile), and the CUTOFF and GLIDE value pills: their readouts follow the voice's maps, which ADV ENV switches (`value_text::cutoff`, `value_text::glide`). The CUTOFF pill (y 231-244, x 468-486) is small enough to merge into the fader cluster |
 | `knobs` | TUNING and CUTOFF |
 | `quality_low` | the QUALITY bar |
+| `knob_extremes` | TUNING, PITCH1, PITCH2, IN, OUT and TILT knobs |
+| `clipper_off` | OUTPUT CLIPPER card only (header switches dimmed, ON LED unlit, body dimmed) |
 | `generator` | ACID EUCLIDEAN GENERATOR body, the GENERATION SEED value |
 | `running` | SEQUENCER step 04 (plate, LED, number), the RUN tile |
 | `running_note` | as `running`, plus every gate and pitch cell |
@@ -147,7 +154,7 @@ the generator card in `generator` is correct. The findings are:
 
 Narrow a card to one control group with `--box x0,y0,x1,y1`. Then confirm that
 the disabled selection still reads: crop it and look for the `SURFACE_HOVER`
-segment among `SURFACE_PRESSED` neighbours.
+segment among `WELL_BG` neighbours.
 
 ## `knobs`: arc versus pointer
 

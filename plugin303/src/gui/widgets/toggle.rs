@@ -13,6 +13,9 @@ const LED_W: f32 = 3.0;
 const LED_H: f32 = 10.0;
 const LED_GAP: f32 = 5.0;
 const PAD_X: f32 = 8.0;
+/// The bar form of the LED: as tall as the step LED, inset from the tile edge.
+const BAR_H: f32 = 4.0;
+const BAR_INSET: f32 = 4.0;
 
 /// A raised on/off tile with an LED: orange LED when on, an empty `WELL_BG`
 /// slot when off. The tile itself never fills orange, so an off toggle still
@@ -23,6 +26,7 @@ pub struct ToggleButton<'a> {
     label: &'a str,
     min_width: f32,
     height: f32,
+    led_bar: bool,
 }
 
 impl<'a> ToggleButton<'a> {
@@ -32,6 +36,7 @@ impl<'a> ToggleButton<'a> {
             label,
             min_width: 0.0,
             height: TOGGLE_H,
+            led_bar: false,
         }
     }
 
@@ -46,6 +51,15 @@ impl<'a> ToggleButton<'a> {
         self.height = height;
         self
     }
+
+    /// Draw the LED as a bar across the bottom of the tile, the form the
+    /// playhead's step LED takes, instead of the slot left of the label. For
+    /// RUN only: the transport state must read from across the window, and a
+    /// 3 x 10 pt slot does not (round-22 #9).
+    pub fn led_bar(mut self) -> Self {
+        self.led_bar = true;
+        self
+    }
 }
 
 /// Paint of one toggle state.
@@ -58,8 +72,11 @@ struct ToggleColors {
 
 fn toggle_colors(on: bool, hovered: bool, enabled: bool) -> ToggleColors {
     if !enabled {
+        // A disabled tile sinks to the well plane: every disabled toggle sits
+        // in a header strip, where SURFACE_PRESSED is the strip's own colour
+        // (1.01:1, round-22 #10). The off slot merges into the tile.
         return ToggleColors {
-            fill: theme::SURFACE_PRESSED,
+            fill: theme::WELL_BG,
             led: if on {
                 theme::TEXT_MUTED
             } else {
@@ -96,7 +113,11 @@ impl Widget for ToggleButton<'_> {
                 .size()
                 .x
         });
-        let group_w = LED_W + LED_GAP + text_w;
+        let group_w = if self.led_bar {
+            text_w
+        } else {
+            LED_W + LED_GAP + text_w
+        };
         let width = (group_w + 2.0 * PAD_X).max(self.min_width);
         let (rect, mut response) = ui.allocate_exact_size(vec2(width, self.height), Sense::click());
         if response.clicked() {
@@ -108,18 +129,36 @@ impl Widget for ToggleButton<'_> {
             painter.set_fade_to_color(None);
             let c = toggle_colors(*self.on, response.hovered(), ui.is_enabled());
             painter.rect_filled(rect, theme::radius(), c.fill);
-            // LED and label are centred as one group.
-            let x0 = rect.center().x - group_w * 0.5;
-            let led =
-                Rect::from_center_size(pos2(x0 + LED_W * 0.5, rect.center().y), vec2(LED_W, LED_H));
-            painter.rect_filled(led, CornerRadius::same(1), c.led);
-            painter.text(
-                pos2(x0 + LED_W + LED_GAP, rect.center().y),
-                Align2::LEFT_CENTER,
-                self.label,
-                font,
-                c.text,
-            );
+            if self.led_bar {
+                // The label centres in the space above the bar.
+                let bar = Rect::from_min_max(
+                    pos2(rect.left() + BAR_INSET, rect.bottom() - BAR_INSET - BAR_H),
+                    pos2(rect.right() - BAR_INSET, rect.bottom() - BAR_INSET),
+                );
+                painter.rect_filled(bar, CornerRadius::same(1), c.led);
+                painter.text(
+                    pos2(rect.center().x, (rect.top() + bar.top()) * 0.5),
+                    Align2::CENTER_CENTER,
+                    self.label,
+                    font,
+                    c.text,
+                );
+            } else {
+                // LED and label are centred as one group.
+                let x0 = rect.center().x - group_w * 0.5;
+                let led = Rect::from_center_size(
+                    pos2(x0 + LED_W * 0.5, rect.center().y),
+                    vec2(LED_W, LED_H),
+                );
+                painter.rect_filled(led, CornerRadius::same(1), c.led);
+                painter.text(
+                    pos2(x0 + LED_W + LED_GAP, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    self.label,
+                    font,
+                    c.text,
+                );
+            }
         }
         response
     }
@@ -168,6 +207,19 @@ mod tests {
                 ratio >= 3.0,
                 "hovered={hovered} enabled={enabled}: {ratio:.2}"
             );
+        }
+    }
+
+    /// A disabled tile stays visible on the header strip, where every disabled
+    /// toggle sits: at least the quietest plane step the design uses (header
+    /// strip on body). SURFACE_PRESSED there was 1.01:1 (round-22 #10).
+    #[test]
+    fn disabled_tile_shows_on_the_header_strip() {
+        let floor = theme::contrast_ratio(theme::PANEL_HEADER_BG, theme::PANEL_BG);
+        for on in [true, false] {
+            let c = toggle_colors(on, false, false);
+            let ratio = theme::contrast_ratio(c.fill, theme::PANEL_HEADER_BG);
+            assert!(ratio >= floor, "on={on}: {ratio:.2} < {floor:.2}");
         }
     }
 }
