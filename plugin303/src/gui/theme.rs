@@ -99,6 +99,21 @@ pub fn field_style(ui: &mut Ui) {
     w.open.bg_fill = SURFACE_PRESSED;
 }
 
+/// Light the actions added to `ui`: an `ACCENT_ORANGE` fill that lifts to
+/// `ACCENT_ORANGE_HOVER` under the pointer like every lit tile. Use it, not
+/// `Button::fill`, which holds one fill in every state.
+pub fn lit_action_style(ui: &mut Ui) {
+    let w = &mut ui.style_mut().visuals.widgets;
+    for (state, fill) in [
+        (&mut w.inactive, ACCENT_ORANGE),
+        (&mut w.hovered, ACCENT_ORANGE_HOVER),
+        (&mut w.active, ACCENT_ORANGE),
+    ] {
+        state.weak_bg_fill = fill;
+        state.bg_fill = fill;
+    }
+}
+
 /// Install the flat style on the egui context. Built-in widgets (DragValue,
 /// ComboBox, Button) inherit it, so panels only draw what is specific to them.
 pub fn apply(ctx: &egui::Context) {

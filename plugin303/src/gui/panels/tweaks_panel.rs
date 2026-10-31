@@ -44,7 +44,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 // runs in the background is not a call to action: the tile
                 // stays raised and the status line alone says CALIBRATING
                 // (round-22 #4).
-                let mut cal_btn = Button::new(
+                let cal_btn = Button::new(
                     RichText::new("CALIBRATE")
                         .font(FontId::proportional(8.5))
                         .color(if needs_rebuild {
@@ -54,13 +54,16 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         }),
                 )
                 .min_size(vec2(80.0, crate::gui::widgets::toggle::TOGGLE_H));
+                let cal_resp = header_ui
+                    .scope(|ui| {
+                        if needs_rebuild {
+                            theme::lit_action_style(ui);
+                        }
+                        ui.add(cal_btn)
+                    })
+                    .inner;
 
-                if needs_rebuild {
-                    cal_btn = cal_btn.fill(theme::ACCENT_ORANGE);
-                }
-
-                if header_ui
-                    .add(cal_btn)
+                if cal_resp
                     .on_hover_text(
                         "Calibrate the VCO pitch for the current AGE, TOL, CMP SEED and \
                          RECAL. Runs in the background",

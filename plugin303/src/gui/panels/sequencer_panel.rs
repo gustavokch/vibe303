@@ -534,15 +534,17 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                             theme::TEXT_PRIMARY
                         }),
                 )
-                .fill(if armed {
-                    theme::ACCENT_ORANGE
-                } else {
-                    theme::SURFACE_ELEVATED
-                })
                 .min_size(vec2(slot_w, ROW_H));
+                let clear_resp = ui
+                    .scope(|ui| {
+                        if armed {
+                            theme::lit_action_style(ui);
+                        }
+                        ui.add(clear_btn)
+                    })
+                    .inner;
 
-                if ui
-                    .add(clear_btn)
+                if clear_resp
                     .on_hover_text("Reset all 16 steps to C3 notes. Click twice to confirm.")
                     .clicked()
                 {

@@ -98,10 +98,15 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 .font(FontId::proportional(8.5))
                                 .color(theme::TEXT_ON_ACCENT),
                         )
-                        .fill(theme::ACCENT_ORANGE)
                         .min_size(vec2(btn_w, crate::gui::widgets::toggle::TOGGLE_H));
+                        let btn_resp = ui
+                            .scope(|ui| {
+                                theme::lit_action_style(ui);
+                                ui.add(btn)
+                            })
+                            .inner;
 
-                        if ui.add(btn).on_hover_text(ENABLE_FUN_HINT).clicked() {
+                        if btn_resp.on_hover_text(ENABLE_FUN_HINT).clicked() {
                             setter.begin_set_parameter(&params.topology);
                             setter.set_parameter(&params.topology, CircuitTopology::Fun);
                             setter.end_set_parameter(&params.topology);

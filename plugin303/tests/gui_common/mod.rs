@@ -123,6 +123,21 @@ pub fn filled_rects(shapes: &[Shape], color: Color32) -> Vec<Rect> {
         .collect()
 }
 
+/// The fill of the smallest filled rect in `shapes` that holds `rect`: the
+/// tile a label sits on.
+pub fn fill_under(shapes: &[Shape], rect: Rect) -> Option<Color32> {
+    shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Rect(r) if r.fill != Color32::TRANSPARENT && r.rect.contains_rect(rect) => {
+                Some(r)
+            }
+            _ => None,
+        })
+        .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+        .map(|r| r.fill)
+}
+
 pub struct Rig {
     pub ctx: Context,
     size: Vec2,
@@ -186,6 +201,21 @@ impl Rig {
     pub fn shapes(&mut self, add: &mut dyn FnMut(&mut Ui)) -> Vec<Shape> {
         self.run(2, None, add);
         self.pass(0.5, vec![egui::Event::PointerGone], add)
+    }
+
+    /// Three frames 10 ms apart with the pointer at `pointer` (or gone): enough
+    /// for the hover to settle (the ANALOG TWEAKS header drops it on the second
+    /// frame after the pointer arrives), short enough that an armed CLEAR stays
+    /// armed. Returns the shapes of the last frame.
+    pub fn shapes_at(&mut self, pointer: Option<Pos2>, add: &mut dyn FnMut(&mut Ui)) -> Vec<Shape> {
+        let event = || match pointer {
+            Some(p) => egui::Event::PointerMoved(p),
+            None => egui::Event::PointerGone,
+        };
+        for _ in 0..2 {
+            self.frame(0.01, vec![event()], add);
+        }
+        self.pass(0.01, vec![event()], add)
     }
 
     /// Run `frames` frames, 0.5 s apart, with the pointer at `pointer` (or gone).
