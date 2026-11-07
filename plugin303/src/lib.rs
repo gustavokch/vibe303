@@ -57,8 +57,6 @@ pub struct Plugin303 {
     active_seq_midi_note: Option<(u8, u8)>,
     /// Monotonic running sample position for multi-block sequencer scheduling.
     current_sample_pos: u64,
-    /// Previous transport sample position to detect jumps, loops, and seeks.
-    prev_transport_sample: Option<i64>,
     /// Cached compiled sequencer pattern for non-blocking RT audio safety.
     cached_pattern: crate::dsp::sequencer::Pattern,
     /// Pre-cached QA playback step for visual regression captures.
@@ -94,7 +92,6 @@ impl Plugin303 {
             active_midi_note: None,
             active_seq_midi_note: None,
             current_sample_pos: 0,
-            prev_transport_sample: None,
             cached_pattern,
             qa_playhead_step,
         }
@@ -258,7 +255,6 @@ impl Plugin for Plugin303 {
             );
         }
         self.current_sample_pos = 0;
-        self.prev_transport_sample = None;
         // Apply the persisted tier (no fade — this is the initial state, not a
         // user change) and report its latency so the host can PDC the
         // oversampling group delay from the first block.
@@ -282,7 +278,6 @@ impl Plugin for Plugin303 {
         self.active_midi_note = None;
         self.active_seq_midi_note = None;
         self.current_sample_pos = 0;
-        self.prev_transport_sample = None;
         // Re-apply the persisted tier immediately (no fade) — otherwise the voice
         // would silently revert to Draft and the next block would crossfade up to
         // the user's tier on every transport start / loop-jump.
@@ -392,24 +387,18 @@ impl Plugin for Plugin303 {
 
         if is_running && seq_sync && transport.playing {
             if let Some(pos_samples) = transport.pos_samples() {
-                let is_discontinuous = match self.prev_transport_sample {
-                    None => true,
-                    Some(prev) => (pos_samples - prev).abs() > (buffer.samples() as i64 + 64),
-                };
-                if is_discontinuous {
-                    self.sequencer.sync_to_transport(
-                        pos_samples,
-                        self.current_sample_pos,
-                        bpm,
-                        timebase,
-                        num_steps,
-                        Some(&self.cached_pattern),
-                    );
-                }
-                self.prev_transport_sample = Some(pos_samples + buffer.samples() as i64);
+                self.sequencer.follow_transport(
+                    pos_samples,
+                    self.current_sample_pos,
+                    buffer.samples() as u32,
+                    bpm,
+                    timebase,
+                    num_steps,
+                    Some(&self.cached_pattern),
+                );
             }
         } else {
-            self.prev_transport_sample = None;
+            self.sequencer.stop_following_transport();
         }
 
         let mut seq_events = [(0, SeqEvent::GateOff); 64];

@@ -61,6 +61,9 @@ pub struct Sequencer {
     prev_note_slide: bool,
     prev_was_sounding: bool,
     isr_origin: f64,
+    /// Host position expected at the next block while following the host
+    /// (SYNC on, host playing). `None` re-places the grid on the next block.
+    host_next_pos: Option<i64>,
     pub current_step: Arc<AtomicU8>,
     pub loop_count: u64,
 }
@@ -81,6 +84,7 @@ impl Sequencer {
             prev_note_slide: false,
             prev_was_sounding: false,
             isr_origin: 0.0,
+            host_next_pos: None,
             current_step: Arc::new(AtomicU8::new(255)),
             loop_count: 0,
         }
@@ -108,10 +112,40 @@ impl Sequencer {
         self.prev_was_sounding = false;
         self.current_step.store(255, Ordering::Relaxed);
         self.loop_count = 0;
+        self.host_next_pos = None;
     }
 
     pub fn reset_transport(&mut self, _pos_beats: f64) {
         self.next_step_sample = 0.0;
+    }
+
+    /// Follows the host playhead while SYNC is on and the host plays. Re-places
+    /// the step grid on the host position (`sync_to_transport`) when the
+    /// transport jumps, so steps stay on the host's grid.
+    #[allow(clippy::too_many_arguments)]
+    pub fn follow_transport(
+        &mut self,
+        pos_samples: i64,
+        block_start: u64,
+        num_samples: u32,
+        bpm: f64,
+        timebase: Timebase,
+        num_steps: u8,
+        pattern: Option<&Pattern>,
+    ) {
+        let jumped = match self.host_next_pos {
+            None => true,
+            Some(expected) => (pos_samples - expected).abs() > num_samples as i64 + 64,
+        };
+        if jumped {
+            self.sync_to_transport(pos_samples, block_start, bpm, timebase, num_steps, pattern);
+        }
+        self.host_next_pos = Some(pos_samples + num_samples as i64);
+    }
+
+    /// Stops following the host. The next `follow_transport` re-places the grid.
+    pub fn stop_following_transport(&mut self) {
+        self.host_next_pos = None;
     }
 
     pub fn sync_to_transport(
