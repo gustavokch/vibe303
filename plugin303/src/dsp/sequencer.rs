@@ -64,6 +64,8 @@ pub struct Sequencer {
     /// Host position expected at the next block while following the host
     /// (SYNC on, host playing). `None` re-places the grid on the next block.
     host_next_pos: Option<i64>,
+    /// RATE the step grid was last placed on while following the host.
+    host_timebase: Timebase,
     pub current_step: Arc<AtomicU8>,
     pub loop_count: u64,
 }
@@ -85,6 +87,7 @@ impl Sequencer {
             prev_was_sounding: false,
             isr_origin: 0.0,
             host_next_pos: None,
+            host_timebase: Timebase::Straight,
             current_step: Arc::new(AtomicU8::new(255)),
             loop_count: 0,
         }
@@ -121,7 +124,7 @@ impl Sequencer {
 
     /// Follows the host playhead while SYNC is on and the host plays. Re-places
     /// the step grid on the host position (`sync_to_transport`) when the
-    /// transport jumps, so steps stay on the host's grid.
+    /// transport jumps or RATE changes, so steps stay on the host's grid.
     #[allow(clippy::too_many_arguments)]
     pub fn follow_transport(
         &mut self,
@@ -137,9 +140,10 @@ impl Sequencer {
             None => true,
             Some(expected) => (pos_samples - expected).abs() > num_samples as i64 + 64,
         };
-        if jumped {
+        if jumped || timebase != self.host_timebase {
             self.sync_to_transport(pos_samples, block_start, bpm, timebase, num_steps, pattern);
         }
+        self.host_timebase = timebase;
         self.host_next_pos = Some(pos_samples + num_samples as i64);
     }
 
@@ -193,7 +197,13 @@ impl Sequencer {
             self.pitch_idx = self.step_idx;
         }
 
-        self.gate_off_sample = None;
+        // A note sounding across the re-sync keeps its pending gate-off. A
+        // slide holds its gate for the step it slides into, which is not the
+        // step that comes next on the new grid, so it ends where that step
+        // starts.
+        if self.gate_off_sample.is_none() && self.prev_note_slide && self.prev_was_sounding {
+            self.gate_off_sample = Some(self.next_step_sample);
+        }
         self.prev_note_slide = false;
         self.prev_was_sounding = false;
     }
@@ -280,9 +290,13 @@ impl Sequencer {
         let block_end = block_start as f64 + num_samples as f64;
         let num_steps = (pattern.num_steps as usize).clamp(1, 16);
 
-        // 1. Pending GateOff from previous block?
+        // 1. Pending GateOff from previous block? It goes off by the next
+        // step's start at the latest, so it stays ahead of that step's event
+        // also when a re-sync moved the next step earlier.
         if let Some(g) = self.gate_off_sample {
-            let g_quant = self.isr_quantise(g, GATE_OFF_LATENCY_S, hw_jitter);
+            let g_quant = self
+                .isr_quantise(g, GATE_OFF_LATENCY_S, hw_jitter)
+                .min(self.isr_quantise(self.next_step_sample, GATE_ON_LATENCY_S, hw_jitter));
             if g_quant < block_end {
                 let offset = (g_quant as u32).saturating_sub(block_start as u32);
                 if *out_count < 64 {

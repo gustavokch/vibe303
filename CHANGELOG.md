@@ -117,6 +117,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
   12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of
   the step.
+- With SYNC on, changing RATE while the host played left the steps on the old
+  rate's grid until the next transport jump, so 12th steps could land off the
+  host's beats. A RATE change now re-places the steps on the host grid, as a
+  jump does. A note sounding at a re-sync (RATE change or jump) keeps its
+  gate-off, and a held slide ends where the next step starts. Before, its gate
+  stayed open until the next note, so MIDI out held the note through rests.
 - The High tier was padded for Best's 4x oversampling latency instead of its
   own 2x latency, so its output came out 15 samples early (about 0.3 ms at
   48 kHz) and a High crossfade blended misaligned paths. High now has its own
