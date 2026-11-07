@@ -167,11 +167,10 @@ impl Timebase {
             Self::Triplet => 5.0,
         }
     }
+    /// Steps per quarter note. Derived from `ticks_per_step` on the 24-tick
+    /// beat, so the step rate and the gate ticks cannot disagree.
     pub fn steps_per_beat(self) -> f64 {
-        match self {
-            Self::Straight => 4.0,
-            Self::Triplet => 8.0 / 3.0,
-        }
+        24.0 / self.ticks_per_step()
     }
 }
 

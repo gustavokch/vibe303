@@ -52,7 +52,7 @@ fn test_sequencer_drift_free() {
 }
 
 #[test]
-fn test_gate_duty_triplet() {
+fn test_triplet_grid_and_gate_duty() {
     let mut seq = Sequencer::new(48000.0);
     seq.set_running(true);
     let mut pat = Pattern {
@@ -61,36 +61,42 @@ fn test_gate_duty_triplet() {
         num_steps: 16,
         decoupled: false,
     };
-    pat.timing[0] = TimeEntry::Note;
+    pat.timing[..4].fill(TimeEntry::Note);
 
     let mut events = [(0, SeqEvent::GateOff); 64];
     let mut count = 0;
 
-    // Triplet step duration: 48000 * 60 / (120 * 8/3) = 9000 samples.
-    // Gate duration: 5/8 of 9000 = 5625 samples.
+    // Triplet (12th) step: 8 of 24 ticks per quarter note, 3 steps per beat.
+    // 120 BPM at 48 kHz: a beat is 24000 samples, a step 8000, the gate 5/8 of
+    // a step (5000). The 4th step lands on beat 2.
     seq.process_block(
         &pat,
         0,
-        9000,
+        24001,
         &mut events,
         &mut count,
         120.0,
         Timebase::Triplet,
         false,
     );
-    assert_eq!(count, 2);
 
-    if let SeqEvent::Trigger { .. } = events[0].1 {
-        assert_eq!(events[0].0, 0);
-    } else {
-        panic!("Expected Trigger");
-    }
-
-    if let SeqEvent::GateOff = events[1].1 {
-        assert_eq!(events[1].0, 5625); // 62.5% of 9000 = 5625
-    } else {
-        panic!("Expected GateOff at 5625, got {:?}", events[1].0);
-    }
+    let trigger = SeqEvent::Trigger {
+        key: 0,
+        octave: 0,
+        accent: false,
+    };
+    assert_eq!(
+        &events[..count],
+        &[
+            (0, trigger),
+            (5000, SeqEvent::GateOff),
+            (8000, trigger),
+            (13000, SeqEvent::GateOff),
+            (16000, trigger),
+            (21000, SeqEvent::GateOff),
+            (24000, trigger),
+        ]
+    );
 }
 
 #[test]
@@ -434,4 +440,124 @@ fn test_decoupled_pitch_transport_sync() {
     } else {
         panic!("Expected Trigger event");
     }
+}
+
+/// Plays `pat` at 120 BPM against a host transport that starts at sample 0 and
+/// runs in `block`-sample blocks (the plugin timeline matches the host's) until
+/// `end`. `rate_at` gives the RATE for the block that starts at a host position.
+/// Returns every event at its absolute sample.
+fn play_synced(
+    pat: &Pattern,
+    block: u32,
+    end: u64,
+    rate_at: impl Fn(u64) -> Timebase,
+) -> Vec<(u64, SeqEvent)> {
+    let mut seq = Sequencer::new(48000.0);
+    seq.set_running(true);
+    let mut played = Vec::new();
+    let mut pos = 0;
+    while pos < end {
+        let timebase = rate_at(pos);
+        seq.follow_transport(
+            pos as i64,
+            pos,
+            block,
+            120.0,
+            timebase,
+            pat.num_steps,
+            Some(pat),
+        );
+        let mut events = [(0, SeqEvent::GateOff); 64];
+        let mut count = 0;
+        seq.process_block(
+            pat,
+            pos,
+            block,
+            &mut events,
+            &mut count,
+            120.0,
+            timebase,
+            false,
+        );
+        played.extend(
+            events[..count]
+                .iter()
+                .map(|&(at, ev)| (pos + at as u64, ev)),
+        );
+        pos += block as u64;
+    }
+    played
+}
+
+const TRIGGER: SeqEvent = SeqEvent::Trigger {
+    key: 0,
+    octave: 0,
+    accent: false,
+};
+
+#[test]
+fn test_rate_change_with_sync_moves_steps_to_the_host_grid() {
+    let pat = Pattern {
+        pitches: [PitchEntry::default(); 16],
+        timing: [TimeEntry::Note; 16],
+        num_steps: 16,
+        decoupled: false,
+    };
+    // 16th steps every 6000 samples until RATE turns 12th at host sample 8000,
+    // then 12th steps on the host's 8000-sample grid. The 16th step from 6000
+    // still holds its gate (off at 9000): it goes off where the next step
+    // starts, ahead of that step's trigger.
+    let played = play_synced(&pat, 2000, 26000, |pos| {
+        if pos < 8000 {
+            Timebase::Straight
+        } else {
+            Timebase::Triplet
+        }
+    });
+    assert_eq!(
+        played,
+        [
+            (0, TRIGGER),
+            (3000, SeqEvent::GateOff),
+            (6000, TRIGGER),
+            (8000, SeqEvent::GateOff),
+            (8000, TRIGGER),
+            (13000, SeqEvent::GateOff),
+            (16000, TRIGGER),
+            (21000, SeqEvent::GateOff),
+            (24000, TRIGGER),
+        ]
+    );
+}
+
+#[test]
+fn test_rate_change_with_sync_ends_a_held_slide() {
+    let mut pat = Pattern {
+        pitches: [PitchEntry::default(); 16],
+        timing: [TimeEntry::Rest; 16],
+        num_steps: 16,
+        decoupled: false,
+    };
+    pat.timing[5] = TimeEntry::Note;
+    pat.pitches[5].slide = true;
+    pat.timing[6] = TimeEntry::Note;
+    // 16th step 5 (sample 30000) slides into step 6, so it holds its gate. RATE
+    // turns 12th at 31000, which re-places the grid: the next step is 12th
+    // step 4 (a rest) at 32000, so the slide ends there. 12th step 5 plays at
+    // 40000.
+    let played = play_synced(&pat, 1000, 41000, |pos| {
+        if pos < 31000 {
+            Timebase::Straight
+        } else {
+            Timebase::Triplet
+        }
+    });
+    assert_eq!(
+        played,
+        [
+            (30000, TRIGGER),
+            (32000, SeqEvent::GateOff),
+            (40000, TRIGGER),
+        ]
+    );
 }

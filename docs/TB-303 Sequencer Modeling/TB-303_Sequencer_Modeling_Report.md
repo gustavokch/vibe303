@@ -257,7 +257,7 @@ let step_pos = beats * 4.0;                            // 16th-note position
 
 Anchor events to absolute beat positions (`event_offset = (event_step_pos - step_pos) * samples_per_beat / 4.0 …`) rather than accumulating, so loop points and transport jumps stay correct. **Caveat:** nih-plug's own docs note the sample position can be unreliable across host loop points (VST3 reports a continuous sample time that CLAP cannot reconstruct) — prefer `pos_beats` for musical anchoring.[^6] Fall back to the internal clock when `tempo`/`pos_beats` are `None` (some hosts don't report them).
 
-**Triplet mode** changes the grid from 4 steps/beat to 8/3 steps per beat (a triplet step = 1/3 beat) and the gate duty from 3/6 to 5/8 — model it as clock-mode data, exactly like the hardware's timebase switch.
+**Triplet mode** changes the grid from 4 steps/beat to 3 steps per beat (a triplet step = 8 of 24 clocks = 1/3 beat) and the gate duty from 3/6 to 5/8 — model it as clock-mode data, exactly like the hardware's timebase switch.
 
 ### 5.3 Data model: keep pitch and timing decoupled
 
@@ -410,7 +410,7 @@ pub enum Timebase { Straight, Triplet } // 6 ticks/step (3 on) vs 8 ticks/step (
 impl Timebase {
     fn ticks_per_step(self) -> f64 { match self { Self::Straight => 6.0, Self::Triplet => 8.0 } }
     fn gate_on_ticks(self)  -> f64 { match self { Self::Straight => 3.0, Self::Triplet => 5.0 } }
-    fn steps_per_beat(self) -> f64 { match self { Self::Straight => 4.0, Self::Triplet => 8.0/3.0 } }
+    fn steps_per_beat(self) -> f64 { match self { Self::Straight => 4.0, Self::Triplet => 3.0 } }
 }
 
 // ---------------- sequencer core ----------------
