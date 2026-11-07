@@ -113,6 +113,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   45 °C) and shows AGE in the years the editor shows (was 0.45 x the value).
 
 ### Fixed
+- The 12th (Triplet) sequencer rate played steps of 3/8 beat (8/3 steps per
+  beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
+  12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of
+  the step.
 - The High tier was padded for Best's 4x oversampling latency instead of its
   own 2x latency, so its output came out 15 samples early (about 0.3 ms at
   48 kHz) and a High crossfade blended misaligned paths. High now has its own

@@ -66,12 +66,12 @@ fn test_gate_duty_triplet() {
     let mut events = [(0, SeqEvent::GateOff); 64];
     let mut count = 0;
 
-    // Triplet step duration: 48000 * 60 / (120 * 8/3) = 9000 samples.
-    // Gate duration: 5/8 of 9000 = 5625 samples.
+    // Triplet (12th) step: 8 of 24 ticks per quarter note, 3 steps per beat.
+    // 48000 * 60 / (120 * 3) = 8000 samples. Gate: 5/8 of 8000 = 5000 samples.
     seq.process_block(
         &pat,
         0,
-        9000,
+        8000,
         &mut events,
         &mut count,
         120.0,
@@ -87,9 +87,9 @@ fn test_gate_duty_triplet() {
     }
 
     if let SeqEvent::GateOff = events[1].1 {
-        assert_eq!(events[1].0, 5625); // 62.5% of 9000 = 5625
+        assert_eq!(events[1].0, 5000); // 62.5% of 8000 = 5000
     } else {
-        panic!("Expected GateOff at 5625, got {:?}", events[1].0);
+        panic!("Expected GateOff at 5000, got {:?}", events[1].0);
     }
 }
 
