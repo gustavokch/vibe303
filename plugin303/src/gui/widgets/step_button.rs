@@ -1,6 +1,8 @@
 use crate::gui::theme;
 use crate::params::{SequencerStep, StepGate};
-use nih_plug_egui::egui::{pos2, vec2, CornerRadius, FontFamily, FontId, Rect, Sense, Stroke, Ui};
+use nih_plug_egui::egui::{
+    pos2, vec2, Color32, CornerRadius, FontFamily, FontId, Rect, Sense, Stroke, Ui,
+};
 
 /// Geometry of one step strip, top to bottom. The painted column background is
 /// drawn *before* the children (paint order within the layer decides stacking),
@@ -14,6 +16,42 @@ pub const STRIP_HEIGHT: f32 = LED_H + HEADER_H + 4.0 * CONTROL_ROW_H;
 
 /// Drawn pill height inside each 21 px hit row (2 px vertical gap between adjacent pills).
 pub const PILL_H: f32 = CONTROL_ROW_H - 2.0;
+
+/// Hover text of a step's ACC flag. The flags have no keyboard shortcut.
+const ACC_HINT: &str = "Lit: this step is accented (louder, with a stronger filter sweep).";
+/// Hover text of a step's SLD flag.
+const SLD_HINT: &str = "Lit: this note slides into the next one (held gate, pitch glide).";
+
+/// Fill and text of an ACC or SLD flag. A lit flag lifts to its hover fill
+/// under the pointer like any lit tile; it stayed flat before (round-22 #18).
+fn flag_colors(
+    lit: bool,
+    hovered: bool,
+    lit_fill: Color32,
+    lit_hover: Color32,
+) -> (Color32, Color32) {
+    match (lit, hovered) {
+        (true, false) => (lit_fill, theme::TEXT_ON_ACCENT),
+        (true, true) => (lit_hover, theme::TEXT_ON_ACCENT),
+        (false, true) => (theme::SURFACE_HOVER, theme::TEXT_SECONDARY),
+        (false, false) => (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY),
+    }
+}
+
+/// Paint one flag pill, `PILL_H` tall, centred in its hit row.
+fn paint_flag(ui: &Ui, hit_rect: Rect, label: &str, fill: Color32, text: Color32) {
+    let pill = Rect::from_center_size(hit_rect.center(), vec2(hit_rect.width(), PILL_H));
+    let p = ui.painter();
+    p.rect_filled(pill, theme::radius(), fill);
+    p.text(
+        pill.center(),
+        nih_plug_egui::egui::Align2::CENTER_CENTER,
+        label,
+        FontId::new(8.5, FontFamily::Proportional),
+        text,
+    );
+}
+
 pub fn format_pitch(semitone: i8, octave: i8) -> String {
     let note_names = [
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "C",
@@ -51,7 +89,7 @@ pub fn render_step_strip(
         }
         // 1. Step LED: a LED_H bar across the column; ACCENT_ORANGE on the playing step, WELL_BG otherwise.
         let (led_rect, led_resp) = ui.allocate_exact_size(vec2(width, LED_H), Sense::hover());
-        let _ = led_resp.on_hover_text("Step LED strip");
+        let _ = led_resp.on_hover_text("Lit: the sequencer is playing this step.");
         if ui.is_rect_visible(led_rect) {
             let p = ui.painter();
             let led_color = if is_active {
@@ -88,63 +126,37 @@ pub fn render_step_strip(
             // ACC Button
             let (acc_hit_rect, acc_resp) =
                 ui.allocate_exact_size(vec2(btn_w, CONTROL_ROW_H), Sense::click());
-            let acc_resp = acc_resp.on_hover_text("Toggle Accent (A)");
+            let acc_resp = acc_resp.on_hover_text(ACC_HINT);
             if acc_resp.clicked() {
                 step.accent = !step.accent;
                 changed = true;
             }
             if ui.is_rect_visible(acc_hit_rect) {
-                let p = ui.painter();
-                let acc_rect = nih_plug_egui::egui::Rect::from_center_size(
-                    acc_hit_rect.center(),
-                    vec2(btn_w, PILL_H),
+                let (bg, text_col) = flag_colors(
+                    step.accent,
+                    acc_resp.hovered(),
+                    theme::ACCENT_ORANGE,
+                    theme::ACCENT_ORANGE_HOVER,
                 );
-                let (bg, text_col) = if step.accent {
-                    (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT)
-                } else if acc_resp.hovered() {
-                    (theme::SURFACE_HOVER, theme::TEXT_SECONDARY)
-                } else {
-                    (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
-                };
-                p.rect_filled(acc_rect, theme::radius(), bg);
-                p.text(
-                    acc_rect.center(),
-                    nih_plug_egui::egui::Align2::CENTER_CENTER,
-                    "ACC",
-                    FontId::new(8.5, FontFamily::Proportional),
-                    text_col,
-                );
+                paint_flag(ui, acc_hit_rect, "ACC", bg, text_col);
             }
 
             // SLD Button
             let (sld_hit_rect, sld_resp) =
                 ui.allocate_exact_size(vec2(btn_w, CONTROL_ROW_H), Sense::click());
-            let sld_resp = sld_resp.on_hover_text("Toggle Slide (S)");
+            let sld_resp = sld_resp.on_hover_text(SLD_HINT);
             if sld_resp.clicked() {
                 step.slide = !step.slide;
                 changed = true;
             }
             if ui.is_rect_visible(sld_hit_rect) {
-                let p = ui.painter();
-                let sld_rect = nih_plug_egui::egui::Rect::from_center_size(
-                    sld_hit_rect.center(),
-                    vec2(btn_w, PILL_H),
+                let (bg, text_col) = flag_colors(
+                    step.slide,
+                    sld_resp.hovered(),
+                    theme::ACCENT_BLUE,
+                    theme::ACCENT_BLUE_HOVER,
                 );
-                let (bg, text_col) = if step.slide {
-                    (theme::ACCENT_BLUE, theme::TEXT_ON_ACCENT)
-                } else if sld_resp.hovered() {
-                    (theme::SURFACE_HOVER, theme::TEXT_SECONDARY)
-                } else {
-                    (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY)
-                };
-                p.rect_filled(sld_rect, theme::radius(), bg);
-                p.text(
-                    sld_rect.center(),
-                    nih_plug_egui::egui::Align2::CENTER_CENTER,
-                    "SLD",
-                    FontId::new(8.5, FontFamily::Proportional),
-                    text_col,
-                );
+                paint_flag(ui, sld_hit_rect, "SLD", bg, text_col);
             }
         });
 
@@ -331,4 +343,30 @@ pub fn render_step_strip(
     });
 
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every flag state answers the pointer: lit or unlit, ACC or SLD, the
+    /// hovered fill differs from the resting one, and the label keeps its
+    /// contrast on both.
+    #[test]
+    fn every_flag_state_shows_hover() {
+        for (lit_fill, lit_hover) in [
+            (theme::ACCENT_ORANGE, theme::ACCENT_ORANGE_HOVER),
+            (theme::ACCENT_BLUE, theme::ACCENT_BLUE_HOVER),
+        ] {
+            for lit in [true, false] {
+                let rest = flag_colors(lit, false, lit_fill, lit_hover);
+                let hover = flag_colors(lit, true, lit_fill, lit_hover);
+                assert_ne!(rest.0, hover.0, "lit={lit} {lit_fill:?}");
+                for (fill, text) in [rest, hover] {
+                    let ratio = theme::contrast_ratio(text, fill);
+                    assert!(ratio >= 4.5, "lit={lit} {fill:?}: {ratio:.2}");
+                }
+            }
+        }
+    }
 }

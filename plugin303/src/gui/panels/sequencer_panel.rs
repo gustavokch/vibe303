@@ -27,6 +27,22 @@ const SLOT_GAP: f32 = 3.0;
 /// How long a first CLEAR click stays armed, in seconds.
 const CLEAR_CONFIRM_S: f64 = 3.0;
 
+/// Hover text of the RATE combo (round-22 #6).
+pub const TIMEBASE_HINT: &str = "Step rate: 16th plays straight 16th steps, 12th plays triplets.";
+/// Hover text of the MODE combo (round-22 #6).
+pub const MODE_HINT: &str = "Direct: each step plays its own pitch. Decoupled: the TB-303 \
+                             pitch/time split; NOTE steps play the stored pitches in order, \
+                             TIE and REST steps use none.";
+
+/// Caption of a TRANSPORT field, left of its value: 8 pt words.
+fn field_caption(ui: &mut Ui, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .font(FontId::proportional(8.0))
+            .color(theme::TEXT_SECONDARY),
+    );
+}
+
 /// Whether CLEAR, armed at `armed_at`, is still armed at `now`.
 fn clear_armed(armed_at: Option<f64>, now: f64) -> bool {
     armed_at.is_some_and(|t| now - t <= CLEAR_CONFIRM_S)
@@ -121,7 +137,8 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     .add(
                         ToggleButton::new(&mut run, "RUN")
                             .min_width(slot_w)
-                            .height(ROW_H),
+                            .height(ROW_H)
+                            .led_bar(),
                     )
                     .on_hover_text("Lit: the sequencer runs (with SYNC lit, while the host plays).")
                     .changed()
@@ -178,11 +195,7 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                             setter.end_set_parameter(&params.midi_out);
                         }
 
-                        ui.label(
-                            RichText::new("CH:")
-                                .font(FontId::proportional(8.0))
-                                .color(theme::TEXT_SECONDARY),
-                        );
+                        field_caption(ui, "CH");
 
                         let mut ch_val = params.midi_out_channel.value();
                         let ch_w = ui.available_width();
@@ -279,11 +292,7 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     |ui| {
                         ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
 
-                        ui.label(
-                            RichText::new("BPM:")
-                                .font(FontId::proportional(8.0))
-                                .color(theme::TEXT_SECONDARY),
-                        );
+                        field_caption(ui, "BPM");
                         let mut tempo_val = params.seq_tempo.value();
 
                         let dn_btn = Button::new(
@@ -346,11 +355,7 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     |ui| {
                         ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
 
-                        ui.label(
-                            RichText::new("LEN:")
-                                .font(FontId::proportional(8.0))
-                                .color(theme::TEXT_SECONDARY),
-                        );
+                        field_caption(ui, "LEN");
                         let mut len_val = params.seq_length.value();
 
                         let dn_btn = Button::new(
@@ -402,7 +407,8 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
 
             ui.add_space(row_gap);
 
-            // Row 5: Timebase (16th/12th) and Mode (Direct/Decoupled) Dropdowns
+            // Row 5: RATE (16th/12th) and MODE (Direct/Decoupled) dropdowns, each
+            // captioned like CH, BPM and LEN and explained on hover (round-22 #6).
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(SLOT_GAP, 0.0);
 
@@ -411,50 +417,34 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     vec2(slot_w, ROW_H),
                     Layout::left_to_right(Align::Center),
                     |ui| {
+                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                        field_caption(ui, "RATE");
+                        let combo_w = ui.available_width();
                         ui.scope(|ui| {
                             theme::field_style(ui);
                             ui.spacing_mut().interact_size.y = ROW_H;
                             let tb_val = params.seq_timebase.value();
                             ComboBox::from_id_salt("seq_tb_combo")
                                 .icon(paint_combobox_down_arrow)
-                                .selected_text(
-                                    RichText::new(match tb_val {
-                                        crate::params::Timebase::Straight => "16th",
-                                        crate::params::Timebase::Triplet => "12th",
-                                    })
-                                    .font(FontId::proportional(8.5)),
-                                )
-                                .width(slot_w)
+                                .selected_text(match tb_val {
+                                    crate::params::Timebase::Straight => "16th",
+                                    crate::params::Timebase::Triplet => "12th",
+                                })
+                                .width(combo_w)
                                 .show_ui(ui, |ui| {
-                                    if ui
-                                        .selectable_label(
-                                            tb_val == crate::params::Timebase::Straight,
-                                            RichText::new("16th").font(FontId::proportional(8.5)),
-                                        )
-                                        .clicked()
-                                    {
-                                        setter.begin_set_parameter(&params.seq_timebase);
-                                        setter.set_parameter(
-                                            &params.seq_timebase,
-                                            crate::params::Timebase::Straight,
-                                        );
-                                        setter.end_set_parameter(&params.seq_timebase);
+                                    for (value, label) in [
+                                        (crate::params::Timebase::Straight, "16th"),
+                                        (crate::params::Timebase::Triplet, "12th"),
+                                    ] {
+                                        if ui.selectable_label(tb_val == value, label).clicked() {
+                                            setter.begin_set_parameter(&params.seq_timebase);
+                                            setter.set_parameter(&params.seq_timebase, value);
+                                            setter.end_set_parameter(&params.seq_timebase);
+                                        }
                                     }
-                                    if ui
-                                        .selectable_label(
-                                            tb_val == crate::params::Timebase::Triplet,
-                                            RichText::new("12th").font(FontId::proportional(8.5)),
-                                        )
-                                        .clicked()
-                                    {
-                                        setter.begin_set_parameter(&params.seq_timebase);
-                                        setter.set_parameter(
-                                            &params.seq_timebase,
-                                            crate::params::Timebase::Triplet,
-                                        );
-                                        setter.end_set_parameter(&params.seq_timebase);
-                                    }
-                                });
+                                })
+                                .response
+                                .on_hover_text(TIMEBASE_HINT);
                         });
                     },
                 );
@@ -464,54 +454,37 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                     vec2(slot_w, ROW_H),
                     Layout::left_to_right(Align::Center),
                     |ui| {
+                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                        field_caption(ui, "MODE");
+                        let combo_w = ui.available_width();
                         ui.scope(|ui| {
                             theme::field_style(ui);
                             ui.spacing_mut().interact_size.y = ROW_H;
                             let mode_val = params.seq_mode.value();
                             ComboBox::from_id_salt("seq_mode_combo")
                                 .icon(paint_combobox_down_arrow)
-                                .selected_text(
-                                    RichText::new(match mode_val {
-                                        crate::params::SequencerMode::DirectGrid => "Direct",
-                                        crate::params::SequencerMode::DecoupledHardware => {
-                                            "Decoupled"
-                                        }
-                                    })
-                                    .font(FontId::proportional(8.5)),
-                                )
-                                .width(slot_w)
+                                .selected_text(match mode_val {
+                                    crate::params::SequencerMode::DirectGrid => "Direct",
+                                    crate::params::SequencerMode::DecoupledHardware => "Decoupled",
+                                })
+                                .width(combo_w)
                                 .show_ui(ui, |ui| {
-                                    if ui
-                                        .selectable_label(
-                                            mode_val == crate::params::SequencerMode::DirectGrid,
-                                            RichText::new("Direct").font(FontId::proportional(8.5)),
-                                        )
-                                        .clicked()
-                                    {
-                                        setter.begin_set_parameter(&params.seq_mode);
-                                        setter.set_parameter(
-                                            &params.seq_mode,
-                                            crate::params::SequencerMode::DirectGrid,
-                                        );
-                                        setter.end_set_parameter(&params.seq_mode);
-                                    }
-                                    if ui
-                                        .selectable_label(
-                                            mode_val
-                                                == crate::params::SequencerMode::DecoupledHardware,
-                                            RichText::new("Decoupled")
-                                                .font(FontId::proportional(8.5)),
-                                        )
-                                        .clicked()
-                                    {
-                                        setter.begin_set_parameter(&params.seq_mode);
-                                        setter.set_parameter(
-                                            &params.seq_mode,
+                                    for (value, label) in [
+                                        (crate::params::SequencerMode::DirectGrid, "Direct"),
+                                        (
                                             crate::params::SequencerMode::DecoupledHardware,
-                                        );
-                                        setter.end_set_parameter(&params.seq_mode);
+                                            "Decoupled",
+                                        ),
+                                    ] {
+                                        if ui.selectable_label(mode_val == value, label).clicked() {
+                                            setter.begin_set_parameter(&params.seq_mode);
+                                            setter.set_parameter(&params.seq_mode, value);
+                                            setter.end_set_parameter(&params.seq_mode);
+                                        }
                                     }
-                                });
+                                })
+                                .response
+                                .on_hover_text(MODE_HINT);
                         });
                     },
                 );
@@ -545,7 +518,9 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                 );
 
                 // CLEAR wipes the pattern: the first click arms it, a second
-                // click within CLEAR_CONFIRM_S clears (round-20 #9).
+                // click within CLEAR_CONFIRM_S clears (round-20 #9). Armed, it
+                // is a lit action: the hover fill would not tell the armed
+                // tile from the one under the pointer (round-22 #17).
                 let clear_id = ui.id().with("clear_armed_at");
                 let now = ui.input(|i| i.time);
                 let armed_at = ui.ctx().data(|d| d.get_temp::<f64>(clear_id));
@@ -553,17 +528,23 @@ pub fn render_transport_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Pa
                 let clear_btn = Button::new(
                     RichText::new(if armed { "CONFIRM CLEAR" } else { "CLEAR" })
                         .font(FontId::proportional(8.5))
-                        .color(theme::TEXT_PRIMARY),
+                        .color(if armed {
+                            theme::TEXT_ON_ACCENT
+                        } else {
+                            theme::TEXT_PRIMARY
+                        }),
                 )
-                .fill(if armed {
-                    theme::SURFACE_HOVER
-                } else {
-                    theme::SURFACE_ELEVATED
-                })
                 .min_size(vec2(slot_w, ROW_H));
+                let clear_resp = ui
+                    .scope(|ui| {
+                        if armed {
+                            theme::lit_action_style(ui);
+                        }
+                        ui.add(clear_btn)
+                    })
+                    .inner;
 
-                if ui
-                    .add(clear_btn)
+                if clear_resp
                     .on_hover_text("Reset all 16 steps to C3 notes. Click twice to confirm.")
                     .clicked()
                 {

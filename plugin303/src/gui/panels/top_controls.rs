@@ -1,12 +1,13 @@
 use std::cell::Cell;
 
 use nih_plug::prelude::{FloatParam, Param, ParamSetter};
-use nih_plug_egui::egui::{vec2, Align, FontFamily, FontId, Layout, Sense, Ui};
+use nih_plug_egui::egui::{vec2, Align, Layout, Ui};
 
 use crate::gui::theme;
+use crate::gui::widgets::caption::GROUP_CAPTION_H;
 use crate::gui::widgets::panel::DevicePanel;
 use crate::gui::widgets::toggle::ToggleButton;
-use crate::gui::widgets::{fader, Knob303, MiniFader, SlideSwitch};
+use crate::gui::widgets::{fader, GroupCaption, Knob303, MiniFader, SlideSwitch};
 use crate::params::{CircuitTopology, Plugin303Params};
 
 /// Hover text of an ADSR fader while ADV ENV is off (round-20 #10).
@@ -14,8 +15,6 @@ pub const ADV_ENV_OFF_HINT: &str = "Turn on ADV ENV to edit the MEG and VEG enve
 /// Hover text of the ADV ENV tile and the ADSR faders in ACCURATE.
 pub const ADV_ENV_ACCURATE_HINT: &str =
     "ADV ENV applies to FUN mode only. Set TOPOLOGY to FUN to use it.";
-
-const CAPTION_H: f32 = 11.0;
 
 /// Envelope Generators:
 /// - MEG ADSR: Modulation Envelope Generator (modulates VCF cutoff filter modulation)
@@ -29,31 +28,7 @@ fn render_adsr_bank(
     disabled_hint: &str,
 ) {
     ui.vertical(|ui| {
-        let is_enabled = ui.is_enabled();
-        let color = if is_enabled {
-            theme::TEXT_SECONDARY
-        } else {
-            theme::TEXT_MUTED
-        };
-        let font = FontId::new(8.5, FontFamily::Proportional);
-        let galley_id = ui.id().with(("adsr_bank_title", title, color));
-        let galley = ui
-            .ctx()
-            .data_mut(|d| d.get_temp::<std::sync::Arc<nih_plug_egui::egui::Galley>>(galley_id));
-        let galley = match galley {
-            Some(g) => g,
-            None => {
-                let g = ui.fonts(|f| f.layout_no_wrap(title.to_string(), font.clone(), color));
-                ui.ctx().data_mut(|d| d.insert_temp(galley_id, g.clone()));
-                g
-            }
-        };
-
-        let (title_rect, _) =
-            ui.allocate_exact_size(vec2(galley.size().x.ceil(), CAPTION_H), Sense::hover());
-        let mut p = ui.painter().clone();
-        p.set_fade_to_color(None);
-        p.galley(title_rect.left_top(), galley, color);
+        ui.add(GroupCaption::new(title));
 
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
@@ -187,7 +162,7 @@ pub fn render_envelope_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Par
             let body_h = body_ui.available_height();
             body_ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                let track_h = (body_h - CAPTION_H - fader::CHROME_H).max(10.0);
+                let track_h = (body_h - GROUP_CAPTION_H - fader::CHROME_H).max(10.0);
 
                 let total_w = ui.available_width();
                 // 13 px of inter-bank separator area: 6 px + 1 px separator + 6 px (<= 8 px each side)

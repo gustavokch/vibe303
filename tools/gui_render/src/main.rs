@@ -26,13 +26,15 @@ use plugin303::qa_playhead_pin;
 
 /// `(VIBE303_QA_STATE, file stem)`. The stems are the ones the capture script
 /// writes: the default state is `latest`.
-const STATES: [(&str, &str); 8] = [
+const STATES: [(&str, &str); 10] = [
     ("default", "latest"),
     ("accurate", "accurate"),
     ("advanced", "advanced"),
     ("running", "running"),
     ("running_note", "running_note"),
     ("knobs", "knobs"),
+    ("knob_extremes", "knob_extremes"),
+    ("clipper_off", "clipper_off"),
     ("quality_low", "quality_low"),
     ("generator", "generator"),
 ];

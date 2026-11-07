@@ -64,10 +64,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   controls in SOUPED-UP ENGINE, OUTPUT CLIPPER, ANALOG TWEAKS and the
   generator have tooltips. In ACCURATE, ADV ENV and both envelope banks are
   disabled, ANALOG TWEAKS shows `FUN MODE ONLY` and hides CALIBRATE.
+- Editor (round-22 GUI audit): ComboBox popups, tooltips and the piano roll
+  sit inside a 3 pt chassis-colour edge, so they no longer merge into the
+  tiles and cards under them. RUN shows its state as an LED bar across the
+  bottom of its tile. Disabled segments and toggles (QUALITY in ACCURATE, ADV
+  ENV in ACCURATE, the OUTPUT CLIPPER header while it is off) are dark wells
+  instead of tiles in the header strip's own colour. CONFIRM CLEAR lights
+  orange while it is armed. NEW SEED moves next to the SEED it changes, in
+  GENERATION. The generator's group captions and the MEG and VEG bank titles
+  end in a rule, and field labels drop their colons. The SOUPED-UP ENGINE
+  DRIVE knob is now VCF DRIVE. The CALIBRATE status reads `CALIBRATION DUE`
+  (was `SYNC PENDING`). With SYNTH off, the app bar reads SYNTH OFF. The step
+  LED's tooltip says what the LED shows. CALIBRATE lights only while a
+  calibration is due; a trim running in the background (after CALIBRATE, a
+  topology switch or a project load) leaves it raised, and the status line
+  reads `CALIBRATING`. The piano roll's close button shows a cross (it showed
+  an empty box) and says on hover that Escape also closes; its active note
+  name is light grey, not orange. The SOUPED-UP ENGINE and OUTPUT CLIPPER knob
+  values fit their pills at every value (`-24.0 st`, `+18.0 dB` printed past
+  the edges). The ROOT list shows all twelve roots without scrolling (A# and B
+  were hidden), and ROOT and SCALE keep one width, so SCALE no longer moves
+  when ROOT changes. The TRANSPORT dropdowns have the captions RATE and MODE
+  and explain both options on hover. TOL shows its value like the fields
+  under it, and every dropdown word uses one size. GENERATE and MUTATE centre
+  their labels. OCT RANGE shows `+0` like the knobs show `+0.0`. A lit ACC or
+  SLD flag lightens under the pointer, and their tooltips no longer name the
+  keys A and S, which do nothing. The lit actions (ENABLE FUN MODE, CALIBRATE
+  when due, CONFIRM CLEAR) also lighten under the pointer, and CLEAR lifts on
+  hover like the other actions. The piano roll title is in the word face.
+  New QA states `knob_extremes` and `clipper_off`.
 - ANALOG TWEAKS CALIBRATE is a manual trim. AGE, TOL and CMP SEED now change
   the components at once in every tier, and the circuit VCOs keep the pitch
   trim of the last CALIBRATE, so the component pitch error is audible (and the
-  status line reads `SYNC PENDING`) until you press CALIBRATE. CALIBRATE
+  status line reads `CALIBRATION DUE`) until you press CALIBRATE. CALIBRATE
   computes the new trim in the background (`CALIBRATING`, about 20-40 s at
   48 kHz) and RECAL sets the share of the error it removes. The trim is saved
   with the project. Before, every tweak started the trim on its own and the

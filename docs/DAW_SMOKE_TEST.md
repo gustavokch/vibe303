@@ -41,11 +41,11 @@ Verified building on this branch: both `TB303.vst3` and `TB303.clap` are produce
       (the VCO pitch LUT is per-sr cached; the first construction at a new host sr
       builds it once — a brief one-time init, not per note/reset).
 - [ ] **CALIBRATE** (FUN, High, held note): set TOL to 10 %. The pitch moves at
-      once and the status reads `SYNC PENDING`. Press CALIBRATE: the status reads
+      once and the status reads `CALIBRATION DUE`. Press CALIBRATE: the status reads
       `CALIBRATING` (about 20-40 s at 48 kHz), the audio never stalls, then the
       note is back in tune and the status reads `CALIBRATED`.
 - [ ] **CALIBRATE survives save / reload**: save, close, reopen. The worn
-      components play in tune once `CALIBRATING` clears (no `SYNC PENDING`).
+      components play in tune once `CALIBRATING` clears (no `CALIBRATION DUE`).
 - [ ] **Save prompt after CALIBRATE alone**: open a saved project, press only
       CALIBRATE, close. Record whether the host asks to save. CALIBRATE changes
       only persisted state, not a parameter, and nih-plug cannot mark the
