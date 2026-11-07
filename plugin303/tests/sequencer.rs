@@ -52,7 +52,7 @@ fn test_sequencer_drift_free() {
 }
 
 #[test]
-fn test_gate_duty_triplet() {
+fn test_triplet_grid_and_gate_duty() {
     let mut seq = Sequencer::new(48000.0);
     seq.set_running(true);
     let mut pat = Pattern {
@@ -61,36 +61,42 @@ fn test_gate_duty_triplet() {
         num_steps: 16,
         decoupled: false,
     };
-    pat.timing[0] = TimeEntry::Note;
+    pat.timing[..4].fill(TimeEntry::Note);
 
     let mut events = [(0, SeqEvent::GateOff); 64];
     let mut count = 0;
 
     // Triplet (12th) step: 8 of 24 ticks per quarter note, 3 steps per beat.
-    // 48000 * 60 / (120 * 3) = 8000 samples. Gate: 5/8 of 8000 = 5000 samples.
+    // 120 BPM at 48 kHz: a beat is 24000 samples, a step 8000, the gate 5/8 of
+    // a step (5000). The 4th step lands on beat 2.
     seq.process_block(
         &pat,
         0,
-        8000,
+        24001,
         &mut events,
         &mut count,
         120.0,
         Timebase::Triplet,
         false,
     );
-    assert_eq!(count, 2);
 
-    if let SeqEvent::Trigger { .. } = events[0].1 {
-        assert_eq!(events[0].0, 0);
-    } else {
-        panic!("Expected Trigger");
-    }
-
-    if let SeqEvent::GateOff = events[1].1 {
-        assert_eq!(events[1].0, 5000); // 62.5% of 8000 = 5000
-    } else {
-        panic!("Expected GateOff at 5000, got {:?}", events[1].0);
-    }
+    let trigger = SeqEvent::Trigger {
+        key: 0,
+        octave: 0,
+        accent: false,
+    };
+    assert_eq!(
+        &events[..count],
+        &[
+            (0, trigger),
+            (5000, SeqEvent::GateOff),
+            (8000, trigger),
+            (13000, SeqEvent::GateOff),
+            (16000, trigger),
+            (21000, SeqEvent::GateOff),
+            (24000, trigger),
+        ]
+    );
 }
 
 #[test]
