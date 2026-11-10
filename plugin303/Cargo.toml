@@ -15,7 +15,7 @@ serde = { version = "1.0", features = ["derive"] }
 # The standalone binary reads the CoreAudio output device's sample rate; same
 # cpal as nih_plug's standalone backend.
 [target.'cfg(target_os = "macos")'.dependencies]
-cpal = { version = "0.15", optional = true }
+cpal = { version = "0.17", optional = true }
 
 [features]
 default = ["gui", "standalone"]
