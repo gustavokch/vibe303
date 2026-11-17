@@ -65,42 +65,40 @@ fn build_lp(beta: f64, fc: f64) -> [f32; L] {
     out
 }
 
-static COEFFS: LazyLock<([f32; 17], [f32; 16], [f32; 33])> = LazyLock::new(|| {
+/// The half-band lowpass's nonzero taps: (centre tap, odd-offset taps).
+///
+/// The cutoff is exactly half the high rate's Nyquist, so every even-offset
+/// tap but the centre is a zero of the sinc (`|h| < 1e-16`, rounding only).
+/// Those taps are dropped: the interpolator's even branch is a pure delay, and
+/// both the interpolator's odd branch and the decimator use the 16 odd taps.
+static COEFFS: LazyLock<(f32, [f32; 16])> = LazyLock::new(|| {
     let h_full = build_lp(8.0, 0.25);
-    let mut he = [0.0f32; 17];
     let mut ho = [0.0f32; 16];
-    for k in 0..17 {
-        he[k] = h_full[2 * k];
-    }
     for k in 0..16 {
         ho[k] = h_full[2 * k + 1];
     }
-    let mut h = [0.0f32; 33];
-    h.copy_from_slice(&h_full[0..33]);
-    (he, ho, h)
+    (h_full[32], ho)
 });
 
 /// 2× polyphase oversampler. `up` zero-stuff-interpolates one base sample into two
 /// high-rate samples; `down` lowpass-decimates two high-rate samples into one.
 pub struct Os2x {
-    he: [f32; 17], // even polyphase branch (16 symmetric pairs + 1 center tap)
-    ho: [f32; 16], // odd polyphase branch (16 symmetric pairs)
+    hc: f32,       // centre tap
+    ho: [f32; 16], // odd-offset taps (16 symmetric pairs)
     hist_up: [f32; BUF_UP],
     head_up: usize,
-    h: [f32; 33], // lowpass FIR (32 symmetric pairs + 1 center tap)
     hist_dn: [f32; BUF_DN],
     head_dn: usize,
 }
 
 impl Os2x {
     pub fn new() -> Self {
-        let (he, ho, h) = *COEFFS;
+        let (hc, ho) = *COEFFS;
         Self {
-            he,
+            hc,
             ho,
             hist_up: [0.0; BUF_UP],
             head_up: 0,
-            h,
             hist_dn: [0.0; BUF_DN],
             head_dn: 0,
         }
@@ -112,13 +110,11 @@ impl Os2x {
         self.hist_up[self.head_up] = x;
         let head = self.head_up;
 
-        let mut ye = self.he[16] * self.hist_up[(head + 48) & MASK_UP];
+        let ye = self.hc * self.hist_up[(head + 48) & MASK_UP];
         let mut yo = 0.0f32;
         for k in 0..16 {
             let s_k = self.hist_up[(head + 64 - k) & MASK_UP];
-            let s_32_k = self.hist_up[(head + 32 + k) & MASK_UP];
             let s_31_k = self.hist_up[(head + 33 + k) & MASK_UP];
-            ye += self.he[k] * (s_k + s_32_k);
             yo += self.ho[k] * (s_k + s_31_k);
         }
         [2.0 * ye, 2.0 * yo]
@@ -136,11 +132,12 @@ impl Os2x {
         self.head_dn = p1;
         let head = p1;
 
-        let mut y = self.h[32] * self.hist_dn[(head + 95) & MASK_DN];
-        for k in 0..32 {
-            let s_a = self.hist_dn[(head + 127 - k) & MASK_DN];
-            let s_b = self.hist_dn[(head + 63 + k) & MASK_DN];
-            y += self.h[k] * (s_a + s_b);
+        let mut y = self.hc * self.hist_dn[(head + 95) & MASK_DN];
+        // Odd tap k = 2j + 1 and its mirror 64 - k.
+        for j in 0..16 {
+            let s_a = self.hist_dn[(head + 126 - 2 * j) & MASK_DN];
+            let s_b = self.hist_dn[(head + 64 + 2 * j) & MASK_DN];
+            y += self.ho[j] * (s_a + s_b);
         }
         y
     }
@@ -336,14 +333,12 @@ mod tests {
         );
     }
 
+    /// `Os2x` skips the even-offset taps, so the filter must stay half-band.
     #[test]
-    fn coeffs_are_cached_and_consistent() {
-        let os1 = Os2x::new();
-        let os2 = Os2x::new();
-        assert_eq!(os1.he, os2.he);
-        assert_eq!(os1.ho, os2.ho);
-        assert_eq!(os1.h, os2.h);
-        assert!(os1.he[16] > 0.0);
-        assert!(os1.h[32] > 0.0);
+    fn lowpass_is_half_band() {
+        let h = build_lp(8.0, 0.25);
+        for i in (0..L).step_by(2).filter(|&i| i != 32) {
+            assert!(h[i].abs() < 1e-12, "even tap {i} = {:e}", h[i]);
+        }
     }
 }

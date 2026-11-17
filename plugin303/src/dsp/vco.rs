@@ -13,10 +13,10 @@
 //! waveform match to SPICE is finalized in V4/V5.
 //!
 //! Device models: [`super::bjt`], [`super::jfet`], [`super::diode`]. Linear solve:
-//! the real-time hot path uses the fast static no-pivot
-//! [`super::linalg_static::ladder_lu_solve`]; LUT warm-up / secant calibration
-//! (off the audio thread) uses the robust dense [`super::linalg::lu_solve`]
-//! instead. Zero-alloc hot path.
+//! the fast static no-pivot [`super::linalg_static::vco_lu_solve`], with the
+//! dense partial-pivot [`super::linalg::lu_solve`] as a fallback for a step whose
+//! static solve is non-finite. LUT builds run the same solver as the real-time
+//! path, so the pitch LUTs match what plays. Zero-alloc hot path.
 
 use super::bjt::{Bjt, BjtParams};
 use super::diode::Diode1N4148;
@@ -60,11 +60,24 @@ use Node::{Fix, Unk};
 const GND: Node = Fix(0.0);
 
 const MAX_ITERS: usize = 100;
-const TOL: f64 = 1e-7;
+/// Iteration cap of each gmin = 0 warm-start attempt in [`Vco303::solve_fast`].
+/// Ramp samples converge in ≤ 29 iterations up to 3.5 kHz, and the sample after
+/// a reset in 38 from a cold start; a reset from the ramp start never converges,
+/// so the cap bounds what that failed attempt wastes (was `MAX_ITERS`).
+const FAST_MAX_ITERS: usize = 40;
+/// The linear warm-start prediction follows a sample that converged in at most
+/// this many iterations. After a harder sample (fast post-reset recovery) the
+/// prediction overshoots and the plain previous state is the better start.
+const PREDICT_MAX_ITERS: u32 = 3;
+/// Convergence tolerances, 100× looser than before: the accepted step bound is
+/// about 1e-5 + 1e-5·12 V ≈ 0.12 mV on a 6 V ramp, and the LUTs are solved with
+/// the same tolerances, so pitch stays calibrated. With the warm starts this
+/// cuts iterations per sample by 8–41 % (C5…A1).
+const TOL: f64 = 1e-5;
 /// Absolute tolerance for convergence (document eq. 3.30: ε_abs).
-const TOL_ABS: f64 = 1e-9;
+const TOL_ABS: f64 = 1e-7;
 /// Relative tolerance for convergence (document eq. 3.30: ε_rel).
-const TOL_REL: f64 = 1e-7;
+const TOL_REL: f64 = 1e-5;
 const GMIN_BASE: f64 = 1e-12;
 const RAMP_S: f64 = 1e-3; // rail ramp time for self-start
 /// DC-blocker highpass corner (Hz). ~7.6 Hz reproduces the legacy hardcoded
@@ -295,12 +308,19 @@ pub struct Vco303 {
     pub is_fun: bool,
     stuck_counter: u32,
     last_cp: f64,
-    /// When true, `newton()` uses the robust dense partial-pivot `lu_solve`
-    /// instead of the fast static `ladder_lu_solve`. Set on the throwaway
-    /// instances used for LUT warm-up / secant calibration (off the audio
-    /// thread, correctness matters more than speed); left `false` on
-    /// real-time instances, which use the validated fast static solve.
-    pub(crate) dense_solver: bool,
+    /// Previous sample's converged state: with `v`, the two points of the
+    /// linear warm-start prediction.
+    v_prev: [f64; NU],
+    /// Whether the next solve starts from the prediction `2·v − v_prev`.
+    predict: bool,
+    /// Converged states of the last reset sample and of the sample after it:
+    /// warm starts for the same two samples of the next cycle.
+    v_reset: Option<[f64; NU]>,
+    v_post: Option<[f64; NU]>,
+    /// v[CP] at the start of the last reset sample: where the ramp trips.
+    cp_trip: f64,
+    /// Whether the last sample was a reset.
+    after_reset: bool,
     /// Request number of the last LUT set seen in `lut_buffer`.
     loaded_sequence: u64,
     /// Cached nominal step-0 LUT played at every thermal step (devices at
@@ -374,7 +394,12 @@ impl Vco303 {
             is_fun: false,
             stuck_counter: 0,
             last_cp: 0.0,
-            dense_solver: false,
+            v_prev: [0.0; NU],
+            predict: false,
+            v_reset: None,
+            v_post: None,
+            cp_trip: 0.0,
+            after_reset: false,
             loaded_sequence: 0,
             fallback: None,
             fallback_from: 0,
@@ -417,7 +442,6 @@ impl Vco303 {
 
         // Slow path: build the LUT without holding the lock.
         let mut tmp = Self::raw(sr);
-        tmp.dense_solver = true;
         tmp.set_fun(is_fun);
         tmp.set_thermal_internal(thermal_noise);
         let mut lut = [0.0; LUT_K];
@@ -711,8 +735,6 @@ impl Vco303 {
     /// measured against the nominal LUT of the same `thermal_step`, so the
     /// device tempco is always trimmed out and only the component error stays.
     fn solve_cv_lut_with_recal(&mut self, recal_scale: f64, thermal_step: i32) -> [f64; LUT_K] {
-        let prev_dense = self.dense_solver;
-        self.dense_solver = true;
         let nominal_lut = if recal_scale < 1.0 {
             Some(Self::cv_lut_for(self.sr as f32, thermal_step, self.is_fun))
         } else {
@@ -778,7 +800,6 @@ impl Vco303 {
                 lut[last] = cv_for_freq(midi_hz(lut_midi(last)));
             }
         }
-        self.dense_solver = prev_dense;
         lut
     }
 
@@ -930,6 +951,12 @@ impl Vco303 {
         self.blep_frac = None;
         self.stuck_counter = 0;
         self.last_cp = 0.0;
+        self.v_prev = [0.0; NU];
+        self.predict = false;
+        self.v_reset = None;
+        self.v_post = None;
+        self.cp_trip = 0.0;
+        self.after_reset = false;
     }
 
     /// Driven rail voltages at the current sample (ramped 0→V over `RAMP_S`).
@@ -1103,42 +1130,33 @@ impl Vco303 {
         }
     }
 
-    /// One Newton solve at precomputed base system, warm-started from `v0`.
+    /// One Newton solve at precomputed base system, warm-started from `v0`;
+    /// `None` if it has not converged after `max_iters` iterations.
     fn newton(
         &self,
         base_a: &[[f64; NU]; NU],
         base_rhs: &[f64; NU],
         v0: [f64; NU],
         vp: f64,
+        max_iters: usize,
     ) -> Option<([f64; NU], u32)> {
         let mut v = v0;
-        for it in 0..MAX_ITERS {
+        for it in 0..max_iters {
             let mut a = *base_a;
             let mut rhs = *base_rhs;
             self.add_nonlinear(&mut a, &mut rhs, &v, vp);
-            // Off the audio thread (LUT warm-up / secant calibration,
-            // `self.dense_solver`) we use the robust dense partial-pivot
-            // `lu_solve`. The real-time hot path instead uses the fast static
-            // no-pivot ladder LU (validated vs dense in
-            // `vco_static_lu_matches_dense`, rel err ≪ TOL; ~10× fewer ops).
-            // NaN from a singular diagonal, or a failed dense solve, is caught
-            // below → drops to the gmin homotopy.
-            let sol = if self.dense_solver {
-                match lu_solve::<NU>(a, rhs) {
-                    Some(s) => s,
-                    None => return None,
-                }
-            } else {
-                let s = vco_lu_solve(a, rhs);
-                if s.iter().all(|x| x.is_finite()) {
-                    s
-                } else {
-                    match lu_solve::<NU>(a, rhs) {
-                        Some(s) => s,
-                        None => return None,
-                    }
-                }
-            };
+            // Fast static no-pivot LU (validated vs dense in
+            // `vco_static_lu_matches_dense`, rel err ≪ TOL; ~10× fewer ops). It
+            // factors in place, so a non-finite result (singular diagonal)
+            // re-assembles the step for the dense partial-pivot solve. A failed
+            // dense solve drops to the gmin homotopy.
+            let mut sol = vco_lu_solve(&mut a, &mut rhs);
+            if !sol.iter().all(|x| x.is_finite()) {
+                let mut a = *base_a;
+                let mut rhs = *base_rhs;
+                self.add_nonlinear(&mut a, &mut rhs, &v, vp);
+                sol = lu_solve::<NU>(a, rhs)?;
+            }
             let mut dmax = 0.0f64;
             for d in 0..NU {
                 if !sol[d].is_finite() {
@@ -1165,6 +1183,58 @@ impl Vco303 {
         None
     }
 
+    /// Newton at gmin = 0 from the best start this sample has. `Ok` holds the
+    /// solution, `Err` the iterations spent before the gmin homotopy takes over.
+    ///
+    /// The ramp converges from the previous state, or from its linear
+    /// prediction after a smooth sample. The JFET reset jumps to a second branch:
+    /// Newton from the pre-reset state never converges there (each reset used
+    /// to fall to the homotopy, ~180 iterations), but the last cycle's reset
+    /// state converges to the same root in 2. The sample after a reset takes 38
+    /// iterations from the reset state and 2–3 from the last cycle's post-reset
+    /// state. The post-reset branch coexists with the ramp (the comparator's
+    /// hysteresis), so the reset start is tried only after the ramp start
+    /// failed, within two ramp steps of the last trip level, and kept only if it
+    /// is a reset; anything else falls to the homotopy as before.
+    fn solve_fast(
+        &self,
+        base_a: &[[f64; NU]; NU],
+        base_rhs: &[f64; NU],
+        vp: f64,
+    ) -> Result<([f64; NU], u32), u32> {
+        let mut spent = 0;
+        if self.after_reset {
+            if let Some(v0) = self.v_post {
+                match self.newton(base_a, base_rhs, v0, vp, FAST_MAX_ITERS) {
+                    Some((v, it)) => return Ok((v, it)),
+                    None => spent += FAST_MAX_ITERS as u32,
+                }
+            }
+        }
+        let mut v0 = self.v;
+        if self.predict {
+            for (x, &prev) in v0.iter_mut().zip(&self.v_prev) {
+                *x = 2.0 * *x - prev;
+            }
+        }
+        match self.newton(base_a, base_rhs, v0, vp, FAST_MAX_ITERS) {
+            Some((v, it)) => return Ok((v, spent + it)),
+            None => spent += FAST_MAX_ITERS as u32,
+        }
+        let cp = self.v[CP];
+        let ramp_step = (self.v_prev[CP] - cp).abs();
+        if let Some(v0) = self.v_reset {
+            if cp - self.cp_trip < 2.0 * ramp_step {
+                match self.newton(base_a, base_rhs, v0, vp, FAST_MAX_ITERS) {
+                    Some((v, it)) if v[CP] - cp > CP_RESET_DELTA => return Ok((v, spent + it)),
+                    Some((_, it)) => spent += it,
+                    None => spent += FAST_MAX_ITERS as u32,
+                }
+            }
+        }
+        Err(spent)
+    }
+
     /// Solve one sample; returns the DC-blocked `o_r` saw + accumulated BLEP residuals.
     ///
     /// The caller must add `self.blep_now` (set by this call) to the returned raw value
@@ -1180,6 +1250,7 @@ impl Vco303 {
             if self.stuck_counter > 50 {
                 self.v[CP] = 12.0 - 0.1 * (self.t_samples % 7) as f64;
                 self.stuck_counter = 0;
+                self.predict = false;
             }
         } else {
             self.stuck_counter = 0;
@@ -1221,21 +1292,21 @@ impl Vco303 {
 
         // Fast path: warm-started Newton at gmin=0; else descend a homotopy.
         let (base_a_0, base_rhs_0) = self.assemble_linear(rails, &cgeq, &cieq, 0.0, i_noise);
-        let v = match self.newton(&base_a_0, &base_rhs_0, self.v, vp) {
-            Some((v, it)) => {
+        let v = match self.solve_fast(&base_a_0, &base_rhs_0, vp) {
+            Ok((v, it)) => {
                 self.dbg_iters = it;
                 self.dbg_homotopy = false;
                 v
             }
-            None => {
+            Err(spent) => {
                 self.dbg_homotopy = true;
                 let mut vh = self.v;
-                let mut its = 0;
+                let mut its = spent;
                 let mut converged0 = false;
                 for &gmin in &[1e-1, 1e-2, 1e-3, 1e-4, 0.0] {
                     let (base_a, base_rhs) =
                         self.assemble_linear(rails, &cgeq, &cieq, gmin, i_noise);
-                    match self.newton(&base_a, &base_rhs, vh, vp) {
+                    match self.newton(&base_a, &base_rhs, vh, vp, MAX_ITERS) {
                         Some((s, it)) => {
                             vh = s;
                             its += it;
@@ -1258,6 +1329,20 @@ impl Vco303 {
                 }
             }
         };
+        // Warm-start state for the next sample (see `solve_fast`).
+        let reset = v[CP] - cp_prev > CP_RESET_DELTA;
+        self.predict = !reset
+            && !self.after_reset
+            && !self.dbg_homotopy
+            && self.dbg_iters <= PREDICT_MAX_ITERS;
+        if reset {
+            self.v_reset = Some(v);
+            self.cp_trip = cp_prev;
+        } else if self.after_reset {
+            self.v_post = Some(v);
+        }
+        self.after_reset = reset;
+        self.v_prev = self.v;
         self.v = v;
 
         // --- JFET reset detection + 2-tap BLEP computation ------------------
@@ -1445,10 +1530,12 @@ mod tests {
         let mut s = String::new();
         s.push_str("/// Generated by `vco::tests emit_and_check_vco_lu` — natural-order,\n");
         s.push_str("/// no-pivot LU specialized to the VCO Jacobian's static fill pattern.\n");
+        s.push_str("/// Factors `a` and `b` in place (the caller re-assembles them every Newton\n");
+        s.push_str("/// step anyway), which avoids copying the 2.3 KB matrix per call.\n");
         s.push_str("/// DO NOT hand-edit; regenerate if the VCO topology changes.\n");
         s.push_str("#[inline]\n");
         s.push_str(&format!(
-            "pub fn vco_lu_solve(mut a: [[f64; {NU}]; {NU}], mut b: [f64; {NU}]) -> [f64; {NU}] {{\n"
+            "pub fn vco_lu_solve(a: &mut [[f64; {NU}]; {NU}], b: &mut [f64; {NU}]) -> [f64; {NU}] {{\n"
         ));
         for col in 0..NU {
             for r in (col + 1)..NU {
@@ -1519,7 +1606,8 @@ mod tests {
                             al[d][d] += extra;
                         }
                         if let Some(dense) = lu_solve::<NU>(al, b) {
-                            let stat = vco_lu_solve(al, b);
+                            let mut bl = b;
+                            let stat = vco_lu_solve(&mut al, &mut bl);
                             let rel = (0..NU)
                                 .map(|k| (stat[k] - dense[k]).abs() / dense[k].abs().max(1e-9))
                                 .fold(0.0, f64::max);
@@ -1563,7 +1651,7 @@ mod tests {
         for k in 0..REPS {
             let mut bb = b;
             bb[0] += (k & 0xff) as f64 * 1e-12;
-            acc2 += vco_lu_solve(black_box(a), black_box(bb))[0];
+            acc2 += vco_lu_solve(&mut black_box(a), &mut black_box(bb))[0];
         }
         let stat = t1.elapsed();
         black_box(acc);

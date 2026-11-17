@@ -126,10 +126,12 @@ circuit/vcf303.toml ──┤
 
 | Tier      | VCO                    | VCF                              | OS   | Cost         | Status                  |
 | --------- | ---------------------- | -------------------------------- | ---- | ------------ | ----------------------- |
-| **Draft** | polyBLEP saw           | TPT ladder                       | 4×   | Cheapest     | RT-viable, ships        |
-| **Low**   | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 4×   | ~42% core    | RT-viable               |
-| **High**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 2×   | not profiled | Not profiled            |
-| **Best**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 4×   | ~147% core   | Offline-grade per voice |
+| **Draft** | polyBLEP saw           | TPT ladder                       | 4×   | ~1.2% core   | RT-viable, ships        |
+| **Low**   | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 4×   | ~6% core     | RT-viable               |
+| **High**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 2×   | ~8% core     | RT-viable               |
+| **Best**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 4×   | ~10% core    | RT-viable               |
+
+Cost is one voice on Apple Silicon (`profile_voice --secs 20`, 2026-11-16); history and method in `docs/plans/2026-11-16-dsp-optimization-knobs-pre-poly.md`.
 
 - Oversampling is **tier-intrinsic** (not a separate param). Each tier's ladder is calibrated to its OS rate.
 - Tier switches use a **10 ms equal-power crossfade** (click-free). Mid-fade changes are queued (no clobbering).
@@ -225,7 +227,7 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 
 4. **Calibrating Draft/TPT cutoff/reso to SPICE is a wash** — the gap is topological (polyBLEP + TPT vs circuit saw + diode ladder), not parametric. Draft's gate is a regression guard, not a fidelity target.
 
-5. **Best is ~147% of one core** (offline-grade per voice). Low is ~42% (RT-viable). If Best-at-RT is ever required, the active stages could ship Low-only.
+5. **The VCO's post-reset branch coexists with the ramp.** Newton from the last reset's state converges on almost every ramp sample, to the wrong root (a premature reset). `Vco303::solve_fast` tries that start only after the ramp start fails, near the last trip level, and keeps it only if CP jumps. Keep that order when touching the VCO solver.
 
 6. **ADAA "at 2×" test ≈ 0 dB** (the 2× FIR already removes that alias). Test ADAA at 1× near Nyquist/2 (f0=11 kHz).
 
