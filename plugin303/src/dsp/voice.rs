@@ -31,8 +31,8 @@ const SELF_HEAT_C: f32 = 3.0;
 
 pub const BEST_OS_FACTOR: f32 = 4.0;
 pub const HIGH_OS_FACTOR: f32 = 2.0;
-pub const LOW_OS_FACTOR: f32 = 4.0;
-pub const DRAFT_OS_FACTOR: f32 = 4.0;
+pub const LOW_OS_FACTOR: f32 = 2.0;
+pub const DRAFT_OS_FACTOR: f32 = 2.0;
 
 /// VCO output gain. The circuit-VCO MNA solver outputs a raw saw wave with ~1.12 V p-p swing.
 /// SPICE gold has a ~1.46 V p-p swing which after its own gain stages gives ~2.92 V p-p.
@@ -43,10 +43,14 @@ pub const VCO_GAIN: f32 = 2.607;
 /// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
 /// gold sits *below* 1.0 — the resonance peak otherwise over-brightens. Tuned
 /// per tier (different OS rate ⇒ different optimum): Best (4×) at 0.70 gives
-/// LSD 3.15 dB. Low (4×) at 0.45 gives LSD 12.48 dB, corr 0.978 (0.50: 28.82).
-/// Low's optimum is a narrow dip (0.43-0.46 stay under 15 dB): its resonance
-/// peak lines up with the gold's there. See `brightness_sweep` /
-/// `low_brightness_sweep` diagnostics.
+/// LSD 1.64 dB (`brightness_sweep`: 1.31–1.64 dB over 0.55–0.70, then 2.63 at
+/// 0.74). Low (2×) at 0.45 gives LSD 13.78 dB, corr 0.981 (0.40: 26.35, 0.50:
+/// 27.46; a narrow dip, `low_brightness_sweep`). Low's darker setting also
+/// compensates its polyBLEP saw, which is brighter than the circuit saw: Low
+/// curves fitted to match Best's filter response leave the voice no closer to
+/// Best. The gold is 0.2 s long, so its LSD moves by several dB with the
+/// render's latency. The spectral gates skip the voice's reported
+/// `latency_samples()`, so a latency change no longer shifts them.
 pub const CIRCUIT_BRIGHT: f64 = 0.70;
 pub const LOW_BRIGHT: f64 = 0.45;
 /// Thermal-noise instance ids of the nodal ladders. A switch-in cold start
@@ -56,13 +60,13 @@ const LOW_LADDER_ID: u32 = 4;
 /// Output level trims (linear gain) that match Draft and Low to Best, at the
 /// resonance knots `0, 0.25, 0.5, 0.75, 1.0`; linear in between. The tiers'
 /// filters lose different amounts of passband level with resonance, so one
-/// gain cannot match every resonance setting. Fitted at 4x OS, before the
+/// gain cannot match every resonance setting. Fitted at 2x OS, before the
 /// output clipper (so every tier drives it equally), as the inverse of the
 /// median tier-vs-Best level (Gate VCA, notes 33/45/57/69 × cutoffs
 /// 300/800/1500/3000 Hz per knot). High needs no trim (within 0.02 dB).
-/// `tier_levels::draft_level_trim_report` re-derives the Draft table.
-const DRAFT_LEVEL_TRIM: [f32; 5] = [1.9828, 0.3730, 0.2677, 0.2791, 0.6080];
-const LOW_LEVEL_TRIM: [f32; 5] = [3.9445, 1.4438, 1.2956, 1.2051, 1.5399];
+/// `tier_levels::{draft,low}_level_trim_report` re-derive the tables.
+const DRAFT_LEVEL_TRIM: [f32; 5] = [1.7710, 0.3554, 0.2572, 0.2680, 0.5928];
+const LOW_LEVEL_TRIM: [f32; 5] = [3.8755, 1.4242, 1.2803, 1.1950, 1.5722];
 
 /// Piecewise-linear lookup in a 5-knot trim table over resonance `0..=1`.
 #[inline]
@@ -222,10 +226,10 @@ pub struct Voice {
     /// Sub-oscillator for Draft tier (always a square wave, one octave below).
     sub_osc: BlepOsc,
     /// Textbook coincident-pole zero-delay-feedback VCF for Draft tier, run
-    /// inside `os4_draft` at 4x.
+    /// inside `os2_draft` at 2x.
     filter: TptLadder,
-    /// Draft-tier oversampling filter (4x Kaiser FIR).
-    os4_draft: Os4x,
+    /// Draft-tier oversampling filter (2x Kaiser FIR).
+    os2_draft: Os2x,
 
     // --- Low Tier ---
     /// Primary polyBLEP oscillator for Low tier.
@@ -234,10 +238,10 @@ pub struct Voice {
     osc2_low: BlepOsc,
     /// Sub-oscillator for Low tier (always a square wave, one octave below).
     sub_osc_low: BlepOsc,
-    /// Low-tier nodal diode-ladder (polyBLEP saw source), run inside `os4_low` at 4x.
+    /// Low-tier nodal diode-ladder (polyBLEP saw source), run inside `os2_low` at 2x.
     ladder_low: LadderVcf,
-    /// Low-tier oversampling filter (4x Kaiser FIR).
-    os4_low: Os4x,
+    /// Low-tier oversampling filter (2x Kaiser FIR).
+    os2_low: Os2x,
 
     // --- High and Best Tiers (circuit VCO) ---
     // The oscillator source is shared and ticked once per output sample, also
@@ -365,6 +369,9 @@ pub struct Voice {
     drift: f32,
     draft_cutoff_mult: f64,
     draft_reso_mult: f64,
+    /// Effective VCF brightness dial (1.0 in ACCURATE): scales every tier's
+    /// calibrated corner (`set_vcf_brightness`).
+    vcf_brightness: f64,
     /// Effective NOISE level in [0, 100] (0 in ACCURATE); sets the ambient
     /// temperature and the ladders' noise current.
     thermal_noise: i32,
@@ -457,8 +464,8 @@ pub fn decay_ms(k: f32) -> f32 {
 
 impl Voice {
     pub fn new(sr: f32) -> Self {
-        let lat_draft = Os4x::new().latency_samples();
-        let lat_low = Os4x::new().latency_samples();
+        let lat_draft = Os2x::new().latency_samples();
+        let lat_low = Os2x::new().latency_samples();
         let lat_high = Os2x::new().latency_samples();
         let lat_best = Os4x::new().latency_samples();
         let max_latency = lat_best.max(lat_high).max(lat_low).max(lat_draft);
@@ -492,13 +499,13 @@ impl Voice {
             osc2: BlepOsc::new(),
             sub_osc: square(),
             filter: TptLadder::new(sr * DRAFT_OS_FACTOR),
-            os4_draft: Os4x::new(),
+            os2_draft: Os2x::new(),
 
             osc_low: BlepOsc::new(),
             osc2_low: BlepOsc::new(),
             sub_osc_low: square(),
             ladder_low,
-            os4_low: Os4x::new(),
+            os2_low: Os2x::new(),
 
             vco,
             vco2,
@@ -582,6 +589,7 @@ impl Voice {
             drift: 0.0,
             draft_cutoff_mult: 1.0,
             draft_reso_mult: 1.0,
+            vcf_brightness: 1.0,
             thermal_noise: 0,
             temperature: 20.0,
             self_heat: 0.0,
@@ -1049,8 +1057,8 @@ impl Voice {
         self.ladder_low.reset();
         self.os4_best = Os4x::new();
         self.os2_high = Os2x::new();
-        self.os4_low = Os4x::new();
-        self.os4_draft = Os4x::new();
+        self.os2_low = Os2x::new();
+        self.os2_draft = Os2x::new();
         self.meg.reset();
         self.veg.reset();
         self.meg_decay.reset();
@@ -1093,7 +1101,7 @@ impl Voice {
     }
 
     /// Select the fidelity tier. Draft routes to the TPT path; Low routes to the
-    /// nodal diode-ladder inside the 4× oversampler (`os4_low`, polyBLEP saw, F4.1); High routes
+    /// nodal diode-ladder inside the 2× oversampler (`os2_low`, polyBLEP saw); High routes
     /// to the circuit VCO → nodal ladder at 2×; Best routes to the same at 4× (F3.5).
     ///
     /// A change starts a short equal-power crossfade (F5.1) from the previous
@@ -1133,13 +1141,13 @@ impl Voice {
         match tier {
             Tier::Draft => {
                 self.filter.reset();
-                self.os4_draft = Os4x::new();
+                self.os2_draft = Os2x::new();
                 self.comp_draft.reset();
             }
             Tier::Low => {
                 self.ladder_low.reset();
                 self.ladder_low.set_instance_id(LOW_LADDER_ID);
-                self.os4_low = Os4x::new();
+                self.os2_low = Os2x::new();
                 self.comp_low.reset();
             }
             Tier::High => {
@@ -1157,9 +1165,9 @@ impl Voice {
         }
     }
 
-    /// Reported host latency is the tier alignment plus the constant 48-sample
-    /// clipper alignment. It is therefore 96 samples for every tier and clipper
-    /// state, including bypass and OS crossfades.
+    /// Reported host latency is the tier alignment (Best's 4× round trip) plus
+    /// the constant clipper alignment (`CLIPPER_LATENCY`), 39 + 39 = 78 samples
+    /// for every tier and clipper state, including bypass and OS crossfades.
     pub fn latency_samples(&self) -> usize {
         self.max_latency + self.clipper.latency_samples()
     }
@@ -1318,7 +1326,7 @@ impl Voice {
     /// second circuit path reuses the mix instead of ticking the VCOs again.
     fn render_tier(&mut self, tier: Tier, circuit_mix: &mut Option<f32>) -> f32 {
         match tier {
-            // Draft: polyBLEP saw → TPT ladder at 4× oversample (cheap, ships).
+            // Draft: polyBLEP saw → TPT ladder at 2× oversample (cheapest).
             // DRAFT_LEVEL_TRIM matches its loudness to Best.
             Tier::Draft => {
                 let osc1 = self.osc.tick();
@@ -1330,21 +1338,16 @@ impl Voice {
                 };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
-                let hi = self.os4_draft.up(mix * self.drive);
-                let o = [
-                    self.filter.tick(hi[0]),
-                    self.filter.tick(hi[1]),
-                    self.filter.tick(hi[2]),
-                    self.filter.tick(hi[3]),
-                ];
+                let hi = self.os2_draft.up(mix * self.drive);
+                let o = [self.filter.tick(hi[0]), self.filter.tick(hi[1])];
                 self.comp_draft.process(
-                    self.os4_draft.down(o)
+                    self.os2_draft.down(o)
                         * (level_trim(&DRAFT_LEVEL_TRIM, self.final_reso) / self.drive),
                 )
             }
-            // Low (F4.1): polyBLEP saw → nodal diode-ladder at 4× oversample.
-            // Skips the costly nodal VCO Newton but keeps the circuit-filter
-            // character — sits between Draft and Best at a fraction of Best cost.
+            // Low: polyBLEP saw → nodal diode-ladder at 2× oversample, the
+            // rate High runs the same ladder at. Skips the costly nodal VCO
+            // Newton but keeps the circuit-filter character.
             Tier::Low => {
                 let osc1 = self.osc_low.tick();
                 let sub = self.sub_osc_low.tick() * self.sub_vol;
@@ -1355,18 +1358,13 @@ impl Voice {
                 };
                 let mix = (osc1 + sub) * (1.0 - self.osc2_vol) + osc2 * self.osc2_vol;
 
-                let hi = self.os4_low.up(mix * self.drive);
-                let o = [
-                    self.ladder_low.tick(hi[0]),
-                    self.ladder_low.tick(hi[1]),
-                    self.ladder_low.tick(hi[2]),
-                    self.ladder_low.tick(hi[3]),
-                ];
+                let hi = self.os2_low.up(mix * self.drive);
+                let o = [self.ladder_low.tick(hi[0]), self.ladder_low.tick(hi[1])];
                 // LOW_LEVEL_TRIM equalises Low's loudness to Best (tier-switch
                 // is then timbre-only). Pre-comp-delay so the crossfade blends
                 // level-matched paths.
                 self.comp_low.process(
-                    self.os4_low.down(o)
+                    self.os2_low.down(o)
                         * (level_trim(&LOW_LEVEL_TRIM, self.final_reso) / self.drive),
                 )
             }
@@ -1604,8 +1602,8 @@ impl Voice {
         let log2_cutoff = (final_cutoff_hz as f64).log2();
         if draft_on {
             let (draft_fc, draft_reso) = Self::map_draft_vcf(log2_cutoff, final_reso);
-            let draft_fc =
-                (draft_fc as f64 * self.draft_cutoff_mult).clamp(20.0, (self.sr * 0.45) as f64);
+            let draft_fc = (draft_fc as f64 * self.draft_cutoff_mult * self.vcf_brightness)
+                .clamp(20.0, (self.sr * 0.45) as f64);
             // The raw Draft reso can exceed 1.0 at high cutoff. The age multiplier must
             // scale that raw value before the clamp, not an already-clamped 1.0.
             let draft_reso = (draft_reso * self.draft_reso_mult as f32).clamp(0.0, 1.0);
@@ -1726,6 +1724,24 @@ impl Voice {
 
     pub fn set_low_brightness(&mut self, cal: f64) {
         self.ladder_low.set_cal(cal);
+    }
+
+    /// FUN-only VCF brightness dial, read at block rate after `update_params`
+    /// (which sets the topology). Scales every tier's calibrated corner: the
+    /// nodal ladders' brightness (`CIRCUIT_BRIGHT`, `LOW_BRIGHT`, on which the
+    /// corner is linear) and Draft's cutoff. ACCURATE plays 1.0. The ladders
+    /// are only re-biased when the effective value changes.
+    pub fn set_vcf_brightness(&mut self, dial: f32) {
+        let b = match self.topology {
+            CircuitTopology::Fun => dial as f64,
+            CircuitTopology::Accurate => 1.0,
+        };
+        if b != self.vcf_brightness {
+            self.vcf_brightness = b;
+            self.ladder_high.set_cal(CIRCUIT_BRIGHT * b);
+            self.ladder_best.set_cal(CIRCUIT_BRIGHT * b);
+            self.ladder_low.set_cal(LOW_BRIGHT * b);
+        }
     }
 
     pub fn set_env_mod(&mut self, env_mod: f32) {

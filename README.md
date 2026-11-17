@@ -22,8 +22,8 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
 
 |Tier|Oscillator|Filter|Oversampling|
 |---|---|---|---|
-|**Draft**|PolyBLEP saw|TPT diode-ladder approximation|4x|
-|**Low**|PolyBLEP saw|Nodal diode ladder with active Q9 resonance|4x|
+|**Draft**|PolyBLEP saw|TPT diode-ladder approximation|2x|
+|**Low**|PolyBLEP saw|Nodal diode ladder with active Q9 resonance|2x|
 |**High**|Nodal relaxation VCO at the base rate|Nodal diode ladder|2x|
 |**Best**|Nodal relaxation VCO (21 nodes)|Nodal diode ladder with active Q9 resonance|4x|
 
@@ -44,7 +44,7 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
   - Accent with capacitor sweep memory and decay ducking.
   - Slide with an adjustable glide time.
   - **ADV ENV** mode exposes MEG (modulation) and VEG (voice) ADSR faders, and a VCA Gate/Envelope selector.
-- **Analog tweaks (FUN mode):** component tolerance (0%, 0.5%, 2%, 5%, 10%), age in years, thermal noise (ambient temperature), drift, a repeatable component seed, and CALIBRATE: it trims the VCO pitch for the current components in the background, and RECAL sets how much of the component pitch error the trim removes.
+- **Analog tweaks (FUN mode):** component tolerance (0%, 0.5%, 2%, 5%, 10%), age in years, thermal noise (ambient temperature), drift, a repeatable component seed, BRIGHT (scales every tier's filter corner around its calibrated setting), and CALIBRATE: it trims the VCO pitch for the current components in the background, and RECAL sets how much of the component pitch error the trim removes.
 
 ### 4. Output clipper
 

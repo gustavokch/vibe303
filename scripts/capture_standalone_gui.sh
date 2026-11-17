@@ -124,7 +124,7 @@ capture_single_state "knobs" "$OUTPUT_DIR/knobs.png"
 capture_single_state "knob_extremes" "$OUTPUT_DIR/knob_extremes.png"
 # Clipper bypass state for disabled OUTPUT CLIPPER header and body checks.
 capture_single_state "clipper_off" "$OUTPUT_DIR/clipper_off.png"
-# Quality tier selection (Low tier: 4x nodal ladder, polyBLEP saw)
+# Quality tier selection (Low tier: 2x nodal ladder, polyBLEP saw)
 # The other non-default tiers (quality_high, quality_best) are supported by
 # VIBE303_QA_STATE in plugin303/src/params.rs but captured manually only —
 # not part of the automated suite.

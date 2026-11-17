@@ -68,12 +68,12 @@ fn accurate_tweaks_explain_why_they_are_inert() {
     let host = DummyGuiContext;
     let setter = ParamSetter::new(&host);
     let mut rig = Rig::new(vec2(right_column_width(), TWEAKS_H + TOOLTIP_ROOM));
-    // 4 Readouts + DRIFT + RECAL.
+    // 4 Readouts + DRIFT + RECAL + BRIGHT.
     assert_disabled_controls_explain(
         &mut rig,
         &mut |ui| tweaks_panel::render_tweaks_panel(ui, &params, &setter),
         tweaks_panel::ACCURATE_HINT,
-        6,
+        7,
     );
 }
 
@@ -195,11 +195,11 @@ fn engine_device_controls_explain_themselves() {
     );
 
     let mut rig = Rig::new(vec2(right_column_width(), TWEAKS_H + TOOLTIP_ROOM));
-    // CALIBRATE + TOL + AGE + NOISE + CMP SEED + DRIFT + RECAL.
+    // CALIBRATE + TOL + AGE + NOISE + CMP SEED + DRIFT + RECAL + BRIGHT.
     assert_controls_explain(
         &mut rig,
         &mut |ui| tweaks_panel::render_tweaks_panel(ui, &params, &setter),
-        7,
+        8,
     );
 }
 

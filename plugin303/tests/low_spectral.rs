@@ -1,9 +1,9 @@
 //! Low fidelity gate (F4.2, spectral).
 //!
-//! Low = polyBLEP saw → nodal diode-ladder VCF at 4× oversample. It skips the
+//! Low = polyBLEP saw → nodal diode-ladder VCF at 2× oversample. It skips the
 //! costly nodal circuit VCO (Best's dominant cost) but keeps the nonlinear
-//! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.959 at 4×)
-//! and Best (circuit VCO→ladder, corr 0.977) on the same spectral metric.
+//! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.945 at 2×)
+//! and Best (circuit VCO→ladder, corr 0.988) on the same spectral metric.
 //!
 //! Same Welch LSD + dB-spectrum-corr metric as Best (`tests/common/mod.rs`).
 //! The budget is necessarily looser than Best: the polyBLEP saw ≠ the circuit
@@ -11,13 +11,17 @@
 //! filter is identical. The gold-power-weighted LSD is large for any non-circuit
 //! saw (it concentrates on the gold's dominant bins), so Low's LSD lands far
 //! from Best's — but well below Draft's. Side-by-side at the gold op-point
-//! (`low_spectral_report`, note 57 / 1002 Hz / reso 0.85), Draft and Low at 4×:
-//!     Draft LSD 33.62 dB  corr 0.959
-//!     Low   LSD 12.47 dB  corr 0.978   <- between the two on both axes
-//!     Best  LSD  3.15 dB  corr 0.988
+//! (`low_spectral_report`, note 57 / 1002 Hz / reso 0.85), Draft and Low at 2×:
+//!     Draft LSD 35.36 dB  corr 0.945
+//!     Low   LSD 13.78 dB  corr 0.981   <- between the two on both axes
+//!     Best  LSD  1.64 dB  corr 0.988
+//! The 0.2 s gold makes these sensitive to the render's latency, so every gate
+//! skips the voice's reported `latency_samples()` (78) and a latency change does
+//! not move them.
 //! The gate proves Low is a genuine fidelity step over Draft: the LSD budget
 //! sits below Draft's LSD, so a regression to the TPT path fails. Draft's corr
-//! (0.959) passes `CORR_MIN`, so corr alone does not discriminate.
+//! (0.945) also falls below `CORR_MIN`, but only just; the LSD gap is the
+//! discriminator.
 
 mod common;
 
@@ -25,12 +29,12 @@ use common::{gold_dir, load_f32, load_gold_op, render_plugin_path, spectral_matc
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 
-// Low at 4× re-tuned to brightness 0.45 ⇒ LSD 28.82 → 12.48 (`low_brightness_sweep`).
-// The optimum is a narrow dip (0.50 gives 28.82), so the budget guards the tuning.
-// Low uses the polyBLEP saw (not the circuit VCO), so its LSD floor is set by the
-// VCO mismatch, not the filter — this gate is a discriminator (Draft fails worse).
-const LSD_BUDGET_DB: f32 = 16.0; // achieved 12.48 dB (deterministic) + margin
-const CORR_MIN: f32 = 0.95; // achieved 0.978; Draft's 0.959 also passes, LSD discriminates
+// Low at 2× keeps brightness 0.45 ⇒ LSD 13.78 (0.40: 26.35, 0.50: 27.46,
+// `low_brightness_sweep`). The optimum is a narrow dip, so the budget guards the
+// tuning. Low uses the polyBLEP saw (not the circuit VCO), so its LSD floor is set
+// by the VCO mismatch, not the filter — this gate is a discriminator (Draft fails worse).
+const LSD_BUDGET_DB: f32 = 16.0; // achieved 13.78 dB (deterministic), margin 2.22 dB
+const CORR_MIN: f32 = 0.95; // achieved 0.981; Draft's 0.945 fails it, but LSD discriminates
 
 /// Renders Low the way the gate does. `cal: Some(c)` overrides the brightness;
 /// `None` plays the voice's own (`LOW_BRIGHT`).
@@ -45,7 +49,7 @@ fn render_low(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: Option<f
     v.set_cutoff(cutoff);
     v.set_reso(reso);
     v.note_on(note);
-    for _ in 0..48 {
+    for _ in 0..v.latency_samples() {
         v.tick();
     }
     (0..n).map(|_| v.tick()).collect()
@@ -59,7 +63,7 @@ fn render_tier(tier: Tier, op: &common::GoldOp, n: usize) -> Vec<f32> {
     v.set_cutoff(op.cutoff);
     v.set_reso(op.reso);
     v.note_on(op.note);
-    for _ in 0..48 {
+    for _ in 0..v.latency_samples() {
         v.tick();
     }
     (0..n).map(|_| v.tick()).collect()
@@ -153,11 +157,10 @@ fn low_voice_spectral_match() {
 
 /// Same gate through the plugin's parameter path (`common::render_plugin_path`):
 /// the default patch with first-block analog wear and Env Mod at 0. Measured
-/// 10.50 dB / 0.977 (`low_voice_spectral_match`: 12.47 dB). With analog wear
-/// resetting the brightness to 1.0, or with the `ladder_low` brightness forced
-/// to 1.0 inside `update_params`, it reads 39.56 dB, while
-/// `low_voice_spectral_match` still passes (12.47 dB): `Voice::new` does not
-/// wear the Low ladder, so only this gate sees it.
+/// 12.99 dB / 0.982 (`low_voice_spectral_match`: 13.78 dB). With the brightness
+/// forced to 1.0 after the patch it reads 39.93 dB, and with the default Env Mod
+/// (0.5) 47.06 dB, while `low_voice_spectral_match` still passes: `Voice::new`
+/// does not wear the Low ladder, so only this gate sees it.
 #[test]
 fn low_plugin_path_spectral_match() {
     let gold = load_f32(&gold_dir().join("voice_A2_mid.f32"));

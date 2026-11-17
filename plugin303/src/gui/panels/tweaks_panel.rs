@@ -338,9 +338,9 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         ui.add_space(col_gap);
 
-                        // Right column: DRIFT and RECAL as LARGE knobs, each centred in
-                        // an equal half of the free width, vertically centred.
-                        let knob_col_w = right_w * 0.5;
+                        // Right column: DRIFT, RECAL and BRIGHT as LARGE knobs, each
+                        // centred in an equal third of the free width, vertically centred.
+                        let knob_col_w = right_w / 3.0;
                         let pad_y = ((total_h - knob_size.y) * 0.5).max(0.0);
                         let knob_column = |ui: &mut Ui, add_knob: &mut dyn FnMut(&mut Ui)| {
                             ui.allocate_ui_with_layout(
@@ -379,6 +379,21 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 .tooltip(
                                     "Recalibration: share of the component pitch error the next \
                                      CALIBRATE removes",
+                                ),
+                            )
+                            .on_disabled_hover_text(ACCURATE_HINT);
+                        });
+                        knob_column(ui, &mut |ui| {
+                            ui.add(
+                                Knob303::new(
+                                    &params.vcf_brightness,
+                                    setter,
+                                    "BRIGHT",
+                                    theme::KNOB_RADIUS_LARGE,
+                                )
+                                .tooltip(
+                                    "Filter brightness: moves every quality tier's filter \
+                                     corner around its calibrated setting (100%)",
                                 ),
                             )
                             .on_disabled_hover_text(ACCURATE_HINT);

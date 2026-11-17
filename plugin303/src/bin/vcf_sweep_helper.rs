@@ -9,7 +9,7 @@
 use plugin303::dsp::filter::Filter303;
 use plugin303::dsp::ladder::TptLadder;
 use plugin303::dsp::ladder_wdf::LadderVcf;
-use plugin303::dsp::oversample::Os4x;
+use plugin303::dsp::oversample::{Os2x, Os4x};
 use plugin303::dsp::voice::{
     BEST_OS_FACTOR, CIRCUIT_BRIGHT, DRAFT_OS_FACTOR, LOW_BRIGHT, LOW_OS_FACTOR,
 };
@@ -29,19 +29,33 @@ fn log_sweep(lo: f32, hi: f32, n: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Runs `f` inside the oversampler for `factor` (2 or 4), as the voice does.
+fn oversampled<F: Filter303 + 'static>(mut f: F, factor: f32) -> Box<dyn FnMut(f32) -> f32> {
+    if factor == 2.0 {
+        let mut os = Os2x::new();
+        Box::new(move |x| {
+            let up = os.up(x);
+            os.down([f.tick(up[0]), f.tick(up[1])])
+        })
+    } else {
+        assert_eq!(factor, 4.0, "unsupported oversampling factor {factor}");
+        let mut os = Os4x::new();
+        Box::new(move |x| {
+            let up = os.up(x);
+            os.down([f.tick(up[0]), f.tick(up[1]), f.tick(up[2]), f.tick(up[3])])
+        })
+    }
+}
+
 fn gain_at_freq(path: Path, fc: f32, reso: f32, poles: usize, freq: f32) -> f32 {
     let amp = 0.02f32;
-    let mut process: Box<dyn FnMut(f32) -> f32> = match path {
+    let mut process = match path {
         Path::Draft => {
             let mut f = TptLadder::new(SR * DRAFT_OS_FACTOR);
             f.set_poles(poles);
             f.set_cutoff(fc);
             f.set_reso(reso);
-            let mut os = Os4x::new();
-            Box::new(move |x| {
-                let up = os.up(x);
-                os.down([f.tick(up[0]), f.tick(up[1]), f.tick(up[2]), f.tick(up[3])])
-            })
+            oversampled(f, DRAFT_OS_FACTOR)
         }
         Path::Low => {
             let mut f = LadderVcf::new(SR * LOW_OS_FACTOR);
@@ -49,11 +63,7 @@ fn gain_at_freq(path: Path, fc: f32, reso: f32, poles: usize, freq: f32) -> f32 
             f.set_poles(poles);
             f.set_cutoff(fc);
             f.set_reso(reso);
-            let mut os = Os4x::new();
-            Box::new(move |x| {
-                let up = os.up(x);
-                os.down([f.tick(up[0]), f.tick(up[1]), f.tick(up[2]), f.tick(up[3])])
-            })
+            oversampled(f, LOW_OS_FACTOR)
         }
         Path::Best => {
             let mut f = LadderVcf::new(SR * BEST_OS_FACTOR);
@@ -61,11 +71,7 @@ fn gain_at_freq(path: Path, fc: f32, reso: f32, poles: usize, freq: f32) -> f32 
             f.set_poles(poles);
             f.set_cutoff(fc);
             f.set_reso(reso);
-            let mut os = Os4x::new();
-            Box::new(move |x| {
-                let up = os.up(x);
-                os.down([f.tick(up[0]), f.tick(up[1]), f.tick(up[2]), f.tick(up[3])])
-            })
+            oversampled(f, BEST_OS_FACTOR)
         }
     };
 

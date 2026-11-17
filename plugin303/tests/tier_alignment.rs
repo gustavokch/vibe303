@@ -6,7 +6,7 @@
 //! outputs are near-identical apart from the oversampler group delay. The
 //! cross-correlation peak between them must therefore sit at lag 0. A High
 //! path padded for Best's 4× latency instead of its own 2× latency shows up as
-//! a 16-sample lead at 48 kHz.
+//! a 7-sample lead at 48 kHz.
 
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;

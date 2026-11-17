@@ -10,7 +10,7 @@
 
 use super::oversample::{Os2x, Os4x};
 
-pub const CLIPPER_LATENCY: usize = 48;
+pub const CLIPPER_LATENCY: usize = Os4x::LATENCY;
 const XFADE_SECONDS: f32 = 0.010;
 const GB: f32 = -3.826;
 const JFET_FLOOR: f32 = 0.089_125;
@@ -61,23 +61,24 @@ impl Default for ClipperParams {
     }
 }
 
+/// Fixed `N`-sample delay line.
 #[derive(Clone, Copy)]
-struct Delay48 {
-    buf: [f32; CLIPPER_LATENCY],
+struct Delay<const N: usize> {
+    buf: [f32; N],
     pos: usize,
 }
 
-impl Delay48 {
+impl<const N: usize> Delay<N> {
     fn new() -> Self {
         Self {
-            buf: [0.0; CLIPPER_LATENCY],
+            buf: [0.0; N],
             pos: 0,
         }
     }
     fn tick(&mut self, x: f32) -> f32 {
         let y = self.buf[self.pos];
         self.buf[self.pos] = x;
-        self.pos = (self.pos + 1) % CLIPPER_LATENCY;
+        self.pos = (self.pos + 1) % N;
         y
     }
     fn reset(&mut self) {
@@ -85,29 +86,8 @@ impl Delay48 {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Delay16 {
-    buf: [f32; 16],
-    pos: usize,
-}
-
-impl Delay16 {
-    fn new() -> Self {
-        Self {
-            buf: [0.0; 16],
-            pos: 0,
-        }
-    }
-    fn tick(&mut self, x: f32) -> f32 {
-        let y = self.buf[self.pos];
-        self.buf[self.pos] = x;
-        self.pos = (self.pos + 1) % 16;
-        y
-    }
-    fn reset(&mut self) {
-        *self = Self::new();
-    }
-}
+/// Pads the 2× path's round trip to the 4× path's.
+const PAD2: usize = Os4x::LATENCY - Os2x::LATENCY;
 
 /// A compact state-space implementation of stages A--D in `warm_clipper.cir`.
 struct StagedEngine {
@@ -359,15 +339,15 @@ impl StagedEngine {
 }
 
 /// Preallocated 2× and 4× engines. The 2× and bypass paths are padded to the
-/// 4× filter's measured 48-sample round-trip delay, so callers always report
-/// the same 48-sample clipper latency.
+/// 4× filter's round-trip delay, so callers always report the same
+/// `CLIPPER_LATENCY`.
 pub struct WarmClipper {
     os2: Os2x,
     os4: Os4x,
     e2: StagedEngine,
     e4: StagedEngine,
-    pad2: Delay16,
-    dry: Delay48,
+    pad2: Delay<PAD2>,
+    dry: Delay<CLIPPER_LATENCY>,
     params: ClipperParams,
     active_bypass: bool,
     active_os: ClipperOs,
@@ -394,8 +374,8 @@ impl WarmClipper {
             os4: Os4x::new(),
             e2: StagedEngine::new(sr * 2.0),
             e4: StagedEngine::new(sr * 4.0),
-            pad2: Delay16::new(),
-            dry: Delay48::new(),
+            pad2: Delay::new(),
+            dry: Delay::new(),
             params: ClipperParams::default(),
             active_bypass: false,
             active_os: ClipperOs::X2,
@@ -457,7 +437,7 @@ impl WarmClipper {
     }
     fn wet2(&mut self, x: f32) -> f32 {
         let hi = self.os2.up(x);
-        // 2× round-trip is 32 samples. Pad 16 samples to the 4× 48-sample path.
+        // Pad the 2× round trip to the 4× path's.
         self.pad2
             .tick(self.os2.down([self.e2.tick(hi[0]), self.e2.tick(hi[1])]))
     }

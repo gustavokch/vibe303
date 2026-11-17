@@ -66,7 +66,7 @@ fn render_gold_op(tier: Tier, bright: Option<f64>, plugin: bool, op: &GoldOp, n:
     v.set_cutoff(op.cutoff);
     v.set_reso(op.reso);
     v.note_on(op.note);
-    for _ in 0..48 {
+    for _ in 0..v.latency_samples() {
         v.tick();
     }
     (0..n).map(|_| v.tick()).collect()

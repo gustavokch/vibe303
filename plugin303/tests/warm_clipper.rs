@@ -205,11 +205,11 @@ fn bypass_and_latency_equivalence() {
     let voice = Voice::new(sr);
     assert_eq!(
         voice.latency_samples(),
-        96,
-        "Total plugin latency reported must be 96 samples"
+        78,
+        "Total plugin latency reported must be 78 samples"
     );
 
-    // Test bypass dry equivalence after 48-sample clipper alignment
+    // Test bypass dry equivalence after 39-sample clipper alignment
     let mut c = WarmClipper::new(sr);
     let mut p = ClipperParams::default();
     p.bypass = true;
@@ -223,8 +223,8 @@ fn bypass_and_latency_equivalence() {
     }
 
     assert_eq!(
-        out_samples[48], impulse_in,
-        "Bypass output must be delayed by exactly 48 samples"
+        out_samples[39], impulse_in,
+        "Bypass output must be delayed by exactly 39 samples"
     );
 }
 

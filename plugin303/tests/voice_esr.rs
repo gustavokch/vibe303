@@ -91,6 +91,7 @@ fn draft_voice_esr_within_budget() {
     let model: Vec<f32> = (0..gold.len()).map(|_| v.tick()).collect();
 
     let e = esr_db(&gold, &model); // measured ~2.44 dB at F2.6
+    println!("Draft voice ESR: {e:.2} dB");
     assert!(
         e <= BUDGET_DB,
         "Draft voice ESR {e:.2} dB exceeds budget {BUDGET_DB} dB (regressed?)"
