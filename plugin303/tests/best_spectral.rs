@@ -35,7 +35,7 @@ fn render_best(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: Option<
     v.set_cutoff(cutoff);
     v.set_reso(reso);
     v.note_on(note);
-    for _ in 0..48 {
+    for _ in 0..v.latency_samples() {
         v.tick();
     }
     (0..n).map(|_| v.tick()).collect()
