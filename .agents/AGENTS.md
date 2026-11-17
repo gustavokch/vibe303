@@ -183,7 +183,7 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 | Test file            | Purpose                                                                     |
 | -------------------- | --------------------------------------------------------------------------- |
 | `best_spectral.rs`   | **Binding spectral gate** — Welch LSD ≤ 4.0, corr ≥ 0.95 vs SPICE gold      |
-| `low_spectral.rs`    | Low-tier spectral gate — LSD ≤ 29, corr ≥ 0.95                             |
+| `low_spectral.rs`    | Low-tier spectral gate — LSD ≤ 16, corr ≥ 0.95                             |
 | `voice_esr.rs`       | Draft-tier ESR regression guard (budget 3.5 dB)                             |
 | `tier_levels.rs`     | Per-tier level parity                                                       |
 | `tier_switch.rs`     | Click-free crossfade: switch-window step ≤ 2.5× steady                      |
@@ -224,7 +224,7 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 
 2. **VCO pitch cal `CV_FIT` is fit to THIS solver** (not SPICE). Re-run `characterize_freq_cv` if the VCO solver changes.
 
-3. **Sample-exact ESR vs ngspice is NOT the acceptance gate** for Best. It's structurally unreachable for a real-time bespoke chain vs ngspice's adaptive solver. The gate is **spectral** (Welch LSD + dB-spectrum correlation). The gold is only 0.2 s, so the LSD moves several dB with the render's latency: an 18-sample latency cut moved Best from 3.15 to 2.24 dB with identical audio. Compare renders at equal alignment before reading a gate change as a sound change.
+3. **Sample-exact ESR vs ngspice is NOT the acceptance gate** for Best. It's structurally unreachable for a real-time bespoke chain vs ngspice's adaptive solver. The gate is **spectral** (Welch LSD + dB-spectrum correlation). The gold is only 0.2 s, so the LSD moves several dB with the render's latency (a 30-sample misalignment moved Low from 13.78 to 15.36 dB and Best from 1.64 to 2.24 dB with identical audio). The spectral gates skip the voice's reported `latency_samples()`, never a literal, so a latency change does not move them; Best reads 1.64 dB, Low 13.78 dB (budget 16). Compare renders at equal alignment before reading a gate change as a sound change.
 
 4. **Calibrating Draft/TPT cutoff/reso to SPICE is a wash** — the gap is topological (polyBLEP + TPT vs circuit saw + diode ladder), not parametric. Draft's gate is a regression guard, not a fidelity target.
 

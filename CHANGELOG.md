@@ -34,8 +34,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it only has to reject images and folds above 1.5·fs (−89 dB). Best costs
   1.7% less, and its latency and the clipper's drop from 48 to 39 samples, so
   the plugin reports 78 samples instead of 96. Best's audio is unchanged
-  (−76 dB difference after alignment); its SPICE spectral gate reads 2.24 dB
-  instead of 3.15 because the 0.2 s gold is latency-sensitive.
+  (−76 dB difference after alignment). The 0.2 s SPICE gold is
+  latency-sensitive, so the spectral gates (`best_spectral`, `low_spectral`,
+  and the plugin-path render in `tests/common`) now skip the voice's reported
+  `latency_samples()` (78) instead of a literal 48 and no longer move with a
+  latency change. Aligned, Best reads 1.64 dB LSD (budget 4), Low 13.78 dB
+  (budget 16, margin 2.22 dB) and Draft 35.36 dB against the SPICE gold;
+  through the plugin's parameter path Best reads 1.95 dB and Low 12.99 dB.
+- New `tests/vcf_brightness.rs` covers the BRIGHT dial: in FUN, 0.5 renders
+  darker than 1.0 on Draft, Low, High and Best; in ACCURATE, 0.5 and 1.0 render
+  bit-identically.
 - Per-voice CPU cost drops 22% (Draft), 27% (Low), 35% (High) and 35% (Best),
   measured in cycles: about 1.1%, 5.9%, 7.8% and 10.2% of one Apple Silicon core.
   The circuit VCO's JFET reset no longer falls back to the gmin homotopy:

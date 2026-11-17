@@ -249,7 +249,7 @@ pub fn apply_patch(
 /// the gold). The path is the default patch (Fun
 /// topology, component seed 1337, drift 0.1, first-block analog wear) with Env
 /// Mod at 0: the gold holds its cutoff still, and the default Env Mod (0.5)
-/// sweeps it, which alone moves Best from 3.5 to 22 dB LSD. A bare `Voice::new`
+/// sweeps it, which alone moves Best from 1.95 to 22.70 dB LSD. A bare `Voice::new`
 /// render never runs `update_params`, so only this render sees an update that
 /// overrides a tier's calibrated voicing.
 pub fn render_plugin_path(tier: plugin303::dsp::filter::Tier, op: &GoldOp, n: usize) -> Vec<f32> {

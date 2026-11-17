@@ -43,13 +43,14 @@ pub const VCO_GAIN: f32 = 2.607;
 /// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
 /// gold sits *below* 1.0 — the resonance peak otherwise over-brightens. Tuned
 /// per tier (different OS rate ⇒ different optimum): Best (4×) at 0.70 gives
-/// LSD 2.24 dB. Low (2×) at 0.45 gives LSD 15.35 dB, corr 0.982 (0.40: 26.81,
-/// 0.50: 29.23). Low's darker setting also compensates its polyBLEP saw, which
-/// is brighter than the circuit saw: Low curves fitted to match Best's filter
-/// response leave the voice no closer to Best. The gold is 0.2 s long, so its
-/// LSD moves by several dB with the render's latency: cutting the 4× latency
-/// from 48 to 39 samples moved Best from 3.15 and Low from 12.25 dB with
-/// unchanged audio. See `brightness_sweep` / `low_brightness_sweep`.
+/// LSD 1.64 dB (`brightness_sweep`: 1.31–1.64 dB over 0.55–0.70, then 2.63 at
+/// 0.74). Low (2×) at 0.45 gives LSD 13.78 dB, corr 0.981 (0.40: 26.35, 0.50:
+/// 27.46; a narrow dip, `low_brightness_sweep`). Low's darker setting also
+/// compensates its polyBLEP saw, which is brighter than the circuit saw: Low
+/// curves fitted to match Best's filter response leave the voice no closer to
+/// Best. The gold is 0.2 s long, so its LSD moves by several dB with the
+/// render's latency. The spectral gates skip the voice's reported
+/// `latency_samples()`, so a latency change no longer shifts them.
 pub const CIRCUIT_BRIGHT: f64 = 0.70;
 pub const LOW_BRIGHT: f64 = 0.45;
 /// Thermal-noise instance ids of the nodal ladders. A switch-in cold start

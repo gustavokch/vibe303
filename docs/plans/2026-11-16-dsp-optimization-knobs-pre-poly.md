@@ -230,14 +230,18 @@ Same protocol as §6, against the §6 build (`d9f8202`):
   that. A fit against Best's rendered voice would be needed to do better.
 - **Level trims** re-derived at 2× (`tier_levels::{draft,low}_level_trim_report`); medians 0.00 dB
   at every knot. Low's spread is the same at 2× as at 4×.
-- **Gates:** `low_spectral` 12.48 → 15.36 dB (budget 16), `low_plugin_path` 12.46 → 13.73, Low vs
+- **Gates:** `low_spectral` 12.48 → 13.78 dB (budget 16), `low_plugin_path` 12.46 → 12.99, Low vs
   Best parity 11.70 → 11.99 dB (corr 0.995), Draft vs Best 12.36 → 13.24 dB (corr 0.982),
   `voice_esr` 3.39 → 2.91 dB (budget 3.5), Draft headroom +0.47 / +2.07 dB (budget 3.5).
 - **The SPICE gold is latency-sensitive.** It is 0.2 s long, so a time shift of the render moves
   its LSD by several dB. K7 cuts Best's latency from 48 to 39 samples and the clipper's by the same:
-  Best's audio is unchanged (−76 dB difference after an 18-sample alignment) but `best_spectral`
-  reads 2.24 dB instead of 3.15, and Low (already at 2×; K7 does not touch its path) 15.35 instead
-  of 12.25. Low's gate margin (0.64 dB) is mostly this shift.
+  Best's audio is unchanged (−76 dB difference after an 18-sample alignment). The gates first
+  skipped a literal 48 samples, so `best_spectral` read 2.24 dB instead of 3.15 and `low_spectral`
+  15.35 instead of 12.25 (margin 0.64 dB) from the misalignment alone. They now skip the voice's
+  reported `latency_samples()` (78) and no longer move with latency: Best 1.64 dB (plugin path
+  1.95), Low 13.78 dB (plugin path 12.99, margin 2.22 dB), Draft 35.36 dB. Brightness sweeps under
+  the aligned gates: Low's optimum stays at 0.45 (13.78 dB; 0.40: 26.35, 0.50: 27.46), Best is flat
+  at 1.31–1.64 dB over 0.55–0.70.
 
 ### What each knob turned out to be
 
