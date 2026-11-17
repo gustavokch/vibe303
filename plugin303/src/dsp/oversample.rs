@@ -1,23 +1,29 @@
-//! Zero-alloc polyphase FIR oversampling. `Os2x` is the primitive (Kaiser-windowed
-//! sinc, base-Nyquist cutoff); `Os4x`/`Os8x` cascade it. Coeffs are built in `new()`;
-//! `up`/`down` touch only fixed-size arrays.
+//! Zero-alloc polyphase FIR oversampling. `HalfBand` is the primitive: one 2×
+//! stage with a Kaiser-windowed half-band sinc. `Os2x` is one long stage;
+//! `Os4x` cascades it with a shorter inner stage; `Os8x` cascades three long
+//! stages. Coeffs are built once per process; `up`/`down` touch only
+//! fixed-size arrays.
 //!
-//! FIR length is odd (`L = 2P-1`) so the linear-phase group delay `(L-1)/2` is an
-//! integer; the up→down round trip then has an integer base-rate latency.
+//! A stage with `M` odd-tap pairs has FIR length `L = 4M + 1`. `L ≡ 1 (mod 4)`
+//! keeps every cascade stage's base-rate group delay an integer.
 
 use std::sync::LazyLock;
 
-/// Half the FIR length (taps per polyphase branch on the up path).
-const P: usize = 33;
-/// Full FIR length — odd and `≡ 1 (mod 4)`, so every cascade stage's base-rate group
-/// delay `(L-1)/2^stage` stays an integer (L=65 → 32 / 16 / 8 for 2×/4×/8×).
-const L: usize = 2 * P - 1; // 65
+/// Odd-tap pairs of the long stage (`Os2x`, `Os4x`'s outer stage): L = 65,
+/// passband to about 0.42·fs, stopband from about 0.58·fs.
+const OUTER_M: usize = 16;
+/// Odd-tap pairs of `Os4x`'s inner stage (2× ↔ 4×): L = 29. Its input is
+/// already band-limited to the base band (≤ 0.5·fs), so it only has to reject
+/// images and folds at ≥ 1.5·fs. Relative to its own rate that transition is
+/// about 3× wider than the long stage's, so 7 pairs at Kaiser β = 9 reach
+/// −89 dB above 1.42·fs (the long stage: −91 dB), with passband ripple under
+/// 0.001 dB to 0.42·fs.
+const INNER_M: usize = 7;
 
-/// Power-of-two ring buffer capacity for up-sampler history (P=33 <= 64).
+/// Ring buffer capacities (powers of two) for the longest stage: the up path
+/// reads `2M` input samples back, the down path `4M + 1` high-rate samples.
 const BUF_UP: usize = 64;
 const MASK_UP: usize = BUF_UP - 1;
-
-/// Power-of-two ring buffer capacity for down-sampler history (L+1=66 <= 128).
 const BUF_DN: usize = 128;
 const MASK_DN: usize = BUF_DN - 1;
 
@@ -45,21 +51,21 @@ fn sinc(x: f64) -> f64 {
     }
 }
 
-/// Build the length-`L` lowpass: windowed sinc at cutoff `fc` (normalised to the
+/// Build the length-`N` lowpass: windowed sinc at cutoff `fc` (normalised to the
 /// high rate; 0.25 = base Nyquist), Kaiser window `beta`, normalised to unit DC gain.
-fn build_lp(beta: f64, fc: f64) -> [f32; L] {
-    let c = (L - 1) as f64 / 2.0;
+fn build_lp<const N: usize>(beta: f64, fc: f64) -> [f32; N] {
+    let c = (N - 1) as f64 / 2.0;
     let denom = i0(beta);
-    let mut h = [0.0f64; L];
+    let mut h = [0.0f64; N];
     let mut sum = 0.0;
-    for i in 0..L {
+    for i in 0..N {
         let n = i as f64 - c;
         let w = i0(beta * (1.0 - (n / c).powi(2)).max(0.0).sqrt()) / denom;
         h[i] = 2.0 * fc * sinc(2.0 * fc * n) * w;
         sum += h[i];
     }
-    let mut out = [0.0f32; L];
-    for i in 0..L {
+    let mut out = [0.0f32; N];
+    for i in 0..N {
         out[i] = (h[i] / sum) as f32; // unit DC gain
     }
     out
@@ -70,30 +76,41 @@ fn build_lp(beta: f64, fc: f64) -> [f32; L] {
 /// The cutoff is exactly half the high rate's Nyquist, so every even-offset
 /// tap but the centre is a zero of the sinc (`|h| < 1e-16`, rounding only).
 /// Those taps are dropped: the interpolator's even branch is a pure delay, and
-/// both the interpolator's odd branch and the decimator use the 16 odd taps.
-static COEFFS: LazyLock<(f32, [f32; 16])> = LazyLock::new(|| {
-    let h_full = build_lp(8.0, 0.25);
-    let mut ho = [0.0f32; 16];
-    for k in 0..16 {
-        ho[k] = h_full[2 * k + 1];
-    }
-    (h_full[32], ho)
-});
+/// both the interpolator's odd branch and the decimator use the `M` odd taps.
+fn half_band<const N: usize, const M: usize>(beta: f64) -> (f32, [f32; M]) {
+    assert_eq!(N, 4 * M + 1);
+    let h = build_lp::<N>(beta, 0.25);
+    (h[2 * M], std::array::from_fn(|k| h[2 * k + 1]))
+}
 
-/// 2× polyphase oversampler. `up` zero-stuff-interpolates one base sample into two
-/// high-rate samples; `down` lowpass-decimates two high-rate samples into one.
-pub struct Os2x {
-    hc: f32,       // centre tap
-    ho: [f32; 16], // odd-offset taps (16 symmetric pairs)
+static OUTER_TAPS: LazyLock<(f32, [f32; OUTER_M])> =
+    LazyLock::new(|| half_band::<{ 4 * OUTER_M + 1 }, OUTER_M>(8.0));
+static INNER_TAPS: LazyLock<(f32, [f32; INNER_M])> =
+    LazyLock::new(|| half_band::<{ 4 * INNER_M + 1 }, INNER_M>(9.0));
+
+/// One 2× polyphase half-band stage with `M` odd-tap pairs. `up`
+/// zero-stuff-interpolates one input sample into two output samples; `down`
+/// lowpass-decimates two input samples into one.
+pub struct HalfBand<const M: usize> {
+    hc: f32,      // centre tap
+    ho: [f32; M], // odd-offset taps (M symmetric pairs)
     hist_up: [f32; BUF_UP],
     head_up: usize,
     hist_dn: [f32; BUF_DN],
     head_dn: usize,
 }
 
-impl Os2x {
-    pub fn new() -> Self {
-        let (hc, ho) = *COEFFS;
+/// 2× oversampler (base rate ↔ 2×).
+pub type Os2x = HalfBand<OUTER_M>;
+/// `Os4x`'s inner stage (2× ↔ 4×).
+type InnerStage = HalfBand<INNER_M>;
+
+impl<const M: usize> HalfBand<M> {
+    /// Round-trip group delay in samples of the stage's lower rate: up and
+    /// down are each `(L - 1) / 2` high-rate samples, `(L - 1) / 2 = 2M` in total.
+    pub const LATENCY: usize = 2 * M;
+
+    fn with_taps((hc, ho): (f32, [f32; M])) -> Self {
         Self {
             hc,
             ho,
@@ -104,26 +121,26 @@ impl Os2x {
         }
     }
 
-    /// One base sample -> two high-rate samples. ×2 compensates the zero-stuff loss.
+    /// One input sample -> two high-rate samples. ×2 compensates the zero-stuff loss.
     pub fn up(&mut self, x: f32) -> [f32; 2] {
         self.head_up = (self.head_up + 1) & MASK_UP;
         self.hist_up[self.head_up] = x;
         let head = self.head_up;
 
-        let ye = self.hc * self.hist_up[(head + 48) & MASK_UP];
+        let ye = self.hc * self.hist_up[(head + BUF_UP - M) & MASK_UP];
         let mut yo = 0.0f32;
-        for k in 0..16 {
-            let s_k = self.hist_up[(head + 64 - k) & MASK_UP];
-            let s_31_k = self.hist_up[(head + 33 + k) & MASK_UP];
-            yo += self.ho[k] * (s_k + s_31_k);
+        for k in 0..M {
+            let s_k = self.hist_up[(head + BUF_UP - k) & MASK_UP];
+            let s_mirror = self.hist_up[(head + BUF_UP + 1 + k - 2 * M) & MASK_UP];
+            yo += self.ho[k] * (s_k + s_mirror);
         }
         [2.0 * ye, 2.0 * yo]
     }
 
-    /// Two high-rate samples -> one base sample (lowpass + decimate by 2). The two
-    /// taps are pushed newest-last; the output keeps the even decimation phase
-    /// (`xhi[2n]`, = `hist_dn[k+1]`), which makes the up→down delay an integer
-    /// `(L-1)/2` base samples instead of a half-sample.
+    /// Two high-rate samples -> one output sample (lowpass + decimate by 2). The
+    /// two taps are pushed newest-last; the output keeps the even decimation
+    /// phase (`xhi[2n]`, = `hist_dn[k+1]`), which makes the up→down delay an
+    /// integer `(L-1)/2` output samples instead of a half-sample.
     pub fn down(&mut self, hi: [f32; 2]) -> f32 {
         let p0 = (self.head_dn + 1) & MASK_DN;
         let p1 = (self.head_dn + 2) & MASK_DN;
@@ -132,44 +149,60 @@ impl Os2x {
         self.head_dn = p1;
         let head = p1;
 
-        let mut y = self.hc * self.hist_dn[(head + 95) & MASK_DN];
-        // Odd tap k = 2j + 1 and its mirror 64 - k.
-        for j in 0..16 {
-            let s_a = self.hist_dn[(head + 126 - 2 * j) & MASK_DN];
-            let s_b = self.hist_dn[(head + 64 + 2 * j) & MASK_DN];
+        let mut y = self.hc * self.hist_dn[(head + BUF_DN - 1 - 2 * M) & MASK_DN];
+        // Odd tap k = 2j + 1 and its mirror 4M - k.
+        for j in 0..M {
+            let s_a = self.hist_dn[(head + BUF_DN - 2 - 2 * j) & MASK_DN];
+            let s_b = self.hist_dn[(head + BUF_DN + 2 * j - 4 * M) & MASK_DN];
             y += self.ho[j] * (s_a + s_b);
         }
         y
     }
 
-    /// Base-rate round-trip group delay of one 2× stage.
+    /// Round-trip group delay of this stage (`LATENCY`).
     pub fn latency_samples(&self) -> usize {
-        (L - 1) / 2 // 32 base samples (up + down each (L-1)/2 hi = (L-1)/2 base total)
+        Self::LATENCY
     }
 }
 
-impl Default for Os2x {
+impl HalfBand<OUTER_M> {
+    pub fn new() -> Self {
+        Self::with_taps(*OUTER_TAPS)
+    }
+}
+
+impl Default for HalfBand<OUTER_M> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// 4× = two 2× stages in series. The inner stage processes the 2×-rate stream
-/// sequentially (two `up`/`down` calls per outer sample) — it is one filter on a
-/// stream, NOT two parallel branches.
+impl HalfBand<INNER_M> {
+    fn new() -> Self {
+        Self::with_taps(*INNER_TAPS)
+    }
+}
+
+/// 4× = the long 2× stage, then the short inner stage. The inner stage
+/// processes the 2×-rate stream sequentially (two `up`/`down` calls per outer
+/// sample) — it is one filter on a stream, NOT two parallel branches.
 pub struct Os4x {
     a: Os2x,
-    b: Os2x,
-    db: Os2x,
+    b: InnerStage,
+    db: InnerStage,
     da: Os2x,
 }
 
 impl Os4x {
+    /// The outer stage's delay is in base samples; the inner stage's runs at
+    /// 2×, so it counts half. 32 + 7 = 39 base samples.
+    pub const LATENCY: usize = Os2x::LATENCY + InnerStage::LATENCY / 2;
+
     pub fn new() -> Self {
         Self {
             a: Os2x::new(),
-            b: Os2x::new(),
-            db: Os2x::new(),
+            b: InnerStage::new(),
+            db: InnerStage::new(),
             da: Os2x::new(),
         }
     }
@@ -185,9 +218,7 @@ impl Os4x {
         self.da.down([s0, s1]) // 2× -> base
     }
     pub fn latency_samples(&self) -> usize {
-        // outer 2× stage = (L-1)/2 base; inner 2× stage runs at 2× so its (L-1)/2
-        // hi-rate delay is (L-1)/4 base. Both integers because L ≡ 1 (mod 4).
-        (L - 1) / 2 + (L - 1) / 4
+        Self::LATENCY
     }
 }
 
@@ -197,12 +228,12 @@ impl Default for Os4x {
     }
 }
 
-/// 8× = three 2× stages in series (each inner stage processes its input stream
-/// sequentially, like `Os4x`).
+/// 8× = three long 2× stages in series (each inner stage processes its input
+/// stream sequentially, like `Os4x`).
 ///
-/// NOT on any current ship path — F5 fixed OS per tier (Low 2×, Best 4×) and
-/// dropped the OS-switch param. Retained + exercised by `tests/ladder_alias.rs`
-/// as the 8× alias-rejection reference and as headroom for a future 8× tier.
+/// NOT on any current ship path (Draft, Low and High run 2×, Best 4×).
+/// Retained + exercised by `tests/ladder_alias.rs` as the 8× alias-rejection
+/// reference and as headroom for a future 8× tier.
 pub struct Os8x {
     a: Os2x,
     b: Os2x,
@@ -248,7 +279,7 @@ impl Os8x {
         self.da.down([s0, s1]) // 2× -> base
     }
     pub fn latency_samples(&self) -> usize {
-        (L - 1) / 2 + (L - 1) / 4 + (L - 1) / 8
+        Os2x::LATENCY + Os2x::LATENCY / 2 + Os2x::LATENCY / 4
     }
 }
 
@@ -333,12 +364,17 @@ mod tests {
         );
     }
 
-    /// `Os2x` skips the even-offset taps, so the filter must stay half-band.
+    /// `HalfBand` skips the even-offset taps, so both filters must stay half-band.
     #[test]
     fn lowpass_is_half_band() {
-        let h = build_lp(8.0, 0.25);
-        for i in (0..L).step_by(2).filter(|&i| i != 32) {
-            assert!(h[i].abs() < 1e-12, "even tap {i} = {:e}", h[i]);
+        fn check<const N: usize>(beta: f64) {
+            let h = build_lp::<N>(beta, 0.25);
+            let c = (N - 1) / 2;
+            for i in (0..N).step_by(2).filter(|&i| i != c) {
+                assert!(h[i].abs() < 1e-12, "N={N}: even tap {i} = {:e}", h[i]);
+            }
         }
+        check::<{ 4 * OUTER_M + 1 }>(8.0);
+        check::<{ 4 * INNER_M + 1 }>(9.0);
     }
 }

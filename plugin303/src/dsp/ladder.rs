@@ -17,8 +17,26 @@ pub struct TptLadder {
 const HEADROOM: f32 = 8.0;
 
 /// Soft-clip: `H*tanh(x/H)` — `~x` near 0, asymptotic to `±H`.
+#[inline]
 fn sat(x: f32) -> f32 {
-    HEADROOM * (x / HEADROOM).tanh()
+    HEADROOM * fast_tanh(x / HEADROOM)
+}
+
+/// Where the [7/6] Padé approximant of `tanh` reaches 0.9999994; it would
+/// pass 1 at 4.9718.
+const TANH_CLAMP: f32 = 4.97;
+
+/// `tanh` from its [7/6] Padé approximant, clamped at `TANH_CLAMP`. Monotone
+/// and inside ±1. Absolute error below 1e-4 (largest at the clamp); for
+/// |x| < 1 it matches `tanh` to f32 rounding (approximant error < 1e-11), so
+/// the small-signal response is unchanged.
+#[inline]
+fn fast_tanh(x: f32) -> f32 {
+    let x = x.clamp(-TANH_CLAMP, TANH_CLAMP);
+    let x2 = x * x;
+    let num = x * (135_135.0 + x2 * (17_325.0 + x2 * (378.0 + x2)));
+    let den = 135_135.0 + x2 * (62_370.0 + x2 * (3_150.0 + 28.0 * x2));
+    num / den
 }
 
 impl TptLadder {

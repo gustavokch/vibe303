@@ -221,6 +221,7 @@ fn apply_plugin_patch(v: &mut plugin303::dsp::voice::Voice, comp_age: i32, env_m
         p.glide.value(),
         p.reso_comp.value(),
     );
+    v.set_vcf_brightness(p.vcf_brightness.value());
 }
 
 /// Renders `tier` at gold operating point `op` through the plugin's parameter

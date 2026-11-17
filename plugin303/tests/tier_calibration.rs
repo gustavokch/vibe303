@@ -4,7 +4,7 @@ use common::spectral_match;
 use plugin303::dsp::filter::{Filter303, Tier};
 use plugin303::dsp::ladder::TptLadder;
 use plugin303::dsp::ladder_wdf::LadderVcf;
-use plugin303::dsp::oversample::Os4x;
+use plugin303::dsp::oversample::{Os2x, Os4x};
 use plugin303::dsp::voice::Voice;
 use plugin303::dsp::voice::{BEST_OS_FACTOR, CIRCUIT_BRIGHT, DRAFT_OS_FACTOR};
 use plugin303::params::CircuitTopology;
@@ -221,9 +221,9 @@ fn test_voicing_parity_sweeps() {
 
     // Draft vs Best target: LSD <= 15.0 dB, corr >= 0.97.
     // Draft's maps (DRAFT_*_POLY) are fitted against Best at CIRCUIT_BRIGHT and
-    // at Draft's 4x filter rate: measured 12.37 dB / 0.982 (25.87 / 0.965 with
-    // the maps fitted against Best at brightness 1.0 and Draft at 1x). The
-    // budget guards that fit; a re-fit that loses it fails here.
+    // at a 4x Draft filter rate: measured 12.37 dB / 0.982 there, 13.24 / 0.982
+    // with Draft at 2x (a re-fit at 2x measured 14.07 / 0.981, so the 4x fit
+    // stays). The budget guards that fit; a re-fit that loses it fails here.
     assert!(
         lsd_draft <= 15.0,
         "Draft vs Best LSD ({:.2} dB) exceeds budget",
@@ -248,10 +248,10 @@ fn filter_peak_gain_db(tier: Tier, fc: f32, reso: f32) -> f32 {
             f.set_poles(4);
             f.set_cutoff(mapped_fc);
             f.set_reso(mapped_reso);
-            let mut os = Os4x::new();
+            let mut os = Os2x::new();
             Box::new(move |x| {
                 let up = os.up(x);
-                os.down([f.tick(up[0]), f.tick(up[1]), f.tick(up[2]), f.tick(up[3])])
+                os.down([f.tick(up[0]), f.tick(up[1])])
             })
         }
         _ => {

@@ -190,21 +190,19 @@ fn pre_clipper_rms(tier: Tier, note: u8, cutoff: f32, reso: f32) -> f32 {
     (acc / n as f64).sqrt() as f32
 }
 
-/// Re-derives `DRAFT_LEVEL_TRIM` (voice.rs): per resonance knot, the median
-/// Draft-vs-Best level over notes 33/45/57/69 × cutoffs 300/800/1500/3000 Hz,
+/// Re-derives a `*_LEVEL_TRIM` table (voice.rs): per resonance knot, the median
+/// tier-vs-Best level over notes 33/45/57/69 × cutoffs 300/800/1500/3000 Hz,
 /// before the output clipper. A matched table prints medians near 0.0 dB;
 /// otherwise multiply each knot's trim by the printed factor.
-#[test]
-#[ignore = "diagnostic: re-derive DRAFT_LEVEL_TRIM"]
-fn draft_level_trim_report() {
+fn level_trim_report(tier: Tier) {
     for (k, reso) in [0.0f32, 0.25, 0.5, 0.75, 1.0].into_iter().enumerate() {
         let mut dbs: Vec<f32> = [33u8, 45, 57, 69]
             .into_iter()
             .flat_map(|note| {
                 [300.0f32, 800.0, 1_500.0, 3_000.0].map(|fc| {
-                    let draft = pre_clipper_rms(Tier::Draft, note, fc, reso);
+                    let level = pre_clipper_rms(tier, note, fc, reso);
                     let best = pre_clipper_rms(Tier::Best, note, fc, reso);
-                    20.0 * (draft / best).log10()
+                    20.0 * (level / best).log10()
                 })
             })
             .collect();
@@ -212,11 +210,23 @@ fn draft_level_trim_report() {
         let median = 0.5 * (dbs[7] + dbs[8]);
         let within = dbs.iter().filter(|d| d.abs() <= 1.5).count();
         println!(
-            "knot {k} reso {reso:.2}: median {median:+.2} dB  factor {:.4}  \
+            "{tier:?} knot {k} reso {reso:.2}: median {median:+.2} dB  factor {:.4}  \
              range {:+.2}..{:+.2}  within ±1.5 dB {within}/16",
             10f32.powf(-median / 20.0),
             dbs[0],
             dbs[15]
         );
     }
+}
+
+#[test]
+#[ignore = "diagnostic: re-derive DRAFT_LEVEL_TRIM"]
+fn draft_level_trim_report() {
+    level_trim_report(Tier::Draft);
+}
+
+#[test]
+#[ignore = "diagnostic: re-derive LOW_LEVEL_TRIM"]
+fn low_level_trim_report() {
+    level_trim_report(Tier::Low);
 }

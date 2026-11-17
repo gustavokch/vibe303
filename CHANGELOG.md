@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.0] - Unreleased
 
 ### Added
+- FUN mode: a BRIGHT knob in ANALOG TWEAKS (`vcf_brightness`, 50–150%,
+  default 100%) scales every quality tier's calibrated filter corner: the
+  nodal ladders' brightness and Draft's cutoff. ACCURATE plays 100%.
 - Windows `x86_64` VST3 + CLAP build targets. New `build-plugins-windows`
   GitHub Actions workflow builds on a hosted `windows-latest` runner in two CPU
   variants (`x86-64-v3` AVX2, `x86-64-v2` compatibility), and
@@ -18,6 +21,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Phase 2 — TB-303 nih-plug voice design + implementation plan under `docs/plans/`.
 
 ### Changed
+- Draft and Low run their filters at 2x oversampling, like High (was 4x).
+  Per-voice cost in cycles drops 30% (Draft) and 40% (Low), to about 0.8% and
+  3.6% of one Apple Silicon core. Draft's TPT ladder saturates through a
+  rational `tanh` (absolute error below 1e-4). Both tiers keep their 4x-fitted
+  cutoff/resonance curves and Low its brightness (0.45): curves re-fitted at 2x
+  against Best's filter response left the voice no closer to Best (mean
+  spectral distance over 27 patches: Low 16.18 dB kept vs 15.33–20.97
+  re-fitted, depending on brightness; Draft 23.32 kept vs 23.94). The level
+  trims are re-derived at 2x.
+- `Os4x`'s inner 2x↔4x stage is a 29-tap half-band instead of the 65-tap one:
+  it only has to reject images and folds above 1.5·fs (−89 dB). Best costs
+  1.7% less, and its latency and the clipper's drop from 48 to 39 samples, so
+  the plugin reports 78 samples instead of 96. Best's audio is unchanged
+  (−76 dB difference after alignment); its SPICE spectral gate reads 2.24 dB
+  instead of 3.15 because the 0.2 s gold is latency-sensitive.
 - Per-voice CPU cost drops 22% (Draft), 27% (Low), 35% (High) and 35% (Best),
   measured in cycles: about 1.1%, 5.9%, 7.8% and 10.2% of one Apple Silicon core.
   The circuit VCO's JFET reset no longer falls back to the gmin homotopy:

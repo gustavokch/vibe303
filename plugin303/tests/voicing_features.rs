@@ -147,7 +147,7 @@ fn test_vca_gate_mode() {
         assert_eq!(v.tick(), 0.0);
     }
 
-    // Gate on -> output should be non-zero after a few samples (PDC delay is 48 samples)
+    // Gate on -> output should be non-zero after a few samples (past the PDC delay)
     v.set_gate(true, true, false, false);
     v.note_on(60);
 
@@ -163,8 +163,8 @@ fn test_vca_gate_mode() {
         "Expected non-zero output in Gate mode when gate is active"
     );
 
-    // Gate off -> output should return to 0.0 once the clipper's 48-sample
-    // dry-delay buffer is flushed with silence.
+    // Gate off -> output should return to 0.0 once the clipper's dry-delay
+    // buffer (`CLIPPER_LATENCY` samples) is flushed with silence.
     v.set_gate(false, false, false, false);
     for _ in 0..plugin303::dsp::warm_clipper::CLIPPER_LATENCY {
         v.tick();

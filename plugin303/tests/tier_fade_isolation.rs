@@ -19,7 +19,7 @@ const SWITCH_AT: usize = 2_400;
 const FADE_END: usize = SWITCH_AT + 600;
 
 /// A voice with a constant gate level (no amplitude envelope), the output
-/// clipper bypassed (pure 48-sample delay), osc2 off, and the given sub level
+/// clipper bypassed (a pure `CLIPPER_LATENCY`-sample delay), osc2 off, and the given sub level
 /// and resonance.
 fn voice(start: Tier, sub_vol: f32, resonance: f32) -> Voice {
     voice_on(start, sub_vol, resonance, CircuitTopology::Accurate)
@@ -104,7 +104,7 @@ fn incoming_tier_does_not_depend_on_outgoing_tier() {
     ] {
         let a = render_switch(from_a, to, 0.0, 0.3, total);
         let b = render_switch(from_b, to, 0.0, 0.3, total);
-        // +64: past the bypassed clipper's 48-sample delay line.
+        // +64: past the bypassed clipper's 39-sample delay line.
         let start = FADE_END + 64;
         let first_diff = (start..total).find(|&i| a[i].to_bits() != b[i].to_bits());
         assert!(

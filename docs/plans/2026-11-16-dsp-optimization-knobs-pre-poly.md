@@ -3,8 +3,8 @@
 **Goal:** list the remaining per-voice CPU knobs, with measured evidence, so the polyphony decision
 (voice count per tier, voice data layout) is made against the optimized cost rather than today's.
 
-**Status:** groups A and B implemented on `perf/pre-poly-knobs`; results in §6. Groups C and D are
-open.
+**Status:** groups A and B implemented on `perf/pre-poly-knobs` (results in §6); group C on
+`perf/tier-2x` (results in §7). Group D is open.
 
 **Supersedes:** the open candidates in `docs/profiling/cpu-profile-report.md` §6–7 and
 `2026-08-20-dsp-nodal-solver-optimization-plan.md`. Rejected ideas from those rounds are listed at the
@@ -200,3 +200,50 @@ renders are bit-identical to `main` before K2; High and Best differ by −125 to
   `emit_and_check_vco_lu` emits the new signature.
 - **K13** removed the dense LU from LUT builds (and the `dense_solver` flag). The dense solve stays as
   the fallback for a non-finite static step.
+
+## 7. Results: group C (2026-11-17)
+
+Implemented: K11 (Low at 2×), K12 (Draft at 2×), K9 (rational `tanh` in the TPT ladder), K7
+(29-tap inner `Os4x` stage). Every test binary passes (`cargo test --release -p plugin303`, 49
+binaries, 275 tests).
+
+### Cost per voice
+
+Same protocol as §6, against the §6 build (`d9f8202`):
+
+| Tier | Instructions | Cycles | % of one core per voice |
+|---|---|---|---|
+| Draft | 3.95e9 → 2.73e9 (−31%) | −30% | 1.15% → about 0.8% |
+| Low | 1.29e10 → 8.12e9 (−37%) | −40% | 5.9% → about 3.6% |
+| High | 1.95e10 → 1.95e10 (+0.2%) | −0.3% | 7.7% (unchanged) |
+| Best | 2.44e10 → 2.40e10 (−1.4%) | −1.7% | 10.1% → about 9.9% |
+
+### Calibration
+
+- **Curves kept.** `calibrate_vcf.py` re-fitted at 2× matches each tier's filter to Best's (Low:
+  0.4–1.5 dB response error instead of 6–9 dB with the July curves, which are close to identity).
+  The voice did not follow. Mean spectral distance to Best's voice over 27 patches (notes 33/45/57 ×
+  cutoff 400/1000/2500 Hz × reso 0.3/0.65/0.85): Low 16.60 (4×) → 16.18 (2×, kept curves) vs 20.97
+  (re-fitted at brightness 0.45) and 15.33–17.15 (re-fitted, brightness 0.20–0.35); Draft 23.15
+  (4×) → 23.32 (2×, kept) vs 23.94 (re-fitted). Low's darker brightness (0.45 vs Best's 0.70)
+  compensates its polyBLEP saw, which is brighter than the circuit saw; a filter-only fit undoes
+  that. A fit against Best's rendered voice would be needed to do better.
+- **Level trims** re-derived at 2× (`tier_levels::{draft,low}_level_trim_report`); medians 0.00 dB
+  at every knot. Low's spread is the same at 2× as at 4×.
+- **Gates:** `low_spectral` 12.48 → 15.36 dB (budget 16), `low_plugin_path` 12.46 → 13.73, Low vs
+  Best parity 11.70 → 11.99 dB (corr 0.995), Draft vs Best 12.36 → 13.24 dB (corr 0.982),
+  `voice_esr` 3.39 → 2.91 dB (budget 3.5), Draft headroom +0.47 / +2.07 dB (budget 3.5).
+- **The SPICE gold is latency-sensitive.** It is 0.2 s long, so a time shift of the render moves
+  its LSD by several dB. K7 cuts Best's latency from 48 to 39 samples and the clipper's by the same:
+  Best's audio is unchanged (−76 dB difference after an 18-sample alignment) but `best_spectral`
+  reads 2.24 dB instead of 3.15, and Low (already at 2×; K7 does not touch its path) 15.35 instead
+  of 12.25. Low's gate margin (0.64 dB) is mostly this shift.
+
+### What each knob turned out to be
+
+- **K7:** an L = 29, Kaiser β = 9 half-band reaches −89 dB above 1.42·fs (the 65-tap stage: −91
+  dB) with < 0.001 dB passband ripple. `Os4x` and `CLIPPER_LATENCY` are 39 samples instead of 48;
+  the plugin reports 78 instead of 96.
+- **K9:** a [7/6] Padé `tanh` clamped at 4.97; absolute error < 1e-4, f32-exact below |x| = 1.
+- **K11/K12:** `LOW_OS_FACTOR` and `DRAFT_OS_FACTOR` are 2; `vcf_sweep_helper` builds each tier's
+  oversampler from its factor.

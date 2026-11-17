@@ -1,9 +1,9 @@
 //! Low fidelity gate (F4.2, spectral).
 //!
-//! Low = polyBLEP saw → nodal diode-ladder VCF at 4× oversample. It skips the
+//! Low = polyBLEP saw → nodal diode-ladder VCF at 2× oversample. It skips the
 //! costly nodal circuit VCO (Best's dominant cost) but keeps the nonlinear
-//! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.959 at 4×)
-//! and Best (circuit VCO→ladder, corr 0.977) on the same spectral metric.
+//! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.949 at 2×)
+//! and Best (circuit VCO→ladder, corr 0.989) on the same spectral metric.
 //!
 //! Same Welch LSD + dB-spectrum-corr metric as Best (`tests/common/mod.rs`).
 //! The budget is necessarily looser than Best: the polyBLEP saw ≠ the circuit
@@ -11,13 +11,16 @@
 //! filter is identical. The gold-power-weighted LSD is large for any non-circuit
 //! saw (it concentrates on the gold's dominant bins), so Low's LSD lands far
 //! from Best's — but well below Draft's. Side-by-side at the gold op-point
-//! (`low_spectral_report`, note 57 / 1002 Hz / reso 0.85), Draft and Low at 4×:
-//!     Draft LSD 33.62 dB  corr 0.959
-//!     Low   LSD 12.47 dB  corr 0.978   <- between the two on both axes
-//!     Best  LSD  3.15 dB  corr 0.988
+//! (`low_spectral_report`, note 57 / 1002 Hz / reso 0.85), Draft and Low at 2×:
+//!     Draft LSD 35.69 dB  corr 0.949
+//!     Low   LSD 15.36 dB  corr 0.982   <- between the two on both axes
+//!     Best  LSD  2.24 dB  corr 0.989
+//! The 0.2 s gold makes these sensitive to the render's latency: the 4×
+//! latency cut from 48 to 39 samples alone moved Low from 12.25 dB and Best
+//! from 3.15 dB.
 //! The gate proves Low is a genuine fidelity step over Draft: the LSD budget
 //! sits below Draft's LSD, so a regression to the TPT path fails. Draft's corr
-//! (0.959) passes `CORR_MIN`, so corr alone does not discriminate.
+//! (0.949) passes `CORR_MIN`, so corr alone does not discriminate.
 
 mod common;
 
@@ -25,12 +28,12 @@ use common::{gold_dir, load_f32, load_gold_op, render_plugin_path, spectral_matc
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
 
-// Low at 4× re-tuned to brightness 0.45 ⇒ LSD 28.82 → 12.48 (`low_brightness_sweep`).
-// The optimum is a narrow dip (0.50 gives 28.82), so the budget guards the tuning.
-// Low uses the polyBLEP saw (not the circuit VCO), so its LSD floor is set by the
-// VCO mismatch, not the filter — this gate is a discriminator (Draft fails worse).
-const LSD_BUDGET_DB: f32 = 16.0; // achieved 12.48 dB (deterministic) + margin
-const CORR_MIN: f32 = 0.95; // achieved 0.978; Draft's 0.959 also passes, LSD discriminates
+// Low at 2× keeps brightness 0.45 ⇒ LSD 15.36 (0.40: 26.81, 0.50: 29.23,
+// `low_brightness_sweep`). The optimum is a narrow dip, so the budget guards the
+// tuning. Low uses the polyBLEP saw (not the circuit VCO), so its LSD floor is set
+// by the VCO mismatch, not the filter — this gate is a discriminator (Draft fails worse).
+const LSD_BUDGET_DB: f32 = 16.0; // achieved 15.36 dB (deterministic)
+const CORR_MIN: f32 = 0.95; // achieved 0.982; Draft's 0.949 also passes, LSD discriminates
 
 /// Renders Low the way the gate does. `cal: Some(c)` overrides the brightness;
 /// `None` plays the voice's own (`LOW_BRIGHT`).

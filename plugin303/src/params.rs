@@ -407,6 +407,9 @@ pub struct Plugin303Params {
     pub comp_drift: FloatParam,
     #[id = "recalibration_scale"]
     pub recalibration_scale: FloatParam,
+    /// FUN-only filter brightness: scales each tier's calibrated corner.
+    #[id = "vcf_brightness"]
+    pub vcf_brightness: FloatParam,
 
     #[id = "tolerance"]
     pub tolerance: EnumParam<CompTolerance>,
@@ -479,6 +482,7 @@ impl Plugin303Params {
                 | "comp_age"
                 | "comp_drift"
                 | "recalibration_scale"
+                | "vcf_brightness"
                 | "tolerance"
                 | "thermal_noise"
                 | "comp_seed" => false,
@@ -863,6 +867,12 @@ impl Default for Plugin303Params {
                 "Recalibration Scale",
                 1.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
+            )),
+
+            vcf_brightness: percent(FloatParam::new(
+                "VCF Brightness",
+                1.0,
+                FloatRange::Linear { min: 0.5, max: 1.5 },
             )),
 
             tolerance: EnumParam::new("Tolerance", CompTolerance::Zero),

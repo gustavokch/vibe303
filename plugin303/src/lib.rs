@@ -327,6 +327,8 @@ impl Plugin for Plugin303 {
             self.params.glide.value(),
             self.params.reso_comp.value(),
         );
+        self.voice
+            .set_vcf_brightness(self.params.vcf_brightness.value());
         self.voice.update_clipper_params(VoiceClipperParams {
             bypass: self.params.clipper_bypass.value(),
             os: self.params.clipper_os.value(),

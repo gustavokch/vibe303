@@ -112,7 +112,7 @@ circuit/vcf303.toml ──┤
 - **`dsp/ladder_wdf.rs`** — `LadderVcf`: nodal MNA diode-ladder VCF with Newton solver, active Q9 resonance (Low + High + Best tiers).
 - **`dsp/osc.rs`** — `Saw`: polyBLEP sawtooth oscillator (Draft + Low tiers).
 - **`dsp/vco.rs`** — `Vco303`: 21-node nodal relaxation oscillator modeling the circuit VCO (High + Best tiers). Per-note pitch LUT with process-global per-sr cache.
-- **`dsp/oversample.rs`** — `Os2x` / `Os4x` / `Os8x`: polyphase FIR (Kaiser-sinc L=65), zero-alloc.
+- **`dsp/oversample.rs`** — `HalfBand<M>` polyphase half-band stage (Kaiser-sinc, `L = 4M + 1`); `Os2x` (L=65), `Os4x` (L=65 outer + L=29 inner), `Os8x` (three L=65 stages, test reference only). Zero-alloc.
 - **`dsp/bjt.rs`** — Gummel-Poon NPN/PNP BJT model.
 - **`dsp/diode.rs`** — 1N4148 diode model with batched stamp.
 - **`dsp/jfet.rs`** — MPF104 JFET model.
@@ -126,16 +126,17 @@ circuit/vcf303.toml ──┤
 
 | Tier      | VCO                    | VCF                              | OS   | Cost         | Status                  |
 | --------- | ---------------------- | -------------------------------- | ---- | ------------ | ----------------------- |
-| **Draft** | polyBLEP saw           | TPT ladder                       | 4×   | ~1.1% core   | RT-viable, ships        |
-| **Low**   | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 4×   | ~6% core     | RT-viable               |
+| **Draft** | polyBLEP saw           | TPT ladder                       | 2×   | ~0.8% core   | RT-viable, ships        |
+| **Low**   | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 2×   | ~3.6% core   | RT-viable               |
 | **High**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 2×   | ~8% core     | RT-viable               |
 | **Best**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 4×   | ~10% core    | RT-viable               |
 
-Cost is one voice on Apple Silicon (`profile_voice --secs 20`, 2026-11-16); history and method in `docs/plans/2026-11-16-dsp-optimization-knobs-pre-poly.md`.
+Cost is one voice on Apple Silicon (`profile_voice --secs 20`, 2026-11-17); history and method in `docs/plans/2026-11-16-dsp-optimization-knobs-pre-poly.md`.
 
 - Oversampling is **tier-intrinsic** (not a separate param). Each tier's ladder is calibrated to its OS rate.
 - Tier switches use a **10 ms equal-power crossfade** (click-free). Mid-fade changes are queued (no clobbering).
-- **PDC** is constant across tiers — every tier is padded to the max OS group delay (Best's 4×), so the host never needs to re-init its graph.
+- **PDC** is constant across tiers — every tier is padded to the max OS group delay (Best's 4×, 39 samples), plus the clipper's 39, so the host sees 78 samples and never needs to re-init its graph.
+- **Draft and Low curves** (`DRAFT_*_POLY`, `LOW_*_POLY`, `LOW_BRIGHT`) were fitted at 4× and kept at 2×: re-fitting them to Best's *filter* response (`calibrate_vcf.py`) left the *voice* no closer to Best, because the polyBLEP saw is brighter than the circuit saw. FUN mode's BRIGHT dial (`vcf_brightness`) scales every tier's calibrated corner.
 
 ---
 
@@ -223,7 +224,7 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 
 2. **VCO pitch cal `CV_FIT` is fit to THIS solver** (not SPICE). Re-run `characterize_freq_cv` if the VCO solver changes.
 
-3. **Sample-exact ESR vs ngspice is NOT the acceptance gate** for Best. It's structurally unreachable for a real-time bespoke chain vs ngspice's adaptive solver. The gate is **spectral** (Welch LSD + dB-spectrum correlation).
+3. **Sample-exact ESR vs ngspice is NOT the acceptance gate** for Best. It's structurally unreachable for a real-time bespoke chain vs ngspice's adaptive solver. The gate is **spectral** (Welch LSD + dB-spectrum correlation). The gold is only 0.2 s, so the LSD moves several dB with the render's latency: an 18-sample latency cut moved Best from 3.15 to 2.24 dB with identical audio. Compare renders at equal alignment before reading a gate change as a sound change.
 
 4. **Calibrating Draft/TPT cutoff/reso to SPICE is a wash** — the gap is topological (polyBLEP + TPT vs circuit saw + diode ladder), not parametric. Draft's gate is a regression guard, not a fidelity target.
 
@@ -231,7 +232,7 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 
 6. **ADAA "at 2×" test ≈ 0 dB** (the 2× FIR already removes that alias). Test ADAA at 1× near Nyquist/2 (f0=11 kHz).
 
-7. **Oversampler FIR: L≡1 mod 4** for integer per-stage latency. Cascade stages process sequentially (single inner `Os2x`). Decimator reads even phase (`hist[k+1]`).
+7. **Oversampler FIR: L≡1 mod 4** for integer per-stage latency. Cascade stages process sequentially (one inner stage per direction, fed its stream in order). `Os4x`'s inner stage only needs to reject ≥ 1.5·fs, so it is a 29-tap half-band, not the 65-tap one. Decimator reads even phase (`hist[k+1]`).
 
 ### Python / ngspice
 
