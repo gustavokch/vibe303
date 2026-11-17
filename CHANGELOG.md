@@ -18,6 +18,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Phase 2 — TB-303 nih-plug voice design + implementation plan under `docs/plans/`.
 
 ### Changed
+- Per-voice CPU cost drops 22% (Draft), 27% (Low), 35% (High) and 35% (Best),
+  measured in cycles: about 1.1%, 5.9%, 7.8% and 10.2% of one Apple Silicon core.
+  The circuit VCO's JFET reset no longer falls back to the gmin homotopy:
+  Newton warm-starts from the previous cycle's reset and post-reset states,
+  and from a linear prediction on the ramp; a failed prediction is retried from
+  the previous state before the reset start. A ramp sample within about 0.5 mV
+  of the comparator fold can still reset one sample early (5 in 673k resets
+  over CV 2–9 at 44.1–192 kHz), about 0.002 samples from the continuous crossing.
+  The VCO and ladder Newton tolerances are looser (100×), the oversampler skips its half-band zero taps,
+  and `Voice::tick` sets oscillator and filter controls only for the tiers it
+  renders. The VCO pitch LUT build is 4.6× faster (it uses the real-time
+  solver instead of the dense LU). Spectral, resonance and pitch gates are
+  unchanged.
 - Quality tiers renamed in fidelity order: Draft (was Low), Low (was High),
   High (was Ultra 2x), Best (was Ultra). The GUI QUALITY switch, the host
   parameter value names, `render303 --tier` and `profile_voice --tier` use the
@@ -37,7 +50,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Low from 28.62 to 12.47 dB LSD; the Low gate budget tightens from 29 to
   16 dB. Draft and Low match Best's level through a resonance-dependent
   output trim, applied before the output clipper (median 0.0 dB vs Best at
-  every resonance point). Draft costs about 1.5% and Low about 8% of one core
+  every resonance point). Draft costs about 1.1% and Low about 5.9% of one core
   per voice at 48 kHz (was 0.9% and 4.5%).
 - Draft's cutoff and resonance maps (`DRAFT_FC_POLY`, `DRAFT_RESO_POLY`) are
   re-fitted against Best at its calibrated brightness (0.70) and at Draft's 4x

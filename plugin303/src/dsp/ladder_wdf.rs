@@ -67,14 +67,18 @@ const CAPS: [(usize, usize, f64); 4] = [
 const MAX_ITERS: usize = 50;
 /// Hard floor for Newton update convergence. Checked before the mixed
 /// absolute/relative tolerance so near-zero node voltages do not over-converge.
-const TOL: f64 = 1e-9;
-/// Absolute tolerance for convergence (document eq. 3.30: ε_abs). Recalibrated
-/// from 1e-11: node voltages are ~±10 V, so 1e-10 is far below audible need and
-/// still 10× tighter than the VCO's absolute floor.
-const TOL_ABS: f64 = 1e-10;
-/// Relative tolerance for convergence (document eq. 3.30: ε_rel). Recalibrated
-/// from 1e-9 (VCO uses 1e-7); guarded by the best_spectral LSD gate.
-const TOL_REL: f64 = 1e-8;
+///
+/// The three tolerances were 100× tighter. Newton converges quadratically, so
+/// the iterate before a step of size δ is already accurate to about δ, and the
+/// extra iteration the tight tolerances forced only confirmed it: 2.63 → 2.01
+/// solves per sample, spectral and resonance gates unchanged.
+const TOL: f64 = 1e-7;
+/// Absolute tolerance for convergence (document eq. 3.30: ε_abs). Node
+/// voltages are ~±10 V, so 1e-8 is far below audible need.
+const TOL_ABS: f64 = 1e-8;
+/// Relative tolerance for convergence (document eq. 3.30: ε_rel). Guarded by
+/// the best_spectral and low_spectral LSD gates.
+const TOL_REL: f64 = 1e-6;
 const DENORM: f64 = 1e-30;
 /// Always-on leakage so reverse-biased nodes never float the matrix.
 const GMIN_BASE: f64 = 1e-12;

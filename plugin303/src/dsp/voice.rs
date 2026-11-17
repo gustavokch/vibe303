@@ -272,6 +272,8 @@ pub struct Voice {
     drift_pitch_osc2: DriftGenerator,
     /// Accent decay integrator accumulator.
     accent_acc: f32,
+    /// Per-sample decay factor of `accent_acc` (200 ms time constant).
+    accent_decay: f32,
 
     // --- Classic 303 Envelope Chain ---
     /// Main Envelope Generator (pure exponential decay) — drives VCF cutoff
@@ -349,8 +351,8 @@ pub struct Voice {
     decay_knob: f32,
     /// Normalised Accent intensity knob setting.
     accent_knob_val: f32,
-    /// Master output volume (dB).
-    master_volume: f32,
+    /// Master output gain (linear, from the volume in dB).
+    master_gain: f32,
     /// Main VCF drive factor.
     drive: f32,
     /// Effective component age in [0, 100] (0 in ACCURATE).
@@ -372,6 +374,8 @@ pub struct Voice {
     /// Gate self-heating above ambient (°C), relaxing toward `SELF_HEAT_C`
     /// while gated and 0 otherwise (15 s / 30 s time constants).
     self_heat: f32,
+    /// Per-sample one-pole coefficients of `self_heat`: [gated, released].
+    self_heat_alpha: [f32; 2],
     /// Last VCO thermal step applied by `tick` (0..=21 step scale; -1 = unset).
     thermal_noise_state: i32,
     /// Last raw `thermal_noise` parameter applied to the ladder filters
@@ -511,6 +515,7 @@ impl Voice {
             drift_reso: DriftGenerator::new(2468),
             drift_pitch_osc2: DriftGenerator::new(3579),
             accent_acc: 0.0,
+            accent_decay: (-1.0 / (0.2 * sr)).exp(),
 
             meg_decay: DecayEnv::new(sr as f64),
             rc1: {
@@ -569,7 +574,7 @@ impl Voice {
             env_mod: 0.0,
             decay_knob: 0.5,
             accent_knob_val: 0.0,
-            master_volume: 0.0,
+            master_gain: 1.0,
             drive: 1.0,
             age: 0,
             tolerance: CompTolerance::Zero,
@@ -580,6 +585,10 @@ impl Voice {
             thermal_noise: 0,
             temperature: 20.0,
             self_heat: 0.0,
+            self_heat_alpha: [
+                1.0 - (-1.0 / (15.0 * sr)).exp(),
+                1.0 - (-1.0 / (30.0 * sr)).exp(),
+            ],
             thermal_noise_state: -1,
             ladder_thermal_state: -1,
             vca_env_mode: VcaEnvMode::Envelope,
@@ -874,7 +883,7 @@ impl Voice {
         self.env_mod = env_mod;
         self.decay_knob = decay_knob;
         self.accent_knob_val = accent_knob;
-        self.master_volume = volume_db;
+        self.master_gain = 10.0f32.powf(volume_db / 20.0);
         self.drive = 10.0f32.powf(final_drive_db / 20.0);
         self.vca_env_mode = final_vca_env_mode;
         self.advanced_env = final_advanced_env;
@@ -1433,8 +1442,7 @@ impl Voice {
         // Operating temperature: the NOISE ambient applies at once; the gate
         // self-heating follows slowly (15 s up, 30 s down).
         let heat_target = if self.gate { SELF_HEAT_C } else { 0.0 };
-        let tau = if self.gate { 15.0 } else { 30.0 };
-        let alpha = 1.0 - (-1.0 / (tau * self.sr)).exp();
+        let alpha = self.self_heat_alpha[usize::from(!self.gate)];
         self.self_heat += alpha * (heat_target - self.self_heat);
         self.temperature = ambient_temp_c(self.thermal_noise) + self.self_heat;
 
@@ -1490,14 +1498,28 @@ impl Voice {
                     + pitch_thermal_st)
                     / 12.0,
             );
-        self.osc.set_freq(osc1_f, self.sr);
-        self.osc_low.set_freq(osc1_f, self.sr);
-        self.vco.set_freq(osc1_f);
+        // Only the tiers rendered this sample (the active one, plus the
+        // outgoing one mid-fade) need their oscillator and filter controls: a
+        // tier gets them again on the first sample it renders.
+        let renders = |t: Tier| self.tier == t || self.xfade_from == Some(t);
+        let draft_on = renders(Tier::Draft);
+        let low_on = renders(Tier::Low);
+        let high_on = renders(Tier::High);
+        let best_on = renders(Tier::Best);
 
         let sub_f = osc1_f * 0.5;
-        self.sub_osc.set_freq(sub_f, self.sr);
-        self.sub_osc_low.set_freq(sub_f, self.sr);
-        self.sub_osc_circuit.set_freq(sub_f, self.sr);
+        if draft_on {
+            self.osc.set_freq(osc1_f, self.sr);
+            self.sub_osc.set_freq(sub_f, self.sr);
+        }
+        if low_on {
+            self.osc_low.set_freq(osc1_f, self.sr);
+            self.sub_osc_low.set_freq(sub_f, self.sr);
+        }
+        if high_on || best_on {
+            self.vco.set_freq(osc1_f);
+            self.sub_osc_circuit.set_freq(sub_f, self.sr);
+        }
 
         if self.osc2_vol > 0.0 {
             let osc2_f = 440.0
@@ -1509,9 +1531,15 @@ impl Voice {
                         + pitch_thermal_st)
                         / 12.0,
                 );
-            self.osc2.set_freq(osc2_f, self.sr);
-            self.osc2_low.set_freq(osc2_f, self.sr);
-            self.vco2.set_freq(osc2_f);
+            if draft_on {
+                self.osc2.set_freq(osc2_f, self.sr);
+            }
+            if low_on {
+                self.osc2_low.set_freq(osc2_f, self.sr);
+            }
+            if high_on || best_on {
+                self.vco2.set_freq(osc2_f);
+            }
         }
 
         // --- 2. Filter Cutoff Modulation ---
@@ -1522,8 +1550,7 @@ impl Voice {
         let reso_drift_val = self.drift_reso.tick(0.05, self.sr);
         let reso_drift_factor = 1.0 + reso_drift_val * 0.03 * self.drift;
 
-        let acc_decay_coeff = (-1.0 / (0.2 * self.sr)).exp();
-        self.accent_acc *= acc_decay_coeff;
+        self.accent_acc *= self.accent_decay;
 
         let final_cutoff_hz = if self.advanced_env {
             // Modulate filter decay using same scaled knob mapping
@@ -1573,25 +1600,31 @@ impl Voice {
         let final_reso = (self.reso_knob * reso_drift_factor).clamp(0.0, 1.0);
         self.final_reso = final_reso;
 
-        // Apply to filters
+        // Apply to the rendered tiers' filters
         let log2_cutoff = (final_cutoff_hz as f64).log2();
-        let (draft_fc, draft_reso) = Self::map_draft_vcf(log2_cutoff, final_reso);
-        let draft_fc =
-            (draft_fc as f64 * self.draft_cutoff_mult).clamp(20.0, (self.sr * 0.45) as f64);
-        // The raw Draft reso can exceed 1.0 at high cutoff. The age multiplier must
-        // scale that raw value before the clamp, not an already-clamped 1.0.
-        let draft_reso = (draft_reso * self.draft_reso_mult as f32).clamp(0.0, 1.0);
-
-        let (low_fc, low_reso) = Self::map_low_vcf(log2_cutoff, final_reso);
-        let low_fc = (low_fc as f64).clamp(20.0, (self.sr * 0.45) as f64);
-        self.filter.set_cutoff(draft_fc as f32);
-        self.filter.set_reso(draft_reso);
-        self.ladder_low.set_cutoff(low_fc as f32);
-        self.ladder_low.set_reso(low_reso);
-
-        for ladder in [&mut self.ladder_high, &mut self.ladder_best] {
-            ladder.set_cutoff(final_cutoff_hz as f32);
-            ladder.set_reso(final_reso);
+        if draft_on {
+            let (draft_fc, draft_reso) = Self::map_draft_vcf(log2_cutoff, final_reso);
+            let draft_fc =
+                (draft_fc as f64 * self.draft_cutoff_mult).clamp(20.0, (self.sr * 0.45) as f64);
+            // The raw Draft reso can exceed 1.0 at high cutoff. The age multiplier must
+            // scale that raw value before the clamp, not an already-clamped 1.0.
+            let draft_reso = (draft_reso * self.draft_reso_mult as f32).clamp(0.0, 1.0);
+            self.filter.set_cutoff(draft_fc as f32);
+            self.filter.set_reso(draft_reso);
+        }
+        if low_on {
+            let (low_fc, low_reso) = Self::map_low_vcf(log2_cutoff, final_reso);
+            let low_fc = (low_fc as f64).clamp(20.0, (self.sr * 0.45) as f64);
+            self.ladder_low.set_cutoff(low_fc as f32);
+            self.ladder_low.set_reso(low_reso);
+        }
+        if high_on {
+            self.ladder_high.set_cutoff(final_cutoff_hz);
+            self.ladder_high.set_reso(final_reso);
+        }
+        if best_on {
+            self.ladder_best.set_cutoff(final_cutoff_hz);
+            self.ladder_best.set_reso(final_reso);
         }
 
         // --- 3. Render Tier audio ---
@@ -1664,10 +1697,7 @@ impl Voice {
         // master fader. Thus volume changes never alter drive or sidechain state.
         let clipped = self.clipper.tick(f * vca_gain);
 
-        // Master Output volume db
-        let master_gain = 10.0f32.powf(self.master_volume / 20.0);
-
-        clipped * master_gain
+        clipped * self.master_gain
     }
 
     pub fn set_cutoff(&mut self, hz: f32) {
