@@ -23,7 +23,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The circuit VCO's JFET reset no longer falls back to the gmin homotopy:
   Newton warm-starts from the previous cycle's reset and post-reset states,
   and from a linear prediction on the ramp; a failed prediction is retried from
-  the previous state before the reset start, so no ramp sample resets early.
+  the previous state before the reset start. A ramp sample within about 0.5 mV
+  of the comparator fold can still reset one sample early (5 in 673k resets
+  over CV 2–9 at 44.1–192 kHz), about 0.002 samples from the continuous crossing.
   The VCO and ladder Newton tolerances are looser (100×), the oversampler skips its half-band zero taps,
   and `Voice::tick` sets oscillator and filter controls only for the tiers it
   renders. The VCO pitch LUT build is 4.6× faster (it uses the real-time

@@ -66,9 +66,14 @@ const MAX_ITERS: usize = 100;
 /// so the cap bounds what that failed attempt wastes (was `MAX_ITERS`).
 const FAST_MAX_ITERS: usize = 40;
 /// Iteration cap of the plain-start retry after a failed prediction attempt.
-/// A ramp sample the prediction missed converges from the previous state in
-/// ≤ 16 iterations (CV 4.5–8.5, 44.1–96 kHz); a real reset never does, so the
-/// cap bounds what each reset wastes here.
+/// A ramp sample the prediction missed usually converges from the previous
+/// state in a few iterations, but Newton slows without bound as CP nears the
+/// fold where the ramp root vanishes (CP ≈ 5.491 V). A sample within about
+/// 0.5 mV of it can miss any cap and take the reset start one sample early,
+/// when the continuous crossing is about 0.002 samples away: 5 in 673k resets
+/// over CV 2–9 at 44.1–192 kHz, all at CV ≥ 7.3. A cap of 40 still left 3 and
+/// cost 5% more iterations. A real reset never converges here, so the cap
+/// bounds what each reset wastes.
 const RETRY_MAX_ITERS: usize = 20;
 /// The linear warm-start prediction follows a sample that converged in at most
 /// this many iterations. After a harder sample (fast post-reset recovery) the
@@ -1238,7 +1243,9 @@ impl Vco303 {
         let cp = self.v[CP];
         let ramp_step = (self.v_prev[CP] - cp).abs();
         if let Some(v0) = self.v_reset {
-            if cp - self.cp_trip < 2.0 * ramp_step {
+            // After a reset `v_reset` is `self.v`, which the plain start just
+            // tried with the same cap: rerunning it cannot converge.
+            if !self.after_reset && cp - self.cp_trip < 2.0 * ramp_step {
                 match self.newton(base_a, base_rhs, v0, vp, FAST_MAX_ITERS) {
                     Some((v, it)) if v[CP] - cp > CP_RESET_DELTA => return Ok((v, spent + it)),
                     Some((_, it)) => spent += it,
