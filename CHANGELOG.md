@@ -18,12 +18,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Phase 2 — TB-303 nih-plug voice design + implementation plan under `docs/plans/`.
 
 ### Changed
-- Per-voice CPU cost drops 24% (Draft), 27% (Low), 36% (High) and 37% (Best),
+- Per-voice CPU cost drops 24% (Draft), 27% (Low), 35% (High) and 36% (Best),
   measured in cycles: about 1.2%, 6%, 8% and 10% of one Apple Silicon core.
   The circuit VCO's JFET reset no longer falls back to the gmin homotopy:
   Newton warm-starts from the previous cycle's reset and post-reset states,
-  and from a linear prediction on the ramp. The VCO and ladder Newton
-  tolerances are looser (100×), the oversampler skips its half-band zero taps,
+  and from a linear prediction on the ramp; a failed prediction is retried from
+  the previous state before the reset start, so no ramp sample resets early.
+  The VCO and ladder Newton tolerances are looser (100×), the oversampler skips its half-band zero taps,
   and `Voice::tick` sets oscillator and filter controls only for the tiers it
   renders. The VCO pitch LUT build is 4.6× faster (it uses the real-time
   solver instead of the dense LU). Spectral, resonance and pitch gates are

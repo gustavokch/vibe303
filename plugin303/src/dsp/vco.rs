@@ -65,6 +65,11 @@ const MAX_ITERS: usize = 100;
 /// a reset in 38 from a cold start; a reset from the ramp start never converges,
 /// so the cap bounds what that failed attempt wastes (was `MAX_ITERS`).
 const FAST_MAX_ITERS: usize = 40;
+/// Iteration cap of the plain-start retry after a failed prediction attempt.
+/// A ramp sample the prediction missed converges from the previous state in
+/// ≤ 16 iterations (CV 4.5–8.5, 44.1–96 kHz); a real reset never does, so the
+/// cap bounds what each reset wastes here.
+const RETRY_MAX_ITERS: usize = 20;
 /// The linear warm-start prediction follows a sample that converged in at most
 /// this many iterations. After a harder sample (fast post-reset recovery) the
 /// prediction overshoots and the plain previous state is the better start.
@@ -1186,16 +1191,19 @@ impl Vco303 {
     /// Newton at gmin = 0 from the best start this sample has. `Ok` holds the
     /// solution, `Err` the iterations spent before the gmin homotopy takes over.
     ///
-    /// The ramp converges from the previous state, or from its linear
-    /// prediction after a smooth sample. The JFET reset jumps to a second branch:
-    /// Newton from the pre-reset state never converges there (each reset used
-    /// to fall to the homotopy, ~180 iterations), but the last cycle's reset
-    /// state converges to the same root in 2. The sample after a reset takes 38
-    /// iterations from the reset state and 2–3 from the last cycle's post-reset
-    /// state. The post-reset branch coexists with the ramp (the comparator's
-    /// hysteresis), so the reset start is tried only after the ramp start
-    /// failed, within two ramp steps of the last trip level, and kept only if it
-    /// is a reset; anything else falls to the homotopy as before.
+    /// The ramp converges from its linear prediction after a smooth sample, or
+    /// from the previous state. The prediction can overshoot and miss within the
+    /// cap, so a failed prediction is followed by the plain previous state
+    /// (`RETRY_MAX_ITERS`) before anything else. The JFET reset jumps to a
+    /// second branch: Newton from the pre-reset state never converges there
+    /// (each reset used to fall to the homotopy, ~180 iterations), but the last
+    /// cycle's reset state converges to the same root in 2. The sample after a
+    /// reset takes 38 iterations from the reset state and 2–3 from the last
+    /// cycle's post-reset state. The post-reset branch coexists with the ramp
+    /// (the comparator's hysteresis), so the reset start is tried last: only
+    /// after the prediction and the plain start both failed, within two ramp
+    /// steps of the last trip level, and kept only if it is a reset; anything
+    /// else falls to the homotopy as before.
     fn solve_fast(
         &self,
         base_a: &[[f64; NU]; NU],
@@ -1211,15 +1219,21 @@ impl Vco303 {
                 }
             }
         }
-        let mut v0 = self.v;
+        let mut plain_cap = FAST_MAX_ITERS;
         if self.predict {
+            plain_cap = RETRY_MAX_ITERS;
+            let mut v0 = self.v;
             for (x, &prev) in v0.iter_mut().zip(&self.v_prev) {
                 *x = 2.0 * *x - prev;
             }
+            match self.newton(base_a, base_rhs, v0, vp, FAST_MAX_ITERS) {
+                Some((v, it)) => return Ok((v, spent + it)),
+                None => spent += FAST_MAX_ITERS as u32,
+            }
         }
-        match self.newton(base_a, base_rhs, v0, vp, FAST_MAX_ITERS) {
+        match self.newton(base_a, base_rhs, self.v, vp, plain_cap) {
             Some((v, it)) => return Ok((v, spent + it)),
-            None => spent += FAST_MAX_ITERS as u32,
+            None => spent += plain_cap as u32,
         }
         let cp = self.v[CP];
         let ramp_step = (self.v_prev[CP] - cp).abs();
@@ -1451,6 +1465,10 @@ impl Vco303 {
 mod tests {
     use super::*;
 
+    /// Relative bound between the static no-pivot LU and the dense partial-pivot
+    /// solve. Independent of the Newton `TOL`: the measured error is ~1e-9.
+    const LU_REL_BOUND: f64 = 1e-8;
+
     #[test]
     fn test_g_mults_updated() {
         let mut vco = Vco303::new(48000.0);
@@ -1524,7 +1542,7 @@ mod tests {
             "  structural nnz : {nnz}/{}  factored L+U : {fnnz}",
             NU * NU
         );
-        eprintln!("  worst |natural − dense| rel : {worst_err:.2e} (vs TOL {TOL:.0e})");
+        eprintln!("  worst |natural − dense| rel : {worst_err:.2e} (vs {LU_REL_BOUND:.0e})");
         eprintln!("  worst growth factor         : {worst_growth:.2e}");
 
         let mut s = String::new();
@@ -1576,12 +1594,11 @@ mod tests {
         let path = std::env::temp_dir().join("vco_lu_gen.rs");
         std::fs::write(&path, &s).unwrap();
         eprintln!("  wrote {}", path.display());
-        // Safe iff the no-pivot error is ≪ the Newton TOL it feeds (1e-7), so it
-        // can't perturb convergence. Margin ~90× here (growth factor 1.0).
+        // The no-pivot error must stay far below `TOL` so it cannot perturb
+        // convergence; the bound is fixed so loosening `TOL` never loosens it.
         assert!(
-            worst_err < 0.1 * TOL,
-            "VCO no-pivot unsafe: rel err {worst_err:.2e} vs 0.1·TOL {:.0e}",
-            0.1 * TOL
+            worst_err < LU_REL_BOUND,
+            "VCO no-pivot unsafe: rel err {worst_err:.2e} vs {LU_REL_BOUND:.0e}"
         );
     }
 
@@ -1617,10 +1634,9 @@ mod tests {
                 }
             }
         }
-        // ≪ Newton TOL (1e-7): the static solve cannot perturb convergence.
         assert!(
-            worst < 0.1 * TOL,
-            "vco static LU diverged: rel err {worst:.2e}"
+            worst < LU_REL_BOUND,
+            "vco static LU diverged: rel err {worst:.2e} vs {LU_REL_BOUND:.0e}"
         );
     }
 

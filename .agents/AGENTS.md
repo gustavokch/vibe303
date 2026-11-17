@@ -227,7 +227,7 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 
 4. **Calibrating Draft/TPT cutoff/reso to SPICE is a wash** — the gap is topological (polyBLEP + TPT vs circuit saw + diode ladder), not parametric. Draft's gate is a regression guard, not a fidelity target.
 
-5. **The VCO's post-reset branch coexists with the ramp.** Newton from the last reset's state converges on almost every ramp sample, to the wrong root (a premature reset). `Vco303::solve_fast` tries that start only after the ramp start fails, near the last trip level, and keeps it only if CP jumps. Keep that order when touching the VCO solver.
+5. **The VCO's post-reset branch coexists with the ramp.** Newton from the last reset's state converges on almost every ramp sample, to the wrong root (a premature reset). `Vco303::solve_fast` tries the starts in this order: the linear prediction, then the plain previous state, and only then the reset start, near the last trip level, kept only if CP jumps. Skipping the plain retry resets a sample early whenever the prediction needs more than 40 iterations. Keep that order when touching the VCO solver.
 
 6. **ADAA "at 2×" test ≈ 0 dB** (the 2× FIR already removes that alias). Test ADAA at 1× near Nyquist/2 (f0=11 kHz).
 
