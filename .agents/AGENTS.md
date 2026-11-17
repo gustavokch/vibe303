@@ -127,13 +127,13 @@ circuit/vcf303.toml ──┤
 | Tier      | VCO                    | VCF                              | OS   | Cost         | Status                  |
 | --------- | ---------------------- | -------------------------------- | ---- | ------------ | ----------------------- |
 | **Draft** | polyBLEP saw           | TPT ladder                       | 2×   | ~0.8% core   | RT-viable, ships        |
-| **Low**   | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 2×   | ~3.6% core   | RT-viable               |
+| **Low**   | polyBLEP saw           | Nodal diode-ladder (`LadderVcf`) | 2×   | ~3.5% core   | RT-viable               |
 | **High**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 2×   | ~8% core     | RT-viable               |
 | **Best**  | Circuit VCO (`Vco303`) | Nodal diode-ladder (`LadderVcf`) | 4×   | ~10% core    | RT-viable               |
 
 Cost is one voice on Apple Silicon (`profile_voice --secs 20`, 2026-11-17); history and method in `docs/plans/2026-11-16-dsp-optimization-knobs-pre-poly.md`.
 
-- Oversampling is **tier-intrinsic** (not a separate param). Each tier's ladder is calibrated to its OS rate.
+- Oversampling is **tier-intrinsic** (not a separate param). High and Best ladders are calibrated at their OS rate; Draft and Low keep curves fitted at 4x and run at 2x.
 - Tier switches use a **10 ms equal-power crossfade** (click-free). Mid-fade changes are queued (no clobbering).
 - **PDC** is constant across tiers — every tier is padded to the max OS group delay (Best's 4×, 39 samples), plus the clipper's 39, so the host sees 78 samples and never needs to re-init its graph.
 - **Draft and Low curves** (`DRAFT_*_POLY`, `LOW_*_POLY`, `LOW_BRIGHT`) were fitted at 4× and kept at 2×: re-fitting them to Best's *filter* response (`calibrate_vcf.py`) left the *voice* no closer to Best, because the polyBLEP saw is brighter than the circuit saw. FUN mode's BRIGHT dial (`vcf_brightness`) scales every tier's calibrated corner.

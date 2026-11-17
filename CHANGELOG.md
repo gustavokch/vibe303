@@ -22,8 +22,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - Draft and Low run their filters at 2x oversampling, like High (was 4x).
-  Per-voice cost in cycles drops 30% (Draft) and 40% (Low), to about 0.8% and
-  3.6% of one Apple Silicon core. Draft's TPT ladder saturates through a
+  Per-voice cost in cycles drops 29% (Draft) and 40% (Low), to about 0.8% and
+  3.5% of one Apple Silicon core. Draft's TPT ladder saturates through a
   rational `tanh` (absolute error below 1e-4). Both tiers keep their 4x-fitted
   cutoff/resonance curves and Low its brightness (0.45): curves re-fitted at 2x
   against Best's filter response left the voice no closer to Best (mean

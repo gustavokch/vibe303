@@ -26,7 +26,7 @@ fn sat(x: f32) -> f32 {
 /// pass 1 at 4.9718.
 const TANH_CLAMP: f32 = 4.97;
 
-/// `tanh` from its [7/6] Padé approximant, clamped at `TANH_CLAMP`. Monotone
+/// `tanh` from its [7/6] Padé approximant, clamped at `TANH_CLAMP`. Monotone up to f32 rounding (dips of at most 8 ULP)
 /// and inside ±1. Absolute error below 1e-4 (largest at the clamp); for
 /// |x| < 1 it matches `tanh` to f32 rounding (approximant error < 1e-11), so
 /// the small-signal response is unchanged.

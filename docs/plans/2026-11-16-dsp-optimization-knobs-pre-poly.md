@@ -205,7 +205,7 @@ renders are bit-identical to `main` before K2; High and Best differ by −125 to
 
 Implemented: K11 (Low at 2×), K12 (Draft at 2×), K9 (rational `tanh` in the TPT ladder), K7
 (29-tap inner `Os4x` stage). Every test binary passes (`cargo test --release -p plugin303`, 49
-binaries, 275 tests).
+binaries, 277 tests).
 
 ### Cost per voice
 
@@ -237,7 +237,7 @@ Same protocol as §6, against the §6 build (`d9f8202`):
   its LSD by several dB. K7 cuts Best's latency from 48 to 39 samples and the clipper's by the same:
   Best's audio is unchanged (−76 dB difference after an 18-sample alignment). The gates first
   skipped a literal 48 samples, so `best_spectral` read 2.24 dB instead of 3.15 and `low_spectral`
-  15.35 instead of 12.25 (margin 0.64 dB) from the misalignment alone. They now skip the voice's
+  15.36 instead of 12.25 (margin 0.64 dB) from the misalignment alone. They now skip the voice's
   reported `latency_samples()` (78) and no longer move with latency: Best 1.64 dB (plugin path
   1.95), Low 13.78 dB (plugin path 12.99, margin 2.22 dB), Draft 35.36 dB. Brightness sweeps under
   the aligned gates: Low's optimum stays at 0.45 (13.78 dB; 0.40: 26.35, 0.50: 27.46), Best is flat
