@@ -42,7 +42,7 @@ jobs:
       # macOS SDK is needed so coreaudio-sys etc. can link the system frameworks.
       MACOSX_SDK_VERSION: "14.5"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust (+ macOS arm64 target)
         uses: dtolnay/rust-toolchain@stable
@@ -115,7 +115,7 @@ jobs:
           ( cd "$RUNNER_TEMP" && zip -r "$OUT.zip" "$OUT" )
           echo "ZIP=$RUNNER_TEMP/$OUT.zip" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.BUNDLE_NAME }}-macos-arm64
           path: ${{ env.ZIP }}
@@ -127,7 +127,7 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -141,7 +141,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.tag }}
