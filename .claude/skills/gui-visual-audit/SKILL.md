@@ -83,11 +83,12 @@ dimensions as given.
 | `advanced.png` | ADV ENV on: both ADSR banks enabled |
 | `running.png` | running, playhead pinned on step 04, a REST step |
 | `running_note.png` | running, every step NOTE: the playhead over a lit gate |
-| `knobs.png` | TUNING +25 ct (bipolar, off its detent), CUTOFF 0.75 |
+| `knobs.png` | TUNING +25 ct (bipolar, off its detent), CUTOFF 0.75, BRIGHT 75% (below its neutral 100%) |
 | `quality_low.png` | QUALITY LOW |
 | `generator.png` | every generator field off its default, SLD CHAIN on |
-| `knob_extremes.png` | knob extremes: PITCH1 -24 st, PITCH2 +24 st, IN -18 dB, OUT +18 dB, TILT -6 dB, TUNING -100 ct |
+| `knob_extremes.png` | knob extremes: PITCH1 -24 st, PITCH2 +24 st, IN -18 dB, OUT +18 dB, TILT -6 dB, TUNING -100 ct, BRIGHT 150% |
 | `clipper_off.png` | OUTPUT CLIPPER disabled (`clipper_bypass` true) |
+| `len12.png` | LEN 12: steps 13-16 are past the loop |
 
 `quality_high` and `quality_best` exist in `QaState`, but neither script
 renders them; capture them by hand when a round needs them.
@@ -97,7 +98,7 @@ list what the set does not cover and put it in the report. Standing gaps:
 hover, press and keyboard focus; open ComboBox and piano-roll popups; the SQR
 and SWP waves; TIE under the playhead; CALIBRATE when a rebuild is due or a
 trim runs; SYNTH MUTE, MIDI ON, LINK off; QUALITY HIGH and BEST; ADV ENV in
-ACCURATE.
+ACCURATE; WAVE SWP stored in ACCURATE; DRIFT and RECAL off their defaults.
 
 ## Phase 2 — Measure
 
@@ -116,8 +117,9 @@ to read:
 
 - **`panels`**: 10 cards, every gutter 6 px, the seam at x 1614 | 1620.
   Anything else is layout drift.
-- **`knobs`**: 27 knobs. A mismatch, or a fill origin that
-  contradicts the parameter's range, is a value/position defect.
+- **`knobs`**: 28 knobs, 7 LARGE and 21 MEDIUM (19 in `accurate`). A mismatch,
+  or a fill origin that contradicts the parameter's range, is a value/position
+  defect.
 - **`accent`**: a disabled control loses the accent by design. The finding
   is orange on a disabled control, or no orange where an enabled selection
   exists.

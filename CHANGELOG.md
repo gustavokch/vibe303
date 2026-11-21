@@ -132,6 +132,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   when due, CONFIRM CLEAR) also lighten under the pointer, and CLEAR lifts on
   hover like the other actions. The piano roll title is in the word face.
   New QA states `knob_extremes` and `clipper_off`.
+- Editor (round-23 GUI audit): WAVE shows only what the voice plays. In FUN it
+  is disabled and says on hover that the SWEEP knob sets the waveform; in
+  ACCURATE the SWP segment cannot be picked and says that it plays SAW. Steps
+  past LEN stay editable but go grey: ACC, SLD, NOTE and TIE lose their
+  colour, the step number, pitch and arrows dim, and the LED slot is not
+  drawn. BRIGHT fills from 100%, left towards 50% and right towards 150%, and
+  draws no arc at 100% (it drew half a ring). DRIFT, RECAL and BRIGHT are
+  MEDIUM knobs like the other device banks, and the ANALOG TWEAKS field
+  column is as wide as its label and field. A disabled knob value is light
+  grey like the other disabled values. Toggles, unselected segments, unlit
+  ACC and SLD flags, the octave arrows and the piano roll's close button
+  darken while pressed, and a knob stays lifted for the whole drag. The
+  status line shows `CALIBRATING` brighter than `CALIBRATED`. NOISE shows the
+  parameter's own text, the string the host shows (`Off`, then the ambient
+  temperature, `30.0°C` at 50), not a percentage, and takes a typed
+  temperature. The AGE, NOISE and CMP SEED tooltips say what the field does,
+  and CUTOFF has a tooltip that says what its Hz readout names. New QA state
+  `len12`; `knobs` and `knob_extremes` move BRIGHT off 100%.
 - ANALOG TWEAKS CALIBRATE is a manual trim. AGE, TOL and CMP SEED now change
   the components at once in every tier, and the circuit VCOs keep the pitch
   trim of the last CALIBRATE, so the component pitch error is audible (and the
