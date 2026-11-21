@@ -48,9 +48,13 @@ impl BlepOsc {
         self.sweep_pos = pos.clamp(0.0, 1.0);
     }
 
+    /// Falls from +1 to -1 over the cycle and jumps up at the wrap, like the
+    /// circuit VCO's `o_r` ramp. The pulse is high from the wrap, while the
+    /// saw is high, so the two are in phase as in `Vco303` and SWEEP morphs
+    /// the same way on every tier.
     fn saw_value(&self, phase: f32) -> f32 {
-        let mut v = 2.0 * phase - 1.0; // naive saw
-        v -= poly_blep(phase, self.inc); // correct transition at 0/1
+        let mut v = 1.0 - 2.0 * phase; // naive saw
+        v += poly_blep(phase, self.inc); // correct transition at 0/1
         v
     }
 
