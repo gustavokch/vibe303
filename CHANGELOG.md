@@ -192,19 +192,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   square on High and Best changes with it: 50% high instead of 46%, and no DC.
 - The circuit VCO (High and Best) aliased at its JFET reset. The solver jumps
   at the first sample past the reset and overshoots on the next, and the BLEP
-  sat at a fixed mid-sample position, sized for a 1.46 V step where the
-  solver's jump is about 0.68 V. Those two samples are now rebuilt from the
-  ramp after the crossing, and the jump takes a two-sided two-tap BLEP at the
-  crossing, predicted a sample ahead from the CP ramp and a bracket of the
-  fold where the reset trips, learned from the resets. The square's edges use
-  the same timing. Inharmonic energy of the saw at 48 kHz drops from -19.6 to
-  -40.0 dB at C5, -16.4 to -34.7 dB at C6 and -13.8 to -30.0 dB at C7; an ideal
-  two-tap BLEP saw reads -39.9, -36.4 and -33.9 dB, and the rest is the
-  solver's own period jitter (0.03–0.05 samples). The solver, and so the
-  pitch, is unchanged. The Best spectral gate reads 1.80 dB LSD (was 1.64,
-  budget 4.0): the SPICE gold is point-sampled, so it keeps the naive saw's
-  aliasing, and the LSD demeans over every bin; at each render's best offset
-  both read 1.61 dB.
+  sat at a fixed mid-sample position, sized for a 1.12 V step (2.92 V after
+  `VCO_GAIN`) where the solver's jump is about 0.68 V. Those two samples are
+  now rebuilt from the ramp after the crossing, and the jump takes a
+  two-sided two-tap BLEP at the crossing, predicted a sample ahead from the CP
+  ramp and a bracket of the fold where the reset trips, learned from the
+  resets. The square's edges use the same timing. Inharmonic energy of the saw
+  at 48 kHz drops from -19.6 to -40.0 dB at C5, -16.4 to -34.7 dB at C6 and
+  -13.8 to -30.0 dB at C7; an ideal two-tap BLEP saw reads -39.9, -36.4 and
+  -33.9 dB, and the rest is the solver's own period jitter (0.03–0.05
+  samples). The solver, and so the pitch, is unchanged. The Best spectral gate
+  reads 1.80 dB LSD (was 1.64, budget 4.0): the SPICE gold is point-sampled,
+  so it keeps the naive saw's aliasing, and the LSD demeans over every bin; at
+  each render's best offset both read 1.61 dB.
 - The 12th (Triplet) sequencer rate played steps of 3/8 beat (8/3 steps per
   beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
   12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of
