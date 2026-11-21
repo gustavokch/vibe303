@@ -2,7 +2,7 @@
 
 mod gui_common;
 
-use gui_common::{text_runs, DummyGuiContext, EnvGuard, Rig, ENV_LOCK};
+use gui_common::{fill_under, text_runs, DummyGuiContext, EnvGuard, Rig, ENV_LOCK};
 use nih_plug::prelude::{BoolParam, ParamSetter};
 use nih_plug_egui::egui::{self, vec2, Rect, Ui};
 use plugin303::dsp::generator::GeneratorParams;
@@ -13,7 +13,7 @@ use plugin303::gui::panels::{
 };
 use plugin303::gui::widgets::toggle::TOGGLE_H;
 use plugin303::gui::{
-    split_columns, BANK_ROW_H, GUI_WIDTH, HEADER_BAR_H, MARGIN, TWEAKS_H, VOICE_ROW_H,
+    split_columns, theme, BANK_ROW_H, GUI_WIDTH, HEADER_BAR_H, MARGIN, TWEAKS_H, VOICE_ROW_H,
 };
 use plugin303::params::Plugin303Params;
 use std::collections::HashSet;
@@ -126,6 +126,66 @@ fn accurate_envelopes_explain_that_adv_env_is_fun_only() {
         top_controls::ADV_ENV_ACCURATE_HINT,
         9,
     );
+}
+
+/// The rect of the painted text `s`.
+fn painted(texts: &[(String, Rect)], s: &str) -> Rect {
+    texts
+        .iter()
+        .find(|(t, _)| t == s)
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("{s:?} is not painted; on screen: {texts:?}"))
+}
+
+/// In FUN the voice ignores WAVE (the SWEEP knob sets the waveform). The
+/// switch is disabled, says so on hover, and its selection drops the accent:
+/// it was drawn live (round-23 #1).
+#[test]
+fn fun_wave_explains_why_it_is_inert() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
+    let params = Plugin303Params::default(); // FUN, WAVE SAW
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    let mut rig = Rig::new(vec2(left_column_width(), VOICE_ROW_H + TOOLTIP_ROOM));
+    let mut add = |ui: &mut Ui| top_controls::render_voice_panel(ui, &params, &setter);
+    assert_disabled_controls_explain(&mut rig, &mut add, top_controls::WAVE_FUN_HINT, 1);
+
+    let shapes = rig.shapes(&mut add);
+    let saw = painted(&text_runs(&shapes), "SAW");
+    assert_eq!(
+        fill_under(&shapes, saw),
+        Some(theme::SURFACE_HOVER),
+        "the disabled selection keeps its position without the accent"
+    );
+}
+
+/// ACCURATE plays SAW for SWP. The segment cannot be picked and says so on
+/// hover; SAW and SQR stay live and do not show that text (round-23 #1).
+#[test]
+fn accurate_swp_explains_that_it_plays_saw() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("VIBE303_QA_STATE", "accurate");
+    let params = Plugin303Params::default(); // WAVE SAW
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    let mut rig = Rig::new(vec2(left_column_width(), VOICE_ROW_H + TOOLTIP_ROOM));
+    let mut add = |ui: &mut Ui| top_controls::render_voice_panel(ui, &params, &setter);
+
+    let shapes = rig.shapes(&mut add);
+    let texts = text_runs(&shapes);
+    let (saw, swp) = (painted(&texts, "SAW"), painted(&texts, "SWP"));
+    assert_eq!(fill_under(&shapes, saw), Some(theme::ACCENT_ORANGE), "SAW");
+    assert_eq!(fill_under(&shapes, swp), Some(theme::WELL_BG), "SWP");
+
+    let hint = top_controls::WAVE_SWP_HINT;
+    let on_swp = rig.hover(swp, &mut add);
+    assert!(
+        on_swp.iter().any(|t| t == hint),
+        "SWP does not show {hint:?}; on screen: {on_swp:?}"
+    );
+    let on_saw = rig.hover(saw, &mut add);
+    assert!(!on_saw.iter().any(|t| t == hint), "SAW shows the SWP hint");
 }
 
 /// For each enabled control the device draws: its rect and the text that

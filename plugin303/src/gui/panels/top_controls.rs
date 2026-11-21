@@ -15,6 +15,17 @@ pub const ADV_ENV_OFF_HINT: &str = "Turn on ADV ENV to edit the MEG and VEG enve
 /// Hover text of the ADV ENV tile and the ADSR faders in ACCURATE.
 pub const ADV_ENV_ACCURATE_HINT: &str =
     "ADV ENV applies to FUN mode only. Set TOPOLOGY to FUN to use it.";
+/// Hover text of WAVE in FUN, where the voice ignores it (round-23 #1).
+pub const WAVE_FUN_HINT: &str =
+    "WAVE applies to ACCURATE mode. In FUN, the SWEEP knob sets the waveform.";
+/// Hover text of the SWP segment in ACCURATE, which has no sweep wave.
+pub const WAVE_SWP_HINT: &str =
+    "ACCURATE has no sweep wave: SWP plays SAW. In FUN, the SWEEP knob morphs saw to square.";
+/// Hover text of CUTOFF: what its Hz readout names.
+pub const CUTOFF_HINT: &str = "Filter cutoff. The readout is the calibrated corner: ADV ENV \
+                               changes its range, BRIGHT and AGE move the played corner around it.";
+/// Index of SWP among the WAVE options.
+const WAVE_SWP: usize = 2;
 
 /// Envelope Generators:
 /// - MEG ADSR: Modulation Envelope Generator (modulates VCF cutoff filter modulation)
@@ -60,10 +71,18 @@ pub fn render_voice_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamS
         |_| {},
         |body_ui| {
             body_ui.horizontal_top(|ui| {
-                ui.add(
-                    SlideSwitch::new(&params.waveform, setter, "WAVE", &["SAW", "SQR", "SWP"])
-                        .vertical(),
-                );
+                // The voice reads WAVE in ACCURATE only. FUN forces the sweep
+                // oscillator, whose shape the SWEEP knob sets, and ACCURATE
+                // plays SAW for SWP (`Voice::update_params`).
+                let is_accurate = params.topology.value() == CircuitTopology::Accurate;
+                ui.add_enabled_ui(is_accurate, |ui| {
+                    ui.add(
+                        SlideSwitch::new(&params.waveform, setter, "WAVE", &["SAW", "SQR", "SWP"])
+                            .vertical()
+                            .lock_option(WAVE_SWP, WAVE_SWP_HINT),
+                    )
+                    .on_disabled_hover_text(WAVE_FUN_HINT);
+                });
                 ui.add_space(4.0);
                 ui.separator();
                 ui.add_space(4.0);
@@ -92,7 +111,8 @@ pub fn render_voice_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamS
                             params.cutoff.unmodulated_plain_value(),
                             params.topology.value(),
                             params.advanced_env.value(),
-                        )),
+                        ))
+                        .tooltip(CUTOFF_HINT),
                 );
                 render_knob(Knob303::new(
                     &params.resonance,

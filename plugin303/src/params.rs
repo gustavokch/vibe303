@@ -479,6 +479,7 @@ impl Plugin303Params {
                 | "veg_sustain"
                 | "veg_release"
                 | "vca_env_mode"
+                | "reso_comp"
                 | "comp_age"
                 | "comp_drift"
                 | "recalibration_scale"
@@ -509,6 +510,7 @@ pub(crate) enum QaState {
     Generator,
     Knobs,
     KnobExtremes,
+    Len12,
     QualityBest,
     QualityHigh,
     QualityLow,
@@ -526,6 +528,7 @@ impl QaState {
             "generator" => Self::Generator,
             "knobs" => Self::Knobs,
             "knob_extremes" => Self::KnobExtremes,
+            "len12" => Self::Len12,
             "quality_best" => Self::QualityBest,
             "quality_high" => Self::QualityHigh,
             "quality_low" => Self::QualityLow,
@@ -578,11 +581,20 @@ impl Default for Plugin303Params {
         let default_advanced_env = qa_state == Some(QaState::Advanced);
 
         // QA capture state only: `knobs` starts with one bipolar knob off its
-        // centre detent and one unipolar knob off its default so the
-        // range-derived arc polarity (round-13 issue 1) is verifiable in a
-        // screenshot. Shipped defaults stay 0.0 ct / 0.5.
+        // centre detent, one unipolar knob off its default and BRIGHT off its
+        // neutral 100%, so the arc's origin (round-13 issue 1, round-23 #4) is
+        // verifiable in a screenshot. `knob_extremes` puts the knobs with the
+        // longest readouts at a limit. Shipped defaults stay 0.0 ct / 0.5 /
+        // 100%.
         let qa_knobs = qa_state == Some(QaState::Knobs);
         let qa_knob_extremes = qa_state == Some(QaState::KnobExtremes);
+        let default_vcf_brightness = if qa_knob_extremes {
+            1.5
+        } else if qa_knobs {
+            0.75
+        } else {
+            1.0
+        };
         let default_tuning = if qa_knob_extremes {
             -100.0
         } else if qa_knobs {
@@ -604,6 +616,14 @@ impl Default for Plugin303Params {
             } else {
                 (0.0, 0.0, 0.0)
             };
+
+        // QA capture state only: `len12` ends the loop at step 12, so steps
+        // 13-16 render as steps past LEN (round-23 #3).
+        let default_seq_length = if qa_state == Some(QaState::Len12) {
+            12
+        } else {
+            16
+        };
 
         let default_clipper_bypass = qa_state == Some(QaState::ClipperOff);
         let default_tier = match qa_state {
@@ -685,7 +705,11 @@ impl Default for Plugin303Params {
             )
             .with_unit(" BPM"),
 
-            seq_length: IntParam::new("Seq Length", 16, IntRange::Linear { min: 1, max: 16 }),
+            seq_length: IntParam::new(
+                "Seq Length",
+                default_seq_length,
+                IntRange::Linear { min: 1, max: 16 },
+            ),
 
             seq_mode: EnumParam::new("Seq Mode", SequencerMode::DirectGrid),
             seq_timebase: EnumParam::new("Seq Timebase", Timebase::Straight),
@@ -871,7 +895,7 @@ impl Default for Plugin303Params {
 
             vcf_brightness: percent(FloatParam::new(
                 "VCF Brightness",
-                1.0,
+                default_vcf_brightness,
                 FloatRange::Linear { min: 0.5, max: 1.5 },
             )),
 

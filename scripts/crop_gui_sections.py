@@ -124,6 +124,7 @@ def process_all_states(qa_dir: Path):
         "knobs",
         "knob_extremes",
         "clipper_off",
+        "len12",
         "quality_low",
         "generator",
     ]:

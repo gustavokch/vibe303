@@ -14,6 +14,7 @@ pub struct Knob303<'a, P: Param> {
     accent_color: Option<nih_plug_egui::egui::Color32>,
     value_text: Option<String>,
     tooltip: Option<&'a str>,
+    neutral: Option<f32>,
 }
 
 impl<'a, P: Param> Knob303<'a, P> {
@@ -26,6 +27,7 @@ impl<'a, P: Param> Knob303<'a, P> {
             accent_color: None,
             value_text: None,
             tooltip: None,
+            neutral: None,
         }
     }
 
@@ -52,6 +54,14 @@ impl<'a, P: Param> Knob303<'a, P> {
     /// R-COMP, DYN), so their knobs carry one (round-20 #11).
     pub fn tooltip(mut self, text: &'a str) -> Self {
         self.tooltip = Some(text);
+        self
+    }
+
+    /// Plain value the fill starts from, for a range around a neutral setting
+    /// above zero (BRIGHT: 100% of 50..150%). At that value the knob draws no
+    /// arc, like a bipolar knob on its detent.
+    pub fn neutral(mut self, plain: f32) -> Self {
+        self.neutral = Some(plain);
         self
     }
 }
@@ -104,7 +114,10 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
                 p.set_fade_to_color(None);
                 p
             };
-            let is_hovered = response.hovered();
+            // The body lifts under the pointer and stays lifted for the whole
+            // drag, when the pointer has left it. It does not drop while
+            // pressed: SURFACE_PRESSED is 1.13:1 on the panel.
+            let is_lifted = response.hovered() || response.is_pointer_button_down_on();
 
             // 1. Flat dial, Ableton style: a thin value ring around a flat
             // body disc with a pointer line. No outline, no ticks, no bezel.
@@ -126,11 +139,10 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
                     .collect()
             };
 
-            // 2. Value ring: full-sweep track, then the active fill. Polarity
-            // comes from the parameter's range: a bipolar range (plain minimum
-            // < 0, e.g. TUNING / PITCH / dB trims) fills outward from the
-            // normalized position of 0.0; a unipolar range fills from the
-            // minimum (round-13 issue 1).
+            // 2. Value ring: full-sweep track, then the active fill. The fill
+            // starts at the neutral value: the one the knob was given, else
+            // 0.0 of a bipolar range (plain minimum < 0, e.g. TUNING / PITCH /
+            // dB trims), else the minimum (round-13 issue 1, round-23 #4).
             painter.add(Shape::line(
                 arc_points(0.0, 1.0),
                 Stroke::new(arc_w, theme::KNOB_TRACK),
@@ -140,12 +152,17 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             } else {
                 theme::TEXT_MUTED
             };
-            let zero_norm = self.param.preview_normalized(0.0);
-            let is_bipolar = self.param.preview_plain(0.0) < 0.0;
-            let (fill_from, fill_to) = if is_bipolar {
-                (zero_norm.min(normalized), zero_norm.max(normalized))
-            } else {
-                (0.0_f32, normalized)
+            let origin = match self.neutral {
+                Some(plain) => Some(plain),
+                None if self.param.preview_plain(0.0) < 0.0 => Some(0.0),
+                None => None,
+            };
+            let (fill_from, fill_to) = match origin {
+                Some(plain) => {
+                    let origin_norm = self.param.preview_normalized(plain);
+                    (origin_norm.min(normalized), origin_norm.max(normalized))
+                }
+                None => (0.0_f32, normalized),
             };
             if fill_to - fill_from > 0.001 {
                 painter.add(Shape::line(
@@ -155,7 +172,7 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
             }
 
             // 3. Body disc and pointer.
-            let body_fill = if is_hovered && is_enabled {
+            let body_fill = if is_lifted && is_enabled {
                 theme::KNOB_BODY_HOVER
             } else {
                 theme::KNOB_BODY
@@ -223,7 +240,12 @@ impl<'a, P: Param<Plain = f32>> Widget for Knob303<'a, P> {
                 nih_plug_egui::egui::Align2::CENTER_CENTER,
                 value_str,
                 FontId::new(8.0, FontFamily::Monospace),
-                theme::TEXT_PRIMARY,
+                // A disabled value reads like a Readout or a fader value.
+                if is_enabled {
+                    theme::TEXT_PRIMARY
+                } else {
+                    theme::TEXT_SECONDARY
+                },
             );
         }
 

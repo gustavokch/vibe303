@@ -4,7 +4,7 @@ use nih_plug_egui::egui::{
     Sense, Stroke, Ui, Widget,
 };
 
-use crate::gui::theme;
+use crate::gui::theme::{self, Pointer};
 
 /// Segment height. One height for every segmented control keeps the rows they
 /// sit in aligned.
@@ -72,17 +72,43 @@ fn segment_corners(i: usize, n: usize, vertical: bool) -> CornerRadius {
     }
 }
 
-/// Fill and text colour for one segment.
-fn segment_colors(selected: bool, hovered: bool, enabled: bool) -> (Color32, Color32) {
+/// Fill and text colour for one segment. `pointer` is the pointer on this
+/// segment; a selected or disabled segment does not answer it.
+fn segment_colors(selected: bool, pointer: Pointer, enabled: bool) -> (Color32, Color32) {
     match (selected, enabled) {
         (true, true) => (theme::ACCENT_ORANGE, theme::TEXT_ON_ACCENT),
         // Disabled selection keeps its position without claiming the accent.
         (true, false) => (theme::SURFACE_HOVER, theme::TEXT_SECONDARY),
-        (false, true) if hovered => (theme::SURFACE_HOVER, theme::TEXT_PRIMARY),
-        (false, true) => (theme::SURFACE_ELEVATED, theme::TEXT_SECONDARY),
+        (false, true) => (
+            theme::raised_fill(pointer),
+            if pointer == Pointer::Away {
+                theme::TEXT_SECONDARY
+            } else {
+                theme::TEXT_PRIMARY
+            },
+        ),
         // The well plane shows on the header strips where every disabled bar
         // sits; SURFACE_PRESSED was the strip's own colour (round-22 #10).
         (false, false) => (theme::WELL_BG, theme::TEXT_MUTED),
+    }
+}
+
+/// The pointer on segment `i` of a bar: the bar has one response, so the
+/// pointer's state belongs to the segment under it and no other.
+fn segment_pointer(
+    response: &Response,
+    slot_at: &impl Fn(Pos2) -> usize,
+    i: usize,
+    enabled: bool,
+) -> Pointer {
+    let under = response
+        .interact_pointer_pos()
+        .or(response.hover_pos())
+        .map(slot_at);
+    if enabled && under == Some(i) {
+        Pointer::of(response)
+    } else {
+        Pointer::Away
     }
 }
 
@@ -178,14 +204,13 @@ fn render_hsegment_row(
             }
         }
 
-        let hovered_idx = if is_enabled {
-            response.hover_pos().map(slot_at)
-        } else {
-            None
-        };
         for (i, opt) in options.iter().enumerate() {
             let seg = slot_rect(i);
-            let (fill, text) = segment_colors(i == current_idx, hovered_idx == Some(i), is_enabled);
+            let (fill, text) = segment_colors(
+                i == current_idx,
+                segment_pointer(&response, &slot_at, i, is_enabled),
+                is_enabled,
+            );
             painter.rect_filled(seg, segment_corners(i, num_opts, false), fill);
             painter.text(
                 seg.center(),
@@ -246,6 +271,7 @@ pub struct SlideSwitch<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> {
     is_vertical: bool,
     fixed_width: Option<f32>,
     caption: Caption,
+    locked: Option<(usize, &'a str)>,
 }
 
 impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> SlideSwitch<'a, T> {
@@ -263,6 +289,7 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> SlideSwitch<'a, T> {
             is_vertical: false,
             fixed_width: None,
             caption: Caption::Above,
+            locked: None,
         }
     }
 
@@ -283,6 +310,13 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> SlideSwitch<'a, T> {
     /// Stack the options vertically, each with a waveform glyph.
     pub fn vertical(mut self) -> Self {
         self.is_vertical = true;
+        self
+    }
+
+    /// Option `idx` cannot be picked: it takes the disabled paint and shows
+    /// `hint` on hover. Vertical variant only.
+    pub fn lock_option(mut self, idx: usize, hint: &'a str) -> Self {
+        self.locked = Some((idx, hint));
         self
     }
 }
@@ -319,10 +353,13 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 ((rel_y / (SLOT_H + SEG_GAP)).floor() as usize).min(num_opts - 1)
             };
 
+            let locked_idx = self.locked.map(|(idx, _)| idx);
             if response.clicked() || response.dragged() {
                 if let Some(mouse_pos) = response.interact_pointer_pos() {
                     let target_idx = slot_at(mouse_pos);
-                    if target_idx != current_idx || response.clicked() {
+                    if Some(target_idx) != locked_idx
+                        && (target_idx != current_idx || response.clicked())
+                    {
                         set_index(self.setter, self.param, target_idx);
                         response.mark_changed();
                     }
@@ -345,11 +382,6 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                     },
                 );
 
-                let hovered_idx = if is_enabled {
-                    response.hover_pos().map(slot_at)
-                } else {
-                    None
-                };
                 for (i, opt) in self.options.iter().enumerate() {
                     let seg = Rect::from_min_size(
                         pos2(
@@ -358,8 +390,12 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                         ),
                         vec2(width, SLOT_H),
                     );
-                    let (fill, text) =
-                        segment_colors(i == current_idx, hovered_idx == Some(i), is_enabled);
+                    let live = is_enabled && Some(i) != locked_idx;
+                    let (fill, text) = segment_colors(
+                        i == current_idx,
+                        segment_pointer(&response, &slot_at, i, live),
+                        live,
+                    );
                     painter.rect_filled(seg, segment_corners(i, num_opts, true), fill);
                     draw_wave_glyph(&painter, i, pos2(seg.left() + 13.0, seg.center().y), text);
                     painter.text(
@@ -372,8 +408,14 @@ impl<'a, T: nih_plug::prelude::Enum + PartialEq + 'static> Widget for SlideSwitc
                 }
             }
 
+            if let Some((idx, hint)) = self.locked {
+                if ui.is_enabled() && response.hover_pos().map(slot_at) == Some(idx) {
+                    response = response.on_hover_text(hint);
+                }
+            }
             return response;
         }
+        debug_assert!(self.locked.is_none(), "lock_option needs .vertical()");
 
         render_hsegment_row(
             ui,
@@ -457,9 +499,9 @@ mod tests {
     /// keeps its position but drops to a neutral fill.
     #[test]
     fn disabled_selection_is_neutral() {
-        let (fill, _) = segment_colors(true, false, false);
+        let (fill, _) = segment_colors(true, Pointer::Away, false);
         assert_ne!(fill, theme::ACCENT_ORANGE);
-        let (fill, _) = segment_colors(true, false, true);
+        let (fill, _) = segment_colors(true, Pointer::Away, true);
         assert_eq!(fill, theme::ACCENT_ORANGE);
     }
 
@@ -471,7 +513,7 @@ mod tests {
     fn disabled_segments_show_on_their_planes() {
         let floor = theme::contrast_ratio(theme::PANEL_HEADER_BG, theme::PANEL_BG);
         for selected in [true, false] {
-            let (fill, _) = segment_colors(selected, false, false);
+            let (fill, _) = segment_colors(selected, Pointer::Away, false);
             for plane in [theme::PANEL_HEADER_BG, theme::PANEL_BG] {
                 let ratio = theme::contrast_ratio(fill, plane);
                 assert!(
@@ -479,6 +521,20 @@ mod tests {
                     "selected={selected} on {plane:?}: {ratio:.2} < {floor:.2}"
                 );
             }
+        }
+    }
+
+    /// An unselected segment answers the pointer on three planes; the
+    /// selected one keeps the accent (round-23 #8: a pressed segment kept the
+    /// hover fill).
+    #[test]
+    fn unselected_segment_shows_rest_hover_and_press() {
+        let fill = |selected, pointer| segment_colors(selected, pointer, true).0;
+        assert_eq!(fill(false, Pointer::Away), theme::SURFACE_ELEVATED);
+        assert_eq!(fill(false, Pointer::Over), theme::SURFACE_HOVER);
+        assert_eq!(fill(false, Pointer::Down), theme::SURFACE_PRESSED);
+        for pointer in [Pointer::Away, Pointer::Over, Pointer::Down] {
+            assert_eq!(fill(true, pointer), theme::ACCENT_ORANGE);
         }
     }
 }

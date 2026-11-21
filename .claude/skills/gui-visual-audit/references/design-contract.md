@@ -28,8 +28,12 @@ Depth comes from five neutral planes and nothing else, darkest to lightest:
 | `SURFACE_ELEVATED` | a raised control at rest: buttons, tiles, unselected segments, the knob body |
 
 Hover lifts a raised control to `SURFACE_HOVER`; press drops it to
-`SURFACE_PRESSED`. A hovered well lifts to `SURFACE_PRESSED` too: lighter
-than the well, still below the raised plane.
+`SURFACE_PRESSED` (`theme::raised_fill`): actions, toggle tiles, unselected
+segments, unlit step pills and the octave tiles answer both. A lit fill
+returns to its resting fill while pressed. The knob body is the exception:
+it lifts under the pointer and stays lifted for the whole drag, because
+`SURFACE_PRESSED` is 1.13:1 on the body. A hovered well lifts to
+`SURFACE_PRESSED` too: lighter than the well, still below the raised plane.
 
 - **No outlines, no shadows, no gradients.** Every widget state has
   `bg_stroke = NONE`. The only line in the UI is the separator: 1 pt
@@ -56,15 +60,15 @@ than the well, still below the raised plane.
 
 | Colour | Role, and only this role |
 |---|---|
-| `ACCENT_ORANGE` | live state: value arcs, fader fills, a toggle's LED when on (RUN's LED bar while the sequencer runs), the selected segment, lit actions (ENABLE FUN MODE, CALIBRATE when a rebuild is due, CONFIRM CLEAR while armed), a lit ACC step, the playhead LED, the active key of the piano roll. As text only in the CALIBRATE status line when a rebuild is due (`tweaks_panel.rs`) |
+| `ACCENT_ORANGE` | live state: value arcs, fader fills, a toggle's LED when on (RUN's LED bar while the sequencer runs), the selected segment, lit actions (ENABLE FUN MODE, CALIBRATE when a rebuild is due, CONFIRM CLEAR while armed), a lit ACC step in the loop, the playhead LED, the active key of the piano roll. As text only in the CALIBRATE status line when a rebuild is due (`tweaks_panel.rs`) |
 | `ACCENT_ORANGE_HOVER` | a hovered lit tile, toggle LED or ACC step |
-| `ACCENT_BLUE` | a lit SLD step. Nothing else |
+| `ACCENT_BLUE` | a lit SLD step in the loop. Nothing else |
 | `ACCENT_BLUE_HOVER` | a hovered lit SLD step. Nothing else |
 | `GATE_NOTE_FILL` > `GATE_TIE_FILL` > `WELL_BG` | NOTE > TIE > REST gate brightness, neutral on purpose so orange and blue stay free |
 | `TEXT_ON_ACCENT` | text on every light fill: orange, blue, NOTE |
-| `TEXT_PRIMARY` | values, readouts, the knob pointer, the playing step number, the label of an on or hovered toggle, the label of an action at rest, the piano roll's title and its active or hovered row label, the app bar's SYNTH OFF status |
-| `TEXT_SECONDARY` | captions, labels, an unselected segment's label, the text on an unlit step pill, an off toggle's label at rest |
-| `TEXT_MUTED` | disabled text and marks, REST text |
+| `TEXT_PRIMARY` | values, readouts, the knob pointer, the playing step number, the label of an on or hovered toggle, the label of an action at rest, the piano roll's title and its active or hovered row label, the app bar's SYNTH OFF status, the CALIBRATING status while a trim runs |
+| `TEXT_SECONDARY` | captions, labels, an unselected segment's label, the text on an unlit step pill, an off toggle's label at rest, a disabled value |
+| `TEXT_MUTED` | disabled text and marks, REST text, the number, pitch and clear flags of a step past LEN |
 
 A third hue, orange that means something other than "live", or blue anywhere
 but SLD is drift.
@@ -104,10 +108,10 @@ The custom widgets clear the fade (`set_fade_to_color(None)`) and paint:
 | Widget | Disabled paint |
 |---|---|
 | Segment: selected / on | `SURFACE_HOVER` fill, `TEXT_SECONDARY` text. Keeps its position, never orange |
-| Segment: unselected / off | `WELL_BG` fill, `TEXT_MUTED` text. Every disabled bar sits in a header strip, and `WELL_BG` shows there (1.30:1); `SURFACE_PRESSED` was the strip's own colour (1.01:1) |
+| Segment: unselected / off | `WELL_BG` fill, `TEXT_MUTED` text. A disabled bar sits in a header strip, where `WELL_BG` shows at 1.30:1 (`SURFACE_PRESSED` was the strip's own colour, 1.01:1), or on the body (WAVE in FUN, 1.21:1) |
 | Toggle: on | `WELL_BG` tile, `TEXT_MUTED` LED and text |
 | Toggle: off | `WELL_BG` tile; the `WELL_BG` LED slot merges into it; `TEXT_MUTED` text |
-| Knob | arc, pointer and label `TEXT_MUTED`; the value stays `TEXT_PRIMARY` |
+| Knob | arc, pointer and label `TEXT_MUTED`; the value `TEXT_SECONDARY`, like a Readout and a fader value. A disabled card holds no `TEXT_PRIMARY` (`gui_text_contrast.rs`) |
 | Fader | fill `TEXT_MUTED`, value `TEXT_SECONDARY` |
 | DevicePanel `.dimmed(true)` | title `TEXT_SECONDARY` |
 | Readout (`widgets/readout.rs`) | always `WELL_BG` well, `TEXT_SECONDARY` 9 pt monospace; a disabled group's labels turn `TEXT_MUTED` |
@@ -120,15 +124,24 @@ hidden.
 A disabled control says why on hover with `on_disabled_hover_text`;
 `on_hover_text` never shows on a disabled widget.
 `plugin303/tests/gui_tooltips.rs` checks QUALITY and ANALOG TWEAKS in
-ACCURATE, both ADSR banks, and the OUTPUT CLIPPER while it is off.
+ACCURATE, both ADSR banks, the OUTPUT CLIPPER while it is off, and WAVE in
+FUN.
 
-Disabled groups (`add_enabled_ui(false, …)`): QUALITY in ACCURATE, both ADSR
-banks (MEG and VEG) unless ADV ENV is on in FUN, the ADV ENV tile in
-ACCURATE, the OUTPUT CLIPPER body and header switches when it is off, and
-the ANALOG TWEAKS body in ACCURATE: its fields become Readouts, its status
-reads FUN MODE ONLY, and its header hides CALIBRATE. GENERATION SEED is a
-Readout in every mode. In ACCURATE the SOUPED-UP ENGINE body is replaced by
-a banner that says why, with an ENABLE FUN MODE action.
+A control the voice ignores is disabled, never drawn live. Disabled groups
+(`add_enabled_ui(false, …)`): QUALITY in ACCURATE, both ADSR banks (MEG and
+VEG) unless ADV ENV is on in FUN, the ADV ENV tile in ACCURATE, the OUTPUT
+CLIPPER body and header switches when it is off, WAVE in FUN (the voice
+plays the sweep oscillator there, shaped by the SWEEP knob), and the ANALOG
+TWEAKS body in ACCURATE: its fields become Readouts, its status reads FUN
+MODE ONLY, and its header hides CALIBRATE. In ACCURATE, WAVE is live but its
+SWP segment is locked: the voice plays SAW for it, and the segment says so
+on hover. GENERATION SEED is a Readout in every mode. In ACCURATE the
+SOUPED-UP ENGINE body is replaced by a banner that says why, with an ENABLE
+FUN MODE action; the voice bypasses all nine knobs the banner hides, R-COMP
+included (`tests/topology.rs`).
+
+A step past LEN is not disabled: it stays editable. It takes the same
+neutral paints, because it never plays (Step column).
 
 - Orange on a disabled control is a defect: orange claims "live".
 - A disabled selection must still show which option is selected.
@@ -139,16 +152,16 @@ a banner that says why, with an ENABLE FUN MODE action.
 | Component | Source | Contract |
 |---|---|---|
 | Device card | `widgets/panel.rs` `DevicePanel` | `PANEL_BG` body under a 22 pt `PANEL_HEADER_BG` strip. Title 9 pt proportional on the left; that device's own mode switches sit right-aligned in the strip (the first one added sits flush right). Body inset 8 pt x, 4 pt y |
-| Segmented control | `widgets/switch.rs` `SlideSwitch`, `BoolSwitch` | one flat bar of 18 pt segments split by 1 pt panel-colour hairlines; only the outer ends are rounded. Selected = orange fill + `TEXT_ON_ACCENT`. Caption 8.5 pt, left of the bar in header strips, above it in knob columns. WAVE is the vertical variant |
+| Segmented control | `widgets/switch.rs` `SlideSwitch`, `BoolSwitch` | one flat bar of 18 pt segments split by 1 pt panel-colour hairlines; only the outer ends are rounded. Selected = orange fill + `TEXT_ON_ACCENT`. Caption 8.5 pt, left of the bar in header strips, above it in knob columns. WAVE is the vertical variant. A locked option (`lock_option`, vertical variant) takes the disabled paint inside a live bar, cannot be picked, and says why on hover |
 | Boolean | `widgets/toggle.rs` `ToggleButton` | every on/off (RUN, SYNC, MIDI, SYNTH, JITTER, ADV ENV, LINK, ON, SLD CHAIN) is a raised tile with a 3 × 10 pt LED left of a state-free label: `WELL_BG` slot off, orange on (`ACCENT_ORANGE_HOVER` on hover). RUN alone (`.led_bar()`) draws its LED as a 4 pt bar across the bottom of the tile, inset 4 pt, the playhead's LED form, with the label centred above it: the transport state reads from across the window. The tile never fills orange. 18 pt tall (28 pt in TRANSPORT). An egui checkbox is drift; a label that spells its state (`MIDI: OFF`) is drift |
-| Knob | `widgets/knob.rs` `Knob303` | two tiers only: LARGE r 21 pt (VOICE, DRIFT, RECAL), MEDIUM r 12 pt (SOUPED-UP ENGINE, OUTPUT CLIPPER). `KNOB_TRACK` ring over the whole -135°..+135° sweep; orange arc from the minimum, or from 0 when the range's plain minimum is below 0 (TUNING, VOLUME, PITCH1/2, IN, OUT, TILT); `KNOB_BODY` disc at 0.68 r; `TEXT_PRIMARY` pointer; label 8.5 pt caps; value 8 pt monospace in an 11 pt `WELL_BG` pill, 52 / 44 pt wide by tier. Every value fits its pill with at least 1 pt each side, and the pill stays inside the knob's footprint (`gui_layout_test.rs`, at the `knob_extremes` values). The value text is the parameter's own text (`value_to_string`, the string the host shows). A knob whose meaning depends on another parameter passes `value_text()` computed from the voice's mapping (`value_text::cutoff`, `value_text::glide`) |
+| Knob | `widgets/knob.rs` `Knob303` | two tiers only: LARGE r 21 pt (VOICE alone), MEDIUM r 12 pt (SOUPED-UP ENGINE, OUTPUT CLIPPER, ANALOG TWEAKS). `KNOB_TRACK` ring over the whole -135°..+135° sweep; orange arc from the parameter's neutral value: 0 when the range's plain minimum is below 0 (TUNING, VOLUME, PITCH1/2, IN, OUT, TILT), 100% for BRIGHT (`Knob303::neutral`), the minimum for every other knob. On its neutral value a knob draws no arc; `KNOB_BODY` disc at 0.68 r; `TEXT_PRIMARY` pointer; label 8.5 pt caps; value 8 pt monospace in an 11 pt `WELL_BG` pill, 52 / 44 pt wide by tier. Every value fits its pill with at least 1 pt each side, and the pill stays inside the knob's footprint (`gui_layout_test.rs`, at the `knob_extremes` values). The value text is the parameter's own text (`value_to_string`, the string the host shows). A knob whose meaning depends on another parameter passes `value_text()` computed from the voice's mapping (`value_text::cutoff`, `value_text::glide`) |
 | Fader | `widgets/fader.rs` `MiniFader` | 12 pt `WELL_BG` track filled from the bottom in the accent; no thumb; label 8.5 pt above, value 7.5 pt monospace below |
-| Value field | `theme::field_style` | DragValue: 9 pt monospace in a well, centred. ComboBox: a well with a ▼. A word value (ROOT, SCALE, RATE, MODE) is 9.5 pt proportional, left-aligned; a numeric value (TOL) is 9 pt monospace, centred like a DragValue. A combo keeps one width for every value it can show: ROOT 34 pt (`G_FIELD_W`, the generator's numeric field width) and SCALE 84 pt, both with a 10 pt ▼ and 4 pt padding, so SCALE starts on the x of STEPS (n) and PITCH LEN. A popup lists every option with no scroll (ROOT: all 12 roots). The TRANSPORT combos keep ▼ even when the popup opens upward. A value that cannot be edited is a `Readout`. The ANALOG TWEAKS fields share one width, `FIELD_W` = 80 pt |
-| Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt `TEXT_PRIMARY` label, centred in the tile; it lifts to `SURFACE_HOVER` under the pointer. A lit action is an orange fill with `TEXT_ON_ACCENT` that lifts to `ACCENT_ORANGE_HOVER` under the pointer (`theme::lit_action_style`; `Button::fill` is drift, because it holds one fill in every state). An action is lit only as the call to action of a state: ENABLE FUN MODE while ACCURATE bypasses the engine, CALIBRATE when a rebuild is due, CONFIRM CLEAR while armed. A trim that runs in the background is not a call to action: CALIBRATE stays raised and the status line alone says CALIBRATING. Any other action is never lit; GENERATE is raised. A destructive action takes two clicks: CLEAR relabels to CONFIRM CLEAR and lights for 3 s; a second click within that window acts. An action sits beside the value it changes: NEW SEED follows the SEED readout in GENERATION |
-| Step column | `widgets/step_button.rs` | top down: 4 pt LED bar, 11 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. A lit ACC or SLD pill lifts to its hover fill under the pointer, an unlit one to `SURFACE_HOVER`. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted |
+| Value field | `theme::field_style` | DragValue: 9 pt monospace in a well, centred. ComboBox: a well with a ▼. A word value (ROOT, SCALE, RATE, MODE) is 9.5 pt proportional, left-aligned; a numeric value (TOL) is 9 pt monospace, centred like a DragValue. A combo keeps one width for every value it can show: ROOT 34 pt (`G_FIELD_W`, the generator's numeric field width) and SCALE 84 pt, both with a 10 pt ▼ and 4 pt padding, so SCALE starts on the x of STEPS (n) and PITCH LEN. A popup lists every option with no scroll (ROOT: all 12 roots). The TRANSPORT combos keep ▼ even when the popup opens upward. A value that cannot be edited is a `Readout`. The ANALOG TWEAKS fields share one width, `FIELD_W` = 80 pt, and their column is the 60 pt label plus that field: the knob bank takes the rest. A field shows the parameter's own text where the parameter prints one (NOISE: `Off`, then the ambient temperature in °C, as the host shows it) |
+| Action | egui `Button` under `theme::apply` | raised tile, 8.5 pt `TEXT_PRIMARY` label, centred in the tile; it lifts to `SURFACE_HOVER` under the pointer. A lit action is an orange fill with `TEXT_ON_ACCENT` that lifts to `ACCENT_ORANGE_HOVER` under the pointer (`theme::lit_action_style`; `Button::fill` is drift, because it holds one fill in every state). An action is lit only as the call to action of a state: ENABLE FUN MODE while ACCURATE bypasses the engine, CALIBRATE when a rebuild is due, CONFIRM CLEAR while armed. A trim that runs in the background is not a call to action: CALIBRATE stays raised and the status line alone says CALIBRATING, in `TEXT_PRIMARY` so it does not read as the settled CALIBRATED (`TEXT_SECONDARY`). Any other action is never lit; GENERATE is raised. A destructive action takes two clicks: CLEAR relabels to CONFIRM CLEAR and lights for 3 s; a second click within that window acts. An action sits beside the value it changes: NEW SEED follows the SEED readout in GENERATION |
+| Step column | `widgets/step_button.rs` | top down: 4 pt LED bar, 11 pt step number (8.5 pt monospace), ACC \| SLD pills, gate pill, pitch well, ▲ \| ▼. Rows on a 21 pt rhythm, pills 19 pt. A lit ACC or SLD pill lifts to its hover fill under the pointer, an unlit one to `SURFACE_HOVER`. REST shows no pitch text and mutes ▲▼; an octave arrow at its limit is muted. A step past LEN never plays and shows no hue: no LED slot; number and pitch `TEXT_MUTED`; a set flag `SURFACE_HOVER` with `TEXT_SECONDARY`, a clear one a `WELL_BG` well with `TEXT_MUTED`; NOTE `SURFACE_HOVER` and TIE `SURFACE_ELEVATED`, both with `TEXT_SECONDARY`; ▲▼ muted. It stays editable (`gui_text_contrast.rs`, at the `len12` state) |
 | Piano roll | `widgets/piano_roll_popup.rs` | a floating layer over the step it edits: title `STEP nn NOTE` 9 pt proportional; close action flush right, a 16 pt raised tile with a painted cross (the font has no ✕ glyph), hover "Close (Esc)"; Escape also closes. Rows: the key on the left (white keys `GATE_NOTE_FILL`, black keys `WELL_BG`, the active key orange), the note name on the right in 9 pt monospace, `TEXT_PRIMARY` on the active or hovered row. The orange key alone marks the active row |
 | Playhead | `step_button.rs` | while the sequencer runs, the playing step's column gets a `PANEL_HEADER_BG` plate, its 4 pt LED turns orange and its number `TEXT_PRIMARY`. Stopped: no step is marked. No frame, no outline |
-| Tooltip | every control | Every control in SOUPED-UP ENGINE (in ACCURATE, the ENABLE FUN MODE action), OUTPUT CLIPPER and ANALOG TWEAKS, every abbreviated generator field, and the two TRANSPORT combos (RATE, MODE), has a hover tooltip (`plugin303/tests/gui_tooltips.rs`). A disabled control uses on_disabled_hover_text to say why. A tooltip names a keyboard shortcut only if the editor handles it; the editor handles one, Escape in the piano roll |
+| Tooltip | every control | Every control in SOUPED-UP ENGINE (in ACCURATE, the ENABLE FUN MODE action), OUTPUT CLIPPER and ANALOG TWEAKS, every abbreviated generator field, and the two TRANSPORT combos (RATE, MODE), has a hover tooltip (`plugin303/tests/gui_tooltips.rs`). In VOICE, WAVE says why it is disabled in FUN, its SWP segment says in ACCURATE that it plays SAW, and CUTOFF says what its Hz readout names. Within one card the tooltips share one form (ANALOG TWEAKS: "Name: effect"). A disabled control uses on_disabled_hover_text to say why. A tooltip names a keyboard shortcut only if the editor handles it; the editor handles one, Escape in the piano roll |
 | Group caption | `widgets/caption.rs` `GroupCaption` | the caption of a group of fields in a body (the generator's PATTERN STRUCTURE, OCTAVE BEHAVIOR, PROBABILITIES; the MEG and VEG banks): 8.5 pt `TEXT_SECONDARY` (`TEXT_MUTED` in a disabled group), then the separator out to the group's right edge. The rule tells it from the field labels, which share its size and colour |
 
 ## Type
@@ -227,4 +240,4 @@ problem a user meets.
 - No accent on a disabled control.
 - No pitch text on a REST step.
 - No arc on a knob at its zero-length fill (a unipolar knob at its minimum,
-  a bipolar knob on its centre detent).
+  a bipolar knob on its centre detent, BRIGHT at 100%).

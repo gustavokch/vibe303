@@ -22,7 +22,7 @@ run it as `uv run --no-project --with numpy --with pillow python scripts/gui_qa_
 python3 scripts/gui_qa_measure.py report target/gui-qa-offscreen
 ```
 
-About 15 s for the eight states on an idle machine; `colors` takes most of
+About 15 s for the eleven states on an idle machine; `colors` takes most of
 it. It prints, in audit order: the capture set, diffs against `latest`, per
 capture the geometry, dead space and colours, knobs in `latest` and `knobs`,
 then the accent table.
@@ -58,7 +58,7 @@ Prints changed-region clusters as `y … x … n=…`. Expected scopes against
 | `quality_low` | the QUALITY bar |
 | `knob_extremes` | TUNING, PITCH1, PITCH2, IN, OUT and TILT knobs |
 | `clipper_off` | OUTPUT CLIPPER card only (header switches dimmed, ON LED unlit, body dimmed) |
-| `generator` | ACID EUCLIDEAN GENERATOR body, the GENERATION SEED value |
+| `generator` | ACID EUCLIDEAN GENERATOR body, the GENERATION MUTATION and SEED values (one cluster, y 663-677, x 1779-2002) |
 | `running` | SEQUENCER step 04 (plate, LED, number), the RUN tile |
 | `running_note` | as `running`, plus every gate and pitch cell |
 
@@ -119,6 +119,15 @@ Triage every flag before it becomes a finding:
   pixels of `TEXT_SECONDARY` labels on `PANEL_BG` settle on #878787, which
   snaps to `TEXT_MUTED` and reports 4.21:1. Probe the glyphs with `text --box`
   before you file: the TUNING label reads `TEXT_SECONDARY`, 7.3:1.
+- **A muted label's edge reads as no token.** The edge pixels of
+  `TEXT_MUTED` labels on `PANEL_BG` settle on #7B7B7B, which `colors` reports
+  as `NOT A THEME TOKEN`, 3.58:1. With three muted knob labels and five muted
+  field labels, ANALOG TWEAKS in `accurate` crosses the pixel floor (n = 217).
+  `text --box` on the labels reads `TEXT_MUTED`, 4.4-4.6:1.
+  On `WELL_BG` the same edge is #797979, 4.00:1: `latest` holds 157 such
+  pixels in SEQUENCER, under the floor, and the muted flags and pitches of
+  steps 13-16 in `len12` lift it over (n = 229). `text --box` reads
+  `TEXT_MUTED` there, 5.2-5.4:1.
 - **`NOT A THEME TOKEN`** on a few hundred pixels is a hard-coded colour or
   an egui default leaking through. A handful of antialiasing neighbours is
   normal.
@@ -162,10 +171,11 @@ segment among `WELL_BG` neighbours.
 python3 scripts/gui_qa_measure.py knobs target/gui-qa-offscreen/knobs.png
 ```
 
-Expect 27 knobs: 9 LARGE (seven in VOICE, DRIFT and RECAL) and 18
-MEDIUM (nine in SOUPED-UP ENGINE, nine in OUTPUT CLIPPER). Expect 18 in
-`accurate`, where the SOUPED-UP body is a banner. Any other count is a layout
-change or a detector failure; look at the image before you read further.
+Expect 28 knobs: 7 LARGE (VOICE) and 21 MEDIUM (nine in SOUPED-UP ENGINE, nine
+in OUTPUT CLIPPER, three in ANALOG TWEAKS).
+Expect 19 in `accurate`, where the SOUPED-UP body is a banner. Any other count
+is a layout change or a detector failure; look at the image before you read
+further.
 
 Per knob: centre, tier, pointer angle in degrees clockwise from 12 o'clock
 and its fraction of the -135°..+135° sweep, the arc's extent and colour
@@ -176,11 +186,13 @@ arc tip to pointer.
   ring) is a hard defect.
 - `from=min` versus `from=centre` is the polarity the widget chose. Check it
   against the parameter range: a range whose plain minimum is below 0 fills
-  from centre, every other range from min. `from=other` is a defect.
+  from centre, BRIGHT fills from its neutral 100% (mid-sweep, so it reads
+  `from=centre`), every other range from min. `from=other` is a defect.
 - `arc=NONE` is correct only at a zero-length fill: a unipolar knob at its
-  minimum, a bipolar knob on its detent. Read the value text to tell. At
-  defaults 14 of 27 knobs draw no arc and every bipolar knob sits on its
-  detent, so only `knobs` (TUNING +25 ct) tests the from-centre polarity.
+  minimum, a bipolar knob on its detent, BRIGHT at its neutral 100%. Read the
+  value text to tell. At defaults 15 of 28 knobs draw no arc and every knob
+  with a neutral value sits on it, so only `knobs` (TUNING +25 ct, BRIGHT 75%)
+  and `knob_extremes` (BRIGHT 150%) test the from-centre polarity.
 - A `muted` arc on an enabled knob, or an `accent` arc on a disabled one, is
   a state defect.
 
