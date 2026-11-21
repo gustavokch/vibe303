@@ -233,9 +233,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   were in antiphase (correlation −0.87) where the circuit's are in phase
   (+0.86): the polyBLEP morph cancelled its fundamental, −6 dB at sweep 0.5,
   while the circuit's grew 5.5 dB. The polyBLEP saw now falls, and the
-  mid-sweep medians read +0.3 to +3.9 dB. Saw and square levels, the Draft
+  mid-sweep medians read −0.2 to +3.9 dB. Saw and square levels, the Draft
   ESR gate and the Low spectral gates are unchanged or better (Draft ESR
   2.58 dB, was 2.91; Low LSD 13.77 / 12.30 dB, was 13.78 / 12.99).
+- Every tier reached the output clipper with the opposite polarity to the
+  circuit. The circuit VCF inverts: at the gold patch the SPICE gold's
+  saw polarity sits 180° from High and Best's, which feed the same falling
+  `o_r` ramp through a non-inverting Rust filter. The voice now inverts its
+  signal before the clipper, so the clipper, which rectifies only positive
+  peaks (and clips the halves differently with Clipper Asym), sees the
+  circuit's polarity on every tier. Best's sample ESR against the gold
+  (`best_esr`, informational) drops from 4.94 to 0.82 dB. The Draft ESR gate
+  reads 2.91 dB again (budget 3.5; 2.58 with the inverted voice), and the
+  spectral gates are unchanged (Best 1.78 dB, Low 13.77 / 12.30 dB).
+  `tests/voice_polarity.rs` gates Best against the gold and every tier
+  against Best.
 - The 12th (Triplet) sequencer rate played steps of 3/8 beat (8/3 steps per
   beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
   12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of

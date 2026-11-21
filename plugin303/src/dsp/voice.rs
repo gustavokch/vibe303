@@ -1746,7 +1746,11 @@ impl Voice {
 
         // Global output clipper is after the VCA/resonance chain and before the
         // master fader. Thus volume changes never alter drive or sidechain state.
-        let clipped = self.clipper.tick(f * vca_gain);
+        // The circuit VCF inverts (the SPICE gold's VCF output is the inverse
+        // of the Rust filters' for the same falling saw) and no Rust filter
+        // does, so the voice inverts here: the clipper, which rectifies only
+        // positive peaks, sees the circuit's polarity on every tier.
+        let clipped = self.clipper.tick(-f * vca_gain);
 
         clipped * self.master_gain
     }
