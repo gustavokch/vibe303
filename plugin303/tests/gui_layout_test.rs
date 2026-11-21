@@ -8,10 +8,11 @@ use nih_plug_egui::egui::{self, vec2, Frame, Margin, Pos2, Rect, Ui, Vec2};
 use plugin303::dsp::generator::{GeneratorParams, MusicalScale};
 use plugin303::gui::panels::generator_panel::{render_generator_panel, GENERATOR_H};
 use plugin303::gui::panels::sequencer_panel::{render_transport_panel, SEQUENCER_H};
-use plugin303::gui::panels::{output_clipper, souped_panel, top_controls};
+use plugin303::gui::panels::{output_clipper, souped_panel, top_controls, tweaks_panel};
 use plugin303::gui::widgets::DevicePanel;
 use plugin303::gui::{
-    render_editor, split_columns, theme, BANK_ROW_H, GUI_HEIGHT, GUI_WIDTH, MARGIN, VOICE_ROW_H,
+    render_editor, split_columns, theme, BANK_ROW_H, GUI_HEIGHT, GUI_WIDTH, MARGIN, TWEAKS_H,
+    VOICE_ROW_H,
 };
 use plugin303::params::Plugin303Params;
 use std::sync::atomic::AtomicU8;
@@ -270,8 +271,9 @@ fn assert_knob_values_fit(device: &str, size: Vec2, count: usize, add: &mut dyn 
 }
 
 /// At the widest values the knobs reach (`knob_extremes`: PITCH ±24 st, IN/OUT
-/// ±18 dB, TUNING -100 ct), every value fits its pill and every pill fits its
-/// knob. Round 22 #2: 8-character values were 39.7 pt in a 38 pt pill.
+/// ±18 dB, TUNING -100 ct, BRIGHT 150%), every value fits its pill and every
+/// pill fits its knob. Round 22 #2: 8-character values were 39.7 pt in a 38 pt
+/// pill.
 #[test]
 fn knob_values_fit_their_pills_and_pills_fit_their_knobs() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -279,7 +281,7 @@ fn knob_values_fit_their_pills_and_pills_fit_their_knobs() {
     let params = Plugin303Params::default();
     let host = DummyGuiContext;
     let setter = ParamSetter::new(&host);
-    let left = split_columns(GUI_WIDTH as f32 - 2.0 * MARGIN).0;
+    let (left, right) = split_columns(GUI_WIDTH as f32 - 2.0 * MARGIN);
 
     assert_knob_values_fit("VOICE", vec2(left, VOICE_ROW_H), 7, &mut |ui| {
         top_controls::render_voice_panel(ui, &params, &setter)
@@ -289,6 +291,9 @@ fn knob_values_fit_their_pills_and_pills_fit_their_knobs() {
     });
     assert_knob_values_fit("OUTPUT CLIPPER", vec2(left, BANK_ROW_H), 9, &mut |ui| {
         output_clipper::render_output_clipper(ui, &params, &setter)
+    });
+    assert_knob_values_fit("ANALOG TWEAKS", vec2(right, TWEAKS_H), 3, &mut |ui| {
+        tweaks_panel::render_tweaks_panel(ui, &params, &setter)
     });
 }
 
@@ -312,6 +317,55 @@ fn text_rect(texts: &[(String, Rect)], s: &str) -> Rect {
         .find(|(t, _)| t == s)
         .map(|(_, r)| *r)
         .unwrap_or_else(|| panic!("{s:?} is not painted; on screen: {texts:?}"))
+}
+
+/// Bounding boxes of the paths stroked in `color`: knob value arcs.
+fn stroked_paths(shapes: &[egui::Shape], color: egui::Color32) -> Vec<Rect> {
+    shapes
+        .iter()
+        .filter_map(|s| match s {
+            egui::Shape::Path(p)
+                if matches!(&p.stroke.color, egui::epaint::ColorMode::Solid(c) if *c == color) =>
+            {
+                Some(Rect::from_points(&p.points))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// BRIGHT's range sits around its calibrated 100%. There the knob draws no
+/// value arc, like a bipolar knob on its detent; below it the arc grows left
+/// from 12 o'clock. It filled from the minimum, so the untouched knob read
+/// half full (round-23 #4).
+#[test]
+fn bright_fills_from_its_neutral_value() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    let right = split_columns(GUI_WIDTH as f32 - 2.0 * MARGIN).1;
+    // `knobs` sets BRIGHT to 75%.
+    for (state, below_neutral) in [("default", false), ("knobs", true)] {
+        let _env = EnvGuard::set("VIBE303_QA_STATE", state);
+        let params = Plugin303Params::default();
+        let shapes = Rig::new(vec2(right, TWEAKS_H))
+            .shapes(&mut |ui| tweaks_panel::render_tweaks_panel(ui, &params, &setter));
+        let knob_x = text_rect(&text_runs(&shapes), "BRIGHT").center().x;
+        let arcs: Vec<Rect> = stroked_paths(&shapes, theme::ACCENT_ORANGE)
+            .into_iter()
+            .filter(|arc| (arc.center().x - knob_x).abs() < 20.0)
+            .collect();
+        if below_neutral {
+            assert_eq!(arcs.len(), 1, "{state}: {arcs:?}");
+            assert!(
+                arcs[0].right() <= knob_x + 0.5,
+                "{state}: the arc at {:?} crosses 12 o'clock (x {knob_x})",
+                arcs[0]
+            );
+        } else {
+            assert!(arcs.is_empty(), "{state}: BRIGHT at 100% draws {arcs:?}");
+        }
+    }
 }
 
 /// PATTERN STRUCTURE is a grid: SCALE starts on the x of STEPS (n) and PITCH

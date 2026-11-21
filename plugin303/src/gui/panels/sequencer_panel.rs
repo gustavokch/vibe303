@@ -84,8 +84,12 @@ pub fn render_sequencer_grid(ui: &mut Ui, params: &Plugin303Params, current_step
         |ui| {
             let body_w = ui.available_width();
             let cell_w = (body_w - 7.0 * GRID_GAP) / 8.0;
-            let active_step = current_step.load(Ordering::Relaxed);
-            let is_running = params.seq_run.value();
+            let playing_step = params
+                .seq_run
+                .value()
+                .then(|| current_step.load(Ordering::Relaxed) as usize);
+            // Steps past LEN never play: the sequence wraps at LEN.
+            let loop_len = params.seq_length.value() as usize;
 
             if let Ok(mut pattern_guard) = params.pattern.write() {
                 ui.spacing_mut().item_spacing = vec2(GRID_GAP, GRID_GAP);
@@ -96,15 +100,14 @@ pub fn render_sequencer_grid(ui: &mut Ui, params: &Plugin303Params, current_step
 
                         for col in 0..8 {
                             let step_idx = row * 8 + col;
-                            let is_current = active_step as usize == step_idx;
                             let step = &mut pattern_guard.steps[step_idx];
 
                             render_step_strip(
                                 ui,
                                 step_idx,
                                 step,
-                                is_current,
-                                is_running,
+                                playing_step == Some(step_idx),
+                                step_idx < loop_len,
                                 cell_w,
                                 STRIP_HEIGHT,
                             );

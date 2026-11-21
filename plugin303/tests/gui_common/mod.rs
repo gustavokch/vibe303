@@ -257,6 +257,20 @@ impl Rig {
         self.frame(0.01, vec![], add)
     }
 
+    /// Hold the primary button down at `at`: move, press, then one frame to
+    /// settle, 10 ms apart. Returns the shapes of the last frame.
+    pub fn press(&mut self, at: Pos2, add: &mut dyn FnMut(&mut Ui)) -> Vec<Shape> {
+        let down = egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        };
+        self.frame(0.01, vec![egui::Event::PointerMoved(at)], add);
+        self.frame(0.01, vec![down], add);
+        self.pass(0.01, vec![], add)
+    }
+
     /// Widgets laid out in the last frame.
     pub fn widgets(&self) -> Vec<egui::WidgetRect> {
         self.ctx.viewport(|vp| {

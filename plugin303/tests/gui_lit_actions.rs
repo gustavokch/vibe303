@@ -111,3 +111,24 @@ fn unarmed_clear_lifts_like_a_raised_action() {
         "CLEAR: (at rest, under the pointer)"
     );
 }
+
+/// A raised tile answers a press like an action: it drops to
+/// `SURFACE_PRESSED` while the button is held. A pressed toggle kept the hover
+/// fill (round-23 #8).
+#[test]
+fn toggle_tile_drops_while_pressed() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    let params = Plugin303Params::default();
+    let mut rig = Rig::new(vec2(columns().1, SEQUENCER_H));
+    let mut add = |ui: &mut Ui| render_transport_panel(ui, &params, &setter);
+    let at = label_rect(&rig.shapes(&mut add), "JITTER").center();
+    let shapes = rig.press(at, &mut add);
+    assert_eq!(
+        fill_under(&shapes, label_rect(&shapes, "JITTER")),
+        Some(theme::SURFACE_PRESSED),
+        "JITTER with the button held on it"
+    );
+}

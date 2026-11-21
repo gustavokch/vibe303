@@ -127,11 +127,7 @@ fn close_button(ui: &mut nih_plug_egui::egui::Ui) -> nih_plug_egui::egui::Respon
     let (rect, response) = ui.allocate_exact_size(vec2(CLOSE_SIZE, CLOSE_SIZE), Sense::click());
     if ui.is_rect_visible(rect) {
         let p = ui.painter();
-        let fill = if response.hovered() {
-            theme::SURFACE_HOVER
-        } else {
-            theme::SURFACE_ELEVATED
-        };
+        let fill = theme::raised_fill(theme::Pointer::of(&response));
         p.rect_filled(rect, theme::radius(), fill);
         let cross = Rect::from_center_size(rect.center(), vec2(CROSS_SIZE, CROSS_SIZE));
         let stroke = Stroke::new(1.5_f32, theme::TEXT_PRIMARY);

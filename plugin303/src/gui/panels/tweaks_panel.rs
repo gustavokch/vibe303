@@ -1,9 +1,10 @@
-use nih_plug::prelude::ParamSetter;
+use nih_plug::prelude::{Param, ParamSetter};
 use nih_plug_egui::egui::{
     pos2, vec2, Align, Align2, Button, Color32, ComboBox, DragValue, FontId, Layout, Rect,
     RichText, Sense, Ui,
 };
 
+use crate::dsp::voice::ambient_temp_c;
 use crate::gui::theme;
 use crate::gui::widgets::panel::DevicePanel;
 use crate::gui::widgets::{Knob303, Readout};
@@ -82,13 +83,14 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         let total_w = ui.available_width();
                         let total_h = ui.available_height();
 
-                        let knob_size = Knob303::<nih_plug::prelude::FloatParam>::size(
-                            theme::KNOB_RADIUS_LARGE,
-                        );
-                        // Field column: 60 px label + the widest field (the TOL combo).
-                        const FIELD_COL_W: f32 = 172.0;
+                        // The knobs take the MEDIUM tier of the other device
+                        // banks: LARGE is VOICE's alone (round-23 #7).
+                        const KNOB_R: f32 = theme::KNOB_RADIUS_MEDIUM;
+                        let knob_size = Knob303::<nih_plug::prelude::FloatParam>::size(KNOB_R);
+                        // Field column: the label, then the field every row shares.
+                        const LABEL_W: f32 = 60.0;
                         let col_gap = 8.0;
-                        let left_w = FIELD_COL_W.min(total_w);
+                        let left_w = (LABEL_W + FIELD_W).min(total_w);
                         let right_w = (total_w - left_w - col_gap).max(0.0);
 
                         // Left column: 4 label-left field rows + 1 calibration status row
@@ -100,7 +102,6 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 ui.scope(|ui| {
                                     theme::field_style(ui);
 
-                                    const LABEL_W: f32 = 60.0;
                                     let row_h = crate::gui::widgets::toggle::TOGGLE_H;
                                     let status_h = 14.0;
                                     let content_h = 4.0 * row_h + status_h;
@@ -233,7 +234,10 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                         format!("{:.0} yrs", v)
                                                     }),
                                             )
-                                            .on_hover_text("Component Aging (0-100 years drag)")
+                                            .on_hover_text(
+                                                "Component age in years: wear shifts the filter \
+                                                 corner and the pitch",
+                                            )
                                             .changed()
                                         {
                                             setter.begin_set_parameter(&params.comp_age);
@@ -244,12 +248,14 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                     ui.add_space(v_gap);
 
-                                    // NOISE
+                                    // NOISE. The value is the parameter's own
+                                    // text, the string the host shows: `Off`,
+                                    // then the ambient temperature (round-23 #10).
                                     field_row(ui, "NOISE", &mut |ui| {
                                         let noise = params.thermal_noise.value();
                                         if is_accurate {
                                             ui.add(Readout::new(
-                                                &format!("{noise}%"),
+                                                &noise_text(params, noise),
                                                 FIELD_W,
                                                 row_h,
                                             ))
@@ -263,9 +269,16 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                 DragValue::new(&mut noise_val)
                                                     .range(0..=100)
                                                     .speed(0.2)
-                                                    .custom_formatter(|v, _| format!("{:.0}%", v)),
+                                                    .custom_formatter(|v, _| {
+                                                        noise_text(params, v as i32)
+                                                    })
+                                                    .custom_parser(parse_noise),
                                             )
-                                            .on_hover_text("Thermal Noise floor (0-100% drag)")
+                                            .on_hover_text(
+                                                "Thermal noise: the circuit's ambient \
+                                                 temperature. Warmer is noisier and plays \
+                                                 slightly flat",
+                                            )
                                             .changed()
                                         {
                                             setter.begin_set_parameter(&params.thermal_noise);
@@ -300,7 +313,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                                     }),
                                             )
                                             .on_hover_text(
-                                                "Component Variation Seed (0000-9999 drag)",
+                                                "Component seed: picks which way each part \
+                                                 strays within TOL",
                                             )
                                             .changed()
                                         {
@@ -314,13 +328,16 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                                     // Status under the fields. In ACCURATE it says the
                                     // card is FUN-only (round-20 #3). Every other state
-                                    // names the CALIBRATE action (round-22 #24).
+                                    // names the CALIBRATE action (round-22 #24). A
+                                    // running trim reads brighter than the settled
+                                    // state: the two words differ by three letters
+                                    // (round-23 #9).
                                     let (status_text, status_color) = if is_accurate {
                                         ("FUN MODE ONLY", theme::TEXT_MUTED)
                                     } else if needs_rebuild {
                                         ("CALIBRATION DUE", theme::ACCENT_ORANGE)
                                     } else if calibrating {
-                                        ("CALIBRATING", theme::TEXT_SECONDARY)
+                                        ("CALIBRATING", theme::TEXT_PRIMARY)
                                     } else {
                                         ("CALIBRATED", theme::TEXT_SECONDARY)
                                     };
@@ -338,8 +355,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
 
                         ui.add_space(col_gap);
 
-                        // Right column: DRIFT, RECAL and BRIGHT as LARGE knobs, each
-                        // centred in an equal third of the free width, vertically centred.
+                        // Right column: DRIFT, RECAL and BRIGHT, each centred in
+                        // an equal third of the free width, vertically centred.
                         let knob_col_w = right_w / 3.0;
                         let pad_y = ((total_h - knob_size.y) * 0.5).max(0.0);
                         let knob_column = |ui: &mut Ui, add_knob: &mut dyn FnMut(&mut Ui)| {
@@ -355,13 +372,7 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         };
                         knob_column(ui, &mut |ui| {
                             ui.add(
-                                Knob303::new(
-                                    &params.comp_drift,
-                                    setter,
-                                    "DRIFT",
-                                    theme::KNOB_RADIUS_LARGE,
-                                )
-                                .tooltip(
+                                Knob303::new(&params.comp_drift, setter, "DRIFT", KNOB_R).tooltip(
                                     "Component drift: slow random wander of pitch, cutoff and \
                                      resonance",
                                 ),
@@ -370,13 +381,8 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         });
                         knob_column(ui, &mut |ui| {
                             ui.add(
-                                Knob303::new(
-                                    &params.recalibration_scale,
-                                    setter,
-                                    "RECAL",
-                                    theme::KNOB_RADIUS_LARGE,
-                                )
-                                .tooltip(
+                                Knob303::new(&params.recalibration_scale, setter, "RECAL", KNOB_R)
+                                    .tooltip(
                                     "Recalibration: share of the component pitch error the next \
                                      CALIBRATE removes",
                                 ),
@@ -385,16 +391,14 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         });
                         knob_column(ui, &mut |ui| {
                             ui.add(
-                                Knob303::new(
-                                    &params.vcf_brightness,
-                                    setter,
-                                    "BRIGHT",
-                                    theme::KNOB_RADIUS_LARGE,
-                                )
-                                .tooltip(
-                                    "Filter brightness: moves every quality tier's filter \
+                                Knob303::new(&params.vcf_brightness, setter, "BRIGHT", KNOB_R)
+                                    // 100% is the calibrated corner: the fill
+                                    // grows from there (round-23 #4).
+                                    .neutral(1.0)
+                                    .tooltip(
+                                        "Filter brightness: moves every quality tier's filter \
                                      corner around its calibrated setting (100%)",
-                                ),
+                                    ),
                             )
                             .on_disabled_hover_text(ACCURATE_HINT);
                         });
@@ -402,4 +406,41 @@ pub fn render_tweaks_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                 });
             },
         );
+}
+
+/// NOISE as the parameter prints it: `Off`, then the ambient temperature.
+fn noise_text(params: &Plugin303Params, noise: i32) -> String {
+    let param = &params.thermal_noise;
+    param.normalized_value_to_string(param.preview_normalized(noise), true)
+}
+
+/// NOISE typed back in: `Off`, or a temperature as the field shows it (`30`,
+/// `30.0°C`). Returns the setting whose temperature is nearest.
+fn parse_noise(text: &str) -> Option<f64> {
+    let text = text.trim();
+    if text.eq_ignore_ascii_case("off") {
+        return Some(0.0);
+    }
+    let celsius: f32 = text.trim_end_matches(['°', 'C', 'c', ' ']).parse().ok()?;
+    let off_by = |noise: &i32| (ambient_temp_c(*noise) - celsius).abs();
+    (0..=100)
+        .min_by(|a, b| off_by(a).total_cmp(&off_by(b)))
+        .map(f64::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Committing the NOISE field unedited keeps the setting: every text the
+    /// field shows parses back to the value it came from.
+    #[test]
+    fn noise_text_parses_back_to_its_setting() {
+        let params = Plugin303Params::default();
+        for noise in 0..=100 {
+            let text = noise_text(&params, noise);
+            assert_eq!(parse_noise(&text), Some(f64::from(noise)), "{text:?}");
+        }
+        assert_eq!(parse_noise("30"), Some(50.0));
+    }
 }

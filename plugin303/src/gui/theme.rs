@@ -99,6 +99,36 @@ pub fn field_style(ui: &mut Ui) {
     w.open.bg_fill = SURFACE_PRESSED;
 }
 
+/// Where the pointer is on a control.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pointer {
+    Away,
+    Over,
+    /// The primary button is held on the control.
+    Down,
+}
+
+impl Pointer {
+    pub fn of(response: &egui::Response) -> Self {
+        if response.is_pointer_button_down_on() {
+            Self::Down
+        } else if response.hovered() {
+            Self::Over
+        } else {
+            Self::Away
+        }
+    }
+}
+
+/// Plane of a raised control: lifted under the pointer, dropped while pressed.
+pub fn raised_fill(pointer: Pointer) -> Color32 {
+    match pointer {
+        Pointer::Away => SURFACE_ELEVATED,
+        Pointer::Over => SURFACE_HOVER,
+        Pointer::Down => SURFACE_PRESSED,
+    }
+}
+
 /// Light the actions added to `ui`: an `ACCENT_ORANGE` fill that lifts to
 /// `ACCENT_ORANGE_HOVER` under the pointer like every lit tile. Use it, not
 /// `Button::fill`, which holds one fill in every state.

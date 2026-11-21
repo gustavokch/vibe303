@@ -77,3 +77,30 @@ fn calibrate_lights_only_when_a_rebuild_is_due() {
         "a rebuild is due"
     );
 }
+
+/// A running trim reads brighter than the settled state: the two words
+/// differ by three letters, and nothing else in the card marks the trim
+/// (round-23 #9).
+#[test]
+fn a_running_trim_reads_brighter_than_a_settled_one() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("VIBE303_QA_STATE", "default");
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    let width = split_columns(GUI_WIDTH as f32 - 2.0 * MARGIN).1;
+    let status_colour = |params: &Plugin303Params, status: &str| {
+        let texts = Rig::new(vec2(width, TWEAKS_H)).run(2, None, &mut |ui: &mut Ui| {
+            tweaks_panel::render_tweaks_panel(ui, params, &setter)
+        });
+        texts
+            .iter()
+            .find(|(t, _)| t == status)
+            .map(|(_, c)| *c)
+            .unwrap_or_else(|| panic!("no {status} in {texts:?}"))
+    };
+
+    let params = Plugin303Params::default();
+    assert_eq!(status_colour(&params, "CALIBRATED"), theme::TEXT_SECONDARY);
+    params.vco_trim_busy.store(true, Ordering::Relaxed);
+    assert_eq!(status_colour(&params, "CALIBRATING"), theme::TEXT_PRIMARY);
+}

@@ -3,7 +3,7 @@ use nih_plug_egui::egui::{
     Widget,
 };
 
-use crate::gui::theme;
+use crate::gui::theme::{self, Pointer};
 
 /// Default height of a toggle and flat button: one height, one row rhythm.
 pub const TOGGLE_H: f32 = 18.0;
@@ -70,7 +70,7 @@ struct ToggleColors {
     text: Color32,
 }
 
-fn toggle_colors(on: bool, hovered: bool, enabled: bool) -> ToggleColors {
+fn toggle_colors(on: bool, pointer: Pointer, enabled: bool) -> ToggleColors {
     if !enabled {
         // A disabled tile sinks to the well plane: every disabled toggle sits
         // in a header strip, where SURFACE_PRESSED is the strip's own colour
@@ -85,19 +85,16 @@ fn toggle_colors(on: bool, hovered: bool, enabled: bool) -> ToggleColors {
             text: theme::TEXT_MUTED,
         };
     }
-    let led = match (on, hovered) {
-        (true, true) => theme::ACCENT_ORANGE_HOVER,
-        (true, false) => theme::ACCENT_ORANGE,
+    // A pressed lit LED returns to its resting fill, like a pressed lit action.
+    let led = match (on, pointer) {
+        (true, Pointer::Over) => theme::ACCENT_ORANGE_HOVER,
+        (true, _) => theme::ACCENT_ORANGE,
         (false, _) => theme::WELL_BG,
     };
     ToggleColors {
-        fill: if hovered {
-            theme::SURFACE_HOVER
-        } else {
-            theme::SURFACE_ELEVATED
-        },
+        fill: theme::raised_fill(pointer),
         led,
-        text: if on || hovered {
+        text: if on || pointer != Pointer::Away {
             theme::TEXT_PRIMARY
         } else {
             theme::TEXT_SECONDARY
@@ -127,7 +124,7 @@ impl Widget for ToggleButton<'_> {
         if ui.is_rect_visible(rect) {
             let mut painter = ui.painter().clone();
             painter.set_fade_to_color(None);
-            let c = toggle_colors(*self.on, response.hovered(), ui.is_enabled());
+            let c = toggle_colors(*self.on, Pointer::of(&response), ui.is_enabled());
             painter.rect_filled(rect, theme::radius(), c.fill);
             if self.led_bar {
                 // The label centres in the space above the bar.
@@ -168,14 +165,19 @@ impl Widget for ToggleButton<'_> {
 mod tests {
     use super::*;
 
-    const MODES: [(bool, bool); 3] = [(false, true), (true, true), (false, false)]; // (hovered, enabled)
+    const MODES: [(Pointer, bool); 4] = [
+        (Pointer::Away, true),
+        (Pointer::Over, true),
+        (Pointer::Down, true),
+        (Pointer::Away, false),
+    ]; // (pointer, enabled)
 
     /// A disabled toggle never shows the accent: lit orange means "live".
     #[test]
     fn disabled_toggle_never_claims_accent() {
         for on in [true, false] {
-            for hovered in [true, false] {
-                let c = toggle_colors(on, hovered, false);
+            for pointer in [Pointer::Away, Pointer::Over, Pointer::Down] {
+                let c = toggle_colors(on, pointer, false);
                 for accent in [theme::ACCENT_ORANGE, theme::ACCENT_ORANGE_HOVER] {
                     assert_ne!(c.fill, accent);
                     assert_ne!(c.led, accent);
@@ -188,11 +190,11 @@ mod tests {
     /// so a boolean never paints a block of orange (round-20 #4).
     #[test]
     fn only_the_led_shows_state() {
-        for (hovered, enabled) in MODES {
-            let on = toggle_colors(true, hovered, enabled);
-            let off = toggle_colors(false, hovered, enabled);
-            assert_eq!(on.fill, off.fill, "hovered={hovered} enabled={enabled}");
-            assert_ne!(on.led, off.led, "hovered={hovered} enabled={enabled}");
+        for (pointer, enabled) in MODES {
+            let on = toggle_colors(true, pointer, enabled);
+            let off = toggle_colors(false, pointer, enabled);
+            assert_eq!(on.fill, off.fill, "{pointer:?} enabled={enabled}");
+            assert_ne!(on.led, off.led, "{pointer:?} enabled={enabled}");
         }
     }
 
@@ -200,13 +202,10 @@ mod tests {
     /// disabled selection still shows.
     #[test]
     fn lit_led_clears_the_mark_floor_on_its_tile() {
-        for (hovered, enabled) in MODES {
-            let c = toggle_colors(true, hovered, enabled);
+        for (pointer, enabled) in MODES {
+            let c = toggle_colors(true, pointer, enabled);
             let ratio = theme::contrast_ratio(c.led, c.fill);
-            assert!(
-                ratio >= 3.0,
-                "hovered={hovered} enabled={enabled}: {ratio:.2}"
-            );
+            assert!(ratio >= 3.0, "{pointer:?} enabled={enabled}: {ratio:.2}");
         }
     }
 
@@ -217,9 +216,22 @@ mod tests {
     fn disabled_tile_shows_on_the_header_strip() {
         let floor = theme::contrast_ratio(theme::PANEL_HEADER_BG, theme::PANEL_BG);
         for on in [true, false] {
-            let c = toggle_colors(on, false, false);
+            let c = toggle_colors(on, Pointer::Away, false);
             let ratio = theme::contrast_ratio(c.fill, theme::PANEL_HEADER_BG);
             assert!(ratio >= floor, "on={on}: {ratio:.2} < {floor:.2}");
+        }
+    }
+
+    /// The tile answers the pointer on three planes: rest, lifted under the
+    /// pointer, dropped while pressed (round-23 #8: a pressed tile kept the
+    /// hover fill).
+    #[test]
+    fn tile_shows_rest_hover_and_press() {
+        for on in [true, false] {
+            let fill = |pointer| toggle_colors(on, pointer, true).fill;
+            assert_eq!(fill(Pointer::Away), theme::SURFACE_ELEVATED);
+            assert_eq!(fill(Pointer::Over), theme::SURFACE_HOVER);
+            assert_eq!(fill(Pointer::Down), theme::SURFACE_PRESSED);
         }
     }
 }
