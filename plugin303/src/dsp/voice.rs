@@ -859,7 +859,7 @@ impl Voice {
                     0.0,                  // vcf_drive
                     false,                // advanced_env
                     VcaEnvMode::Envelope, // vca_env_mode
-                    reso_comp,            // reso_comp
+                    0.0,                  // reso_comp: the stock circuit has no make-up gain
                 )
             }
             CircuitTopology::Fun => {

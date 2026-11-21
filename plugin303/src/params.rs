@@ -479,6 +479,7 @@ impl Plugin303Params {
                 | "veg_sustain"
                 | "veg_release"
                 | "vca_env_mode"
+                | "reso_comp"
                 | "comp_age"
                 | "comp_drift"
                 | "recalibration_scale"

@@ -116,7 +116,7 @@ fn test_accurate_topology_dsp_coercion() {
         0.75,
         0,
         0.5,
-        0.0,
+        1.0, // R-COMP at full: bypassed like the rest
     );
 
     v_adv.note_on(60);

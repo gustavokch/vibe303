@@ -144,6 +144,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   components again.
 - The analog tweaks act in FUN only, as the editor says: ACCURATE plays
   nominal components with no drift and no added heat.
+- ACCURATE bypasses R-COMP like the other SOUPED-UP ENGINE knobs its banner
+  hides. The editor already set R-COMP to 0% on entering ACCURATE; a host
+  that changed R-COMP or TOPOLOGY itself could still apply the make-up gain.
 - AGE darkens the Draft tier like the ladder tiers (Draft scaled its cutoff up
   with age). RECAL no longer changes the filter: it only scales the VCO pitch
   trim.
