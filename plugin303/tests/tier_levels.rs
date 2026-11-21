@@ -27,13 +27,14 @@ mod common;
 
 use plugin303::dsp::filter::Tier;
 use plugin303::dsp::voice::Voice;
-use plugin303::params::VcaEnvMode;
+use plugin303::params::{OscWave, VcaEnvMode};
 
 /// Sustained-body RMS for one tier: trigger, skip the attack, measure the decay.
-fn tier_rms(tier: Tier, note: u8, cutoff: f32, reso: f32) -> f32 {
+fn tier_rms(tier: Tier, wave: OscWave, note: u8, cutoff: f32, reso: f32) -> f32 {
     let sr = 48_000.0;
     let mut v = Voice::new(sr);
     v.set_tier_immediate(tier);
+    v.set_wave(wave);
     v.set_vca_env_mode(VcaEnvMode::Gate);
     v.set_cutoff(cutoff);
     v.set_reso(reso);
@@ -63,9 +64,9 @@ fn tier_rms(tier: Tier, note: u8, cutoff: f32, reso: f32) -> f32 {
 #[test]
 fn tiers_match_at_passband() {
     for &(note, cutoff) in &[(45u8, 2_000.0f32), (45, 3_000.0), (57, 3_000.0)] {
-        let draft = tier_rms(Tier::Draft, note, cutoff, 0.0);
-        let low = tier_rms(Tier::Low, note, cutoff, 0.0);
-        let best = tier_rms(Tier::Best, note, cutoff, 0.0);
+        let draft = tier_rms(Tier::Draft, OscWave::Saw, note, cutoff, 0.0);
+        let low = tier_rms(Tier::Low, OscWave::Saw, note, cutoff, 0.0);
+        let best = tier_rms(Tier::Best, OscWave::Saw, note, cutoff, 0.0);
 
         let low_db = 20.0 * (low / draft).log10();
         let best_db = 20.0 * (best / draft).log10();
@@ -91,27 +92,31 @@ fn tiers_match_at_passband() {
 /// tier switch is a timbre change, not a volume jump — **in the resonant regime
 /// a 303 actually plays in** (reso ≳ 0.2). Low's polyBLEP-saw path sits below
 /// Best's nodal-VCO path through the depressed-corner ladder by a
-/// resonance-dependent amount; `LOW_LEVEL_TRIM` (voice.rs) is a reso-dependent
-/// makeup table that matches the median level per resonance knot. The residual
-/// spread is the filter-shape difference (largest at reso = 0 with the cutoff
-/// near the fundamental), so it is not gated tightly at reso = 0 (the passband
-/// test bounds it loosely vs Draft instead).
+/// resonance-dependent amount; `LOW_SAW_TRIM` and `LOW_SQUARE_TRIM` (voice.rs)
+/// are reso-dependent makeup tables that match the median level per resonance
+/// knot, one per waveform. The residual spread is the filter-shape difference
+/// (largest at reso = 0 with the cutoff near the fundamental), so it is not
+/// gated tightly at reso = 0 (the passband test bounds it loosely vs Draft
+/// instead).
 #[test]
 fn low_tracks_best_level() {
-    for &(note, cutoff, reso) in &[
-        (45u8, 1_500.0f32, 0.3f32),
-        (33, 800.0, 0.5),
-        (57, 3_000.0, 0.2),
-        (57, 1_002.0, 0.85), // the gold patch
-    ] {
-        let low = tier_rms(Tier::Low, note, cutoff, reso);
-        let best = tier_rms(Tier::Best, note, cutoff, reso);
-        let db = 20.0 * (low / best).log10();
-        eprintln!("note{note} fc{cutoff:.0} r{reso}  Low vs Best = {db:+.1} dB");
-        assert!(
-            db.abs() <= 2.5,
-            "Low off Best by {db:.1} dB at note{note}/fc{cutoff:.0}/r{reso} (expect within ±2.5 dB)"
-        );
+    for wave in [OscWave::Saw, OscWave::Square] {
+        for &(note, cutoff, reso) in &[
+            (45u8, 1_500.0f32, 0.3f32),
+            (33, 800.0, 0.5),
+            (57, 3_000.0, 0.2),
+            (57, 1_002.0, 0.85), // the gold patch
+        ] {
+            let low = tier_rms(Tier::Low, wave, note, cutoff, reso);
+            let best = tier_rms(Tier::Best, wave, note, cutoff, reso);
+            let db = 20.0 * (low / best).log10();
+            eprintln!("{wave:?} note{note} fc{cutoff:.0} r{reso}  Low vs Best = {db:+.1} dB");
+            assert!(
+                db.abs() <= 2.5,
+                "{wave:?}: Low off Best by {db:.1} dB at note{note}/fc{cutoff:.0}/r{reso} \
+                 (expect within ±2.5 dB)"
+            );
+        }
     }
 }
 
@@ -131,9 +136,9 @@ fn no_tier_collapses_in_level() {
         (57, 400.0, 0.0),
     ];
     for &(note, cutoff, reso) in cases {
-        let draft = tier_rms(Tier::Draft, note, cutoff, reso);
-        let low = tier_rms(Tier::Low, note, cutoff, reso);
-        let best = tier_rms(Tier::Best, note, cutoff, reso);
+        let draft = tier_rms(Tier::Draft, OscWave::Saw, note, cutoff, reso);
+        let low = tier_rms(Tier::Low, OscWave::Saw, note, cutoff, reso);
+        let best = tier_rms(Tier::Best, OscWave::Saw, note, cutoff, reso);
         let low_db = 20.0 * (low / draft).log10();
         let best_db = 20.0 * (best / draft).log10();
         assert!(
@@ -153,9 +158,9 @@ fn no_tier_collapses_in_level_exhaustive() {
     for &note in &[33u8, 45, 57] {
         for &cutoff in &[400.0f32, 1_500.0, 6_000.0] {
             for &reso in &[0.0f32, 0.5] {
-                let draft = tier_rms(Tier::Draft, note, cutoff, reso);
-                let low = tier_rms(Tier::Low, note, cutoff, reso);
-                let best = tier_rms(Tier::Best, note, cutoff, reso);
+                let draft = tier_rms(Tier::Draft, OscWave::Saw, note, cutoff, reso);
+                let low = tier_rms(Tier::Low, OscWave::Saw, note, cutoff, reso);
+                let best = tier_rms(Tier::Best, OscWave::Saw, note, cutoff, reso);
                 let low_db = 20.0 * (low / draft).log10();
                 let best_db = 20.0 * (best / draft).log10();
                 assert!(
@@ -172,11 +177,12 @@ fn no_tier_collapses_in_level_exhaustive() {
 }
 
 /// Gate-mode RMS of one tier with the output clipper bypassed: the level the
-/// `*_LEVEL_TRIM` tables in `voice.rs` match (the trims sit before the clipper).
-fn pre_clipper_rms(tier: Tier, note: u8, cutoff: f32, reso: f32) -> f32 {
+/// trim tables in `voice.rs` match (the trims sit before the clipper).
+fn pre_clipper_rms(tier: Tier, wave: OscWave, note: u8, cutoff: f32, reso: f32) -> f32 {
     let mut v = Voice::new(48_000.0);
     v.update_clipper_params_immediate(common::bypassed_clipper());
     v.set_tier_immediate(tier);
+    v.set_wave(wave);
     v.set_vca_env_mode(VcaEnvMode::Gate);
     v.set_cutoff(cutoff);
     v.set_reso(reso);
@@ -190,18 +196,18 @@ fn pre_clipper_rms(tier: Tier, note: u8, cutoff: f32, reso: f32) -> f32 {
     (acc / n as f64).sqrt() as f32
 }
 
-/// Re-derives a `*_LEVEL_TRIM` table (voice.rs): per resonance knot, the median
-/// tier-vs-Best level over notes 33/45/57/69 × cutoffs 300/800/1500/3000 Hz,
-/// before the output clipper. A matched table prints medians near 0.0 dB;
+/// Re-derives a trim table (voice.rs) for one waveform: per resonance knot, the
+/// median tier-vs-Best level over notes 33/45/57/69 × cutoffs 300/800/1500/3000
+/// Hz, before the output clipper. A matched table prints medians near 0.0 dB;
 /// otherwise multiply each knot's trim by the printed factor.
-fn level_trim_report(tier: Tier) {
+fn level_trim_report(tier: Tier, wave: OscWave) {
     for (k, reso) in [0.0f32, 0.25, 0.5, 0.75, 1.0].into_iter().enumerate() {
         let mut dbs: Vec<f32> = [33u8, 45, 57, 69]
             .into_iter()
             .flat_map(|note| {
                 [300.0f32, 800.0, 1_500.0, 3_000.0].map(|fc| {
-                    let level = pre_clipper_rms(tier, note, fc, reso);
-                    let best = pre_clipper_rms(Tier::Best, note, fc, reso);
+                    let level = pre_clipper_rms(tier, wave, note, fc, reso);
+                    let best = pre_clipper_rms(Tier::Best, wave, note, fc, reso);
                     20.0 * (level / best).log10()
                 })
             })
@@ -210,7 +216,7 @@ fn level_trim_report(tier: Tier) {
         let median = 0.5 * (dbs[7] + dbs[8]);
         let within = dbs.iter().filter(|d| d.abs() <= 1.5).count();
         println!(
-            "{tier:?} knot {k} reso {reso:.2}: median {median:+.2} dB  factor {:.4}  \
+            "{tier:?} {wave:?} knot {k} reso {reso:.2}: median {median:+.2} dB  factor {:.4}  \
              range {:+.2}..{:+.2}  within ±1.5 dB {within}/16",
             10f32.powf(-median / 20.0),
             dbs[0],
@@ -220,13 +226,15 @@ fn level_trim_report(tier: Tier) {
 }
 
 #[test]
-#[ignore = "diagnostic: re-derive DRAFT_LEVEL_TRIM"]
+#[ignore = "diagnostic: re-derive DRAFT_SAW_TRIM and DRAFT_SQUARE_TRIM"]
 fn draft_level_trim_report() {
-    level_trim_report(Tier::Draft);
+    level_trim_report(Tier::Draft, OscWave::Saw);
+    level_trim_report(Tier::Draft, OscWave::Square);
 }
 
 #[test]
-#[ignore = "diagnostic: re-derive LOW_LEVEL_TRIM"]
+#[ignore = "diagnostic: re-derive LOW_SAW_TRIM and LOW_SQUARE_TRIM"]
 fn low_level_trim_report() {
-    level_trim_report(Tier::Low);
+    level_trim_report(Tier::Low, OscWave::Saw);
+    level_trim_report(Tier::Low, OscWave::Square);
 }

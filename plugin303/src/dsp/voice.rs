@@ -72,13 +72,18 @@ const LOW_LADDER_ID: u32 = 4;
 /// Output level trims (linear gain) that match Draft and Low to Best, at the
 /// resonance knots `0, 0.25, 0.5, 0.75, 1.0`; linear in between. The tiers'
 /// filters lose different amounts of passband level with resonance, so one
-/// gain cannot match every resonance setting. Fitted at 2x OS, before the
-/// output clipper (so every tier drives it equally), as the inverse of the
+/// gain cannot match every resonance setting. The polyBLEP oscillators of
+/// Draft and Low play their square louder against their saw than the circuit
+/// VCO does, so each waveform has its own table and SWEEP blends the two by
+/// its position, as the oscillators blend the waves. Fitted at 2x OS, before
+/// the output clipper (so every tier drives it equally), as the inverse of the
 /// median tier-vs-Best level (Gate VCA, notes 33/45/57/69 × cutoffs
 /// 300/800/1500/3000 Hz per knot). High needs no trim (within 0.02 dB).
 /// `tier_levels::{draft,low}_level_trim_report` re-derive the tables.
-const DRAFT_LEVEL_TRIM: [f32; 5] = [1.9410, 0.3902, 0.2827, 0.2927, 0.5878];
-const LOW_LEVEL_TRIM: [f32; 5] = [4.2413, 1.5646, 1.4056, 1.3082, 1.5698];
+const DRAFT_SAW_TRIM: [f32; 5] = [1.9410, 0.3902, 0.2827, 0.2927, 0.5878];
+const DRAFT_SQUARE_TRIM: [f32; 5] = [1.3191, 0.4039, 0.3102, 0.3075, 0.4104];
+const LOW_SAW_TRIM: [f32; 5] = [4.2413, 1.5646, 1.4056, 1.3082, 1.5698];
+const LOW_SQUARE_TRIM: [f32; 5] = [2.4994, 1.6065, 1.6153, 1.5821, 1.5205];
 
 /// Piecewise-linear lookup in a 5-knot trim table over resonance `0..=1`.
 #[inline]
@@ -87,6 +92,12 @@ fn level_trim(table: &[f32; 5], reso: f32) -> f32 {
     let i = (p as usize).min(3);
     let t = p - i as f32;
     table[i] + (table[i + 1] - table[i]) * t
+}
+
+/// The trim table for a waveform `square` of the way from the saw to the
+/// square, knot by knot.
+fn blend_trims(saw: &[f32; 5], sq: &[f32; 5], square: f32) -> [f32; 5] {
+    std::array::from_fn(|k| saw[k] + (sq[k] - saw[k]) * square)
 }
 const XFADE_SECS: f32 = 0.010;
 const COMP_BUF: usize = 64;
@@ -369,6 +380,10 @@ pub struct Voice {
     reso_knob: f32,
     /// Resonance after drift, as the filters see it this sample (level trims).
     final_reso: f32,
+    /// Draft and Low level trim tables for the oscillators' waveform
+    /// (`set_trim_wave`).
+    draft_trim: [f32; 5],
+    low_trim: [f32; 5],
     /// Normalised VCF Envelope Modulation intensity knob setting.
     env_mod: f32,
     /// Normalised Envelope Decay knob setting.
@@ -602,6 +617,8 @@ impl Voice {
             cutoff_knob: 0.5,
             reso_knob: 0.0,
             final_reso: 0.0,
+            draft_trim: DRAFT_SAW_TRIM,
+            low_trim: LOW_SAW_TRIM,
             env_mod: 0.0,
             decay_knob: 0.5,
             accent_knob_val: 0.0,
@@ -968,6 +985,8 @@ impl Voice {
         self.vco2.set_wave(final_wave);
         self.vco2.set_pw(final_pw);
         self.vco2.set_sweep(final_sweep as f64);
+
+        self.set_trim_wave(final_wave, final_sweep);
 
         // Update Envelopes sample rates to self.sr
         let sr_f64 = self.sr as f64;
@@ -1364,7 +1383,7 @@ impl Voice {
     fn render_tier(&mut self, tier: Tier, circuit_mix: &mut Option<f32>) -> f32 {
         match tier {
             // Draft: polyBLEP saw → TPT ladder at 2× oversample (cheapest).
-            // DRAFT_LEVEL_TRIM matches its loudness to Best.
+            // The Draft trim matches its loudness to Best.
             Tier::Draft => {
                 let osc1 = self.osc.tick();
                 let sub = self.sub_osc.tick() * self.sub_vol;
@@ -1379,7 +1398,7 @@ impl Voice {
                 let o = [self.filter.tick(hi[0]), self.filter.tick(hi[1])];
                 self.comp_draft.process(
                     self.os2_draft.down(o)
-                        * (level_trim(&DRAFT_LEVEL_TRIM, self.final_reso) / self.drive),
+                        * (level_trim(&self.draft_trim, self.final_reso) / self.drive),
                 )
             }
             // Low: polyBLEP saw → nodal diode-ladder at 2× oversample, the
@@ -1397,12 +1416,12 @@ impl Voice {
 
                 let hi = self.os2_low.up(mix * self.drive);
                 let o = [self.ladder_low.tick(hi[0]), self.ladder_low.tick(hi[1])];
-                // LOW_LEVEL_TRIM equalises Low's loudness to Best (tier-switch
+                // The Low trim equalises Low's loudness to Best (tier-switch
                 // is then timbre-only). Pre-comp-delay so the crossfade blends
                 // level-matched paths.
                 self.comp_low.process(
                     self.os2_low.down(o)
-                        * (level_trim(&LOW_LEVEL_TRIM, self.final_reso) / self.drive),
+                        * (level_trim(&self.low_trim, self.final_reso) / self.drive),
                 )
             }
             // High: circuit VCO saw → nodal diode-ladder at 2× oversample.
@@ -1749,6 +1768,19 @@ impl Voice {
         self.osc2_low.set_wave(wave);
         self.vco.set_wave(wave);
         self.vco2.set_wave(wave);
+        self.set_trim_wave(wave, self.vco.sweep_pos as f32);
+    }
+
+    /// Selects the Draft and Low level trims for the oscillators' waveform:
+    /// SWEEP blends the saw and square tables by its position.
+    fn set_trim_wave(&mut self, wave: OscWave, sweep: f32) {
+        let square = match wave {
+            OscWave::Saw => 0.0,
+            OscWave::Square => 1.0,
+            OscWave::Sweep => sweep.clamp(0.0, 1.0),
+        };
+        self.draft_trim = blend_trims(&DRAFT_SAW_TRIM, &DRAFT_SQUARE_TRIM, square);
+        self.low_trim = blend_trims(&LOW_SAW_TRIM, &LOW_SQUARE_TRIM, square);
     }
 
     pub fn set_circuit_brightness(&mut self, cal: f64) {
