@@ -21,8 +21,13 @@ use plugin303::dsp::voice::Voice;
 // F6.5: active Q9 resonance (F6.3) + re-tuned brightness (CIRCUIT_BRIGHT = 0.70)
 // dropped the gold-power-weighted LSD from 4.42 → 3.87 dB. The gate renders
 // the voice's own brightness, so it measures what the plugin plays.
-const LSD_BUDGET_DB: f32 = 4.0; // achieved 1.64 dB (deterministic render) + margin
-const CORR_MIN: f32 = 0.95; // achieved corr 0.988; spectra share their shape
+// Achieved 1.80 dB, corr 0.987 (deterministic render) + margin. It read 1.64 dB / 0.988
+// before the circuit VCO's reset was band-limited. The gold is point-sampled from SPICE, so it
+// keeps the naive saw's aliasing, and the LSD demeans the dB spectra over every bin from
+// 40 Hz to 16 kHz. Less aliasing lowers the render's mean 0.5 dB and shifts the weighted bins.
+// With each render's best offset, the LSD reads 1.61 dB both before and after.
+const LSD_BUDGET_DB: f32 = 4.0;
+const CORR_MIN: f32 = 0.95; // spectra share their shape
 
 fn render_best(sr: f32, cutoff: f32, reso: f32, note: u8, n: usize, cal: Option<f64>) -> Vec<f32> {
     let mut v = Voice::new(sr);
@@ -86,7 +91,7 @@ fn best_voice_spectral_match() {
 
 /// Same gate through the plugin's parameter path (`common::render_plugin_path`):
 /// the default patch with first-block analog wear and Env Mod at 0. Measured
-/// 1.95 dB / 0.987 (`best_voice_spectral_match`: 1.64 dB / 0.988). With the
+/// 1.99 dB / 0.987 (`best_voice_spectral_match`: 1.80 dB / 0.987). With the
 /// brightness forced to 1.0 after the patch (the failure fixed in `29936e7`) it
 /// reads 9.18 dB, and with the default Env Mod (0.5) 22.70 dB. Only this gate
 /// sees an override inside `update_params`: a bare `Voice::new` render never

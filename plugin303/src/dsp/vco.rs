@@ -95,8 +95,8 @@ const RAMP_S: f64 = 1e-3; // rail ramp time for self-start
 const DC_BLOCK_HZ: f32 = 7.6;
 /// Square level: the pulse swings ±0.56 V (VCO_GAIN brings it to 2.92 V p-p).
 const SQ_LEVEL: f32 = 0.56;
-/// Weight of each new reset-to-reset period in the square's period estimate:
-/// smooths the one-sample quantisation of the reset over about four cycles.
+/// Weight of each new crossing-to-crossing period in the square's period
+/// estimate: smooths the error of the predicted crossing over about four cycles.
 const SQ_PERIOD_SMOOTH: f32 = 0.25;
 /// Per-iteration node-voltage step limit (damped Newton): bounds the exponential
 /// overshoot that otherwise diverges on this stiff relaxation core.
@@ -258,6 +258,17 @@ impl VcoLutBuffer {
     }
 }
 
+/// A JFET reset predicted inside the next sample interval.
+#[derive(Clone, Copy)]
+struct ResetEdge {
+    /// Fraction of the interval before the crossing.
+    frac: f32,
+    /// The saw's jump at the crossing (raw `o_r`).
+    jump: f32,
+    /// Whether the square rises there (it is low by then).
+    sq_rise: bool,
+}
+
 pub struct Vco303 {
     sr: f64,
     npn: BjtParams,
@@ -296,39 +307,38 @@ pub struct Vco303 {
     pub dbg_iters: u32,
     #[doc(hidden)]
     pub dbg_homotopy: bool,
-    /// Ready-to-add BLEP correction for the **current** output sample.
-    ///
-    /// Set by `tick()` to the first of the two-tap BLEP residual whenever the JFET
-    /// reset fires (v[CP] jumps upward by > [`CP_RESET_DELTA`] V). The caller adds
-    /// this to the raw VCO output before upsampling. Zero if no reset occurred.
-    ///
-    /// The BLEP is calibrated to the SPICE-measured reset-step amplitude so no
-    /// external scaling is needed. RT-safe; never allocates.
-    pub blep_now: f32,
-    /// Ready-to-add BLEP correction for the **next** output sample (the second tap).
-    ///
-    /// Consumed automatically at the start of the following `tick()` call and placed
-    /// into `blep_now` for that sample's output. The caller should also add it if it
-    /// caches VCO output for the inter-sample position.
-    pub blep_next: f32,
-    /// Pending second-tap BLEP value to inject at the START of the next `tick()`.
-    /// Internal; carried from the reset sample to the following sample.
-    blep_pending: f32,
-    /// Whether a reset occurred last tick (used by `blep_frac` smoke-test compat).
-    pub blep_frac: Option<f32>,
+    /// CP bracket `(lo, hi)` of the ramp's fold, where the JFET reset trips:
+    /// the last ramp sample before a reset lies above it, and that sample less
+    /// one ramp step below it. Narrows as resets land at new sample phases.
+    fold: Option<(f64, f64)>,
+    /// Reset predicted inside the next sample interval.
+    next_reset: Option<ResetEdge>,
+    /// The ramp after the last crossing: its level at the crossing (raw
+    /// `o_r`) and its per-sample step over the step before the crossing.
+    post_ramp: Option<(f32, f32)>,
+    /// Samples from the last reset sample to this one.
+    since_reset: u32,
+    /// Fraction of the sample interval before the last crossing.
+    reset_frac: f32,
+    /// Raw `o_r` of the previous sample, the last ramp step, and the ramp
+    /// step before the last crossing.
+    o_last: f32,
+    o_step: f32,
+    o_step_reset: f32,
+    /// Saw value that replaces the solver's sample after the reset sample.
+    saw_fill: Option<f32>,
 
     // Synthesized square wave state
-    sq_blep_pending: f32,
     /// Pulse width: the fraction of each cycle the square is high (0.5 = the
     /// stock square).
     pw: f32,
-    /// Samples from the last reset to this sample; infinite before the first.
+    /// Time from the last crossing to this sample; infinite before the first.
     sq_t: f32,
-    /// Smoothed reset-to-reset period in samples; 0 until two resets.
+    /// Smoothed crossing-to-crossing period in samples; 0 until two resets.
     sq_period: f32,
-    /// `sq_t` less the falling edge's time, and the square's state, at the
-    /// previous sample.
-    sq_d_prev: f32,
+    /// Falling edge predicted inside the next sample interval: the fraction
+    /// of the interval before it.
+    sq_fall: Option<f32>,
     sq_high: bool,
     pub is_fun: bool,
     stuck_counter: u32,
@@ -410,15 +420,19 @@ impl Vco303 {
             noise_seed: 12345,
             dbg_iters: 0,
             dbg_homotopy: false,
-            blep_now: 0.0,
-            blep_next: 0.0,
-            blep_pending: 0.0,
-            blep_frac: None,
-            sq_blep_pending: 0.0,
+            fold: None,
+            next_reset: None,
+            post_ramp: None,
+            since_reset: 0,
+            reset_frac: 0.0,
+            o_last: 0.0,
+            o_step: 0.0,
+            o_step_reset: 0.0,
+            saw_fill: None,
             pw: 0.5,
             sq_t: f32::INFINITY,
             sq_period: 0.0,
-            sq_d_prev: f32::INFINITY,
+            sq_fall: None,
             sq_high: false,
             is_fun: false,
             stuck_counter: 0,
@@ -979,10 +993,15 @@ impl Vco303 {
         self.t_samples = 0;
         self.dc_x1 = 0.0;
         self.dc_y1 = 0.0;
-        self.blep_now = 0.0;
-        self.blep_next = 0.0;
-        self.blep_pending = 0.0;
-        self.blep_frac = None;
+        self.fold = None;
+        self.next_reset = None;
+        self.post_ramp = None;
+        self.since_reset = 0;
+        self.reset_frac = 0.0;
+        self.o_last = 0.0;
+        self.o_step = 0.0;
+        self.o_step_reset = 0.0;
+        self.saw_fill = None;
         self.stuck_counter = 0;
         self.last_cp = 0.0;
         self.v_prev = [0.0; NU];
@@ -991,10 +1010,9 @@ impl Vco303 {
         self.v_post = None;
         self.cp_trip = 0.0;
         self.after_reset = false;
-        self.sq_blep_pending = 0.0;
         self.sq_t = f32::INFINITY;
         self.sq_period = 0.0;
-        self.sq_d_prev = f32::INFINITY;
+        self.sq_fall = None;
         self.sq_high = false;
     }
 
@@ -1285,10 +1303,15 @@ impl Vco303 {
         Err(spent)
     }
 
-    /// Solve one sample; returns the DC-blocked `o_r` saw + accumulated BLEP residuals.
+    /// Solve one sample; returns the band-limited oscillator output.
     ///
-    /// The caller must add `self.blep_now` (set by this call) to the returned raw value
-    /// to get the band-limited output. `blep_now` is zero when no reset occurred.
+    /// The solver puts the JFET reset on the sample grid: it jumps at the first
+    /// sample past the fold, and the sample after that overshoots. The ramp on
+    /// both sides keeps the true crossing time, so the output rebuilds those
+    /// two samples from the ramp that follows the crossing and smooths the jump
+    /// with a two-sided two-tap BLEP at the crossing. Its first tap lands on
+    /// the sample before the crossing, so the crossing is predicted one sample
+    /// ahead from the CP ramp and the bracket of the fold.
     pub fn tick(&mut self) -> f32 {
         // --- JFET Perturbation Watchdog ---
         // If the integrator capacitor node CP remains static or toggles in numerical DC equilibrium
@@ -1307,22 +1330,13 @@ impl Vco303 {
         }
         self.last_cp = cp_val;
 
-        // --- Carry the pending 2nd-tap BLEP from last sample's reset --------
-        // The 2-tap BLEP must modify TWO adjacent samples: the reset sample itself
-        // (tap 0 = blep_now) and the FOLLOWING sample (tap 1 = blep_pending → blep_now
-        // next tick). blep_next is read by the caller if it needs lookahead; here we
-        // just forward blep_pending into blep_now for this sample.
-        self.blep_now = self.blep_pending;
-        self.blep_next = 0.0;
-        self.blep_pending = 0.0;
-        self.blep_frac = None; // compat field
-
         let dt = 1.0 / self.sr;
         let rails = self.rails();
         let vp = rails.0;
 
         // Save cp before the solve — needed for reset detection.
         let cp_prev = self.v[CP];
+        let cp_prev2 = self.v_prev[CP];
 
         let cdefs = self.caps(vp);
         let mut cgeq = [0.0f64; 5];
@@ -1395,28 +1409,6 @@ impl Vco303 {
         self.v_prev = self.v;
         self.v = v;
 
-        // --- JFET reset detection + 2-tap BLEP computation ------------------
-        let cp_now = v[CP];
-        let delta = cp_now - cp_prev;
-
-        let mut sq_blep0 = self.sq_blep_pending;
-        self.sq_blep_pending = 0.0;
-        let mut reset_alpha = None;
-
-        if delta > CP_RESET_DELTA {
-            let mid = (cp_prev + cp_now) * 0.5;
-            let alpha = ((mid - cp_prev) / delta.max(1e-9)).clamp(0.0, 1.0) as f32;
-            const BLEP_STEP: f32 = 2.92; // OR_SWING (1.46 V) × VCO_GAIN (2.0)
-            let tap0 = BLEP_STEP * (alpha * alpha / 2.0 - alpha); // < 0 for α∈(0,1)
-            let tap1 = BLEP_STEP * (-alpha * alpha / 2.0); // ≤ 0
-            self.blep_now += tap0;
-            self.blep_pending = tap1;
-            self.blep_next = tap1;
-            self.blep_frac = Some(alpha);
-            reset_alpha = Some(alpha);
-        }
-        // --- end BLEP ---------------------------------------------------
-
         for (j, cd) in cdefs.iter().enumerate() {
             let vc = vof(cd.p, &v) - vof(cd.q, &v);
             let inew = cgeq[j] * vc - cieq[j];
@@ -1425,61 +1417,120 @@ impl Vco303 {
         }
         self.t_samples += 1;
 
-        let saw_raw = v[O_R] as f32;
+        // --- Reset edge -----------------------------------------------------
+        let o_now = v[O_R] as f32;
+        let cp_now = v[CP];
+        let ramp_before = self.since_reset >= 3;
+        let predicted = self.next_reset.take();
+        let mut saw = o_now;
+        let mut saw_res = 0.0f32;
+        let mut sq_res = 0.0f32;
+        if let Some(frac) = self.sq_fall.take() {
+            self.sq_high = false;
+            sq_res += SQ_LEVEL * frac * frac;
+        }
+        if reset {
+            // An unpredicted reset is taken to cross at the end of the interval.
+            let frac = predicted.map_or(1.0, |e| e.frac);
+            self.saw_fill = None;
+            if let Some((top, ratio)) = self.post_ramp {
+                let step = self.o_step * ratio;
+                let jump = predicted.map_or(top - (self.o_last + self.o_step * frac), |e| e.jump);
+                saw = top + step * (1.0 - frac);
+                self.saw_fill = Some(top + step * (2.0 - frac));
+                saw_res -= jump * frac * frac / 2.0;
+            }
+            let step = cp_prev2 - cp_prev;
+            if ramp_before && step > 0.0 {
+                let (lo, hi) = (cp_prev - step, cp_prev);
+                self.fold = match self.fold {
+                    Some((l, h)) if l.max(lo) <= h.min(hi) => Some((l.max(lo), h.min(hi))),
+                    // First reset, or the fold moved (wear, temperature).
+                    _ => Some((lo, hi)),
+                };
+            }
+            let period = self.sq_t + frac;
+            if period.is_finite() {
+                self.sq_period = if self.sq_period > 0.0 {
+                    self.sq_period + SQ_PERIOD_SMOOTH * (period - self.sq_period)
+                } else {
+                    period
+                };
+            }
+            self.sq_t = 1.0 - frac;
+            if predicted.map_or(!self.sq_high && self.sq_period > 0.0, |e| e.sq_rise) {
+                self.sq_high = true;
+                sq_res -= SQ_LEVEL * frac * frac;
+            }
+            self.since_reset = 0;
+            self.reset_frac = frac;
+            self.o_step_reset = self.o_step;
+        } else {
+            self.sq_t += 1.0;
+            self.since_reset = self.since_reset.saturating_add(1);
+            if self.since_reset == 1 {
+                if let Some(fill) = self.saw_fill.take() {
+                    saw = fill;
+                }
+            } else if self.since_reset >= 3 {
+                let step = o_now - self.o_last;
+                if self.since_reset == 3 {
+                    // `o_last` is the first settled sample, 3 - frac after the crossing.
+                    let ratio = step / self.o_step_reset;
+                    if ratio.is_finite() {
+                        let top = self.o_last - step * (3.0 - self.reset_frac);
+                        self.post_ramp = Some((top, ratio));
+                    }
+                }
+                self.o_step = step;
+                if let (Some((lo, hi)), Some((top, _))) = (self.fold, self.post_ramp) {
+                    let cp_step = cp_prev - cp_now;
+                    let fold = 0.5 * (lo + hi);
+                    if cp_step > 0.0 && cp_now - cp_step < fold {
+                        let frac = ((cp_now - fold) / cp_step).clamp(0.0, 1.0) as f32;
+                        let jump = top - (o_now + step * frac);
+                        saw_res += jump * (1.0 - frac) * (1.0 - frac) / 2.0;
+                        self.next_reset = Some(ResetEdge {
+                            frac,
+                            jump,
+                            sq_rise: false,
+                        });
+                    }
+                }
+            }
+        }
+        self.o_last = o_now;
+
+        // Square: high for the first `pw` of each cycle, from the crossing, as
+        // the polyBLEP pulse of the lower tiers. Its edges inside the next
+        // interval: down `pw` of a period after the crossing (unless the next
+        // reset comes first), then up at the reset.
+        if self.sq_high && self.sq_period > 0.0 {
+            let frac = (self.pw * self.sq_period - self.sq_t).max(0.0);
+            if frac <= 1.0 && self.next_reset.is_none_or(|e| frac < e.frac) {
+                self.sq_fall = Some(frac);
+                sq_res -= SQ_LEVEL * (1.0 - frac) * (1.0 - frac);
+            }
+        }
+        if let Some(e) = self.next_reset.as_mut() {
+            e.sq_rise = self.sq_period > 0.0 && (!self.sq_high || self.sq_fall.is_some());
+            if e.sq_rise {
+                sq_res += SQ_LEVEL * (1.0 - e.frac) * (1.0 - e.frac);
+            }
+        }
+
+        let saw_raw = saw + saw_res;
         let y_saw = saw_raw - self.dc_x1 + self.dc_r * self.dc_y1;
         self.dc_x1 = saw_raw;
         self.dc_y1 = y_saw;
-
-        // Square: high for the first `pw` of each cycle, from the JFET reset,
-        // as the polyBLEP pulse of the lower tiers. Timed from the resets (the
-        // DC-blocked ramp bends at low notes and overshoots after each reset,
-        // so a comparator on it would not give `pw`).
-        let t = match reset_alpha {
-            Some(a) => {
-                let period = self.sq_t + a;
-                if period.is_finite() {
-                    self.sq_period = if self.sq_period > 0.0 {
-                        self.sq_period + SQ_PERIOD_SMOOTH * (period - self.sq_period)
-                    } else {
-                        period
-                    };
-                }
-                1.0 - a
-            }
-            None => self.sq_t + 1.0,
-        };
-        self.sq_t = t;
-        let d = t - self.pw * self.sq_period;
-        let high = d < 0.0;
-        if high != self.sq_high {
-            // A ±1.12 V edge: up at the reset, down `pw` of a period later
-            // (the edge moves with a swept `pw`). alpha is the fraction of the
-            // sample BEFORE the edge.
-            let alpha = reset_alpha
-                .unwrap_or_else(|| (self.sq_d_prev / (self.sq_d_prev - d)).clamp(0.0, 1.0));
-            // Two-tap BLEP: the edge smoothed by a two-sample triangle centred
-            // one sample late, continuous in alpha.
-            let step = if high {
-                2.0 * SQ_LEVEL
-            } else {
-                -2.0 * SQ_LEVEL
-            };
-            sq_blep0 += step * (alpha * alpha / 2.0 - alpha - 0.5);
-            self.sq_blep_pending += step * (-alpha * alpha / 2.0);
-        }
-        self.sq_high = high;
-        self.sq_d_prev = d;
-
         // The pulse (±0.56 V) less its mean, so a width change moves no DC.
-        let level = if high { SQ_LEVEL } else { -SQ_LEVEL };
-        let pulse_raw = level - SQ_LEVEL * (2.0 * self.pw - 1.0) + sq_blep0;
+        let level = if self.sq_high { SQ_LEVEL } else { -SQ_LEVEL };
+        let pulse = level - SQ_LEVEL * (2.0 * self.pw - 1.0) + sq_res;
 
         match self.wave {
             OscWave::Saw => y_saw,
-            OscWave::Square => pulse_raw,
-            OscWave::Sweep => {
-                y_saw * (1.0 - self.sweep_pos as f32) + pulse_raw * self.sweep_pos as f32
-            }
+            OscWave::Square => pulse,
+            OscWave::Sweep => y_saw * (1.0 - self.sweep_pos as f32) + pulse * self.sweep_pos as f32,
         }
     }
 }

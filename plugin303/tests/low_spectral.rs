@@ -3,7 +3,7 @@
 //! Low = polyBLEP saw → nodal diode-ladder VCF at 2× oversample. It skips the
 //! costly nodal circuit VCO (Best's dominant cost) but keeps the nonlinear
 //! diode-ladder filter character, so it should land between Draft (TPT, corr≈0.945 at 2×)
-//! and Best (circuit VCO→ladder, corr 0.988) on the same spectral metric.
+//! and Best (circuit VCO→ladder, corr 0.987) on the same spectral metric.
 //!
 //! Same Welch LSD + dB-spectrum-corr metric as Best (`tests/common/mod.rs`).
 //! The budget is necessarily looser than Best: the polyBLEP saw ≠ the circuit
@@ -14,7 +14,7 @@
 //! (`low_spectral_report`, note 57 / 1002 Hz / reso 0.85), Draft and Low at 2×:
 //!     Draft LSD 35.36 dB  corr 0.945
 //!     Low   LSD 13.78 dB  corr 0.981   <- between the two on both axes
-//!     Best  LSD  1.64 dB  corr 0.988
+//!     Best  LSD  1.80 dB  corr 0.987
 //! The 0.2 s gold makes these sensitive to the render's latency, so every gate
 //! skips the voice's reported `latency_samples()` (78) and a latency change does
 //! not move them.
