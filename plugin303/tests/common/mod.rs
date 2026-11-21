@@ -27,7 +27,8 @@ pub fn load_f32(path: &PathBuf) -> Vec<f32> {
         .collect()
 }
 
-fn fft(re: &mut [f64], im: &mut [f64]) {
+/// In-place radix-2 FFT; `re.len()` must be a power of two.
+pub fn fft(re: &mut [f64], im: &mut [f64]) {
     let n = re.len();
     let mut j = 0;
     for i in 1..n {

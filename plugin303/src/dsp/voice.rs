@@ -41,17 +41,18 @@ pub const HIGH_OS_FACTOR: f32 = 2.0;
 pub const LOW_OS_FACTOR: f32 = 2.0;
 pub const DRAFT_OS_FACTOR: f32 = 2.0;
 
-/// VCO output gain. The circuit-VCO MNA solver outputs a raw saw wave with ~1.12 V p-p swing.
-/// SPICE gold has a ~1.46 V p-p swing which after its own gain stages gives ~2.92 V p-p.
-/// `VCO_GAIN = 2.92 / 1.120 = 2.607` matches the SPICE drive level into the VCF.
+/// VCO output gain, `2.92 / 1.120 = 2.607`: SPICE's ~1.46 V p-p saw gives ~2.92 V p-p
+/// after its own gain stages, and 1.12 V was the MNA solver's raw p-p. That figure held the
+/// one-sample overshoot after each reset, which `Vco303::tick()` no longer emits; the ramp
+/// itself swings about 0.70 V.
 pub const VCO_GAIN: f32 = 2.607;
 
 /// Per-tier VCF brightness (cutoff→bias scale on the shared `LadderVcf`). With
 /// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
 /// gold sits *below* 1.0 — the resonance peak otherwise over-brightens. Tuned
 /// per tier (different OS rate ⇒ different optimum): Best (4×) at 0.70 gives
-/// LSD 1.64 dB (`brightness_sweep`: 1.31–1.64 dB over 0.55–0.70, then 2.63 at
-/// 0.74). Low (2×) at 0.45 gives LSD 13.78 dB, corr 0.981 (0.40: 26.35, 0.50:
+/// LSD 1.80 dB (`brightness_sweep`: 1.47–1.82 dB over 0.55–0.74, with no trend,
+/// then 2.08 at 0.76). Low (2×) at 0.45 gives LSD 13.78 dB, corr 0.981 (0.40: 26.35, 0.50:
 /// 27.46; a narrow dip, `low_brightness_sweep`). Low's darker setting also
 /// compensates its polyBLEP saw, which is brighter than the circuit saw: Low
 /// curves fitted to match Best's filter response leave the voice no closer to
@@ -1426,35 +1427,17 @@ impl Voice {
     /// Circuit oscillator mix (VCO, sub, VCO 2) for the current output sample.
     /// Ticks the oscillators only if `cached` is empty, then caches the result.
     ///
-    /// The nodal VCO runs at base rate; its sharp JFET reset edge is corrected by
-    /// a 2-tap first-order BLEP computed inside `Vco303::tick()`. `blep_now` is
-    /// already calibrated to SPICE OR_SWING × VCO_GAIN (= 2.92 V); tap 1 is
-    /// auto-injected on the following tick.
-    ///
-    /// RESIDUAL LIMITATION: higher-order alias from the smooth ramp (not the
-    /// reset edge) is negligible relative to the reset. A full 4× VCO (a future
-    /// full-rate-VCO tier) gives complete alias freedom at ~4× the CPU cost.
+    /// The nodal VCO runs at base rate; `Vco303::tick()` band-limits its JFET
+    /// reset and square edges with two-tap BLEPs at their sub-sample times.
     #[inline]
     fn circuit_mix(&mut self, cached: &mut Option<f32>) -> f32 {
         if let Some(mix) = *cached {
             return mix;
         }
-        let raw = self.vco.tick() * VCO_GAIN;
-        let blep = match self.vco.wave {
-            OscWave::Saw => self.vco.blep_now,
-            OscWave::Sweep => self.vco.blep_now * (1.0 - self.vco.sweep_pos as f32),
-            OscWave::Square => 0.0,
-        };
-        let osc1 = raw + blep;
+        let osc1 = self.vco.tick() * VCO_GAIN;
         let sub = self.sub_osc_circuit.tick() * self.sub_vol;
         let osc2 = if self.osc2_vol > 0.0 {
-            let raw2 = self.vco2.tick() * VCO_GAIN;
-            let blep2 = match self.vco2.wave {
-                OscWave::Saw => self.vco2.blep_now,
-                OscWave::Sweep => self.vco2.blep_now * (1.0 - self.vco2.sweep_pos as f32),
-                OscWave::Square => 0.0,
-            };
-            raw2 + blep2
+            self.vco2.tick() * VCO_GAIN
         } else {
             0.0
         };
