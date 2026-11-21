@@ -135,7 +135,13 @@ capture_single_state "quality_low" "$OUTPUT_DIR/quality_low.png"
 capture_single_state "generator" "$OUTPUT_DIR/generator.png"
 
 echo "Extracting dynamic section crops, margins, and diff composites..."
-python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
+# Homebrew's python3 can ship without a working Pillow; uv supplies one.
+if python3 -c 'from PIL import Image' 2>/dev/null; then
+    PYTHON=(python3)
+else
+    PYTHON=(uv run --no-project --with numpy --with pillow python)
+fi
+"${PYTHON[@]}" "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
 
 REQUIRED_CROPS=(
     "latest.png"

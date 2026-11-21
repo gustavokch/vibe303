@@ -13,7 +13,13 @@ OUTPUT_DIR="${1:-$REPO_ROOT/target/gui-qa-offscreen}"
 cd "$REPO_ROOT"
 cargo run --release -p gui_render -- --out "$OUTPUT_DIR"
 
-python3 "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
+# Homebrew's python3 can ship without a working Pillow; uv supplies one.
+if python3 -c 'from PIL import Image' 2>/dev/null; then
+    PYTHON=(python3)
+else
+    PYTHON=(uv run --no-project --with numpy --with pillow python)
+fi
+"${PYTHON[@]}" "$SCRIPT_DIR/crop_gui_sections.py" "$OUTPUT_DIR"
 
 echo "Offscreen renders and crops are in $OUTPUT_DIR"
-echo "Measure: python3 scripts/gui_qa_measure.py report $OUTPUT_DIR"
+echo "Measure: ${PYTHON[*]} scripts/gui_qa_measure.py report $OUTPUT_DIR"
