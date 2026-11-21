@@ -217,6 +217,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into the output clipper and Draft and Low stay level with Best. The Best
   spectral gate reads 1.78 dB LSD, corr 0.987 (was 1.80, 0.987); the
   brightness sweep shows no new optimum, so `CIRCUIT_BRIGHT` stays 0.70.
+- Draft and Low played the square at a different level from Best: across
+  resonance their median level ran from −0.8 to +3.4 dB (Draft) and from
+  −1.7 to +4.6 dB (Low), before the output clipper. One trim
+  table per tier, fitted on the saw, served both waveforms, but the circuit
+  VCO's square sits 9.1 dB above its saw (RMS) and the polyBLEP square only
+  4.8 dB above. Each waveform now has its own table (`DRAFT_SAW_TRIM`,
+  `DRAFT_SQUARE_TRIM`, `LOW_SAW_TRIM`, `LOW_SQUARE_TRIM`; the saw tables are
+  the old `*_LEVEL_TRIM`), and FUN's SWEEP blends the two by its position.
+  Every square median now reads 0.00 dB against Best, and
+  `tier_levels::low_tracks_best_level` gates the square as well as the saw.
 - The 12th (Triplet) sequencer rate played steps of 3/8 beat (8/3 steps per
   beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
   12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of
