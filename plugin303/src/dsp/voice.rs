@@ -41,18 +41,22 @@ pub const HIGH_OS_FACTOR: f32 = 2.0;
 pub const LOW_OS_FACTOR: f32 = 2.0;
 pub const DRAFT_OS_FACTOR: f32 = 2.0;
 
-/// VCO output gain, `2.92 / 1.120 = 2.607`: SPICE's ~1.46 V p-p saw gives ~2.92 V p-p
-/// after its own gain stages, and 1.12 V was the MNA solver's raw p-p. That figure held the
-/// one-sample overshoot after each reset, which `Vco303::tick()` no longer emits; the ramp
-/// itself swings about 0.70 V.
-pub const VCO_GAIN: f32 = 2.607;
+/// VCO output gain: twice the SPICE VCO's ramp swing over this solver's, both `o_r` at
+/// MIDI 57 and 48 kHz: `2 × 0.973 / 0.682 = 2.86`. The SPICE reference feeds `o_r` to the
+/// VCF unscaled, so the 2 is the Rust ladder's input scale, kept from the old derivation
+/// `2.92 / 1.12 = 2.607`. Both of its swings were peak-to-peak readings that overstated
+/// the ramp: SPICE's 1.46 V spanned 70 ms while `o_r`'s DC level still drifted, and the
+/// solver's 1.12 V held the overshoot after each reset, which `Vco303::tick()` no longer
+/// emits. The swing ratio runs from 1.45 at 110 Hz to 1.37 at 1 kHz, so this gain is
+/// 0.1 dB low to 0.4 dB high over that range.
+pub const VCO_GAIN: f32 = 2.86;
 
 /// Per-tier VCF brightness (cutoff→bias scale on the shared `LadderVcf`). With
 /// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
 /// gold sits *below* 1.0 — the resonance peak otherwise over-brightens. Tuned
 /// per tier (different OS rate ⇒ different optimum): Best (4×) at 0.70 gives
-/// LSD 1.80 dB (`brightness_sweep`: 1.47–1.82 dB over 0.55–0.74, with no trend,
-/// then 2.08 at 0.76). Low (2×) at 0.45 gives LSD 13.78 dB, corr 0.981 (0.40: 26.35, 0.50:
+/// LSD 1.78 dB (`brightness_sweep`: 1.39–1.78 dB over 0.55–0.74, with no trend,
+/// then 2.02 at 0.76). Low (2×) at 0.45 gives LSD 13.78 dB, corr 0.981 (0.40: 26.35, 0.50:
 /// 27.46; a narrow dip, `low_brightness_sweep`). Low's darker setting also
 /// compensates its polyBLEP saw, which is brighter than the circuit saw: Low
 /// curves fitted to match Best's filter response leave the voice no closer to
@@ -73,8 +77,8 @@ const LOW_LADDER_ID: u32 = 4;
 /// median tier-vs-Best level (Gate VCA, notes 33/45/57/69 × cutoffs
 /// 300/800/1500/3000 Hz per knot). High needs no trim (within 0.02 dB).
 /// `tier_levels::{draft,low}_level_trim_report` re-derive the tables.
-const DRAFT_LEVEL_TRIM: [f32; 5] = [1.7710, 0.3554, 0.2572, 0.2680, 0.5928];
-const LOW_LEVEL_TRIM: [f32; 5] = [3.8755, 1.4242, 1.2803, 1.1950, 1.5722];
+const DRAFT_LEVEL_TRIM: [f32; 5] = [1.9410, 0.3902, 0.2827, 0.2927, 0.5878];
+const LOW_LEVEL_TRIM: [f32; 5] = [4.2413, 1.5646, 1.4056, 1.3082, 1.5698];
 
 /// Piecewise-linear lookup in a 5-knot trim table over resonance `0..=1`.
 #[inline]

@@ -3,13 +3,14 @@
 //! #4 (iter count multiplies every per-iter cost). Not a gate.
 //!
 //! Run: `cargo test -p plugin303 --test newton_iters -- --ignored --nocapture`.
-//! Mirrors `Voice::render_tier(Best)`: VCO saw ×2.0 gain → Os4x.up → 4× ladder
+//! Mirrors `Voice::render_tier(Best)`: VCO saw × `VCO_GAIN` → Os4x.up → 4× ladder
 //! tick → Os4x.down, ladder built at 4×sr with the Best brightness (0.70).
 
 use plugin303::dsp::filter::Filter303;
 use plugin303::dsp::ladder_wdf::LadderVcf;
 use plugin303::dsp::oversample::Os4x;
 use plugin303::dsp::vco::Vco303;
+use plugin303::dsp::voice::VCO_GAIN;
 
 fn midi_to_freq(n: u8) -> f32 {
     440.0 * 2.0f32.powf((n as f32 - 69.0) / 12.0)
@@ -63,7 +64,7 @@ fn best_newton_iter_histogram() {
 
     let n = (sr * secs) as usize;
     for i in 0..n {
-        let s = vco.tick() * 2.0; // VCO_GAIN
+        let s = vco.tick() * VCO_GAIN;
         if i >= warm {
             vco_hist[(vco.dbg_iters as usize).min(HBINS - 1)] += 1;
             vco_n += 1;

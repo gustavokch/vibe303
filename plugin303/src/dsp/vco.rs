@@ -93,7 +93,7 @@ const RAMP_S: f64 = 1e-3; // rail ramp time for self-start
 /// DC-blocker highpass corner (Hz). ~7.6 Hz reproduces the legacy hardcoded
 /// `0.999` pole at 48 kHz, but is now scaled by `sr` so the corner is invariant.
 const DC_BLOCK_HZ: f32 = 7.6;
-/// Square level: the pulse swings ±0.56 V (VCO_GAIN brings it to 2.92 V p-p).
+/// Square level: the pulse swings ±0.56 V, which `VCO_GAIN` brings to 3.2 V p-p.
 const SQ_LEVEL: f32 = 0.56;
 /// Weight of each new crossing-to-crossing period in the square's period
 /// estimate: smooths the error of the predicted crossing over about four cycles.
