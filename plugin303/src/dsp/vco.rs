@@ -93,6 +93,11 @@ const RAMP_S: f64 = 1e-3; // rail ramp time for self-start
 /// DC-blocker highpass corner (Hz). ~7.6 Hz reproduces the legacy hardcoded
 /// `0.999` pole at 48 kHz, but is now scaled by `sr` so the corner is invariant.
 const DC_BLOCK_HZ: f32 = 7.6;
+/// Square level: the pulse swings ±0.56 V (VCO_GAIN brings it to 2.92 V p-p).
+const SQ_LEVEL: f32 = 0.56;
+/// Weight of each new reset-to-reset period in the square's period estimate:
+/// smooths the one-sample quantisation of the reset over about four cycles.
+const SQ_PERIOD_SMOOTH: f32 = 0.25;
 /// Per-iteration node-voltage step limit (damped Newton): bounds the exponential
 /// overshoot that otherwise diverges on this stiff relaxation core.
 const VLIM: f64 = 0.5;
@@ -313,8 +318,18 @@ pub struct Vco303 {
     pub blep_frac: Option<f32>,
 
     // Synthesized square wave state
-    sq_y_prev: f32,
     sq_blep_pending: f32,
+    /// Pulse width: the fraction of each cycle the square is high (0.5 = the
+    /// stock square).
+    pw: f32,
+    /// Samples from the last reset to this sample; infinite before the first.
+    sq_t: f32,
+    /// Smoothed reset-to-reset period in samples; 0 until two resets.
+    sq_period: f32,
+    /// `sq_t` less the falling edge's time, and the square's state, at the
+    /// previous sample.
+    sq_d_prev: f32,
+    sq_high: bool,
     pub is_fun: bool,
     stuck_counter: u32,
     last_cp: f64,
@@ -399,8 +414,12 @@ impl Vco303 {
             blep_next: 0.0,
             blep_pending: 0.0,
             blep_frac: None,
-            sq_y_prev: 0.0,
             sq_blep_pending: 0.0,
+            pw: 0.5,
+            sq_t: f32::INFINITY,
+            sq_period: 0.0,
+            sq_d_prev: f32::INFINITY,
+            sq_high: false,
             is_fun: false,
             stuck_counter: 0,
             last_cp: 0.0,
@@ -935,6 +954,11 @@ impl Vco303 {
         self.sweep_pos = pos;
     }
 
+    /// Pulse width of the square: the fraction of each cycle it is high.
+    pub fn set_pw(&mut self, pw: f32) {
+        self.pw = pw.clamp(0.01, 0.99);
+    }
+
     pub fn set_instance_id(&mut self, id: u32) {
         self.instance_id = id;
         self.noise_seed = 12345u32.wrapping_add(id * 1000);
@@ -967,6 +991,11 @@ impl Vco303 {
         self.v_post = None;
         self.cp_trip = 0.0;
         self.after_reset = false;
+        self.sq_blep_pending = 0.0;
+        self.sq_t = f32::INFINITY;
+        self.sq_period = 0.0;
+        self.sq_d_prev = f32::INFINITY;
+        self.sq_high = false;
     }
 
     /// Driven rail voltages at the current sample (ramped 0→V over `RAMP_S`).
@@ -1372,6 +1401,7 @@ impl Vco303 {
 
         let mut sq_blep0 = self.sq_blep_pending;
         self.sq_blep_pending = 0.0;
+        let mut reset_alpha = None;
 
         if delta > CP_RESET_DELTA {
             let mid = (cp_prev + cp_now) * 0.5;
@@ -1383,14 +1413,7 @@ impl Vco303 {
             self.blep_pending = tap1;
             self.blep_next = tap1;
             self.blep_frac = Some(alpha);
-
-            // Square wave downward step at JFET reset (matching saw)
-            // We're synthesizing a pulse that swings -0.56 to +0.56 (p-p 1.12V)
-            // VCO_GAIN (2.607) brings this to 2.92V p-p.
-            // Step size is -1.12V (downward)
-            const SQ_DOWN_STEP: f32 = -1.12;
-            sq_blep0 += SQ_DOWN_STEP * (alpha * alpha / 2.0 - alpha);
-            self.sq_blep_pending += SQ_DOWN_STEP * (-alpha * alpha / 2.0);
+            reset_alpha = Some(alpha);
         }
         // --- end BLEP ---------------------------------------------------
 
@@ -1407,18 +1430,49 @@ impl Vco303 {
         self.dc_x1 = saw_raw;
         self.dc_y1 = y_saw;
 
-        // Upward zero crossing detection (smooth ramp crossing zero)
-        if self.sq_y_prev <= 0.0 && y_saw > 0.0 {
-            // alpha is the fraction of the sample BEFORE the crossing
-            let alpha = (self.sq_y_prev / (self.sq_y_prev - y_saw)).clamp(0.0, 1.0);
-            const SQ_UP_STEP: f32 = 1.12;
-            sq_blep0 += SQ_UP_STEP * (alpha * alpha / 2.0 - alpha);
-            self.sq_blep_pending += SQ_UP_STEP * (-alpha * alpha / 2.0);
+        // Square: high for the first `pw` of each cycle, from the JFET reset,
+        // as the polyBLEP pulse of the lower tiers. Timed from the resets (the
+        // DC-blocked ramp bends at low notes and overshoots after each reset,
+        // so a comparator on it would not give `pw`).
+        let t = match reset_alpha {
+            Some(a) => {
+                let period = self.sq_t + a;
+                if period.is_finite() {
+                    self.sq_period = if self.sq_period > 0.0 {
+                        self.sq_period + SQ_PERIOD_SMOOTH * (period - self.sq_period)
+                    } else {
+                        period
+                    };
+                }
+                1.0 - a
+            }
+            None => self.sq_t + 1.0,
+        };
+        self.sq_t = t;
+        let d = t - self.pw * self.sq_period;
+        let high = d < 0.0;
+        if high != self.sq_high {
+            // A ±1.12 V edge: up at the reset, down `pw` of a period later
+            // (the edge moves with a swept `pw`). alpha is the fraction of the
+            // sample BEFORE the edge.
+            let alpha = reset_alpha
+                .unwrap_or_else(|| (self.sq_d_prev / (self.sq_d_prev - d)).clamp(0.0, 1.0));
+            // Two-tap BLEP: the edge smoothed by a two-sample triangle centred
+            // one sample late, continuous in alpha.
+            let step = if high {
+                2.0 * SQ_LEVEL
+            } else {
+                -2.0 * SQ_LEVEL
+            };
+            sq_blep0 += step * (alpha * alpha / 2.0 - alpha - 0.5);
+            self.sq_blep_pending += step * (-alpha * alpha / 2.0);
         }
-        self.sq_y_prev = y_saw;
+        self.sq_high = high;
+        self.sq_d_prev = d;
 
-        // Synthesize the square wave (±0.56V) + BLEP
-        let pulse_raw = if y_saw > 0.0 { 0.56 } else { -0.56 } + sq_blep0;
+        // The pulse (±0.56 V) less its mean, so a width change moves no DC.
+        let level = if high { SQ_LEVEL } else { -SQ_LEVEL };
+        let pulse_raw = level - SQ_LEVEL * (2.0 * self.pw - 1.0) + sq_blep0;
 
         match self.wave {
             OscWave::Saw => y_saw,

@@ -16,6 +16,8 @@ fn test_topology_param_defaults_and_blackouts() {
     assert!(params.is_param_active("osc1_pw"));
     assert!(params.is_param_active("sub_vol"));
     assert!(params.is_param_active("sweep_pos"));
+    assert!(params.is_param_active("osc1_pwm"));
+    assert!(params.is_param_active("osc1_pwm_rate"));
     assert!(params.is_param_active("vcf_taps"));
     assert!(params.is_param_active("vcf_drive"));
     assert!(params.is_param_active("advanced_env"));

@@ -3,6 +3,10 @@ use nih_plug::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// OSC1 pulse-width span: the PW knob's range and the clamp on the PWM sweep.
+pub const OSC1_PW_MIN: f32 = 0.1;
+pub const OSC1_PW_MAX: f32 = 0.9;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum, Serialize, Deserialize)]
 pub enum CompTolerance {
     #[default]
@@ -365,6 +369,11 @@ pub struct Plugin303Params {
     pub sub_vol: FloatParam,
     #[id = "sweep_pos"]
     pub sweep_pos: FloatParam,
+    /// FUN-only: a triangle LFO sweeps OSC1's pulse width around PW.
+    #[id = "osc1_pwm"]
+    pub osc1_pwm: BoolParam,
+    #[id = "osc1_pwm_rate"]
+    pub osc1_pwm_rate: FloatParam,
     #[id = "vcf_taps"]
     pub vcf_taps: EnumParam<VcfTaps>,
     #[id = "vcf_drive"]
@@ -467,6 +476,8 @@ impl Plugin303Params {
                 | "osc1_pw"
                 | "sub_vol"
                 | "sweep_pos"
+                | "osc1_pwm"
+                | "osc1_pwm_rate"
                 | "vcf_taps"
                 | "vcf_drive"
                 | "advanced_env"
@@ -749,7 +760,10 @@ impl Default for Plugin303Params {
             osc1_pw: percent(FloatParam::new(
                 "Osc 1 PW",
                 0.5,
-                FloatRange::Linear { min: 0.1, max: 0.9 },
+                FloatRange::Linear {
+                    min: OSC1_PW_MIN,
+                    max: OSC1_PW_MAX,
+                },
             )),
 
             sub_vol: percent(FloatParam::new(
@@ -763,6 +777,20 @@ impl Default for Plugin303Params {
                 0.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )),
+
+            osc1_pwm: BoolParam::new("Osc 1 PWM", false),
+
+            osc1_pwm_rate: FloatParam::new(
+                "Osc 1 PWM Rate",
+                1.0,
+                FloatRange::Skewed {
+                    min: 0.1,
+                    max: 20.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_value_to_string(Arc::new(crate::value_text::lfo_hz))
+            .with_string_to_value(formatters::s2v_f32_hz_then_khz()),
 
             vcf_taps: EnumParam::new("VCF Taps", VcfTaps::FourPole),
 

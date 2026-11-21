@@ -171,7 +171,7 @@ segment among `WELL_BG` neighbours.
 python3 scripts/gui_qa_measure.py knobs target/gui-qa-offscreen/knobs.png
 ```
 
-Expect 28 knobs: 7 LARGE (VOICE) and 21 MEDIUM (nine in SOUPED-UP ENGINE, nine
+Expect 29 knobs: 7 LARGE (VOICE) and 22 MEDIUM (ten in SOUPED-UP ENGINE, nine
 in OUTPUT CLIPPER, three in ANALOG TWEAKS).
 Expect 19 in `accurate`, where the SOUPED-UP body is a banner. Any other count
 is a layout change or a detector failure; look at the image before you read
@@ -190,7 +190,7 @@ arc tip to pointer.
   `from=centre`), every other range from min. `from=other` is a defect.
 - `arc=NONE` is correct only at a zero-length fill: a unipolar knob at its
   minimum, a bipolar knob on its detent, BRIGHT at its neutral 100%. Read the
-  value text to tell. At defaults 15 of 28 knobs draw no arc and every knob
+  value text to tell. At defaults 15 of 29 knobs draw no arc and every knob
   with a neutral value sits on it, so only `knobs` (TUNING +25 ct, BRIGHT 75%)
   and `knob_extremes` (BRIGHT 150%) test the from-centre polarity.
 - A `muted` arc on an enabled knob, or an `accent` arc on a disabled one, is
