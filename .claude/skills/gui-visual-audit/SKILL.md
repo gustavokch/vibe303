@@ -117,7 +117,7 @@ to read:
 
 - **`panels`**: 10 cards, every gutter 6 px, the seam at x 1614 | 1620.
   Anything else is layout drift.
-- **`knobs`**: 28 knobs, 7 LARGE and 21 MEDIUM (19 in `accurate`). A mismatch,
+- **`knobs`**: 29 knobs, 7 LARGE and 22 MEDIUM (19 in `accurate`). A mismatch,
   or a fill origin that contradicts the parameter's range, is a value/position
   defect.
 - **`accent`**: a disabled control loses the accent by design. The finding

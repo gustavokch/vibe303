@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.0] - Unreleased
 
 ### Added
+- FUN mode: OSC1 pulse-width modulation. A PWM switch in the SOUPED-UP ENGINE
+  header (`osc1_pwm`, default off) lets a triangle LFO sweep oscillator 1's
+  pulse width 40 points each side of PW, clamped to PW's 10–90% range: from
+  50% it sweeps the whole range. PWM RATE (`osc1_pwm_rate`, 0.1–20 Hz,
+  default 1 Hz) sets its speed and is disabled while PWM is off. The
+  triangle runs free and restarts at PW when PWM is switched on. Oscillator 2
+  and the sub keep their static widths. It is heard as SWEEP moves toward the
+  square; ACCURATE plays the stock 50% square. `tests/osc1_pwm.rs` covers
+  every tier.
 - FUN mode: a BRIGHT knob in ANALOG TWEAKS (`vcf_brightness`, 50–150%,
   default 100%) scales every quality tier's calibrated filter corner: the
   nodal ladders' brightness and Draft's cutoff. ACCURATE plays 100%.
@@ -173,6 +182,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   45 °C) and shows AGE in the years the editor shows (was 0.45 x the value).
 
 ### Fixed
+- The circuit VCO's square (High and Best) ignored PW. It went high at the
+  JFET reset and low where the DC-blocked ramp crossed zero: 46% high, a
+  -0.044 V DC offset, no BLEP on the falling edge and a cancelling pair at
+  the reset (the code took the ramp for rising; it falls). It is now high for
+  PW of each cycle, timed from the resets on a period smoothed over about four
+  cycles, with its mean removed, so High and Best follow PW for both
+  oscillators like Draft and Low. Both edges take a two-tap BLEP: the falling
+  edge at its interpolated position, the rising edge at the reset's fixed
+  mid-sample position, as the saw's. Inharmonic energy of the 50% square
+  drops 1.5–1.6 dB at C5–C7 (48 kHz) and its largest alias spur 2.4–3.6 dB.
+  The rest is the reset itself, which the saw shares: placed on the sample
+  grid and followed by a two-sample overshoot, it leaves the saw's
+  inharmonic energy at -19 dB (C5) to -14 dB (C7). ACCURATE's square on High
+  and Best changes with it: 50% high instead of 46%, and no DC.
 - The 12th (Triplet) sequencer rate played steps of 3/8 beat (8/3 steps per
   beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
   12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of

@@ -124,21 +124,22 @@ hidden.
 A disabled control says why on hover with `on_disabled_hover_text`;
 `on_hover_text` never shows on a disabled widget.
 `plugin303/tests/gui_tooltips.rs` checks QUALITY and ANALOG TWEAKS in
-ACCURATE, both ADSR banks, the OUTPUT CLIPPER while it is off, and WAVE in
-FUN.
+ACCURATE, both ADSR banks, the OUTPUT CLIPPER while it is off, WAVE in FUN,
+and PWM RATE while PWM is off.
 
 A control the voice ignores is disabled, never drawn live. Disabled groups
 (`add_enabled_ui(false, …)`): QUALITY in ACCURATE, both ADSR banks (MEG and
 VEG) unless ADV ENV is on in FUN, the ADV ENV tile in ACCURATE, the OUTPUT
-CLIPPER body and header switches when it is off, WAVE in FUN (the voice
-plays the sweep oscillator there, shaped by the SWEEP knob), and the ANALOG
+CLIPPER body and header switches when it is off, PWM RATE while PWM is off,
+WAVE in FUN (the voice plays the sweep oscillator there, shaped by the SWEEP
+knob), and the ANALOG
 TWEAKS body in ACCURATE: its fields become Readouts, its status reads FUN
 MODE ONLY, and its header hides CALIBRATE. In ACCURATE, WAVE is live but its
 SWP segment is locked: the voice plays SAW for it, and the segment says so
 on hover. GENERATION SEED is a Readout in every mode. In ACCURATE the
 SOUPED-UP ENGINE body is replaced by a banner that says why, with an ENABLE
-FUN MODE action; the voice bypasses all nine knobs the banner hides, R-COMP
-included (`tests/topology.rs`).
+FUN MODE action; the voice bypasses all ten knobs and the PWM switch the
+banner hides, R-COMP included (`tests/topology.rs`, `tests/osc1_pwm.rs`).
 
 A step past LEN is not disabled: it stays editable. It takes the same
 neutral paints, because it never plays (Step column).
@@ -153,7 +154,7 @@ neutral paints, because it never plays (Step column).
 |---|---|---|
 | Device card | `widgets/panel.rs` `DevicePanel` | `PANEL_BG` body under a 22 pt `PANEL_HEADER_BG` strip. Title 9 pt proportional on the left; that device's own mode switches sit right-aligned in the strip (the first one added sits flush right). Body inset 8 pt x, 4 pt y |
 | Segmented control | `widgets/switch.rs` `SlideSwitch`, `BoolSwitch` | one flat bar of 18 pt segments split by 1 pt panel-colour hairlines; only the outer ends are rounded. Selected = orange fill + `TEXT_ON_ACCENT`. Caption 8.5 pt, left of the bar in header strips, above it in knob columns. WAVE is the vertical variant. A locked option (`lock_option`, vertical variant) takes the disabled paint inside a live bar, cannot be picked, and says why on hover |
-| Boolean | `widgets/toggle.rs` `ToggleButton` | every on/off (RUN, SYNC, MIDI, SYNTH, JITTER, ADV ENV, LINK, ON, SLD CHAIN) is a raised tile with a 3 × 10 pt LED left of a state-free label: `WELL_BG` slot off, orange on (`ACCENT_ORANGE_HOVER` on hover). RUN alone (`.led_bar()`) draws its LED as a 4 pt bar across the bottom of the tile, inset 4 pt, the playhead's LED form, with the label centred above it: the transport state reads from across the window. The tile never fills orange. 18 pt tall (28 pt in TRANSPORT). An egui checkbox is drift; a label that spells its state (`MIDI: OFF`) is drift |
+| Boolean | `widgets/toggle.rs` `ToggleButton` | every on/off (RUN, SYNC, MIDI, SYNTH, JITTER, ADV ENV, LINK, ON, PWM, SLD CHAIN) is a raised tile with a 3 × 10 pt LED left of a state-free label: `WELL_BG` slot off, orange on (`ACCENT_ORANGE_HOVER` on hover). RUN alone (`.led_bar()`) draws its LED as a 4 pt bar across the bottom of the tile, inset 4 pt, the playhead's LED form, with the label centred above it: the transport state reads from across the window. The tile never fills orange. 18 pt tall (28 pt in TRANSPORT). An egui checkbox is drift; a label that spells its state (`MIDI: OFF`) is drift |
 | Knob | `widgets/knob.rs` `Knob303` | two tiers only: LARGE r 21 pt (VOICE alone), MEDIUM r 12 pt (SOUPED-UP ENGINE, OUTPUT CLIPPER, ANALOG TWEAKS). `KNOB_TRACK` ring over the whole -135°..+135° sweep; orange arc from the parameter's neutral value: 0 when the range's plain minimum is below 0 (TUNING, VOLUME, PITCH1/2, IN, OUT, TILT), 100% for BRIGHT (`Knob303::neutral`), the minimum for every other knob. On its neutral value a knob draws no arc; `KNOB_BODY` disc at 0.68 r; `TEXT_PRIMARY` pointer; label 8.5 pt caps; value 8 pt monospace in an 11 pt `WELL_BG` pill, 52 / 44 pt wide by tier. Every value fits its pill with at least 1 pt each side, and the pill stays inside the knob's footprint (`gui_layout_test.rs`, at the `knob_extremes` values). The value text is the parameter's own text (`value_to_string`, the string the host shows). A knob whose meaning depends on another parameter passes `value_text()` computed from the voice's mapping (`value_text::cutoff`, `value_text::glide`) |
 | Fader | `widgets/fader.rs` `MiniFader` | 12 pt `WELL_BG` track filled from the bottom in the accent; no thumb; label 8.5 pt above, value 7.5 pt monospace below |
 | Value field | `theme::field_style` | DragValue: 9 pt monospace in a well, centred. ComboBox: a well with a ▼. A word value (ROOT, SCALE, RATE, MODE) is 9.5 pt proportional, left-aligned; a numeric value (TOL) is 9 pt monospace, centred like a DragValue. A combo keeps one width for every value it can show: ROOT 34 pt (`G_FIELD_W`, the generator's numeric field width) and SCALE 84 pt, both with a 10 pt ▼ and 4 pt padding, so SCALE starts on the x of STEPS (n) and PITCH LEN. A popup lists every option with no scroll (ROOT: all 12 roots). The TRANSPORT combos keep ▼ even when the popup opens upward. A value that cannot be edited is a `Readout`. The ANALOG TWEAKS fields share one width, `FIELD_W` = 80 pt, and their column is the 60 pt label plus that field: the knob bank takes the rest. A field shows the parameter's own text where the parameter prints one (NOISE: `Off`, then the ambient temperature in °C, as the host shows it) |
