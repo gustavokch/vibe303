@@ -205,6 +205,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reads 1.80 dB LSD (was 1.64, budget 4.0): the SPICE gold is point-sampled,
   so it keeps the naive saw's aliasing, and the LSD demeans over every bin; at
   each render's best offset both read 1.61 dB.
+- The circuit VCO (High and Best) drove the filter 0.8 dB below the level its
+  gain was meant to give. `VCO_GAIN` scales the solver's saw to twice the
+  SPICE VCO's, and it was 2.92 / 1.12 = 2.607 from two peak-to-peak readings
+  that overstated the ramps: SPICE's 1.46 V spanned 70 ms while `o_r`'s DC
+  level still drifted (its ramp swings 0.97 V), and the solver's 1.12 V held
+  the overshoot after each reset (its ramp swings 0.68 V). It is now
+  2 × 0.973 / 0.682 = 2.86, matched at MIDI 57: 0.1 dB low at 110 Hz to
+  0.4 dB high at 1 kHz. The square scales with it. `DRAFT_LEVEL_TRIM`
+  and `LOW_LEVEL_TRIM` are re-derived, so every tier plays about 0.8 dB louder
+  into the output clipper and Draft and Low stay level with Best. The Best
+  spectral gate reads 1.78 dB LSD, corr 0.987 (was 1.80, 0.987); the
+  brightness sweep shows no new optimum, so `CIRCUIT_BRIGHT` stays 0.70.
 - The 12th (Triplet) sequencer rate played steps of 3/8 beat (8/3 steps per
   beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
   12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of
