@@ -227,6 +227,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the old `*_LEVEL_TRIM`), and FUN's SWEEP blends the two by its position.
   Every square median now reads 0.00 dB against Best, and
   `tier_levels::low_tracks_best_level` gates the square as well as the saw.
+- FUN's SWEEP between saw and square played Draft and Low −10.7 to +0.6 dB
+  from Best (median per resonance knot, sweep 0.25–0.75). The polyBLEP saw rose
+  while the circuit VCO's `o_r` ramp falls, so the polyBLEP saw and square
+  were in antiphase (correlation −0.87) where the circuit's are in phase
+  (+0.86): the polyBLEP morph cancelled its fundamental, −6 dB at sweep 0.5,
+  while the circuit's grew 5.5 dB. The polyBLEP saw now falls, and the
+  mid-sweep medians read +0.3 to +3.9 dB. Saw and square levels, the Draft
+  ESR gate and the Low spectral gates are unchanged or better (Draft ESR
+  2.58 dB, was 2.91; Low LSD 13.77 / 12.30 dB, was 13.78 / 12.99).
 - The 12th (Triplet) sequencer rate played steps of 3/8 beat (8/3 steps per
   beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
   12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of
