@@ -200,6 +200,8 @@ pub struct VoiceClipperParams {
     pub bass: f32,
     pub tone: f32,
     pub asym: bool,
+    /// POLARITY −: the clipper plays the voice inverted (`ClipperParams::invert`).
+    pub invert: bool,
     pub mix: f32,
     pub in_db: f32,
     pub out_db: f32,
@@ -224,6 +226,7 @@ fn clipper_params_map(p: VoiceClipperParams) -> ClipperParams {
         bass_ohms: 4_700.0 * (22_000.0 / 4_700.0_f32).powf(bass_norm),
         tone_f: 470e-12 * (4.7e-9 / 470e-12_f32).powf(tone_norm),
         asym: p.asym,
+        invert: p.invert,
         mix: p.mix,
         in_db: p.in_db,
         out_db: p.out_db,
@@ -1702,7 +1705,8 @@ impl Voice {
         // The circuit VCF inverts (the SPICE gold's VCF output is the inverse
         // of the Rust filters' for the same falling saw) and no Rust filter
         // does, so the voice inverts here: the clipper, which rectifies only
-        // positive peaks, sees the circuit's polarity on every tier.
+        // positive peaks, sees the circuit's polarity on every tier. POLARITY −
+        // has it play the other half-wave (`VoiceClipperParams::invert`).
         let clipped = self.clipper.tick(-f * vca_gain);
 
         clipped * self.master_gain

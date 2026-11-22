@@ -337,6 +337,7 @@ impl Plugin for Plugin303 {
             bass: self.params.clipper_bass.value(),
             tone: self.params.clipper_tone.value(),
             asym: self.params.clipper_asym.value(),
+            invert: self.params.clipper_invert.value(),
             mix: self.params.clipper_mix.value(),
             in_db: self.params.clipper_in_gain.value(),
             out_db: self.params.clipper_out_gain.value(),

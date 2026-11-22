@@ -48,7 +48,7 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
 
 ### 4. Output clipper
 
-A global output stage modeled on a germanium JFET clipper netlist (`docs/Germanium JFET Clipper Schematic/`). It is evaluated as four small stateful stages with a fast-attack, slow-release JFET shunt. Controls: drive, threshold, bass, tone, in and out gain (linkable), tilt, dynamics, mix, silicon or germanium diode, 2x or 4x oversampling, and bypass.
+A global output stage modeled on a germanium JFET clipper netlist (`docs/Germanium JFET Clipper Schematic/`). It is evaluated as four small stateful stages with a fast-attack, slow-release JFET shunt. Controls: drive, threshold, bass, tone, in and out gain (linkable), tilt, dynamics, mix, silicon or germanium diode, polarity (which half of the wave the germanium diode flattens), 2x or 4x oversampling, and bypass.
 
 ### 5. Sequencer
 

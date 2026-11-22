@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.0] - Unreleased
 
 ### Added
+- OUTPUT CLIPPER: a POLARITY switch (`clipper_invert`, default +). At −
+  the clipper plays the voice inverted and inverts its output back, so the
+  output keeps the circuit's polarity while the GE diode flattens the other
+  half of the wave; on SI only the detector's half-wave changes. On GE, −
+  plays High and Best through the clipper as they were before the voice took
+  the circuit's polarity: the distortion of their square and SWEEP drops
+  about 7 dB, and of their saw rises 1.6 dB. The switch morphs over 10 ms,
+  so it does not click (`tests/warm_clipper.rs`).
 - FUN mode: a BRIGHT knob in ANALOG TWEAKS (`vcf_brightness`, 50–150%,
   default 100%) scales every quality tier's calibrated filter corner: the
   nodal ladders' brightness and Draft's cutoff. ACCURATE plays 100%.
@@ -235,7 +243,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reads 2.91 dB again (budget 3.5; 2.58 with the inverted voice), and the
   spectral gates are unchanged (Best 1.78 dB, Low 13.77 / 12.30 dB).
   `tests/voice_polarity.rs` gates Best against the gold and every tier
-  against Best.
+  against Best. The clipper's POLARITY switch plays the other half-wave.
 - The 12th (Triplet) sequencer rate played steps of 3/8 beat (8/3 steps per
   beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
   12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of

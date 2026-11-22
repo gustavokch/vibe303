@@ -3,7 +3,7 @@
 //! Numeric oracles derived from `warm_clipper.cir` ngspice validation.
 
 use plugin303::dsp::voice::Voice;
-use plugin303::dsp::warm_clipper::{ClipperParams, WarmClipper};
+use plugin303::dsp::warm_clipper::{ClipperOs, ClipperParams, WarmClipper};
 
 fn compute_rms(samples: &[f32]) -> f32 {
     let sum_sq: f32 = samples.iter().map(|&x| x * x).sum();
@@ -550,4 +550,78 @@ fn reset_preserves_params() {
             "sample {i}: reset must preserve params"
         );
     }
+}
+
+/// POLARITY − is the clipper fed the inverted input, its output inverted back:
+/// on GE the diode flattens the other half-wave. Both oversampling rates and
+/// both diodes, driven hard enough that the detector opens the JFET shunt.
+#[test]
+fn invert_is_the_clipper_on_the_inverted_input() {
+    let sr = 48_000.0;
+    for os in [ClipperOs::X2, ClipperOs::X4] {
+        for asym in [false, true] {
+            let p = ClipperParams {
+                os,
+                asym,
+                ..ClipperParams::default()
+            };
+            let mut inverted = WarmClipper::new(sr);
+            inverted.set_params_immediate(ClipperParams { invert: true, ..p });
+            let mut fed_inverted = WarmClipper::new(sr);
+            fed_inverted.set_params_immediate(p);
+            let (mut worst, mut peak) = (0.0f32, 0.0f32);
+            for i in 0..9_600 {
+                // A falling saw plus a second harmonic: the half-waves differ.
+                let t = i as f32 / sr;
+                let x = 0.8 * (1.0 - 2.0 * (110.0 * t).fract())
+                    + 0.3 * (2.0 * std::f32::consts::PI * 220.0 * t).sin();
+                let a = inverted.tick(x);
+                let b = -fed_inverted.tick(-x);
+                worst = worst.max((a - b).abs());
+                peak = peak.max(a.abs());
+            }
+            assert!(
+                worst <= 1e-6 * peak.max(1.0),
+                "{os:?} asym={asym}: invert differs from the inverted feed by {worst}"
+            );
+        }
+    }
+}
+
+/// Switching POLARITY mid-note morphs over 10 ms: no sample step is larger
+/// than the held note's own. An instant switch on GE at the wave's peak steps
+/// by the gap between the diode's two sides there.
+#[test]
+fn invert_switch_is_click_free() {
+    let sr = 48_000.0;
+    let p = ClipperParams {
+        asym: true,
+        drive_ohms: 22_000.0,
+        ..ClipperParams::default()
+    };
+    let mut c = WarmClipper::new(sr);
+    c.set_params_immediate(p);
+    // 100 Hz: 480 samples a cycle, a positive peak at sample 120 of each.
+    let x = |i: usize| 0.15 * (2.0 * std::f32::consts::PI * 100.0 * i as f32 / sr).sin();
+    let toggle = 120 + 480 * 20;
+    let win = 2_400;
+    let y: Vec<f32> = (0..toggle + 2 * win)
+        .map(|i| {
+            if i == toggle {
+                c.set_params(ClipperParams { invert: true, ..p });
+            }
+            c.tick(x(i))
+        })
+        .collect();
+    let max_step = |a: usize, b: usize| {
+        (a..b)
+            .map(|i| (y[i] - y[i - 1]).abs())
+            .fold(0.0f32, f32::max)
+    };
+    let steady = max_step(toggle - win, toggle).max(max_step(toggle + win, toggle + 2 * win));
+    let switch = max_step(toggle, toggle + win);
+    assert!(
+        switch <= 1.2 * steady,
+        "switching POLARITY stepped {switch} against a held {steady}"
+    );
 }

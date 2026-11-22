@@ -247,11 +247,11 @@ fn engine_device_controls_explain_themselves() {
     );
 
     let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
-    // 9 knobs + ON + OS + DIODE + LINK.
+    // 9 knobs + ON + OS + DIODE + POLARITY + LINK.
     assert_controls_explain(
         &mut rig,
         &mut |ui| output_clipper::render_output_clipper(ui, &params, &setter),
-        13,
+        14,
     );
 
     let mut rig = Rig::new(vec2(right_column_width(), TWEAKS_H + TOOLTIP_ROOM));
@@ -385,12 +385,12 @@ fn bypassed_clipper_explains_why_it_is_inert() {
     let host = DummyGuiContext;
     let setter = ParamSetter::new(&host);
     let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
-    // OS + DIODE + LINK + 9 knobs; ON stays live.
+    // OS + DIODE + POLARITY + LINK + 9 knobs; ON stays live.
     assert_disabled_controls_explain(
         &mut rig,
         &mut |ui| output_clipper::render_output_clipper(ui, &params, &setter),
         output_clipper::CLIPPER_OFF_HINT,
-        12,
+        13,
     );
 }
 

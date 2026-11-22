@@ -164,6 +164,7 @@ pub fn bypassed_clipper() -> plugin303::dsp::voice::VoiceClipperParams {
         bass: 8_200.0,
         tone: 1e-9,
         asym: false,
+        invert: false,
         mix: 1.0,
         in_db: 0.0,
         out_db: 0.0,

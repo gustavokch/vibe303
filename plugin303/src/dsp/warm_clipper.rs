@@ -7,6 +7,11 @@
 //! allocation-free while retaining the important circuit behaviour: a
 //! GB-referenced high-passed detector, fast attack/slow release JFET shunt,
 //! germanium feedback clipping, and an unducked low-frequency blend.
+//!
+//! `ClipperParams::invert` plays the clipper as if it were fed the inverted
+//! signal and its output inverted back. Every stage but the detector's
+//! rectifier and the germanium diode is odd, so the engine mirrors just those
+//! two, morphing over `XFADE_SECONDS` so the switch does not click.
 
 use super::oversample::{Os2x, Os4x};
 
@@ -35,6 +40,9 @@ pub struct ClipperParams {
     pub bass_ohms: f32,
     pub tone_f: f32,
     pub asym: bool,
+    /// Mirror the rectifier and the diode: the clipper fed the inverted
+    /// input, inverted back. GE flattens the other half-wave.
+    pub invert: bool,
     pub mix: f32,      // 0.0 = dry, 1.0 = wet; equal-power law
     pub in_db: f32,    // pre-clipper input gain
     pub out_db: f32,   // post-clipper output gain
@@ -52,6 +60,7 @@ impl Default for ClipperParams {
             bass_ohms: 8_200.0,
             tone_f: 1e-9,
             asym: false,
+            invert: false,
             mix: 1.0, // DSP default stays wet; the plugin param defaults to dry
             in_db: 0.0,
             out_db: 0.0,
@@ -126,6 +135,10 @@ struct StagedEngine {
     peak_env: f32,
     dyn_attack: f32,
     dyn_release: f32,
+    // Invert morph: 0 plays the input as fed, 1 mirrored; ramps toward
+    // `params.invert` by `invert_step` per sample.
+    invert: f32,
+    invert_step: f32,
     params: ClipperParams,
 }
 
@@ -170,6 +183,8 @@ impl StagedEngine {
             peak_env: 0.0,
             dyn_attack,
             dyn_release,
+            invert: 0.0,
+            invert_step: 1.0 / (XFADE_SECONDS * sr).max(1.0),
             params: ClipperParams::default(),
         };
         engine.update_tone_alpha();
@@ -202,6 +217,11 @@ impl StagedEngine {
         self.update_tilt_coeffs();
     }
 
+    /// Ends the invert morph at once, at `params.invert`.
+    fn snap_invert(&mut self) {
+        self.invert = if self.params.invert { 1.0 } else { 0.0 };
+    }
+
     fn reset(&mut self) {
         // Preserve live params across reset: filter state clears, but the
         // control dimensions (drive, tilt, dynamics, ...) must not revert to
@@ -210,6 +230,7 @@ impl StagedEngine {
         let params = self.params;
         *self = Self::new(self.sr);
         self.set_params(params);
+        self.snap_invert();
     }
 
     #[inline]
@@ -277,7 +298,17 @@ impl StagedEngine {
         self.hp_x2 = h1;
         self.hp_y2 = h2;
         let sens_gain = (p.threshold_ohms.clamp(2_200.0, 22_000.0) / 4_700.0).recip();
-        let rectified = (h2 * 0.18 * sens_gain - 0.50).max(0.0);
+        // Invert: rectify the negative half-wave instead, blended through the
+        // morph. The endpoints are exact: 1·a + 0·b = a.
+        let target = if p.invert { 1.0 } else { 0.0 };
+        if self.invert < target {
+            self.invert = (self.invert + self.invert_step).min(1.0);
+        } else if self.invert > target {
+            self.invert = (self.invert - self.invert_step).max(0.0);
+        }
+        let inv = self.invert;
+        let det = h2 * 0.18 * sens_gain;
+        let rectified = (1.0 - inv) * (det - 0.50).max(0.0) + inv * (-det - 0.50).max(0.0);
         let env_target = GB + rectified.min(12.0);
         let env_a = if env_target > self.env {
             self.env_attack
@@ -303,12 +334,23 @@ impl StagedEngine {
         let clipped = if p.asym {
             // Large equivalent series resistance on D2b: retain the topology
             // but make the negative feedback branch intentionally weak.
-            if vca >= 0.0 {
-                ge_knee * (vca / ge_knee).tanh()
+            let ge = |u: f32| {
+                if u >= 0.0 {
+                    ge_knee * (u / ge_knee).tanh()
+                } else {
+                    u * 0.55
+                }
+            };
+            // Inverted, the diode is mirrored: -ge(-u). Mid-morph, a blend.
+            if inv == 0.0 {
+                ge(vca)
+            } else if inv == 1.0 {
+                -ge(-vca)
             } else {
-                vca * 0.55
+                (1.0 - inv) * ge(vca) - inv * ge(-vca)
             }
         } else {
+            // Odd: the same either way.
             ge_knee * (vca / ge_knee).tanh()
         };
         let clp = Self::one_pole(&mut self.tone, clipped, self.tone_alpha);
@@ -426,6 +468,8 @@ impl WarmClipper {
     pub fn set_params_immediate(&mut self, params: ClipperParams) {
         self.e2.set_params(params);
         self.e4.set_params(params);
+        self.e2.snap_invert();
+        self.e4.snap_invert();
         self.active_bypass = params.bypass;
         self.active_os = params.os;
         self.fade_from_bypass = params.bypass;

@@ -434,6 +434,9 @@ pub struct Plugin303Params {
     pub clipper_tone: FloatParam,
     #[id = "clipper_asym"]
     pub clipper_asym: BoolParam,
+    /// POLARITY: `true` (−) has the clipper play the voice inverted.
+    #[id = "clipper_invert"]
+    pub clipper_invert: BoolParam,
     #[id = "clipper_mix"]
     pub clipper_mix: FloatParam,
     #[id = "clipper_in_gain"]
@@ -942,6 +945,13 @@ impl Default for Plugin303Params {
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )),
             clipper_asym: BoolParam::new("Clipper Asym", false),
+            clipper_invert: BoolParam::new("Clipper Polarity", false)
+                .with_value_to_string(Arc::new(|inv| if inv { "−" } else { "+" }.to_string()))
+                .with_string_to_value(Arc::new(|s| match s.trim() {
+                    "+" => Some(false),
+                    "−" | "-" => Some(true),
+                    _ => None,
+                })),
             clipper_mix: percent(FloatParam::new(
                 "Clipper Mix",
                 0.0,
