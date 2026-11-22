@@ -135,10 +135,6 @@ struct StagedEngine {
     peak_env: f32,
     dyn_attack: f32,
     dyn_release: f32,
-    // Invert morph: 0 plays the input as fed, 1 mirrored; ramps toward
-    // `params.invert` by `invert_step` per sample.
-    invert: f32,
-    invert_step: f32,
     params: ClipperParams,
 }
 
@@ -183,8 +179,6 @@ impl StagedEngine {
             peak_env: 0.0,
             dyn_attack,
             dyn_release,
-            invert: 0.0,
-            invert_step: 1.0 / (XFADE_SECONDS * sr).max(1.0),
             params: ClipperParams::default(),
         };
         engine.update_tone_alpha();
@@ -217,11 +211,6 @@ impl StagedEngine {
         self.update_tilt_coeffs();
     }
 
-    /// Ends the invert morph at once, at `params.invert`.
-    fn snap_invert(&mut self) {
-        self.invert = if self.params.invert { 1.0 } else { 0.0 };
-    }
-
     fn reset(&mut self) {
         // Preserve live params across reset: filter state clears, but the
         // control dimensions (drive, tilt, dynamics, ...) must not revert to
@@ -230,7 +219,6 @@ impl StagedEngine {
         let params = self.params;
         *self = Self::new(self.sr);
         self.set_params(params);
-        self.snap_invert();
     }
 
     #[inline]
@@ -242,7 +230,7 @@ impl StagedEngine {
     /// Stages A→B→C→D, with exact same-sample handoffs. Gate junction
     /// coupling uses the previous stage-C state implicitly (the documented
     /// one-sweep-free policy; Ratk dominates in the operating region).
-    fn tick(&mut self, input: f32) -> f32 {
+    fn tick(&mut self, input: f32, inv: f32) -> f32 {
         let x = if input.is_finite() {
             input.clamp(-16.0, 16.0)
         } else {
@@ -300,13 +288,6 @@ impl StagedEngine {
         let sens_gain = (p.threshold_ohms.clamp(2_200.0, 22_000.0) / 4_700.0).recip();
         // Invert: rectify the negative half-wave instead, blended through the
         // morph. The endpoints are exact: 1·a + 0·b = a.
-        let target = if p.invert { 1.0 } else { 0.0 };
-        if self.invert < target {
-            self.invert = (self.invert + self.invert_step).min(1.0);
-        } else if self.invert > target {
-            self.invert = (self.invert - self.invert_step).max(0.0);
-        }
-        let inv = self.invert;
         let det = h2 * 0.18 * sens_gain;
         let rectified = (1.0 - inv) * (det - 0.50).max(0.0) + inv * (-det - 0.50).max(0.0);
         let env_target = GB + rectified.min(12.0);
@@ -397,6 +378,8 @@ pub struct WarmClipper {
     fade_from_os: ClipperOs,
     fade: f32,
     fade_step: f32,
+    // Shared by both wet paths, including when neither path renders.
+    invert: f32,
     // Base-rate smoothed scalars for the new control dimensions.
     smooth_k: f32,
     in_t: f32,
@@ -425,6 +408,7 @@ impl WarmClipper {
             fade_from_os: ClipperOs::X2,
             fade: 1.0,
             fade_step: 1.0 / (sr * XFADE_SECONDS).max(1.0),
+            invert: 0.0,
             smooth_k: 1.0 - (-1.0 / (0.010 * sr)).exp(),
             in_t: 1.0,
             in_s: 1.0,
@@ -468,8 +452,7 @@ impl WarmClipper {
     pub fn set_params_immediate(&mut self, params: ClipperParams) {
         self.e2.set_params(params);
         self.e4.set_params(params);
-        self.e2.snap_invert();
-        self.e4.snap_invert();
+        self.invert = f32::from(params.invert);
         self.active_bypass = params.bypass;
         self.active_os = params.os;
         self.fade_from_bypass = params.bypass;
@@ -482,16 +465,18 @@ impl WarmClipper {
     fn wet2(&mut self, x: f32) -> f32 {
         let hi = self.os2.up(x);
         // Pad the 2× round trip to the 4× path's.
-        self.pad2
-            .tick(self.os2.down([self.e2.tick(hi[0]), self.e2.tick(hi[1])]))
+        self.pad2.tick(self.os2.down([
+            self.e2.tick(hi[0], self.invert),
+            self.e2.tick(hi[1], self.invert),
+        ]))
     }
     fn wet4(&mut self, x: f32) -> f32 {
         let hi = self.os4.up(x);
         self.os4.down([
-            self.e4.tick(hi[0]),
-            self.e4.tick(hi[1]),
-            self.e4.tick(hi[2]),
-            self.e4.tick(hi[3]),
+            self.e4.tick(hi[0], self.invert),
+            self.e4.tick(hi[1], self.invert),
+            self.e4.tick(hi[2], self.invert),
+            self.e4.tick(hi[3], self.invert),
         ])
     }
     fn branch(&mut self, bypass: bool, os: ClipperOs, x: f32, d: f32) -> f32 {
@@ -516,6 +501,12 @@ impl WarmClipper {
         self.out_s += self.smooth_k * (self.out_t - self.out_s);
         self.dry_s += self.smooth_k * (self.dry_t - self.dry_s);
         self.wet_s += self.smooth_k * (self.wet_t - self.wet_s);
+        let target = f32::from(self.params.invert);
+        if self.invert < target {
+            self.invert = (self.invert + self.fade_step).min(1.0);
+        } else if self.invert > target {
+            self.invert = (self.invert - self.fade_step).max(0.0);
+        }
         // Both paths are only rendered during a transition. A bypassed steady
         // engine therefore incurs no nonlinear solve.
         let to = self.branch(self.active_bypass, self.active_os, x, d);
@@ -536,6 +527,7 @@ impl WarmClipper {
         self.pad2.reset();
         self.dry.reset();
         self.fade = 1.0;
+        self.invert = f32::from(self.params.invert);
         self.snap_smoothers();
         self.active_bypass = self.params.bypass;
         self.active_os = self.params.os;

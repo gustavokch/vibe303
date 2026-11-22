@@ -625,3 +625,42 @@ fn invert_switch_is_click_free() {
         "switching POLARITY stepped {switch} against a held {steady}"
     );
 }
+
+#[test]
+fn settled_polarity_survives_enabling_an_idle_wet_path() {
+    let sr = 48_000.0;
+    for (bypass, os) in [(true, ClipperOs::X4), (false, ClipperOs::X2)] {
+        let p = ClipperParams {
+            bypass,
+            os,
+            asym: true,
+            drive_ohms: 22_000.0,
+            ..ClipperParams::default()
+        };
+        let inverted = ClipperParams { invert: true, ..p };
+        let mut automated = WarmClipper::new(sr);
+        let mut reference = WarmClipper::new(sr);
+        automated.set_params_immediate(p);
+        reference.set_params_immediate(inverted);
+        automated.set_params(inverted);
+        for _ in 0..960 {
+            automated.tick(0.0);
+            reference.tick(0.0);
+        }
+        let wet = ClipperParams {
+            bypass: false,
+            os: ClipperOs::X4,
+            ..inverted
+        };
+        automated.set_params(wet);
+        reference.set_params(wet);
+        for i in 0..480 {
+            let x = 0.15 * (2.0 * std::f32::consts::PI * i as f32 / 480.0).sin();
+            let error = (automated.tick(x) - reference.tick(x)).abs();
+            assert!(
+                error <= 1e-6,
+                "bypass={bypass}, sample {i}: stale polarity, error {error}"
+            );
+        }
+    }
+}

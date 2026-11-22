@@ -13,8 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   half of the wave; on SI only the detector's half-wave changes. On GE, −
   plays High and Best through the clipper as they were before the voice took
   the circuit's polarity: the distortion of their square and SWEEP drops
-  about 7 dB, and of their saw rises 1.6 dB. The switch morphs over 10 ms,
-  so it does not click (`tests/warm_clipper.rs`).
+  about 7 dB, and of their saw rises 1.6 dB. The switch morphs over 10 ms
+  even while bypassed, so re-enabling or changing oversampling does not
+  restart the morph (`tests/warm_clipper.rs`).
 - FUN mode: a BRIGHT knob in ANALOG TWEAKS (`vcf_brightness`, 50–150%,
   default 100%) scales every quality tier's calibrated filter corner: the
   nodal ladders' brightness and Draft's cutoff. ACCURATE plays 100%.
