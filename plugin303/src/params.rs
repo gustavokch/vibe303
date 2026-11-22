@@ -494,6 +494,7 @@ impl Plugin303Params {
             },
             CircuitTopology::Fun => match param_id {
                 "waveform" => false,
+                "osc1_pw" => matches!(self.tier.value(), Tier::Draft | Tier::Low),
                 _ => true,
             },
         }

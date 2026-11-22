@@ -263,6 +263,41 @@ fn engine_device_controls_explain_themselves() {
     );
 }
 
+#[test]
+fn pulse_width_is_only_editable_on_draft_and_low() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    for (state, enabled) in [
+        ("default", true),
+        ("quality_low", true),
+        ("quality_high", false),
+        ("quality_best", false),
+    ] {
+        let _env = EnvGuard::set("VIBE303_QA_STATE", state);
+        let params = Plugin303Params::default();
+        let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
+        let mut add = |ui: &mut Ui| souped_panel::render_souped_panel(ui, &params, &setter);
+        let shapes = rig.shapes(&mut add);
+        let label = painted(&text_runs(&shapes), "PW");
+        let knob = rig
+            .widgets()
+            .into_iter()
+            .find(|w| w.sense.senses_drag() && w.rect.contains(label.center()))
+            .expect("PW knob");
+        assert_eq!(knob.enabled, enabled, "PW with {state}");
+        if !enabled {
+            let texts = rig.hover(knob.rect, &mut add);
+            assert!(
+                texts
+                    .iter()
+                    .any(|text| text == "Pulse width is adjustable only on Draft and Low."),
+                "PW has no disabled explanation with {state}: {texts:?}"
+            );
+        }
+    }
+}
+
 /// In ACCURATE the SOUPED-UP ENGINE body is a banner with one action; it says
 /// what it does on hover like every other engine control (round-20 #11).
 #[test]

@@ -16,6 +16,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   about 7 dB, and of their saw rises 1.6 dB. The switch morphs over 10 ms
   even while bypassed, so re-enabling or changing oversampling does not
   restart the morph (`tests/warm_clipper.rs`).
+- FUN mode: PW stays adjustable on Draft and Low. High and Best take the
+  square from the circuit saw and disable PW with an explanation on hover.
 - FUN mode: a BRIGHT knob in ANALOG TWEAKS (`vcf_brightness`, 50–150%,
   default 100%) scales every quality tier's calibrated filter corner: the
   nodal ladders' brightness and Draft's cutoff. ACCURATE plays 100%.

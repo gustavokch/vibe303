@@ -32,12 +32,12 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
 
 ### 2. Topology: Accurate and Fun
 
-- **Accurate:** hardware behavior. Fixed 4-pole filter, no drive, no second oscillator, no sub, fixed 50% pulse width, Sweep wave falls back to Saw, simple envelopes, pitch limited to MIDI 24 to 72. The SOUPED-UP ENGINE device dims its controls.
+- **Accurate:** hardware behavior. Fixed 4-pole filter, no drive, no second oscillator, no sub, no pulse-width adjustment, Sweep wave falls back to Saw, simple envelopes, pitch limited to MIDI 24 to 72. The SOUPED-UP ENGINE device dims its controls.
 - **Fun:** unlocks the Souped-Up engine and widens the pitch range to MIDI 0 to 108. Fun is the default.
 
 ### 3. Voice
 
-- **Oscillators:** Saw, Square, and a continuous Saw to Square Sweep. Souped-Up adds a second oscillator with pitch and mix, a sub oscillator, pulse width, and sweep.
+- **Oscillators:** Saw, Square, and a continuous Saw to Square Sweep. Souped-Up adds a second oscillator with pitch and mix, a sub oscillator, and sweep. PW adjusts the static pulse width on Draft and Low; High and Best use the circuit square and disable PW.
 - **Filter:** diode ladder with switchable 2-pole (12 dB/oct), 3-pole (18 dB/oct), and 4-pole (24 dB/oct) taps, plus drive and resonance gain compensation.
 - **Envelopes and accent:**
   - RC envelope decay curves calibrated against the circuit.

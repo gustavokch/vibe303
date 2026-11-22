@@ -124,17 +124,17 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         let col_w = total_w / 9.0;
                         let col_h = ui.available_height();
 
-                        let mut render_knob = |knob: Knob303<'_, _>| {
+                        let mut render_knob = |enabled, knob: Knob303<'_, _>| {
                             ui.allocate_ui_with_layout(
                                 vec2(col_w, col_h),
                                 Layout::top_down(Align::Center),
-                                |ui| {
-                                    ui.add(knob);
-                                },
-                            );
+                                |ui| ui.add_enabled(enabled, knob),
+                            )
+                            .inner
                         };
 
                         render_knob(
+                            true,
                             Knob303::new(
                                 &params.vcf_drive,
                                 setter,
@@ -144,10 +144,12 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("VCF input drive (dB)"),
                         );
                         render_knob(
+                            true,
                             Knob303::new(&params.sub_vol, setter, "SUB", theme::KNOB_RADIUS_MEDIUM)
                                 .tooltip("Sub-oscillator level"),
                         );
                         render_knob(
+                            true,
                             Knob303::new(&params.glide, setter, "GLIDE", theme::KNOB_RADIUS_MEDIUM)
                                 .value_text(crate::value_text::glide(
                                     params.glide.unmodulated_plain_value(),
@@ -157,6 +159,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 .tooltip("Pitch glide time on slid notes"),
                         );
                         render_knob(
+                            true,
                             Knob303::new(
                                 &params.osc1_pitch,
                                 setter,
@@ -166,6 +169,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("Oscillator 1 pitch offset (semitones)"),
                         );
                         render_knob(
+                            true,
                             Knob303::new(
                                 &params.osc2_pitch,
                                 setter,
@@ -175,6 +179,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("Oscillator 2 pitch offset (semitones)"),
                         );
                         render_knob(
+                            true,
                             Knob303::new(
                                 &params.osc2_vol,
                                 setter,
@@ -184,10 +189,13 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("Oscillator 2 level"),
                         );
                         render_knob(
+                            params.is_param_active("osc1_pw"),
                             Knob303::new(&params.osc1_pw, setter, "PW", theme::KNOB_RADIUS_MEDIUM)
-                                .tooltip("Oscillator 1 pulse width"),
-                        );
+                                .tooltip("Oscillator pulse width"),
+                        )
+                        .on_disabled_hover_text("Pulse width is adjustable only on Draft and Low.");
                         render_knob(
+                            true,
                             Knob303::new(
                                 &params.sweep_pos,
                                 setter,
@@ -197,6 +205,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("Oscillator 1 waveform morph, saw to square"),
                         );
                         render_knob(
+                            true,
                             Knob303::new(
                                 &params.reso_comp,
                                 setter,
