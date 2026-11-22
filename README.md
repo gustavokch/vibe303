@@ -32,12 +32,12 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
 
 ### 2. Topology: Accurate and Fun
 
-- **Accurate:** hardware behavior. Fixed 4-pole filter, no drive, no second oscillator, no sub, fixed 50% pulse width, Sweep wave falls back to Saw, simple envelopes, pitch limited to MIDI 24 to 72. The SOUPED-UP ENGINE device dims its controls.
+- **Accurate:** hardware behavior. Fixed 4-pole filter, no drive, no second oscillator, no sub, no pulse-width adjustment, Sweep wave falls back to Saw, simple envelopes, pitch limited to MIDI 24 to 72. The SOUPED-UP ENGINE device dims its controls.
 - **Fun:** unlocks the Souped-Up engine and widens the pitch range to MIDI 0 to 108. Fun is the default.
 
 ### 3. Voice
 
-- **Oscillators:** Saw, Square, and a continuous Saw to Square Sweep. Souped-Up adds a second oscillator with pitch and mix, a sub oscillator, pulse width, sweep, and PWM: a triangle LFO with its own rate sweeps oscillator 1's pulse width.
+- **Oscillators:** Saw, Square, and a continuous Saw to Square Sweep. Souped-Up adds a second oscillator with pitch and mix, a sub oscillator, and sweep. PW adjusts the static pulse width on Draft and Low; High and Best use the circuit square and disable PW.
 - **Filter:** diode ladder with switchable 2-pole (12 dB/oct), 3-pole (18 dB/oct), and 4-pole (24 dB/oct) taps, plus drive and resonance gain compensation.
 - **Envelopes and accent:**
   - RC envelope decay curves calibrated against the circuit.
@@ -48,7 +48,7 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
 
 ### 4. Output clipper
 
-A global output stage modeled on a germanium JFET clipper netlist (`docs/Germanium JFET Clipper Schematic/`). It is evaluated as four small stateful stages with a fast-attack, slow-release JFET shunt. Controls: drive, threshold, bass, tone, in and out gain (linkable), tilt, dynamics, mix, silicon or germanium diode, 2x or 4x oversampling, and bypass.
+A global output stage modeled on a germanium JFET clipper netlist (`docs/Germanium JFET Clipper Schematic/`). It is evaluated as four small stateful stages with a fast-attack, slow-release JFET shunt. Controls: drive, threshold, bass, tone, in and out gain (linkable), tilt, dynamics, mix, silicon or germanium diode, polarity (which half of the wave the germanium diode flattens), 2x or 4x oversampling, and bypass.
 
 ### 5. Sequencer
 

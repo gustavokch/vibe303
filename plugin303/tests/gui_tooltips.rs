@@ -239,17 +239,19 @@ fn engine_device_controls_explain_themselves() {
     let setter = ParamSetter::new(&host);
 
     let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
-    // 9 knobs + VCA ENV + VCF TAPS + PWM. PWM RATE waits for PWM and says so.
-    let mut add = |ui: &mut Ui| souped_panel::render_souped_panel(ui, &params, &setter);
-    assert_controls_explain(&mut rig, &mut add, 12);
-    assert_disabled_controls_explain(&mut rig, &mut add, souped_panel::PWM_OFF_HINT, 1);
+    // 9 knobs + VCA ENV + VCF TAPS.
+    assert_controls_explain(
+        &mut rig,
+        &mut |ui| souped_panel::render_souped_panel(ui, &params, &setter),
+        11,
+    );
 
     let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
-    // 9 knobs + ON + OS + DIODE + LINK.
+    // 9 knobs + ON + OS + DIODE + POLARITY + LINK.
     assert_controls_explain(
         &mut rig,
         &mut |ui| output_clipper::render_output_clipper(ui, &params, &setter),
-        13,
+        14,
     );
 
     let mut rig = Rig::new(vec2(right_column_width(), TWEAKS_H + TOOLTIP_ROOM));
@@ -259,6 +261,41 @@ fn engine_device_controls_explain_themselves() {
         &mut |ui| tweaks_panel::render_tweaks_panel(ui, &params, &setter),
         8,
     );
+}
+
+#[test]
+fn pulse_width_is_only_editable_on_draft_and_low() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let host = DummyGuiContext;
+    let setter = ParamSetter::new(&host);
+    for (state, enabled) in [
+        ("default", true),
+        ("quality_low", true),
+        ("quality_high", false),
+        ("quality_best", false),
+    ] {
+        let _env = EnvGuard::set("VIBE303_QA_STATE", state);
+        let params = Plugin303Params::default();
+        let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
+        let mut add = |ui: &mut Ui| souped_panel::render_souped_panel(ui, &params, &setter);
+        let shapes = rig.shapes(&mut add);
+        let label = painted(&text_runs(&shapes), "PW");
+        let knob = rig
+            .widgets()
+            .into_iter()
+            .find(|w| w.sense.senses_drag() && w.rect.contains(label.center()))
+            .expect("PW knob");
+        assert_eq!(knob.enabled, enabled, "PW with {state}");
+        if !enabled {
+            let texts = rig.hover(knob.rect, &mut add);
+            assert!(
+                texts
+                    .iter()
+                    .any(|text| text == "Pulse width is adjustable only on Draft and Low."),
+                "PW has no disabled explanation with {state}: {texts:?}"
+            );
+        }
+    }
 }
 
 /// In ACCURATE the SOUPED-UP ENGINE body is a banner with one action; it says
@@ -383,12 +420,12 @@ fn bypassed_clipper_explains_why_it_is_inert() {
     let host = DummyGuiContext;
     let setter = ParamSetter::new(&host);
     let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
-    // OS + DIODE + LINK + 9 knobs; ON stays live.
+    // OS + DIODE + POLARITY + LINK + 9 knobs; ON stays live.
     assert_disabled_controls_explain(
         &mut rig,
         &mut |ui| output_clipper::render_output_clipper(ui, &params, &setter),
         output_clipper::CLIPPER_OFF_HINT,
-        12,
+        13,
     );
 }
 

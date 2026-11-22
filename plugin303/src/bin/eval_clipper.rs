@@ -17,6 +17,7 @@ fn print_usage() {
          --bass <float>      Bass resistance in Ohms (4700.0..22000.0, default: 8200.0)\n\
          --tone <float>      Tone capacitance in Farads (default: 1e-9)\n\
          --asym              Asymmetric clipping mode\n\
+         --invert            Clip the inverted input, inverted back (POLARITY −)\n\
          --mix <float>       Dry/wet mix 0.0..1.0 (default: 1.0)\n\
          --in-gain <float>   Input gain dB -18..18 (default: 0.0)\n\
          --out-gain <float>  Output gain dB -18..18 (default: 0.0)\n\
@@ -57,6 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bass: f32 = 8200.0;
     let mut tone: f32 = 1e-9;
     let mut asym = false;
+    let mut invert = false;
     let mut mix: f32 = 1.0;
     let mut in_gain: f32 = 0.0;
     let mut out_gain: f32 = 0.0;
@@ -94,6 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tone = take_value(&args, &mut i, "--tone")?.parse()?;
             }
             "--asym" => asym = true,
+            "--invert" => invert = true,
             "--mix" => {
                 mix = take_value(&args, &mut i, "--mix")?.parse()?;
             }
@@ -188,6 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         bass_ohms: bass,
         tone_f: tone,
         asym,
+        invert,
         mix,
         in_db: in_gain,
         out_db: out_gain,

@@ -6,19 +6,24 @@
 //!
 //! A stage with `M` odd-tap pairs has FIR length `L = 4M + 1`. `L ≡ 1 (mod 4)`
 //! keeps every cascade stage's base-rate group delay an integer.
+//!
+//! Both stages pass 0.42·fs flat (ripple under 0.001 dB) and reject at least
+//! 100 dB of everything that folds onto that passband: images above 0.58·fs
+//! on the way up, content above 0.58·fs before it folds on the way down.
 
 use std::sync::LazyLock;
 
-/// Odd-tap pairs of the long stage (`Os2x`, `Os4x`'s outer stage): L = 65,
-/// passband to about 0.42·fs, stopband from about 0.58·fs.
-const OUTER_M: usize = 16;
-/// Odd-tap pairs of `Os4x`'s inner stage (2× ↔ 4×): L = 29. Its input is
-/// already band-limited to the base band (≤ 0.5·fs), so it only has to reject
-/// images and folds at ≥ 1.5·fs. Relative to its own rate that transition is
-/// about 3× wider than the long stage's, so 7 pairs at Kaiser β = 9 reach
-/// −89 dB above 1.42·fs (the long stage: −91 dB), with passband ripple under
-/// 0.001 dB to 0.42·fs.
-const INNER_M: usize = 7;
+/// Odd-tap pairs of the long stage (`Os2x`, `Os4x`'s outer stage): L = 85.
+/// At Kaiser β = 10.5 it reaches −104 dB from 0.58·fs (L = 65 at β = 8 reached
+/// −81 dB there; 20 pairs fall short of 100 dB at any β).
+const OUTER_M: usize = 21;
+const OUTER_BETA: f64 = 10.5;
+/// Odd-tap pairs of `Os4x`'s inner stage (2× ↔ 4×): L = 33. Its input is
+/// already band-limited by the outer stage, so it only has to reject images
+/// and folds at ≥ 1.42·fs. Relative to its own rate that transition is about
+/// 3× wider than the long stage's, so 8 pairs at β = 10.5 reach −103 dB there.
+const INNER_M: usize = 8;
+const INNER_BETA: f64 = 10.5;
 
 /// Ring buffer capacities (powers of two) for the longest stage: the up path
 /// reads `2M` input samples back, the down path `4M + 1` high-rate samples.
@@ -26,8 +31,9 @@ const BUF_UP: usize = 64;
 const MASK_UP: usize = BUF_UP - 1;
 const BUF_DN: usize = 128;
 const MASK_DN: usize = BUF_DN - 1;
+const _: () = assert!(2 * OUTER_M <= BUF_UP && 4 * OUTER_M < BUF_DN);
 
-/// Modified Bessel I0 via series (enough terms for double precision at beta≈8).
+/// Modified Bessel I0 via series (enough terms for double precision at β ≤ 11).
 fn i0(x: f64) -> f64 {
     let mut term = 1.0;
     let mut sum = 1.0;
@@ -84,9 +90,9 @@ fn half_band<const N: usize, const M: usize>(beta: f64) -> (f32, [f32; M]) {
 }
 
 static OUTER_TAPS: LazyLock<(f32, [f32; OUTER_M])> =
-    LazyLock::new(|| half_band::<{ 4 * OUTER_M + 1 }, OUTER_M>(8.0));
+    LazyLock::new(|| half_band::<{ 4 * OUTER_M + 1 }, OUTER_M>(OUTER_BETA));
 static INNER_TAPS: LazyLock<(f32, [f32; INNER_M])> =
-    LazyLock::new(|| half_band::<{ 4 * INNER_M + 1 }, INNER_M>(9.0));
+    LazyLock::new(|| half_band::<{ 4 * INNER_M + 1 }, INNER_M>(INNER_BETA));
 
 /// One 2× polyphase half-band stage with `M` odd-tap pairs. `up`
 /// zero-stuff-interpolates one input sample into two output samples; `down`
@@ -195,7 +201,7 @@ pub struct Os4x {
 
 impl Os4x {
     /// The outer stage's delay is in base samples; the inner stage's runs at
-    /// 2×, so it counts half. 32 + 7 = 39 base samples.
+    /// 2×, so it counts half. 42 + 8 = 50 base samples.
     pub const LATENCY: usize = Os2x::LATENCY + InnerStage::LATENCY / 2;
 
     pub fn new() -> Self {
@@ -321,17 +327,74 @@ mod tests {
         );
     }
 
-    #[test]
-    fn upsampler_attenuates_above_base_nyquist() {
-        let sr = 96_000.0;
-        let mut os = Os2x::new();
-        let hot = tone(36_000.0, sr, 8_192); // above base Nyquist (24 kHz)
-        let mut out = vec![0.0; hot.len() / 2];
-        for i in 0..out.len() {
-            out[i] = os.down([hot[2 * i], hot[2 * i + 1]]);
+    /// High-rate impulse response of an upsampler.
+    fn up_impulse<const K: usize>(mut up: impl FnMut(f32) -> [f32; K], n: usize) -> Vec<f64> {
+        (0..n)
+            .flat_map(|i| up(if i == 0 { 1.0 } else { 0.0 }))
+            .map(f64::from)
+            .collect()
+    }
+
+    /// High-rate impulse response of a decimator. `down` keeps every K-th
+    /// sample of one filter g, so an impulse at high-rate time t0 reads back
+    /// g[K·i − t0]; one fresh decimator per phase t0 recovers every tap.
+    fn down_impulse<const K: usize, D>(
+        new: impl Fn() -> D,
+        down: impl Fn(&mut D, [f32; K]) -> f32,
+        n: usize,
+    ) -> Vec<f64> {
+        let mut g = vec![0.0; K * n];
+        for t0 in 0..K {
+            let mut d = new();
+            for i in 0..n {
+                let y = down(&mut d, std::array::from_fn(|k| f32::from(i == 0 && k == t0)));
+                if K * i >= t0 {
+                    g[K * i - t0] = f64::from(y);
+                }
+            }
         }
-        let e: f32 = out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32;
-        assert!(e.sqrt() < 0.05, "alias not attenuated: rms {}", e.sqrt());
+        g
+    }
+
+    /// Peak gain of `h` over `[lo, hi]` relative to its DC gain, in dB, with
+    /// frequencies as fractions of `h`'s rate.
+    fn peak_db(h: &[f64], lo: f64, hi: f64) -> f64 {
+        let mag = |f: f64| {
+            let (re, im) = h.iter().enumerate().fold((0.0, 0.0), |(re, im), (n, &v)| {
+                let p = 2.0 * std::f64::consts::PI * f * n as f64;
+                (re + v * p.cos(), im - v * p.sin())
+            });
+            (re * re + im * im).sqrt()
+        };
+        let dc = mag(0.0);
+        (0..=2_000)
+            .map(|k| 20.0 * (mag(lo + (hi - lo) * k as f64 / 2_000.0) / dc).log10())
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    /// Everything that folds onto the 0.42·fs passband is at least 100 dB
+    /// down, both ways: 0.58·fs up to the high rate's Nyquist, which is
+    /// 0.29..0.5 of the 2× rate and 0.145..0.5 of the 4× rate.
+    #[test]
+    fn rejects_100_db_above_the_passband() {
+        let mut os2 = Os2x::new();
+        let mut os4 = Os4x::new();
+        let cases = [
+            ("Os2x up", peak_db(&up_impulse(|x| os2.up(x), 64), 0.29, 0.5)),
+            (
+                "Os2x down",
+                peak_db(&down_impulse(Os2x::new, |d, hi| d.down(hi), 64), 0.29, 0.5),
+            ),
+            ("Os4x up", peak_db(&up_impulse(|x| os4.up(x), 64), 0.145, 0.5)),
+            (
+                "Os4x down",
+                peak_db(&down_impulse(Os4x::new, |d, hi| d.down(hi), 64), 0.145, 0.5),
+            ),
+        ];
+        for (name, db) in cases {
+            println!("{name}: {db:.1} dB");
+            assert!(db <= -100.0, "{name}: only {db:.1} dB above the passband");
+        }
     }
 
     #[test]
@@ -374,7 +437,7 @@ mod tests {
                 assert!(h[i].abs() < 1e-12, "N={N}: even tap {i} = {:e}", h[i]);
             }
         }
-        check::<{ 4 * OUTER_M + 1 }>(8.0);
-        check::<{ 4 * INNER_M + 1 }>(9.0);
+        check::<{ 4 * OUTER_M + 1 }>(OUTER_BETA);
+        check::<{ 4 * INNER_M + 1 }>(INNER_BETA);
     }
 }

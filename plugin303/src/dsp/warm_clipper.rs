@@ -7,6 +7,11 @@
 //! allocation-free while retaining the important circuit behaviour: a
 //! GB-referenced high-passed detector, fast attack/slow release JFET shunt,
 //! germanium feedback clipping, and an unducked low-frequency blend.
+//!
+//! `ClipperParams::invert` plays the clipper as if it were fed the inverted
+//! signal and its output inverted back. Every stage but the detector's
+//! rectifier and the germanium diode is odd, so the engine mirrors just those
+//! two, morphing over `XFADE_SECONDS` so the switch does not click.
 
 use super::oversample::{Os2x, Os4x};
 
@@ -35,6 +40,9 @@ pub struct ClipperParams {
     pub bass_ohms: f32,
     pub tone_f: f32,
     pub asym: bool,
+    /// Mirror the rectifier and the diode: the clipper fed the inverted
+    /// input, inverted back. GE flattens the other half-wave.
+    pub invert: bool,
     pub mix: f32,      // 0.0 = dry, 1.0 = wet; equal-power law
     pub in_db: f32,    // pre-clipper input gain
     pub out_db: f32,   // post-clipper output gain
@@ -52,6 +60,7 @@ impl Default for ClipperParams {
             bass_ohms: 8_200.0,
             tone_f: 1e-9,
             asym: false,
+            invert: false,
             mix: 1.0, // DSP default stays wet; the plugin param defaults to dry
             in_db: 0.0,
             out_db: 0.0,
@@ -221,7 +230,7 @@ impl StagedEngine {
     /// Stages A→B→C→D, with exact same-sample handoffs. Gate junction
     /// coupling uses the previous stage-C state implicitly (the documented
     /// one-sweep-free policy; Ratk dominates in the operating region).
-    fn tick(&mut self, input: f32) -> f32 {
+    fn tick(&mut self, input: f32, inv: f32) -> f32 {
         let x = if input.is_finite() {
             input.clamp(-16.0, 16.0)
         } else {
@@ -277,7 +286,10 @@ impl StagedEngine {
         self.hp_x2 = h1;
         self.hp_y2 = h2;
         let sens_gain = (p.threshold_ohms.clamp(2_200.0, 22_000.0) / 4_700.0).recip();
-        let rectified = (h2 * 0.18 * sens_gain - 0.50).max(0.0);
+        // Invert: rectify the negative half-wave instead, blended through the
+        // morph. The endpoints are exact: 1·a + 0·b = a.
+        let det = h2 * 0.18 * sens_gain;
+        let rectified = (1.0 - inv) * (det - 0.50).max(0.0) + inv * (-det - 0.50).max(0.0);
         let env_target = GB + rectified.min(12.0);
         let env_a = if env_target > self.env {
             self.env_attack
@@ -303,12 +315,23 @@ impl StagedEngine {
         let clipped = if p.asym {
             // Large equivalent series resistance on D2b: retain the topology
             // but make the negative feedback branch intentionally weak.
-            if vca >= 0.0 {
-                ge_knee * (vca / ge_knee).tanh()
+            let ge = |u: f32| {
+                if u >= 0.0 {
+                    ge_knee * (u / ge_knee).tanh()
+                } else {
+                    u * 0.55
+                }
+            };
+            // Inverted, the diode is mirrored: -ge(-u). Mid-morph, a blend.
+            if inv == 0.0 {
+                ge(vca)
+            } else if inv == 1.0 {
+                -ge(-vca)
             } else {
-                vca * 0.55
+                (1.0 - inv) * ge(vca) - inv * ge(-vca)
             }
         } else {
+            // Odd: the same either way.
             ge_knee * (vca / ge_knee).tanh()
         };
         let clp = Self::one_pole(&mut self.tone, clipped, self.tone_alpha);
@@ -355,6 +378,8 @@ pub struct WarmClipper {
     fade_from_os: ClipperOs,
     fade: f32,
     fade_step: f32,
+    // Shared by both wet paths, including when neither path renders.
+    invert: f32,
     // Base-rate smoothed scalars for the new control dimensions.
     smooth_k: f32,
     in_t: f32,
@@ -383,6 +408,7 @@ impl WarmClipper {
             fade_from_os: ClipperOs::X2,
             fade: 1.0,
             fade_step: 1.0 / (sr * XFADE_SECONDS).max(1.0),
+            invert: 0.0,
             smooth_k: 1.0 - (-1.0 / (0.010 * sr)).exp(),
             in_t: 1.0,
             in_s: 1.0,
@@ -426,6 +452,7 @@ impl WarmClipper {
     pub fn set_params_immediate(&mut self, params: ClipperParams) {
         self.e2.set_params(params);
         self.e4.set_params(params);
+        self.invert = f32::from(params.invert);
         self.active_bypass = params.bypass;
         self.active_os = params.os;
         self.fade_from_bypass = params.bypass;
@@ -438,16 +465,18 @@ impl WarmClipper {
     fn wet2(&mut self, x: f32) -> f32 {
         let hi = self.os2.up(x);
         // Pad the 2× round trip to the 4× path's.
-        self.pad2
-            .tick(self.os2.down([self.e2.tick(hi[0]), self.e2.tick(hi[1])]))
+        self.pad2.tick(self.os2.down([
+            self.e2.tick(hi[0], self.invert),
+            self.e2.tick(hi[1], self.invert),
+        ]))
     }
     fn wet4(&mut self, x: f32) -> f32 {
         let hi = self.os4.up(x);
         self.os4.down([
-            self.e4.tick(hi[0]),
-            self.e4.tick(hi[1]),
-            self.e4.tick(hi[2]),
-            self.e4.tick(hi[3]),
+            self.e4.tick(hi[0], self.invert),
+            self.e4.tick(hi[1], self.invert),
+            self.e4.tick(hi[2], self.invert),
+            self.e4.tick(hi[3], self.invert),
         ])
     }
     fn branch(&mut self, bypass: bool, os: ClipperOs, x: f32, d: f32) -> f32 {
@@ -472,6 +501,12 @@ impl WarmClipper {
         self.out_s += self.smooth_k * (self.out_t - self.out_s);
         self.dry_s += self.smooth_k * (self.dry_t - self.dry_s);
         self.wet_s += self.smooth_k * (self.wet_t - self.wet_s);
+        let target = f32::from(self.params.invert);
+        if self.invert < target {
+            self.invert = (self.invert + self.fade_step).min(1.0);
+        } else if self.invert > target {
+            self.invert = (self.invert - self.fade_step).max(0.0);
+        }
         // Both paths are only rendered during a transition. A bypassed steady
         // engine therefore incurs no nonlinear solve.
         let to = self.branch(self.active_bypass, self.active_os, x, d);
@@ -492,6 +527,7 @@ impl WarmClipper {
         self.pad2.reset();
         self.dry.reset();
         self.fade = 1.0;
+        self.invert = f32::from(self.params.invert);
         self.snap_smoothers();
         self.active_bypass = self.params.bypass;
         self.active_os = self.params.os;

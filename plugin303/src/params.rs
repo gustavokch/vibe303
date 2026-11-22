@@ -3,10 +3,6 @@ use nih_plug::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// OSC1 pulse-width span: the PW knob's range and the clamp on the PWM sweep.
-pub const OSC1_PW_MIN: f32 = 0.1;
-pub const OSC1_PW_MAX: f32 = 0.9;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Enum, Serialize, Deserialize)]
 pub enum CompTolerance {
     #[default]
@@ -369,11 +365,6 @@ pub struct Plugin303Params {
     pub sub_vol: FloatParam,
     #[id = "sweep_pos"]
     pub sweep_pos: FloatParam,
-    /// FUN-only: a triangle LFO sweeps OSC1's pulse width around PW.
-    #[id = "osc1_pwm"]
-    pub osc1_pwm: BoolParam,
-    #[id = "osc1_pwm_rate"]
-    pub osc1_pwm_rate: FloatParam,
     #[id = "vcf_taps"]
     pub vcf_taps: EnumParam<VcfTaps>,
     #[id = "vcf_drive"]
@@ -443,6 +434,9 @@ pub struct Plugin303Params {
     pub clipper_tone: FloatParam,
     #[id = "clipper_asym"]
     pub clipper_asym: BoolParam,
+    /// POLARITY: `true` (−) has the clipper play the voice inverted.
+    #[id = "clipper_invert"]
+    pub clipper_invert: BoolParam,
     #[id = "clipper_mix"]
     pub clipper_mix: FloatParam,
     #[id = "clipper_in_gain"]
@@ -476,8 +470,6 @@ impl Plugin303Params {
                 | "osc1_pw"
                 | "sub_vol"
                 | "sweep_pos"
-                | "osc1_pwm"
-                | "osc1_pwm_rate"
                 | "vcf_taps"
                 | "vcf_drive"
                 | "advanced_env"
@@ -502,6 +494,7 @@ impl Plugin303Params {
             },
             CircuitTopology::Fun => match param_id {
                 "waveform" => false,
+                "osc1_pw" => matches!(self.tier.value(), Tier::Draft | Tier::Low),
                 _ => true,
             },
         }
@@ -760,10 +753,7 @@ impl Default for Plugin303Params {
             osc1_pw: percent(FloatParam::new(
                 "Osc 1 PW",
                 0.5,
-                FloatRange::Linear {
-                    min: OSC1_PW_MIN,
-                    max: OSC1_PW_MAX,
-                },
+                FloatRange::Linear { min: 0.1, max: 0.9 },
             )),
 
             sub_vol: percent(FloatParam::new(
@@ -777,20 +767,6 @@ impl Default for Plugin303Params {
                 0.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )),
-
-            osc1_pwm: BoolParam::new("Osc 1 PWM", false),
-
-            osc1_pwm_rate: FloatParam::new(
-                "Osc 1 PWM Rate",
-                1.0,
-                FloatRange::Skewed {
-                    min: 0.1,
-                    max: 20.0,
-                    factor: FloatRange::skew_factor(-2.0),
-                },
-            )
-            .with_value_to_string(Arc::new(crate::value_text::lfo_hz))
-            .with_string_to_value(formatters::s2v_f32_hz_then_khz()),
 
             vcf_taps: EnumParam::new("VCF Taps", VcfTaps::FourPole),
 
@@ -970,6 +946,13 @@ impl Default for Plugin303Params {
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )),
             clipper_asym: BoolParam::new("Clipper Asym", false),
+            clipper_invert: BoolParam::new("Clipper Polarity", false)
+                .with_value_to_string(Arc::new(|inv| if inv { "−" } else { "+" }.to_string()))
+                .with_string_to_value(Arc::new(|s| match s.trim() {
+                    "+" => Some(false),
+                    "−" | "-" => Some(true),
+                    _ => None,
+                })),
             clipper_mix: percent(FloatParam::new(
                 "Clipper Mix",
                 0.0,

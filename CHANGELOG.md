@@ -7,15 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.0] - Unreleased
 
 ### Added
-- FUN mode: OSC1 pulse-width modulation. A PWM switch in the SOUPED-UP ENGINE
-  header (`osc1_pwm`, default off) lets a triangle LFO sweep oscillator 1's
-  pulse width 40 points each side of PW, clamped to PW's 10–90% range: from
-  50% it sweeps the whole range. PWM RATE (`osc1_pwm_rate`, 0.1–20 Hz,
-  default 1 Hz) sets its speed and is disabled while PWM is off. The
-  triangle runs free and restarts at PW when PWM is switched on. Oscillator 2
-  and the sub keep their static widths. It is heard as SWEEP moves toward the
-  square; ACCURATE plays the stock 50% square. `tests/osc1_pwm.rs` covers
-  every tier.
+- OUTPUT CLIPPER: a POLARITY switch (`clipper_invert`, default +). At −
+  the clipper plays the voice inverted and inverts its output back, so the
+  output keeps the circuit's polarity while the GE diode flattens the other
+  half of the wave; on SI only the detector's half-wave changes. On GE, −
+  plays High and Best through the clipper as they were before the voice took
+  the circuit's polarity: the distortion of their square and SWEEP drops
+  about 7 dB, and of their saw rises 1.6 dB. The switch morphs over 10 ms
+  even while bypassed, so re-enabling or changing oversampling does not
+  restart the morph (`tests/warm_clipper.rs`).
+- FUN mode: PW stays adjustable on Draft and Low. High and Best take the
+  square from the circuit saw and disable PW with an explanation on hover.
 - FUN mode: a BRIGHT knob in ANALOG TWEAKS (`vcf_brightness`, 50–150%,
   default 100%) scales every quality tier's calibrated filter corner: the
   nodal ladders' brightness and Draft's cutoff. ACCURATE plays 100%.
@@ -30,6 +32,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Phase 2 — TB-303 nih-plug voice design + implementation plan under `docs/plans/`.
 
 ### Changed
+- The oversamplers reject at least 100 dB of everything that folds onto their
+  0.42·fs passband, up and down (was −81 dB; `rejects_100_db_above_the_passband`
+  in `dsp/oversample.rs`). The long half-band stage is 85 taps at Kaiser
+  β 10.5 (was 65 at β 8) and `Os4x`'s inner stage 33 taps at β 10.5 (was 29
+  at β 9). Best's latency and the clipper's rise from 39 to 50 samples, so the
+  plugin reports 100 samples instead of 78. The output changes by −61 to
+  −77 dB relative to its level on every tier, with the clipper bypassed or on
+  GE at 2X and 4X; 99.8% or more of that difference lies below 5 kHz, with the
+  voice's own energy. A round trip costs 13.6 ns per sample through `Os2x`
+  (was 10.3) and 36.0 ns through `Os4x` (was 23.6), best of 27 runs on Apple
+  Silicon: about 0.06% more of one core per `Os4x` at 48 kHz. Spectral gates:
+  Best 1.78 → 1.76 dB, Draft 35.36 → 36.20 dB, Low 13.77 → 10.95 dB, because
+  Low's bins above 10 kHz, 138 dB below its peak, dropped 9 dB and moved the
+  demeaned spectrum; through the plugin's parameter path Best reads 1.96 dB
+  and Low 11.47 dB.
 - Draft and Low run their filters at 2x oversampling, like High (was 4x).
   Per-voice cost in cycles drops 29% (Draft) and 40% (Low), to about 0.8% and
   3.5% of one Apple Silicon core. Draft's TPT ladder saturates through a
@@ -182,14 +199,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   45 °C) and shows AGE in the years the editor shows (was 0.45 x the value).
 
 ### Fixed
-- The circuit VCO's square (High and Best) ignored PW. It went high at the
-  JFET reset and low where the DC-blocked ramp crossed zero: 46% high, a
-  -0.044 V DC offset, no BLEP on the falling edge and a cancelling pair at
-  the reset (the code took the ramp for rising; it falls). It is now high for
-  PW of each cycle, timed from the resets on a period smoothed over about four
-  cycles, with its mean removed, so High and Best follow PW for both
-  oscillators like Draft and Low. Both edges take a two-tap BLEP. ACCURATE's
-  square on High and Best changes with it: 50% high instead of 46%, and no DC.
 - The circuit VCO (High and Best) aliased at its JFET reset. The solver jumps
   at the first sample past the reset and overshoots on the next, and the BLEP
   sat at a fixed mid-sample position, sized for a 1.12 V step (2.92 V after
@@ -197,14 +206,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now rebuilt from the ramp after the crossing, and the jump takes a
   two-sided two-tap BLEP at the crossing, predicted a sample ahead from the CP
   ramp and a bracket of the fold where the reset trips, learned from the
-  resets. The square's edges use the same timing. Inharmonic energy of the saw
-  at 48 kHz drops from -19.6 to -40.0 dB at C5, -16.4 to -34.7 dB at C6 and
-  -13.8 to -30.0 dB at C7; an ideal two-tap BLEP saw reads -39.9, -36.4 and
-  -33.9 dB, and the rest is the solver's own period jitter (0.03–0.05
-  samples). The solver, and so the pitch, is unchanged. The Best spectral gate
-  reads 1.80 dB LSD (was 1.64, budget 4.0): the SPICE gold is point-sampled,
-  so it keeps the naive saw's aliasing, and the LSD demeans over every bin; at
-  each render's best offset both read 1.61 dB.
+  resets. The square, high from the reset until the DC-blocked ramp falls
+  through zero, takes the same two-tap BLEP at the reset and another at that
+  zero crossing, extrapolated a sample ahead from the ramp's last step; it had
+  a cancelling pair at the reset and none on its falling edge. Its
+  inharmonic energy reads -36.8 dB at C6 and -30.4 dB at C7, and its duty
+  follows a note change from the first cycle (`tests/vco_square.rs`). Inharmonic
+  energy of the saw at 48 kHz drops from -19.6 to -40.0 dB at C5, -16.4 to
+  -34.7 dB at C6 and -13.8 to -30.0 dB at C7; an ideal two-tap BLEP saw reads
+  -39.9, -36.4 and -33.9 dB, and the rest is the solver's own period jitter
+  (0.03–0.05 samples). The solver, and so the pitch, is unchanged. The Best
+  spectral gate reads 1.80 dB LSD (was 1.64, budget 4.0): the SPICE gold is
+  point-sampled, so it keeps the naive saw's aliasing, and the LSD demeans over
+  every bin; at each render's best offset both read 1.61 dB.
 - The circuit VCO (High and Best) drove the filter 0.8 dB below the level its
   gain was meant to give. `VCO_GAIN` scales the solver's saw to twice the
   SPICE VCO's, and it was 2.92 / 1.12 = 2.607 from two peak-to-peak readings
@@ -247,7 +261,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reads 2.91 dB again (budget 3.5; 2.58 with the inverted voice), and the
   spectral gates are unchanged (Best 1.78 dB, Low 13.77 / 12.30 dB).
   `tests/voice_polarity.rs` gates Best against the gold and every tier
-  against Best.
+  against Best. The clipper's POLARITY switch plays the other half-wave.
 - The 12th (Triplet) sequencer rate played steps of 3/8 beat (8/3 steps per
   beat, 10.7 per bar) instead of triplets. It now plays three steps per beat,
   12 per bar (8 of the 24 clock ticks per quarter note); the gate stays 5/8 of

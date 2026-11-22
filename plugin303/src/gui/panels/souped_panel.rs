@@ -3,14 +3,11 @@ use nih_plug_egui::egui::{vec2, Align, Button, FontId, Layout, RichText, Ui};
 
 use crate::gui::theme;
 use crate::gui::widgets::panel::DevicePanel;
-use crate::gui::widgets::{Knob303, SlideSwitch, ToggleButton};
+use crate::gui::widgets::{Knob303, SlideSwitch};
 use crate::params::{CircuitTopology, Plugin303Params};
 
 /// Hover text of the ACCURATE banner's action (round-20 #11).
 pub const ENABLE_FUN_HINT: &str = "Switch TOPOLOGY to FUN and turn the souped-up engine back on.";
-
-/// Hover text of PWM RATE while PWM is off.
-pub const PWM_OFF_HINT: &str = "Light PWM to sweep oscillator 1's pulse width at this rate.";
 
 pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &ParamSetter) {
     let is_accurate = params.topology.value() == CircuitTopology::Accurate;
@@ -21,7 +18,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
             ui,
             |header_ui| {
                 if !is_accurate {
-                    // Header runs right-to-left: add VCA ENV first, then VCF TAPS, then PWM.
+                    // Header runs right-to-left: add VCA ENV first, then VCF TAPS.
                     header_ui.add(
                         SlideSwitch::new(&params.vca_env_mode, setter, "VCA ENV", &["GATE", "ENV"])
                             .caption_left(),
@@ -41,19 +38,6 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .caption_left(),
                         )
                         .on_hover_text("Filter slope: 2, 3 or 4 poles");
-                    let mut pwm = params.osc1_pwm.value();
-                    if header_ui
-                        .add(ToggleButton::new(&mut pwm, "PWM"))
-                        .on_hover_text(
-                            "Lit: a triangle LFO sweeps oscillator 1's pulse width around PW, \
-                             at PWM RATE.",
-                        )
-                        .changed()
-                    {
-                        setter.begin_set_parameter(&params.osc1_pwm);
-                        setter.set_parameter(&params.osc1_pwm, pwm);
-                        setter.end_set_parameter(&params.osc1_pwm);
-                    }
                 }
             },
             |body_ui| {
@@ -133,24 +117,24 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                         }
                     });
                 } else {
-                    // Row of 10 MEDIUM knobs filling the full 50 px body, top-aligned
+                    // Row of 9 MEDIUM knobs filling the full 50 px body, top-aligned
                     body_ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                         let total_w = ui.available_width();
-                        let col_w = total_w / 10.0;
+                        let col_w = total_w / 9.0;
                         let col_h = ui.available_height();
 
-                        let render_knob = |ui: &mut Ui, knob: Knob303<'_, _>| {
+                        let mut render_knob = |enabled, knob: Knob303<'_, _>| {
                             ui.allocate_ui_with_layout(
                                 vec2(col_w, col_h),
                                 Layout::top_down(Align::Center),
-                                |ui| ui.add(knob),
+                                |ui| ui.add_enabled(enabled, knob),
                             )
                             .inner
                         };
 
                         render_knob(
-                            ui,
+                            true,
                             Knob303::new(
                                 &params.vcf_drive,
                                 setter,
@@ -160,12 +144,12 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("VCF input drive (dB)"),
                         );
                         render_knob(
-                            ui,
+                            true,
                             Knob303::new(&params.sub_vol, setter, "SUB", theme::KNOB_RADIUS_MEDIUM)
                                 .tooltip("Sub-oscillator level"),
                         );
                         render_knob(
-                            ui,
+                            true,
                             Knob303::new(&params.glide, setter, "GLIDE", theme::KNOB_RADIUS_MEDIUM)
                                 .value_text(crate::value_text::glide(
                                     params.glide.unmodulated_plain_value(),
@@ -175,7 +159,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                                 .tooltip("Pitch glide time on slid notes"),
                         );
                         render_knob(
-                            ui,
+                            true,
                             Knob303::new(
                                 &params.osc1_pitch,
                                 setter,
@@ -185,7 +169,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("Oscillator 1 pitch offset (semitones)"),
                         );
                         render_knob(
-                            ui,
+                            true,
                             Knob303::new(
                                 &params.osc2_pitch,
                                 setter,
@@ -195,7 +179,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("Oscillator 2 pitch offset (semitones)"),
                         );
                         render_knob(
-                            ui,
+                            true,
                             Knob303::new(
                                 &params.osc2_vol,
                                 setter,
@@ -205,25 +189,13 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("Oscillator 2 level"),
                         );
                         render_knob(
-                            ui,
+                            params.is_param_active("osc1_pw"),
                             Knob303::new(&params.osc1_pw, setter, "PW", theme::KNOB_RADIUS_MEDIUM)
-                                .tooltip("Oscillator 1 pulse width, the centre of the PWM sweep"),
-                        );
-                        ui.add_enabled_ui(params.osc1_pwm.value(), |ui| {
-                            render_knob(
-                                ui,
-                                Knob303::new(
-                                    &params.osc1_pwm_rate,
-                                    setter,
-                                    "PWM RATE",
-                                    theme::KNOB_RADIUS_MEDIUM,
-                                )
-                                .tooltip("PWM triangle LFO rate (Hz)"),
-                            )
-                            .on_disabled_hover_text(PWM_OFF_HINT);
-                        });
+                                .tooltip("Oscillator pulse width"),
+                        )
+                        .on_disabled_hover_text("Pulse width is adjustable only on Draft and Low.");
                         render_knob(
-                            ui,
+                            true,
                             Knob303::new(
                                 &params.sweep_pos,
                                 setter,
@@ -233,7 +205,7 @@ pub fn render_souped_panel(ui: &mut Ui, params: &Plugin303Params, setter: &Param
                             .tooltip("Oscillator 1 waveform morph, saw to square"),
                         );
                         render_knob(
-                            ui,
+                            true,
                             Knob303::new(
                                 &params.reso_comp,
                                 setter,

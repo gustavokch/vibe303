@@ -20,8 +20,9 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
         .show(
             ui,
             |header_ui| {
-                // Header visual order left-to-right: LINK | DIODE | OS | ON.
-                // The header layout is right-to-left, so add: ON, then OS, DIODE, LINK.
+                // Header visual order left-to-right: LINK | POLARITY | DIODE | OS | ON.
+                // The header layout is right-to-left, so add: ON, then OS, DIODE,
+                // POLARITY, LINK.
                 let mut on = !bypassed;
                 let on_resp = header_ui
                     .add(ToggleButton::new(&mut on, "ON"))
@@ -46,6 +47,16 @@ pub fn render_output_clipper(ui: &mut Ui, params: &Plugin303Params, setter: &Par
                     )
                     .on_hover_text(
                         "SI: silicon, symmetric clipping. GE: germanium, asymmetric clipping.",
+                    )
+                    .on_disabled_hover_text(CLIPPER_OFF_HINT);
+
+                    ui.add(
+                        BoolSwitch::new(&params.clipper_invert, setter, "POLARITY", ["+", "−"])
+                            .caption_left(),
+                    )
+                    .on_hover_text(
+                        "−: the clipper plays the voice inverted, so GE flattens the other \
+                         half of the wave. The output keeps its polarity.",
                     )
                     .on_disabled_hover_text(CLIPPER_OFF_HINT);
 
