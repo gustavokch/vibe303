@@ -48,9 +48,9 @@ pub const VCO_GAIN: f32 = 2.86;
 /// the active Q9 resonance (F6.3) the spectral-LSD optimum vs the whole-voice
 /// gold sits *below* 1.0 — the resonance peak otherwise over-brightens. Tuned
 /// per tier (different OS rate ⇒ different optimum): Best (4×) at 0.70 gives
-/// LSD 1.78 dB (`brightness_sweep`: 1.39–1.78 dB over 0.55–0.74, with no trend,
-/// then 2.02 at 0.76). Low (2×) at 0.45 gives LSD 13.78 dB, corr 0.981 (0.40: 26.35, 0.50:
-/// 27.46; a narrow dip, `low_brightness_sweep`). Low's darker setting also
+/// LSD 1.76 dB (`brightness_sweep`: 1.29–1.76 dB over 0.55–0.76). Low (2×) at
+/// 0.45 gives LSD 10.95 dB, corr 0.972 (0.40: 28.61, 0.50: 25.61; a narrow dip,
+/// `low_brightness_sweep`). Low's darker setting also
 /// compensates its polyBLEP saw, which is brighter than the circuit saw: Low
 /// curves fitted to match Best's filter response leave the voice no closer to
 /// Best. The gold is 0.2 s long, so its LSD moves by several dB with the
@@ -1193,7 +1193,7 @@ impl Voice {
     }
 
     /// Reported host latency is the tier alignment (Best's 4× round trip) plus
-    /// the constant clipper alignment (`CLIPPER_LATENCY`), 39 + 39 = 78 samples
+    /// the constant clipper alignment (`CLIPPER_LATENCY`), 50 + 50 = 100 samples
     /// for every tier and clipper state, including bypass and OS crossfades.
     pub fn latency_samples(&self) -> usize {
         self.max_latency + self.clipper.latency_samples()

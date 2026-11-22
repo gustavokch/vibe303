@@ -112,7 +112,7 @@ circuit/vcf303.toml ──┤
 - **`dsp/ladder_wdf.rs`** — `LadderVcf`: nodal MNA diode-ladder VCF with Newton solver, active Q9 resonance (Low + High + Best tiers).
 - **`dsp/osc.rs`** — `Saw`: polyBLEP sawtooth oscillator (Draft + Low tiers).
 - **`dsp/vco.rs`** — `Vco303`: 21-node nodal relaxation oscillator modeling the circuit VCO (High + Best tiers). Per-note pitch LUT with process-global per-sr cache.
-- **`dsp/oversample.rs`** — `HalfBand<M>` polyphase half-band stage (Kaiser-sinc, `L = 4M + 1`); `Os2x` (L=65), `Os4x` (L=65 outer + L=29 inner), `Os8x` (three L=65 stages, test reference only). Zero-alloc.
+- **`dsp/oversample.rs`** — `HalfBand<M>` polyphase half-band stage (Kaiser-sinc, `L = 4M + 1`); `Os2x` (L=85), `Os4x` (L=85 outer + L=33 inner), `Os8x` (three L=85 stages, test reference only). Every stage passes 0.42·fs and rejects ≥ 100 dB of what folds onto it (`rejects_100_db_above_the_passband`). Zero-alloc.
 - **`dsp/bjt.rs`** — Gummel-Poon NPN/PNP BJT model.
 - **`dsp/diode.rs`** — 1N4148 diode model with batched stamp.
 - **`dsp/jfet.rs`** — MPF104 JFET model.
@@ -135,7 +135,7 @@ Cost is one voice on Apple Silicon (`profile_voice --secs 20`, 2026-11-17); hist
 
 - Oversampling is **tier-intrinsic** (not a separate param). High and Best ladders are calibrated at their OS rate; Draft and Low keep curves fitted at 4x and run at 2x.
 - Tier switches use a **10 ms equal-power crossfade** (click-free). Mid-fade changes are queued (no clobbering).
-- **PDC** is constant across tiers — every tier is padded to the max OS group delay (Best's 4×, 39 samples), plus the clipper's 39, so the host sees 78 samples and never needs to re-init its graph.
+- **PDC** is constant across tiers — every tier is padded to the max OS group delay (Best's 4×, 50 samples), plus the clipper's 50, so the host sees 100 samples and never needs to re-init its graph.
 - **Draft and Low curves** (`DRAFT_*_POLY`, `LOW_*_POLY`, `LOW_BRIGHT`) were fitted at 4× and kept at 2×: re-fitting them to Best's *filter* response (`calibrate_vcf.py`) left the *voice* no closer to Best, because the polyBLEP saw is brighter than the circuit saw. FUN mode's BRIGHT dial (`vcf_brightness`) scales every tier's calibrated corner.
 
 ---
@@ -224,7 +224,7 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 
 2. **VCO pitch cal `CV_FIT` is fit to THIS solver** (not SPICE). Re-run `characterize_freq_cv` if the VCO solver changes.
 
-3. **Sample-exact ESR vs ngspice is NOT the acceptance gate** for Best. It's structurally unreachable for a real-time bespoke chain vs ngspice's adaptive solver. The gate is **spectral** (Welch LSD + dB-spectrum correlation). The gold is only 0.2 s, so the LSD moves several dB with the render's latency (a 30-sample misalignment moved Low from 13.78 to 15.36 dB and Best from 1.64 to 2.24 dB with identical audio). The spectral gates skip the voice's reported `latency_samples()`, never a literal, so a latency change does not move them; Best reads 1.78 dB, Low 13.78 dB (budget 16). Compare renders at equal alignment before reading a gate change as a sound change. The gold is point-sampled from SPICE, so it keeps the naive saw's aliasing, and the LSD demeans over every bin: removing aliasing alone moved Best from 1.64 to 1.80 dB (1.61 dB for both at each render's best offset).
+3. **Sample-exact ESR vs ngspice is NOT the acceptance gate** for Best. It's structurally unreachable for a real-time bespoke chain vs ngspice's adaptive solver. The gate is **spectral** (Welch LSD + dB-spectrum correlation). The gold is only 0.2 s, so the LSD moves several dB with the render's latency (a 30-sample misalignment moved Low from 13.78 to 15.36 dB and Best from 1.64 to 2.24 dB with identical audio). The spectral gates skip the voice's reported `latency_samples()`, never a literal, so a latency change does not move them; Best reads 1.76 dB, Low 10.95 dB (budget 16). Compare renders at equal alignment before reading a gate change as a sound change. The gold is point-sampled from SPICE, so it keeps the naive saw's aliasing, and the LSD demeans over every bin: removing aliasing alone moved Best from 1.64 to 1.80 dB (1.61 dB for both at each render's best offset). The demeaning is unweighted, so bins far below the gold's energy still move it: the oversamplers' 100 dB stopband moved Low from 13.77 to 10.95 dB by lowering its bins above 10 kHz, 138 dB below its peak, by 9 dB.
 
 4. **Calibrating Draft/TPT cutoff/reso to SPICE is a wash** — the gap is topological (polyBLEP + TPT vs circuit saw + diode ladder), not parametric. Draft's gate is a regression guard, not a fidelity target.
 
@@ -234,7 +234,7 @@ The test suite is the primary quality gate. ~65 tests pass, ~8 ignored (diagnost
 
 6. **ADAA "at 2×" test ≈ 0 dB** (the 2× FIR already removes that alias). Test ADAA at 1× near Nyquist/2 (f0=11 kHz).
 
-7. **Oversampler FIR: L≡1 mod 4** for integer per-stage latency. Cascade stages process sequentially (one inner stage per direction, fed its stream in order). `Os4x`'s inner stage only needs to reject ≥ 1.5·fs, so it is a 29-tap half-band, not the 65-tap one. Decimator reads even phase (`hist[k+1]`).
+7. **Oversampler FIR: L≡1 mod 4** for integer per-stage latency. Cascade stages process sequentially (one inner stage per direction, fed its stream in order). `Os4x`'s inner stage only needs to reject ≥ 1.42·fs, so it is a 33-tap half-band, not the 85-tap one. Both reach ≥ 100 dB at Kaiser β = 10.5; 20 outer pairs top out at −99.7 dB. Decimator reads even phase (`hist[k+1]`).
 
 ### Python / ngspice
 

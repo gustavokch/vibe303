@@ -29,6 +29,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Phase 2 — TB-303 nih-plug voice design + implementation plan under `docs/plans/`.
 
 ### Changed
+- The oversamplers reject at least 100 dB of everything that folds onto their
+  0.42·fs passband, up and down (was −81 dB; `rejects_100_db_above_the_passband`
+  in `dsp/oversample.rs`). The long half-band stage is 85 taps at Kaiser
+  β 10.5 (was 65 at β 8) and `Os4x`'s inner stage 33 taps at β 10.5 (was 29
+  at β 9). Best's latency and the clipper's rise from 39 to 50 samples, so the
+  plugin reports 100 samples instead of 78. The output changes by −61 to
+  −77 dB relative to its level on every tier, with the clipper bypassed or on
+  GE at 2X and 4X; 99.8% or more of that difference lies below 5 kHz, with the
+  voice's own energy. A round trip costs 13.6 ns per sample through `Os2x`
+  (was 10.3) and 36.0 ns through `Os4x` (was 23.6), best of 27 runs on Apple
+  Silicon: about 0.06% more of one core per `Os4x` at 48 kHz. Spectral gates:
+  Best 1.78 → 1.76 dB, Draft 35.36 → 36.20 dB, Low 13.77 → 10.95 dB, because
+  Low's bins above 10 kHz, 138 dB below its peak, dropped 9 dB and moved the
+  demeaned spectrum; through the plugin's parameter path Best reads 1.96 dB
+  and Low 11.47 dB.
 - Draft and Low run their filters at 2x oversampling, like High (was 4x).
   Per-voice cost in cycles drops 29% (Draft) and 40% (Low), to about 0.8% and
   3.5% of one Apple Silicon core. Draft's TPT ladder saturates through a

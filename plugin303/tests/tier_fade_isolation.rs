@@ -104,7 +104,7 @@ fn incoming_tier_does_not_depend_on_outgoing_tier() {
     ] {
         let a = render_switch(from_a, to, 0.0, 0.3, total);
         let b = render_switch(from_b, to, 0.0, 0.3, total);
-        // +64: past the bypassed clipper's 39-sample delay line.
+        // +64: past the bypassed clipper's 50-sample delay line.
         let start = FADE_END + 64;
         let first_diff = (start..total).find(|&i| a[i].to_bits() != b[i].to_bits());
         assert!(
