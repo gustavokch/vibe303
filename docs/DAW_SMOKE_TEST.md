@@ -52,10 +52,6 @@ Verified building on this branch: both `TB303.vst3` and `TB303.clap` are produce
       project dirty, so a host that tracks only parameter edits loses the trim.
 - [ ] **NOISE 100 right after load** (FUN, High): the pitch is in tune from the
       first note, before `CALIBRATING` clears.
-- [ ] **PWM** (FUN, SWEEP 100%, held note): light PWM in SOUPED-UP ENGINE. The
-      square's width sweeps audibly (a slow chorus-like thinning and thickening)
-      on Draft, Low, High and Best, with no click when PWM switches on. PWM RATE
-      changes the speed; with MIX2 at 100% the sweep stops (OSC1 only).
 
 ## Findings
 

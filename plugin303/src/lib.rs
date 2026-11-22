@@ -327,10 +327,6 @@ impl Plugin for Plugin303 {
             self.params.glide.value(),
             self.params.reso_comp.value(),
         );
-        self.voice.set_osc1_pwm(
-            self.params.osc1_pwm.value(),
-            self.params.osc1_pwm_rate.value(),
-        );
         self.voice
             .set_vcf_brightness(self.params.vcf_brightness.value());
         self.voice.update_clipper_params(VoiceClipperParams {

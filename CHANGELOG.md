@@ -7,15 +7,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.0] - Unreleased
 
 ### Added
-- FUN mode: OSC1 pulse-width modulation. A PWM switch in the SOUPED-UP ENGINE
-  header (`osc1_pwm`, default off) lets a triangle LFO sweep oscillator 1's
-  pulse width 40 points each side of PW, clamped to PW's 10–90% range: from
-  50% it sweeps the whole range. PWM RATE (`osc1_pwm_rate`, 0.1–20 Hz,
-  default 1 Hz) sets its speed and is disabled while PWM is off. The
-  triangle runs free and restarts at PW when PWM is switched on. Oscillator 2
-  and the sub keep their static widths. It is heard as SWEEP moves toward the
-  square; ACCURATE plays the stock 50% square. `tests/osc1_pwm.rs` covers
-  every tier.
 - FUN mode: a BRIGHT knob in ANALOG TWEAKS (`vcf_brightness`, 50–150%,
   default 100%) scales every quality tier's calibrated filter corner: the
   nodal ladders' brightness and Draft's cutoff. ACCURATE plays 100%.
@@ -182,14 +173,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   45 °C) and shows AGE in the years the editor shows (was 0.45 x the value).
 
 ### Fixed
-- The circuit VCO's square (High and Best) ignored PW. It went high at the
-  JFET reset and low where the DC-blocked ramp crossed zero: 46% high, a
-  -0.044 V DC offset, no BLEP on the falling edge and a cancelling pair at
-  the reset (the code took the ramp for rising; it falls). It is now high for
-  PW of each cycle, timed from the resets on a period smoothed over about four
-  cycles, with its mean removed, so High and Best follow PW for both
-  oscillators like Draft and Low. Both edges take a two-tap BLEP. ACCURATE's
-  square on High and Best changes with it: 50% high instead of 46%, and no DC.
 - The circuit VCO (High and Best) aliased at its JFET reset. The solver jumps
   at the first sample past the reset and overshoots on the next, and the BLEP
   sat at a fixed mid-sample position, sized for a 1.12 V step (2.92 V after

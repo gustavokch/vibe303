@@ -36,15 +36,6 @@ pub fn hz(hz: f32) -> String {
     }
 }
 
-/// An LFO rate: two decimals below 10 Hz, one from there ("0.10 Hz", "20.0 Hz").
-pub fn lfo_hz(hz: f32) -> String {
-    if hz >= 9.995 {
-        format!("{hz:.1} Hz")
-    } else {
-        format!("{hz:.2} Hz")
-    }
-}
-
 /// The voice reads ADV ENV only in FUN (`voice.rs` forces it off in ACCURATE).
 fn adv_env_live(topology: CircuitTopology, advanced_env: bool) -> bool {
     topology == CircuitTopology::Fun && advanced_env

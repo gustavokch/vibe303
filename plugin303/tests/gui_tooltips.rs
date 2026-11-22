@@ -239,10 +239,12 @@ fn engine_device_controls_explain_themselves() {
     let setter = ParamSetter::new(&host);
 
     let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
-    // 9 knobs + VCA ENV + VCF TAPS + PWM. PWM RATE waits for PWM and says so.
-    let mut add = |ui: &mut Ui| souped_panel::render_souped_panel(ui, &params, &setter);
-    assert_controls_explain(&mut rig, &mut add, 12);
-    assert_disabled_controls_explain(&mut rig, &mut add, souped_panel::PWM_OFF_HINT, 1);
+    // 9 knobs + VCA ENV + VCF TAPS.
+    assert_controls_explain(
+        &mut rig,
+        &mut |ui| souped_panel::render_souped_panel(ui, &params, &setter),
+        11,
+    );
 
     let mut rig = Rig::new(vec2(left_column_width(), BANK_ROW_H + TOOLTIP_ROOM));
     // 9 knobs + ON + OS + DIODE + LINK.

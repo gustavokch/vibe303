@@ -13,7 +13,6 @@ use super::vco::Vco303;
 use super::warm_clipper::{ClipperOs, ClipperParams, WarmClipper};
 use crate::params::{
     CircuitTopology, ClipperOversampling, CompTolerance, OscWave, VcaEnvMode, VcfTaps, VcoTrim,
-    OSC1_PW_MAX, OSC1_PW_MIN,
 };
 
 /// Equal-tempered MIDI note -> frequency (A4 = note 69 = 440 Hz).
@@ -29,12 +28,6 @@ pub fn ambient_temp_c(thermal_noise: i32) -> f32 {
 
 /// Self-heating (°C) a held gate settles at, above ambient.
 const SELF_HEAT_C: f32 = 3.0;
-
-/// How far the PWM triangle swings OSC1's pulse width each side of the PW
-/// knob, clamped to the knob's range: from 50% it sweeps the whole 10–90%.
-const PWM_DEPTH: f32 = 0.4;
-/// PWM triangle phase at its centre on the way up: the sweep starts at PW.
-const PWM_PHASE_CENTRE: f32 = 0.25;
 
 pub const BEST_OS_FACTOR: f32 = 4.0;
 pub const HIGH_OS_FACTOR: f32 = 2.0;
@@ -366,14 +359,6 @@ pub struct Voice {
     osc2_vol: f32,
     /// Relative volume of sub-oscillator in [0, 1].
     sub_vol: f32,
-    /// OSC1 pulse width from the PW knob (50% in ACCURATE): the PWM centre.
-    osc1_pw: f32,
-    /// PWM switch and triangle rate (Hz) as the host set them; the sweep runs
-    /// only in FUN.
-    pwm_on: bool,
-    pwm_rate_hz: f32,
-    /// PWM triangle phase in [0, 1).
-    pwm_phase: f32,
     /// Normalised VCF Cutoff knob setting.
     cutoff_knob: f32,
     /// Normalised VCF Resonance knob setting.
@@ -610,10 +595,6 @@ impl Voice {
             osc2_pitch_st: 0.0,
             osc2_vol: 0.0,
             sub_vol: 0.0,
-            osc1_pw: 0.5,
-            pwm_on: false,
-            pwm_rate_hz: 1.0,
-            pwm_phase: PWM_PHASE_CENTRE,
             cutoff_knob: 0.5,
             reso_knob: 0.0,
             final_reso: 0.0,
@@ -739,17 +720,6 @@ impl Voice {
 
     pub fn set_advanced_env(&mut self, enabled: bool) {
         self.advanced_env = enabled;
-    }
-
-    /// OSC1 PWM: a triangle at `rate_hz` sweeps OSC1's pulse width around the
-    /// PW knob, in FUN only. OSC2 keeps the static PW. Switching it on restarts
-    /// the triangle at its centre, so the width does not jump.
-    pub fn set_osc1_pwm(&mut self, on: bool, rate_hz: f32) {
-        if on && !self.pwm_on {
-            self.pwm_phase = PWM_PHASE_CENTRE;
-        }
-        self.pwm_on = on;
-        self.pwm_rate_hz = rate_hz;
     }
 
     fn tolerance_f64(&self) -> f64 {
@@ -962,10 +932,9 @@ impl Voice {
         self.ladder_best.set_poles(poles_n);
         self.ladder_low.set_poles(poles_n);
 
-        // Update Osc Waveforms & PW parameters. OSC1's pulse width is set per
-        // sample in `tick` (the PWM sweep); OSC2 plays the PW knob as it is.
-        self.osc1_pw = final_pw;
+        // Update Osc Waveforms & PW parameters
         self.osc.set_wave(final_wave);
+        self.osc.set_pw(final_pw);
         self.osc.set_sweep(final_sweep);
 
         self.osc2.set_wave(final_wave);
@@ -973,6 +942,7 @@ impl Voice {
         self.osc2.set_sweep(final_sweep);
 
         self.osc_low.set_wave(final_wave);
+        self.osc_low.set_pw(final_pw);
         self.osc_low.set_sweep(final_sweep);
 
         self.osc2_low.set_wave(final_wave);
@@ -983,7 +953,6 @@ impl Voice {
         self.vco.set_sweep(final_sweep as f64);
 
         self.vco2.set_wave(final_wave);
-        self.vco2.set_pw(final_pw);
         self.vco2.set_sweep(final_sweep as f64);
 
         self.set_trim_wave(final_wave, final_sweep);
@@ -1091,7 +1060,6 @@ impl Voice {
     /// `initialize()` (non-RT). Leaves a clean steady Draft; the caller re-applies
     /// the persisted tier via [`set_tier_immediate`].
     pub fn reset(&mut self) {
-        self.pwm_phase = PWM_PHASE_CENTRE;
         self.osc = BlepOsc::new();
         self.osc2 = BlepOsc::new();
         self.sub_osc = BlepOsc::new();
@@ -1543,32 +1511,17 @@ impl Voice {
         let high_on = renders(Tier::High);
         let best_on = renders(Tier::Best);
 
-        // OSC1 pulse width: the PW knob, swept by the PWM triangle in FUN.
-        let osc1_pw = if self.pwm_on && self.topology == CircuitTopology::Fun {
-            let tri = 1.0 - 4.0 * (self.pwm_phase - 0.5).abs();
-            self.pwm_phase += self.pwm_rate_hz / self.sr;
-            if self.pwm_phase >= 1.0 {
-                self.pwm_phase -= 1.0;
-            }
-            (self.osc1_pw + PWM_DEPTH * tri).clamp(OSC1_PW_MIN, OSC1_PW_MAX)
-        } else {
-            self.osc1_pw
-        };
-
         let sub_f = osc1_f * 0.5;
         if draft_on {
             self.osc.set_freq(osc1_f, self.sr);
-            self.osc.set_pw(osc1_pw);
             self.sub_osc.set_freq(sub_f, self.sr);
         }
         if low_on {
             self.osc_low.set_freq(osc1_f, self.sr);
-            self.osc_low.set_pw(osc1_pw);
             self.sub_osc_low.set_freq(sub_f, self.sr);
         }
         if high_on || best_on {
             self.vco.set_freq(osc1_f);
-            self.vco.set_pw(osc1_pw);
             self.sub_osc_circuit.set_freq(sub_f, self.sr);
         }
 

@@ -286,7 +286,7 @@ fn knob_values_fit_their_pills_and_pills_fit_their_knobs() {
     assert_knob_values_fit("VOICE", vec2(left, VOICE_ROW_H), 7, &mut |ui| {
         top_controls::render_voice_panel(ui, &params, &setter)
     });
-    assert_knob_values_fit("SOUPED-UP ENGINE", vec2(left, BANK_ROW_H), 10, &mut |ui| {
+    assert_knob_values_fit("SOUPED-UP ENGINE", vec2(left, BANK_ROW_H), 9, &mut |ui| {
         souped_panel::render_souped_panel(ui, &params, &setter)
     });
     assert_knob_values_fit("OUTPUT CLIPPER", vec2(left, BANK_ROW_H), 9, &mut |ui| {

@@ -37,7 +37,7 @@ The VCO and VCF are modeled as circuit IR (`circuit/*.toml`), emitted to SPICE, 
 
 ### 3. Voice
 
-- **Oscillators:** Saw, Square, and a continuous Saw to Square Sweep. Souped-Up adds a second oscillator with pitch and mix, a sub oscillator, pulse width, sweep, and PWM: a triangle LFO with its own rate sweeps oscillator 1's pulse width.
+- **Oscillators:** Saw, Square, and a continuous Saw to Square Sweep. Souped-Up adds a second oscillator with pitch and mix, a sub oscillator, pulse width, and sweep.
 - **Filter:** diode ladder with switchable 2-pole (12 dB/oct), 3-pole (18 dB/oct), and 4-pole (24 dB/oct) taps, plus drive and resonance gain compensation.
 - **Envelopes and accent:**
   - RC envelope decay curves calibrated against the circuit.
