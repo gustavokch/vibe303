@@ -180,14 +180,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now rebuilt from the ramp after the crossing, and the jump takes a
   two-sided two-tap BLEP at the crossing, predicted a sample ahead from the CP
   ramp and a bracket of the fold where the reset trips, learned from the
-  resets. The square's edges use the same timing. Inharmonic energy of the saw
-  at 48 kHz drops from -19.6 to -40.0 dB at C5, -16.4 to -34.7 dB at C6 and
-  -13.8 to -30.0 dB at C7; an ideal two-tap BLEP saw reads -39.9, -36.4 and
-  -33.9 dB, and the rest is the solver's own period jitter (0.03–0.05
-  samples). The solver, and so the pitch, is unchanged. The Best spectral gate
-  reads 1.80 dB LSD (was 1.64, budget 4.0): the SPICE gold is point-sampled,
-  so it keeps the naive saw's aliasing, and the LSD demeans over every bin; at
-  each render's best offset both read 1.61 dB.
+  resets. The square, high from the reset until the DC-blocked ramp falls
+  through zero, takes the same two-tap BLEP at the reset and another at that
+  zero crossing, extrapolated a sample ahead from the ramp's last step; it had
+  a cancelling pair at the reset and none on its falling edge. Its
+  inharmonic energy reads -36.8 dB at C6 and -30.4 dB at C7, and its duty
+  follows a note change from the first cycle (`tests/vco_square.rs`). Inharmonic
+  energy of the saw at 48 kHz drops from -19.6 to -40.0 dB at C5, -16.4 to
+  -34.7 dB at C6 and -13.8 to -30.0 dB at C7; an ideal two-tap BLEP saw reads
+  -39.9, -36.4 and -33.9 dB, and the rest is the solver's own period jitter
+  (0.03–0.05 samples). The solver, and so the pitch, is unchanged. The Best
+  spectral gate reads 1.80 dB LSD (was 1.64, budget 4.0): the SPICE gold is
+  point-sampled, so it keeps the naive saw's aliasing, and the LSD demeans over
+  every bin; at each render's best offset both read 1.61 dB.
 - The circuit VCO (High and Best) drove the filter 0.8 dB below the level its
   gain was meant to give. `VCO_GAIN` scales the solver's saw to twice the
   SPICE VCO's, and it was 2.92 / 1.12 = 2.607 from two peak-to-peak readings

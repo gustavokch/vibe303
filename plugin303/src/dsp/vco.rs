@@ -93,11 +93,8 @@ const RAMP_S: f64 = 1e-3; // rail ramp time for self-start
 /// DC-blocker highpass corner (Hz). ~7.6 Hz reproduces the legacy hardcoded
 /// `0.999` pole at 48 kHz, but is now scaled by `sr` so the corner is invariant.
 const DC_BLOCK_HZ: f32 = 7.6;
-/// Square level: the pulse swings ±0.56 V, which `VCO_GAIN` brings to 3.2 V p-p.
+/// Square level: the pulse swings ±0.56 V before `VCO_GAIN`.
 const SQ_LEVEL: f32 = 0.56;
-/// Weight of each new crossing-to-crossing period in the square's period
-/// estimate: smooths the error of the predicted crossing over about four cycles.
-const SQ_PERIOD_SMOOTH: f32 = 0.25;
 /// Per-iteration node-voltage step limit (damped Newton): bounds the exponential
 /// overshoot that otherwise diverges on this stiff relaxation core.
 const VLIM: f64 = 0.5;
@@ -329,13 +326,6 @@ pub struct Vco303 {
     saw_fill: Option<f32>,
 
     // Synthesized square wave state
-    /// Pulse width: the fraction of each cycle the square is high (0.5 = the
-    /// stock square).
-    pw: f32,
-    /// Time from the last crossing to this sample; infinite before the first.
-    sq_t: f32,
-    /// Smoothed crossing-to-crossing period in samples; 0 until two resets.
-    sq_period: f32,
     /// Falling edge predicted inside the next sample interval: the fraction
     /// of the interval before it.
     sq_fall: Option<f32>,
@@ -429,9 +419,6 @@ impl Vco303 {
             o_step: 0.0,
             o_step_reset: 0.0,
             saw_fill: None,
-            pw: 0.5,
-            sq_t: f32::INFINITY,
-            sq_period: 0.0,
             sq_fall: None,
             sq_high: false,
             is_fun: false,
@@ -968,11 +955,6 @@ impl Vco303 {
         self.sweep_pos = pos;
     }
 
-    /// Pulse width of the square: the fraction of each cycle it is high.
-    pub fn set_pw(&mut self, pw: f32) {
-        self.pw = pw.clamp(0.01, 0.99);
-    }
-
     pub fn set_instance_id(&mut self, id: u32) {
         self.instance_id = id;
         self.noise_seed = 12345u32.wrapping_add(id * 1000);
@@ -1010,8 +992,6 @@ impl Vco303 {
         self.v_post = None;
         self.cp_trip = 0.0;
         self.after_reset = false;
-        self.sq_t = f32::INFINITY;
-        self.sq_period = 0.0;
         self.sq_fall = None;
         self.sq_high = false;
     }
@@ -1449,16 +1429,7 @@ impl Vco303 {
                     _ => Some((lo, hi)),
                 };
             }
-            let period = self.sq_t + frac;
-            if period.is_finite() {
-                self.sq_period = if self.sq_period > 0.0 {
-                    self.sq_period + SQ_PERIOD_SMOOTH * (period - self.sq_period)
-                } else {
-                    period
-                };
-            }
-            self.sq_t = 1.0 - frac;
-            if predicted.map_or(!self.sq_high && self.sq_period > 0.0, |e| e.sq_rise) {
+            if predicted.map_or(!self.sq_high, |e| e.sq_rise) {
                 self.sq_high = true;
                 sq_res -= SQ_LEVEL * frac * frac;
             }
@@ -1466,7 +1437,6 @@ impl Vco303 {
             self.reset_frac = frac;
             self.o_step_reset = self.o_step;
         } else {
-            self.sq_t += 1.0;
             self.since_reset = self.since_reset.saturating_add(1);
             if self.since_reset == 1 {
                 if let Some(fill) = self.saw_fill.take() {
@@ -1501,31 +1471,37 @@ impl Vco303 {
         }
         self.o_last = o_now;
 
-        // Square: high for the first `pw` of each cycle, from the crossing, as
-        // the polyBLEP pulse of the lower tiers. Its edges inside the next
-        // interval: down `pw` of a period after the crossing (unless the next
-        // reset comes first), then up at the reset.
-        if self.sq_high && self.sq_period > 0.0 {
-            let frac = (self.pw * self.sq_period - self.sq_t).max(0.0);
-            if frac <= 1.0 && self.next_reset.is_none_or(|e| frac < e.frac) {
-                self.sq_fall = Some(frac);
-                sq_res -= SQ_LEVEL * (1.0 - frac) * (1.0 - frac);
+        let saw_raw = saw + saw_res;
+        let y_last = self.dc_y1;
+        let y_saw = saw_raw - self.dc_x1 + self.dc_r * self.dc_y1;
+        self.dc_x1 = saw_raw;
+        self.dc_y1 = y_saw;
+
+        // Square: a comparator on the DC-blocked saw, high from the reset until
+        // the falling ramp crosses zero. Its edges inside the next interval take
+        // two-tap BLEPs: the fall where the ramp's last step carries it through
+        // zero (unless the next reset comes first), then the rise at the reset.
+        if self.sq_high && self.sq_fall.is_none() && self.since_reset >= 1 {
+            let step = y_saw - y_last;
+            if y_saw <= 0.0 {
+                // The ramp crossed zero unpredicted: fall on this sample.
+                self.sq_high = false;
+            } else if step < 0.0 && y_saw + step <= 0.0 {
+                let frac = y_saw / -step;
+                if self.next_reset.is_none_or(|e| frac < e.frac) {
+                    self.sq_fall = Some(frac);
+                    sq_res -= SQ_LEVEL * (1.0 - frac) * (1.0 - frac);
+                }
             }
         }
         if let Some(e) = self.next_reset.as_mut() {
-            e.sq_rise = self.sq_period > 0.0 && (!self.sq_high || self.sq_fall.is_some());
+            e.sq_rise = !self.sq_high || self.sq_fall.is_some();
             if e.sq_rise {
                 sq_res += SQ_LEVEL * (1.0 - e.frac) * (1.0 - e.frac);
             }
         }
-
-        let saw_raw = saw + saw_res;
-        let y_saw = saw_raw - self.dc_x1 + self.dc_r * self.dc_y1;
-        self.dc_x1 = saw_raw;
-        self.dc_y1 = y_saw;
-        // The pulse (±0.56 V) less its mean, so a width change moves no DC.
         let level = if self.sq_high { SQ_LEVEL } else { -SQ_LEVEL };
-        let pulse = level - SQ_LEVEL * (2.0 * self.pw - 1.0) + sq_res;
+        let pulse = level + sq_res;
 
         match self.wave {
             OscWave::Saw => y_saw,
